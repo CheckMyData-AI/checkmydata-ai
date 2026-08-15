@@ -236,7 +236,7 @@ function LoginPageContent() {
               }
             />
             {emailTouched && email && !emailRegex.test(email) && (
-              <p className="text-[10px] text-error mt-1 px-1">
+              <p className="text-kicker text-error mt-1 px-1">
                 Please enter a valid email address
               </p>
             )}
@@ -260,11 +260,11 @@ function LoginPageContent() {
               }
             />
             {mode === "register" && password.length > 0 && password.length < 8 ? (
-              <p className="text-[10px] text-error mt-1 px-1">
+              <p className="text-kicker text-error mt-1 px-1">
                 Password must be at least 8 characters
               </p>
             ) : mode === "register" ? (
-              <p className="text-[10px] text-text-muted mt-1 px-1">
+              <p className="text-kicker text-text-muted mt-1 px-1">
                 Min. 8 characters
               </p>
             ) : null}
@@ -306,7 +306,7 @@ function LoginPageContent() {
             <>
               <div className="flex items-center gap-3">
                 <div className="flex-1 border-t border-border-subtle" />
-                <span className="text-[10px] text-text-muted uppercase tracking-wider">
+                <span className="text-kicker text-text-muted uppercase tracking-wider">
                   or
                 </span>
                 <div className="flex-1 border-t border-border-subtle" />
@@ -350,7 +350,7 @@ function LoginPageContent() {
           </p>
         </form>
 
-        <p className="text-center text-[11px] text-text-muted mt-4">
+        <p className="text-center text-meta text-text-muted mt-4">
           <Link
             href="/terms"
             className="hover:text-text-tertiary transition-colors"

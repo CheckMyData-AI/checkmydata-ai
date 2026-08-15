@@ -86,7 +86,7 @@ function StepRow({
             <span className="text-xs text-text-tertiary">{step.agent}</span>
           )}
           {step.elapsed_ms != null && (
-            <span className="text-[10px] text-text-muted font-mono tabular-nums">
+            <span className="text-kicker text-text-muted font-mono tabular-nums">
               {formatStepElapsed(step.elapsed_ms)}
             </span>
           )}

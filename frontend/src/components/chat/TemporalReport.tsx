@@ -60,7 +60,7 @@ export function TemporalReport({ report }: TemporalReportProps) {
     <div className="mt-2 rounded-xl border border-border-default bg-accent-muted overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] w-full text-left"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-meta w-full text-left"
       >
         <span>⏱️</span>
         <span className="font-medium text-accent">
@@ -74,16 +74,16 @@ export function TemporalReport({ report }: TemporalReportProps) {
           </span>
         )}
         {report.seasonality?.detected && (
-          <span className="text-[10px] px-1 py-0.5 rounded bg-accent-muted text-accent">
+          <span className="text-kicker px-1 py-0.5 rounded bg-accent-muted text-accent">
             seasonal
           </span>
         )}
         {report.recent_anomalies.length > 0 && (
-          <span className="text-[10px] px-1 py-0.5 rounded bg-warning-muted text-warning">
+          <span className="text-kicker px-1 py-0.5 rounded bg-warning-muted text-warning">
             {report.recent_anomalies.length} anomalies
           </span>
         )}
-        <span className="ml-auto text-text-muted text-[10px]">
+        <span className="ml-auto text-text-muted text-kicker">
           {report.total_points} points
         </span>
         <svg
@@ -100,17 +100,17 @@ export function TemporalReport({ report }: TemporalReportProps) {
       {expanded && (
         <div className="px-2.5 pb-2 space-y-1.5 border-t border-border-subtle">
           {report.context_note && (
-            <div className="text-[11px] text-text-secondary leading-relaxed pt-1.5">
+            <div className="text-meta text-text-secondary leading-relaxed pt-1.5">
               {report.context_note}
             </div>
           )}
 
           {report.trend && (
-            <div className="text-[11px] space-y-0.5">
+            <div className="text-meta space-y-0.5">
               <div className={`font-medium ${trendCfg.color}`}>
                 {trendCfg.icon} Trend: {report.trend.description}
               </div>
-              <div className="text-text-tertiary text-[10px]">
+              <div className="text-text-tertiary text-kicker">
                 From {report.trend.start_value.toFixed(1)} to{" "}
                 {report.trend.end_value.toFixed(1)} over{" "}
                 {report.trend.periods} periods (fit: {(report.trend.strength * 100).toFixed(0)}%)
@@ -119,23 +119,23 @@ export function TemporalReport({ report }: TemporalReportProps) {
           )}
 
           {report.seasonality && report.seasonality.detected && (
-            <div className="text-[11px] space-y-0.5">
+            <div className="text-meta space-y-0.5">
               <div className="font-medium text-accent">
                 🔄 Seasonality: {report.seasonality.description}
               </div>
-              <div className="text-text-tertiary text-[10px]">
+              <div className="text-text-tertiary text-kicker">
                 Amplitude: {report.seasonality.amplitude.toFixed(2)}
               </div>
             </div>
           )}
 
           {report.recent_anomalies.length > 0 && (
-            <div className="text-[11px] space-y-0.5">
+            <div className="text-meta space-y-0.5">
               <div className="font-medium text-warning">
                 ⚡ Temporal Anomalies
               </div>
               {report.recent_anomalies.map((a, i) => (
-                <div key={i} className="text-[10px] text-text-tertiary">
+                <div key={i} className="text-kicker text-text-tertiary">
                   Position {a.position}: {a.direction} ({a.z_score}σ) — value{" "}
                   {a.value.toFixed(2)}
                 </div>

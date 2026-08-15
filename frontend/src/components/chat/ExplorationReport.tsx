@@ -82,7 +82,7 @@ export function ExplorationReport({ report, onDrillDown }: ExplorationReportProp
   return (
     <div className={`mt-2 rounded-xl border ${statusCfg.border} ${statusCfg.bg} overflow-hidden`}>
       {/* Header */}
-      <div className="px-2.5 py-1.5 flex items-center gap-1.5 text-[11px]">
+      <div className="px-2.5 py-1.5 flex items-center gap-1.5 text-meta">
         <span>{statusCfg.icon}</span>
         <span className={`font-medium ${statusCfg.color}`}>
           Exploration Report: {statusCfg.label}
@@ -93,30 +93,30 @@ export function ExplorationReport({ report, onDrillDown }: ExplorationReportProp
       </div>
 
       {/* Summary */}
-      <div className="px-2.5 pb-1.5 text-[11px] text-text-secondary leading-relaxed">
+      <div className="px-2.5 pb-1.5 text-meta text-text-secondary leading-relaxed">
         {report.summary}
       </div>
 
       {/* Badge row */}
       <div className="px-2.5 pb-1.5 flex gap-1.5 flex-wrap">
         {report.critical_count > 0 && (
-          <span className="text-[10px] px-1 py-0.5 rounded bg-error-muted text-error">
+          <span className="text-kicker px-1 py-0.5 rounded bg-error-muted text-error">
             {report.critical_count} critical
           </span>
         )}
         {report.warning_count > 0 && (
-          <span className="text-[10px] px-1 py-0.5 rounded bg-warning-muted text-warning">
+          <span className="text-kicker px-1 py-0.5 rounded bg-warning-muted text-warning">
             {report.warning_count} warnings
           </span>
         )}
         {report.positive_count > 0 && (
-          <span className="text-[10px] px-1 py-0.5 rounded bg-success-muted text-success">
+          <span className="text-kicker px-1 py-0.5 rounded bg-success-muted text-success">
             {report.positive_count} positive
           </span>
         )}
         <button
           onClick={() => setShowSteps(!showSteps)}
-          className="text-[10px] px-1 py-0.5 rounded bg-surface-2 text-text-tertiary hover:text-text-primary transition-all"
+          className="text-kicker px-1 py-0.5 rounded bg-surface-2 text-text-tertiary hover:text-text-primary transition-all"
         >
           {showSteps ? "Hide" : "Show"} steps ({report.investigation_steps.length})
         </button>
@@ -125,7 +125,7 @@ export function ExplorationReport({ report, onDrillDown }: ExplorationReportProp
       {/* Investigation steps */}
       {showSteps && (
         <div className="px-2.5 pb-1.5 border-t border-border-subtle">
-          <ol className="list-decimal list-inside text-[10px] text-text-tertiary space-y-0.5 pt-1">
+          <ol className="list-decimal list-inside text-kicker text-text-tertiary space-y-0.5 pt-1">
             {report.investigation_steps.map((step, i) => (
               <li key={i}>{step}</li>
             ))}
@@ -145,14 +145,14 @@ export function ExplorationReport({ report, onDrillDown }: ExplorationReportProp
               <div key={idx} className="border-b border-border-subtle last:border-b-0">
                 <button
                   onClick={() => setExpandedIdx(isExpanded ? null : idx)}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] w-full text-left"
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-meta w-full text-left"
                 >
-                  <span className="text-[10px] shrink-0">{sevCfg.icon}</span>
-                  <span className="text-[10px] shrink-0">{catIcon}</span>
+                  <span className="text-kicker shrink-0">{sevCfg.icon}</span>
+                  <span className="text-kicker shrink-0">{catIcon}</span>
                   <span className={`${sevCfg.color} truncate`} title={finding.title}>
                     {finding.title}
                   </span>
-                  <span className="ml-auto text-[10px] text-text-muted shrink-0">
+                  <span className="ml-auto text-kicker text-text-muted shrink-0">
                     {Math.round(finding.confidence * 100)}%
                   </span>
                   <svg
@@ -167,7 +167,7 @@ export function ExplorationReport({ report, onDrillDown }: ExplorationReportProp
                 </button>
 
                 {isExpanded && (
-                  <div className="px-2.5 pb-1.5 space-y-1 text-[11px]">
+                  <div className="px-2.5 pb-1.5 space-y-1 text-meta">
                     {finding.description && (
                       <div className="text-text-secondary leading-relaxed">
                         {finding.description}
@@ -192,7 +192,7 @@ export function ExplorationReport({ report, onDrillDown }: ExplorationReportProp
                           onDrillDown(`Investigate: ${finding.title}`);
                           setExpandedIdx(null);
                         }}
-                        className="text-[10px] px-1.5 py-0.5 rounded border border-border-default text-text-secondary hover:text-text-primary transition-all"
+                        className="text-kicker px-1.5 py-0.5 rounded border border-border-default text-text-secondary hover:text-text-primary transition-all"
                       >
                         Dig deeper
                       </button>

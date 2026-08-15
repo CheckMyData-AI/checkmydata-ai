@@ -63,7 +63,7 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
     cls = "text-text-secondary bg-surface-2/50 border-border-default/50";
   }
   return (
-    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded border ${cls}`}>
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-kicker font-medium rounded border ${cls}`}>
       {label} ({Math.round(confidence * 100)}%)
     </span>
   );
@@ -98,7 +98,7 @@ function InsightCard({
             <span className={`text-xs font-medium ${cfg.color}`}>{cfg.label}</span>
             <ConfidenceBadge confidence={insight.confidence} />
             {insight.times_surfaced > 1 && (
-              <span className="text-[10px] text-text-muted">
+              <span className="text-kicker text-text-muted">
                 seen {insight.times_surfaced}x
               </span>
             )}
@@ -122,12 +122,12 @@ function InsightCard({
 
           {insight.recommended_action && (
             <div className="rounded-md bg-surface-1 border border-border-subtle px-2.5 py-1.5">
-              <p className="text-[10px] text-text-muted uppercase tracking-wider mb-0.5">
+              <p className="text-kicker text-text-muted uppercase tracking-wider mb-0.5">
                 Recommended action
               </p>
               <p className="text-xs text-text-primary">{insight.recommended_action}</p>
               {insight.expected_impact && (
-                <p className="text-[11px] text-success mt-0.5">
+                <p className="text-meta text-success mt-0.5">
                   Expected: {insight.expected_impact}
                 </p>
               )}
@@ -140,7 +140,7 @@ function InsightCard({
                 e.stopPropagation();
                 onConfirm(insight.id);
               }}
-              className="text-[11px] px-2 py-0.5 rounded border border-border-default text-success bg-success-muted hover:bg-success-muted transition-colors"
+              className="text-meta px-2 py-0.5 rounded border border-border-default text-success bg-success-muted hover:bg-success-muted transition-colors"
             >
               Confirm
             </button>
@@ -149,7 +149,7 @@ function InsightCard({
                 e.stopPropagation();
                 onDismiss(insight.id);
               }}
-              className="text-[11px] px-2 py-0.5 rounded border border-border-default/50 text-text-secondary bg-surface-2/50 hover:bg-surface-3/50 transition-colors"
+              className="text-meta px-2 py-0.5 rounded border border-border-default/50 text-text-secondary bg-surface-2/50 hover:bg-surface-3/50 transition-colors"
             >
               Dismiss
             </button>
@@ -158,7 +158,7 @@ function InsightCard({
                 e.stopPropagation();
                 onResolve(insight.id);
               }}
-              className="text-[11px] px-2 py-0.5 rounded border border-border-default text-accent bg-accent-muted hover:bg-accent-muted transition-colors"
+              className="text-meta px-2 py-0.5 rounded border border-border-default text-accent bg-accent-muted hover:bg-accent-muted transition-colors"
             >
               Resolved
             </button>
@@ -168,7 +168,7 @@ function InsightCard({
                   e.stopPropagation();
                   onDrillDown(`Tell me more about: ${insight.title}`);
                 }}
-                className="text-[11px] px-2 py-0.5 rounded border border-accent/30 text-accent bg-accent-muted hover:bg-accent/20 transition-colors ml-auto"
+                className="text-meta px-2 py-0.5 rounded border border-accent/30 text-accent bg-accent-muted hover:bg-accent/20 transition-colors ml-auto"
               >
                 Investigate
               </button>
@@ -272,7 +272,7 @@ export function InsightFeedPanel({ onDrillDown }: InsightFeedPanelProps) {
             Insights
           </h3>
           {summary && summary.total_active > 0 && (
-            <span className="text-[10px] text-text-muted">
+            <span className="text-kicker text-text-muted">
               {summary.total_active} active
             </span>
           )}
@@ -289,7 +289,7 @@ export function InsightFeedPanel({ onDrillDown }: InsightFeedPanelProps) {
                 <button
                   key={s}
                   onClick={() => setFilter(s)}
-                  className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                  className={`text-kicker px-1.5 py-0.5 rounded transition-colors ${
                     filter === s
                       ? "bg-primary text-primary-foreground"
                       : "bg-surface-2 text-text-secondary hover:bg-surface-3"
@@ -319,7 +319,7 @@ export function InsightFeedPanel({ onDrillDown }: InsightFeedPanelProps) {
             </p>
             <button
               onClick={loadInsights}
-              className="text-[11px] text-accent hover:text-accent-hover transition-colors"
+              className="text-meta text-accent hover:text-accent-hover transition-colors"
             >
               Retry
             </button>

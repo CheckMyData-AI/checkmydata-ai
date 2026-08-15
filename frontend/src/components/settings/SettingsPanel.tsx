@@ -139,7 +139,7 @@ export function SettingsPanel({ onClose, onNavigate }: SettingsPanelProps) {
             <div className="px-4 py-3 border-b border-border-subtle">
               <p className="text-sm text-text-primary">{activeProject.name}</p>
               {activeProject.repo_url && (
-                <p className="text-[11px] text-text-muted font-mono truncate mt-0.5">
+                <p className="text-meta text-text-muted font-mono truncate mt-0.5">
                   {activeProject.repo_url}
                 </p>
               )}
@@ -283,7 +283,7 @@ function DeleteConfirm({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="px-4 pb-4 space-y-2.5 border-t border-border-subtle pt-3">
-      <p className="text-[11px] text-text-secondary leading-relaxed">
+      <p className="text-meta text-text-secondary leading-relaxed">
         This will permanently delete your account and all associated data.
       </p>
       <input

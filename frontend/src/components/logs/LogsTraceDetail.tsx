@@ -83,9 +83,9 @@ export function LogsTraceDetail({ projectId, traceId, onClose }: Props) {
           <Icon name="x" size={14} />
         </button>
         <span className="text-xs font-medium text-text-primary">Request Trace</span>
-        <span className="text-[10px] text-text-muted font-mono">{trace.workflow_id.slice(0, 8)}</span>
+        <span className="text-kicker text-text-muted font-mono">{trace.workflow_id.slice(0, 8)}</span>
         <span
-          className={`ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded ${
+          className={`ml-auto text-kicker font-medium px-1.5 py-0.5 rounded ${
             trace.status === "completed"
               ? "bg-success/10 text-success"
               : trace.status === "failed"
@@ -99,7 +99,7 @@ export function LogsTraceDetail({ projectId, traceId, onClose }: Props) {
 
       <div className="px-4 py-3 border-b border-border-subtle space-y-2">
         <p className="text-sm text-text-primary">{trace.question || "(no question)"}</p>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-text-muted">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-kicker text-text-muted">
           <span>Type: {trace.response_type}</span>
           <span>Model: {trace.llm_model}</span>
           <span>Provider: {trace.llm_provider}</span>
@@ -121,14 +121,14 @@ export function LogsTraceDetail({ projectId, traceId, onClose }: Props) {
 
       {failed.length > 0 && (
         <div className="px-4 py-2 bg-error/5 border-b border-border-subtle">
-          <span className="text-[10px] font-medium text-error">
+          <span className="text-kicker font-medium text-error">
             {failed.length} failed span{failed.length > 1 ? "s" : ""}
           </span>
         </div>
       )}
 
       <div className="px-2 py-2">
-        <div className="text-[10px] text-text-tertiary uppercase tracking-wider px-2 py-1 mb-1">
+        <div className="text-kicker text-text-tertiary uppercase tracking-wider px-2 py-1 mb-1">
           Spans ({spans.length})
         </div>
         <div role="tree" aria-label="Trace spans">

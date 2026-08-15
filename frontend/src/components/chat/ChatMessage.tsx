@@ -19,6 +19,7 @@ import { SessionContinuationBanner } from "./SessionContinuationBanner";
 import { SQLExplainer } from "./SQLExplainer";
 import { SQLResultSection } from "./SQLResultSection";
 import { Seal, sealStateFor } from "@/components/ui/Seal";
+import { cn } from "@/lib/utils";
 
 interface AttemptInfo {
   attempt: number;
@@ -115,7 +116,7 @@ function ReasoningButton({ messageId }: { messageId: string }) {
   return (
     <button
       onClick={() => (isActive ? closePanel() : openPanel(messageId))}
-      className={`text-[10px] ml-1 transition-colors ${
+      className={`text-kicker ml-1 transition-colors ${
         isActive ? "text-accent" : "text-text-tertiary hover:text-text-primary"
       }`}
       aria-label={isActive ? "Hide reasoning" : "Show reasoning"}
@@ -313,9 +314,16 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
   return (
     <div className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[95%] md:max-w-[80%] min-w-0 overflow-hidden rounded-xl px-3 py-2.5 md:px-4 md:py-3 ${
-          isUser ? "bg-primary text-primary-foreground" : "bg-surface-2 text-text-primary"
-        }`}
+        className={cn(
+          "min-w-0 overflow-hidden",
+          isUser
+            // The reader's own turn: a filled bubble, in ink.
+            ? "max-w-[95%] rounded-card bg-primary px-3 py-2.5 text-primary-foreground md:max-w-[80%] md:px-4 md:py-3"
+            // The answer: no bubble. It is the page's content, not a remark —
+            // the reference draws it straight on the panel, and a card around
+            // something the reader is meant to audit adds a wall to look past.
+            : "w-full max-w-full text-text-primary",
+        )}
       >
         {message.stalenessWarning && (
           <div className="mb-2 px-2 py-1.5 rounded bg-warning-muted border border-border-default text-warning text-xs">
@@ -327,15 +335,12 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
         {!isUser && responseType !== "text" && responseType !== "error" && (
           <div className="mb-1.5 flex items-center gap-1.5">
             <span
-              className={`text-[10px] px-1.5 py-0.5 rounded ${
-                responseType === "sql_result"
-                  ? "bg-accent-muted text-accent"
-                  : responseType === "clarification_request"
-                  ? "bg-warning-muted text-warning"
-                  : responseType === "step_limit_reached"
-                  ? "bg-warning-muted text-warning"
-                  : "bg-accent-muted text-accent"
-              }`}
+              className={cn(
+                "inline-flex items-center rounded-control border px-2 py-0.5 font-mono text-kicker uppercase tracking-kicker",
+                responseType === "clarification_request" || responseType === "step_limit_reached"
+                  ? "border-warn/40 text-ink"
+                  : "border-accent-line text-accent",
+              )}
             >
               {responseType === "sql_result"
                 ? "SQL Result"
@@ -407,7 +412,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
                 <summary className="cursor-pointer text-text-secondary hover:text-text-primary flex items-center gap-2">
                   View SQL Query
                   {sqlComplexity && (
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${complexityBadgeColors[sqlComplexity] || ""}`}>
+                    <span className={`text-kicker px-1.5 py-0.5 rounded font-medium ${complexityBadgeColors[sqlComplexity] || ""}`}>
                       {sqlComplexity.charAt(0).toUpperCase() + sqlComplexity.slice(1)}
                     </span>
                   )}
@@ -431,7 +436,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
                   <button
                     onClick={() => setViewMode("viz")}
                     aria-label="Show visualization"
-                    className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
+                    className={`px-2 py-1 rounded-md text-meta transition-colors ${
                       viewMode === "viz"
                         ? "bg-surface-3 text-text-primary"
                         : "text-text-secondary hover:text-text-primary"
@@ -442,7 +447,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
                   <button
                     onClick={() => setViewMode("text")}
                     aria-label="Show data as text"
-                    className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
+                    className={`px-2 py-1 rounded-md text-meta transition-colors ${
                       viewMode === "text"
                         ? "bg-surface-3 text-text-primary"
                         : "text-text-secondary hover:text-text-primary"
@@ -469,7 +474,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
                       <VizRenderer data={overrideViz ?? message.visualization!} />
                       <button
                         onClick={() => setMobileVizExpanded(false)}
-                        className="mt-1.5 text-[10px] text-text-secondary hover:text-text-primary transition-colors"
+                        className="mt-1.5 text-kicker text-text-secondary hover:text-text-primary transition-colors"
                       >
                         Collapse chart
                       </button>
@@ -518,13 +523,13 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
               <button
                 onClick={handleSummarize}
                 disabled={summaryLoading}
-                className="text-[10px] px-2 py-0.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:border-border-default transition-colors disabled:opacity-50"
+                className="text-kicker px-2 py-0.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:border-border-default transition-colors disabled:opacity-50"
               >
                 {summaryLoading ? "Generating..." : "Summary"}
               </button>
             )}
             {summaryText && (
-              <div className="mt-1 p-2 rounded-lg bg-surface-1/60 border border-border-subtle text-[11px] text-text-primary leading-relaxed">
+              <div className="mt-1 p-2 rounded-lg bg-surface-1/60 border border-border-subtle text-meta text-text-primary leading-relaxed">
                 {summaryText}
               </div>
             )}
@@ -550,9 +555,9 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
                 {(metadata?.rag_sources ?? []).map((src, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center gap-1.5 py-1 px-2 rounded bg-surface-1/50 text-[11px] text-text-secondary"
+                    className="flex items-center gap-1.5 py-1 px-2 rounded bg-surface-1/50 text-meta text-text-secondary"
                   >
-                    <span className="text-[10px] uppercase px-1 py-px rounded bg-accent-muted text-accent">
+                    <span className="text-kicker uppercase px-1 py-px rounded bg-accent-muted text-accent">
                       {src.doc_type || "doc"}
                     </span>
                     <span className="truncate flex-1" title={src.source_path}>
@@ -576,7 +581,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
             {onRetry && responseType === "error" && (
               <button
                 onClick={onRetry}
-                className="text-[10px] px-2 py-0.5 rounded bg-surface-3 text-text-primary hover:bg-surface-3 transition-colors"
+                className="text-kicker px-2 py-0.5 rounded bg-surface-3 text-text-primary hover:bg-surface-3 transition-colors"
               >
                 Retry
               </button>
@@ -694,7 +699,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
             ) : summaryText ? (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[10px] font-medium text-info">Executive Summary</span>
+                  <span className="text-kicker font-medium text-info">Executive Summary</span>
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(summaryText).then(
@@ -702,7 +707,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
                         () => toast("Failed to copy", "error"),
                       );
                     }}
-                    className="text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
+                    className="text-kicker text-text-tertiary hover:text-text-primary transition-colors"
                   >
                     Copy
                   </button>
@@ -717,36 +722,36 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
         {!isUser && metadata && (metadata.row_count != null || metadata.execution_time_ms != null || (metadata.total_attempts && metadata.total_attempts > 0) || metadata.token_usage) && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {metadata.execution_time_ms != null && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-3/50 text-text-secondary">
+              <span className="text-kicker px-1.5 py-0.5 rounded bg-surface-3/50 text-text-secondary">
                 {metadata.execution_time_ms < 1000
                   ? `${Math.round(metadata.execution_time_ms)}ms`
                   : `${(metadata.execution_time_ms / 1000).toFixed(1)}s`}
               </span>
             )}
             {metadata.row_count != null && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-3/50 text-text-secondary">
+              <span className="text-kicker px-1.5 py-0.5 rounded bg-surface-3/50 text-text-secondary">
                 {metadata.row_count} row{metadata.row_count !== 1 ? "s" : ""}
               </span>
             )}
             {metadata.viz_type && metadata.viz_type !== "text" && (
-              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-surface-3/50 text-text-secondary">
+              <span className="hidden md:inline text-kicker px-1.5 py-0.5 rounded bg-surface-3/50 text-text-secondary">
                 {metadata.viz_type}
               </span>
             )}
             {metadata.total_attempts != null && metadata.total_attempts > 1 && (
-              <span className={`hidden md:inline text-[10px] px-1.5 py-0.5 rounded ${metadata.error ? "bg-error-muted text-error" : "bg-success-muted text-success"}`}>
+              <span className={`hidden md:inline text-kicker px-1.5 py-0.5 rounded ${metadata.error ? "bg-error-muted text-error" : "bg-success-muted text-success"}`}>
                 {metadata.error
                   ? `Failed after ${metadata.total_attempts} attempts`
                   : `Resolved after ${metadata.total_attempts} attempts`}
               </span>
             )}
             {metadata.token_usage?.total_tokens != null && Number(metadata.token_usage.total_tokens) > 0 && (
-              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-surface-3/50 text-text-secondary" title={`Prompt: ${Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()} | Completion: ${Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()}`}>
+              <span className="hidden md:inline text-kicker px-1.5 py-0.5 rounded bg-surface-3/50 text-text-secondary" title={`Prompt: ${Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()} | Completion: ${Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()}`}>
                 {Number(metadata.token_usage.prompt_tokens ?? 0).toLocaleString()} in / {Number(metadata.token_usage.completion_tokens ?? 0).toLocaleString()} out
               </span>
             )}
             {metadata.token_usage?.estimated_cost_usd != null && Number(metadata.token_usage.estimated_cost_usd) > 0 && (
-              <span className="hidden md:inline text-[10px] px-1.5 py-0.5 rounded bg-info-muted text-info">
+              <span className="hidden md:inline text-kicker px-1.5 py-0.5 rounded bg-info-muted text-info">
                 ${Number(metadata.token_usage.estimated_cost_usd) < 0.01
                   ? Number(metadata.token_usage.estimated_cost_usd).toFixed(4)
                   : Number(metadata.token_usage.estimated_cost_usd).toFixed(2)}
@@ -754,7 +759,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
             )}
             <button
               onClick={() => setShowDetails((v) => !v)}
-              className="text-[10px] text-text-tertiary hover:text-text-primary ml-1"
+              className="text-kicker text-text-tertiary hover:text-text-primary ml-1"
               aria-expanded={showDetails}
               aria-label={showDetails ? "Hide message details" : "Show message details"}
             >
@@ -765,7 +770,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
 
         {/* Expandable details */}
         {showDetails && metadata && (
-          <div className="mt-2 p-2 bg-surface-1/50 rounded text-[10px] text-text-tertiary space-y-1">
+          <div className="mt-2 p-2 bg-surface-1/50 rounded text-kicker text-text-tertiary space-y-1">
             {metadata.workflow_id && <div>Workflow: {metadata.workflow_id}</div>}
             {metadata.response_type && <div>Response type: {metadata.response_type}</div>}
             {metadata.execution_time_ms != null && (
@@ -803,7 +808,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
                     key={idx}
                     className="flex items-center gap-1.5 py-0.5 text-text-tertiary"
                   >
-                    <span className="text-[10px] uppercase px-1 py-px rounded bg-surface-2 text-text-tertiary">
+                    <span className="text-kicker uppercase px-1 py-px rounded bg-surface-2 text-text-tertiary">
                       {src.doc_type || "doc"}
                     </span>
                     <span className="truncate flex-1" title={src.source_path}>

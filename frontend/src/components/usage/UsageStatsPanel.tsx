@@ -17,11 +17,11 @@ function formatCost(usd: number | null): string {
 }
 
 function ChangeBadge({ value }: { value: number | null }) {
-  if (value == null || value === 0) return <span className="text-[10px] text-text-tertiary">--</span>;
+  if (value == null || value === 0) return <span className="text-kicker text-text-tertiary">--</span>;
   const isUp = value > 0;
   return (
     <span
-      className={`text-[10px] font-medium ${isUp ? "text-warning" : "text-success"}`}
+      className={`text-kicker font-medium ${isUp ? "text-warning" : "text-success"}`}
     >
       {isUp ? "+" : ""}{value.toFixed(1)}%
     </span>
@@ -77,7 +77,7 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
 
   if (loading) {
     return (
-      <div className="px-2 py-1 text-[10px] text-text-tertiary animate-pulse">
+      <div className="px-2 py-1 text-kicker text-text-tertiary animate-pulse">
         Loading usage...
       </div>
     );
@@ -85,7 +85,7 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
 
   if (error) {
     return (
-      <div className="px-2 py-1 text-[10px] text-error flex items-center gap-2">
+      <div className="px-2 py-1 text-kicker text-error flex items-center gap-2">
         <span>{error}</span>
         <button onClick={load} className="text-text-secondary hover:text-text-primary underline">Retry</button>
       </div>
@@ -100,9 +100,9 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
     return (
       <div className="px-2 py-1 space-y-1">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] text-text-tertiary">30-day tokens</span>
+          <span className="text-kicker text-text-tertiary">30-day tokens</span>
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-medium text-text-primary tabular-nums">
+            <span className="text-meta font-medium text-text-primary tabular-nums">
               {formatNumber(cur.total_tokens)}
             </span>
             <ChangeBadge value={change.total_tokens} />
@@ -110,9 +110,9 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
         </div>
         {cur.estimated_cost_usd != null && cur.estimated_cost_usd > 0 && (
           <div className="flex items-center justify-between">
-            <span className="text-[10px] text-text-tertiary">Est. cost</span>
+            <span className="text-kicker text-text-tertiary">Est. cost</span>
             <div className="flex items-center gap-1.5">
-              <span className="text-[11px] font-medium text-text-primary tabular-nums">
+              <span className="text-meta font-medium text-text-primary tabular-nums">
                 {formatCost(cur.estimated_cost_usd)}
               </span>
               <ChangeBadge value={change.estimated_cost_usd} />
@@ -120,9 +120,9 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
           </div>
         )}
         <div className="flex items-center justify-between">
-          <span className="text-[10px] text-text-tertiary">Requests</span>
+          <span className="text-kicker text-text-tertiary">Requests</span>
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-medium text-text-primary tabular-nums">
+            <span className="text-meta font-medium text-text-primary tabular-nums">
               {cur.request_count.toLocaleString()}
             </span>
             <ChangeBadge value={change.request_count} />
@@ -157,16 +157,16 @@ export function UsageStatsPanel({ compact = false }: UsageStatsPanelProps) {
         />
       </div>
 
-      <div className="flex items-center justify-between text-[10px] text-text-tertiary">
+      <div className="flex items-center justify-between text-kicker text-text-tertiary">
         <span>Requests: {cur.request_count.toLocaleString()}</span>
         <span>vs prev {stats.period_days}d</span>
       </div>
 
       {stats.daily_breakdown.length > 0 && (
         <div>
-          <div className="text-[10px] text-text-tertiary mb-1">Daily tokens ({stats.period_days}d)</div>
+          <div className="text-kicker text-text-tertiary mb-1">Daily tokens ({stats.period_days}d)</div>
           <MiniBarChart data={stats.daily_breakdown} />
-          <div className="flex justify-between text-[10px] text-text-muted mt-0.5">
+          <div className="flex justify-between text-kicker text-text-muted mt-0.5">
             <span>{stats.daily_breakdown[0]?.date}</span>
             <span>{stats.daily_breakdown[stats.daily_breakdown.length - 1]?.date}</span>
           </div>
@@ -187,7 +187,7 @@ function StatCard({
 }) {
   return (
     <div className="bg-surface-2/50 rounded-md px-2 py-1.5">
-      <div className="text-[10px] text-text-tertiary">{label}</div>
+      <div className="text-kicker text-text-tertiary">{label}</div>
       <div className="flex items-center gap-1.5 mt-0.5">
         <span className="text-sm font-medium text-text-primary tabular-nums">{value}</span>
         <ChangeBadge value={change} />

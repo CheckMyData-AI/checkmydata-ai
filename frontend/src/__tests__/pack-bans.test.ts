@@ -75,6 +75,21 @@ describe("ledger pack bans", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("sets no font size outside the pack's ramp", () => {
+    // The craft bar's "no ad-hoc font size anywhere in the diff" is only
+    // achievable because the ramp ships as tokens. 484 bracket sizes across 78
+    // files were swept onto it; 11px and 13px had no step and were rounded to
+    // the nearest one that exists rather than given a token the pack does not
+    // own.
+    const offenders = FILES.flatMap(({ path, lines }) =>
+      lines
+        .map((line, i) => ({ line, i }))
+        .filter(({ line }) => /\btext-\[\d+(px|rem)\]/.test(line))
+        .map(({ i }) => `${path}:${i + 1}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
   it("keeps the shadcn layer off shadcn's own accent and muted SURFACES", () => {
     // In this project `--accent` is the brand terracotta and `--muted` is muted
     // ink; shadcn means a hover surface and a surface fill by those names. A

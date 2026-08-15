@@ -123,7 +123,7 @@ export function PricingTable() {
             }`}
           >
             {highlighted && (
-              <span className="self-start px-2 py-0.5 mb-3 rounded-full bg-accent/10 text-accent text-[11px] font-semibold uppercase tracking-wide">
+              <span className="self-start px-2 py-0.5 mb-3 rounded-full bg-accent/10 text-accent text-meta font-semibold uppercase tracking-wide">
                 Most popular
               </span>
             )}

@@ -242,7 +242,7 @@ function AppPageContent() {
                             <span className="text-xs text-text-secondary truncate">
                               {activeConnection.name}
                             </span>
-                            <span className="text-[10px] text-text-muted uppercase font-mono">
+                            <span className="text-kicker text-text-muted uppercase font-mono">
                               {connectionSourceLabel(activeConnection)}
                             </span>
                           </div>
@@ -315,7 +315,7 @@ function AppPageContent() {
                         >
                           <Icon name="bookmark" size={16} />
                           {notesCount > 0 && !notesOpen && (
-                            <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                            <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-primary text-primary-foreground text-kicker font-bold flex items-center justify-center">
                               {notesCount > 9 ? "9+" : notesCount}
                             </span>
                           )}

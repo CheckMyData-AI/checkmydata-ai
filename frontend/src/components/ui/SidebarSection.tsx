@@ -104,11 +104,11 @@ export function SidebarSection({
             size={14}
             className="text-text-tertiary shrink-0"
           />
-          <span className="flex-1 text-[11px] font-medium text-text-secondary">
+          <span className="flex-1 text-meta font-medium text-text-secondary">
             {title}
           </span>
           {count !== undefined && count > 0 && (
-            <span className="text-[10px] text-text-muted tabular-nums">
+            <span className="text-kicker text-text-muted tabular-nums">
               {count}
             </span>
           )}

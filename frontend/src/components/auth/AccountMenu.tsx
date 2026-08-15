@@ -65,7 +65,7 @@ export function AccountMenu() {
             {view === "menu" && (
               <div className="py-1">
                 <div className="px-2.5 py-2 border-b border-border-subtle">
-                  <p className="text-[10px] uppercase tracking-wider text-text-muted mb-1.5">Appearance</p>
+                  <p className="text-kicker uppercase tracking-wider text-text-muted mb-1.5">Appearance</p>
                   <ThemeToggle />
                 </div>
                 {!isGoogleOnly && (
@@ -198,7 +198,7 @@ function DeleteConfirm({ onClose }: { onClose: () => void }) {
   return (
     <div className="p-3 space-y-2.5">
       <p className="text-xs font-medium text-error">Delete Account</p>
-      <p className="text-[11px] text-text-secondary leading-relaxed">
+      <p className="text-meta text-text-secondary leading-relaxed">
         This will permanently delete your account and all associated data. This action cannot be undone.
       </p>
       <input

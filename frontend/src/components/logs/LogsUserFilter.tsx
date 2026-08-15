@@ -20,10 +20,10 @@ export function LogsUserFilter({ users, selectedUserId, onSelect }: Props) {
         }`}
       >
         <div className="w-6 h-6 rounded-full bg-surface-3 flex items-center justify-center shrink-0">
-          <span className="text-[10px] font-medium text-text-tertiary">All</span>
+          <span className="text-kicker font-medium text-text-tertiary">All</span>
         </div>
         <span className="truncate font-medium">All users</span>
-        <span className="ml-auto text-[10px] text-text-muted tabular-nums">
+        <span className="ml-auto text-kicker text-text-muted tabular-nums">
           {users.reduce((s, u) => s + u.request_count, 0)}
         </span>
       </button>
@@ -48,13 +48,13 @@ export function LogsUserFilter({ users, selectedUserId, onSelect }: Props) {
             />
           ) : (
             <div className="w-6 h-6 rounded-full bg-surface-3 border border-border-default flex items-center justify-center shrink-0">
-              <span className="text-[10px] font-medium text-text-tertiary">
+              <span className="text-kicker font-medium text-text-tertiary">
                 {(u.display_name || u.email || "?").charAt(0).toUpperCase()}
               </span>
             </div>
           )}
           <span className="truncate">{u.display_name || u.email}</span>
-          <span className="ml-auto text-[10px] text-text-muted tabular-nums shrink-0">
+          <span className="ml-auto text-kicker text-text-muted tabular-nums shrink-0">
             {u.request_count}
           </span>
         </button>

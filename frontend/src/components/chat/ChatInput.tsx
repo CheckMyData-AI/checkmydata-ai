@@ -74,7 +74,7 @@ export function ChatInput({ onSend, disabled, placeholder, rightSlot }: ChatInpu
           {rightSlot}
         </div>
         {nearLimit && (
-          <p className={`text-[10px] text-right pr-14 transition-colors ${remaining <= 50 ? "text-error" : "text-text-tertiary"}`}>
+          <p className={`text-kicker text-right pr-14 transition-colors ${remaining <= 50 ? "text-error" : "text-text-tertiary"}`}>
             {remaining} characters remaining
           </p>
         )}

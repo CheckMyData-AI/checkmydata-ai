@@ -345,12 +345,12 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
         <ListError
           message={loadError}
           onRetry={() => void load()}
-          className="px-1 py-2 text-[11px] text-error flex items-center gap-2"
+          className="px-1 py-2 text-meta text-error flex items-center gap-2"
         />
       )}
 
       {!loading && schedules.length === 0 && !showForm && !loadError && (
-        <p className="text-[11px] text-text-muted px-1 py-1">
+        <p className="text-meta text-text-muted px-1 py-1">
           No scheduled queries yet.
         </p>
       )}
@@ -363,8 +363,8 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
               return <StatusDot status={st.status} title={st.label} />;
             })()}
             <div className="flex-1 min-w-0">
-              <p className="text-[11px] font-medium text-text-primary truncate">{s.title}</p>
-              <p className="text-[10px] text-text-muted">
+              <p className="text-meta font-medium text-text-primary truncate">{s.title}</p>
+              <p className="text-kicker text-text-muted">
                 {cronToHuman(s.cron_expression)}
                 {s.last_run_at && <> &middot; {timeAgo(s.last_run_at)}</>}
               </p>
@@ -422,14 +422,14 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
           {expandedId === s.id && (
             <div className="border-t border-border-subtle px-2.5 py-2 space-y-1">
               {historyLoading ? (
-                <p className="text-[10px] text-text-muted">Loading...</p>
+                <p className="text-kicker text-text-muted">Loading...</p>
               ) : history.length === 0 ? (
-                <p className="text-[10px] text-text-muted">No runs yet</p>
+                <p className="text-kicker text-text-muted">No runs yet</p>
               ) : (
                 history.slice(0, 10).map((run) => (
                   <div
                     key={run.id}
-                    className="flex items-center gap-2 text-[10px]"
+                    className="flex items-center gap-2 text-kicker"
                   >
                     <StatusDot
                       status={
@@ -470,7 +470,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             maxLength={255}
             aria-label="Schedule title"
             aria-required="true"
-            className="w-full text-[11px] bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+            className="w-full text-meta bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
           />
 
           <textarea
@@ -481,7 +481,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             maxLength={10000}
             aria-label="SQL query"
             aria-required="true"
-            className="w-full text-[11px] font-mono bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:border-accent"
+            className="w-full text-meta font-mono bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:border-accent"
           />
 
           {connections.length > 1 && (
@@ -489,7 +489,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
               value={connectionId}
               onChange={(e) => setConnectionId(e.target.value)}
               aria-label="Connection"
-              className="w-full text-[11px] bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
+              className="w-full text-meta bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
             >
               {connections.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -503,7 +503,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setCronMode("preset")}
-                className={`text-[10px] px-2 py-0.5 rounded ${
+                className={`text-kicker px-2 py-0.5 rounded ${
                   cronMode === "preset"
                     ? "bg-primary text-primary-foreground"
                     : "bg-surface-2 text-text-secondary hover:bg-surface-3"
@@ -513,7 +513,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
               </button>
               <button
                 onClick={() => setCronMode("custom")}
-                className={`text-[10px] px-2 py-0.5 rounded ${
+                className={`text-kicker px-2 py-0.5 rounded ${
                   cronMode === "custom"
                     ? "bg-primary text-primary-foreground"
                     : "bg-surface-2 text-text-secondary hover:bg-surface-3"
@@ -527,7 +527,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                 value={cronPreset}
                 onChange={(e) => setCronPreset(e.target.value)}
                 aria-label="Schedule frequency"
-                className="w-full text-[11px] bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
+                className="w-full text-meta bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
               >
                 {CRON_PRESETS.map((p) => (
                   <option key={p.value} value={p.value}>
@@ -541,17 +541,17 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                 onChange={(e) => setCronCustom(e.target.value)}
                 placeholder="e.g. 0 */2 * * *"
                 aria-label="Custom cron expression"
-                className="w-full text-[11px] font-mono bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+                className="w-full text-meta font-mono bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
               />
             )}
           </div>
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-text-tertiary">Alert Conditions</span>
+              <span className="text-kicker text-text-tertiary">Alert Conditions</span>
               <button
                 onClick={addCondition}
-                className="text-[10px] text-accent hover:text-accent-hover"
+                className="text-kicker text-accent hover:text-accent-hover"
               >
                 + Add
               </button>
@@ -563,13 +563,13 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                   onChange={(e) => updateCondition(idx, "column", e.target.value)}
                   placeholder="column"
                   aria-label={`Alert condition ${idx + 1} column`}
-                  className="flex-1 text-[10px] bg-surface-0 border border-border-default rounded px-1.5 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+                  className="flex-1 text-kicker bg-surface-0 border border-border-default rounded px-1.5 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
                 />
                 <select
                   value={cond.operator}
                   onChange={(e) => updateCondition(idx, "operator", e.target.value)}
                   aria-label={`Alert condition ${idx + 1} operator`}
-                  className="text-[10px] bg-surface-0 border border-border-default rounded px-1 py-1 text-text-primary focus:outline-none focus:border-accent"
+                  className="text-kicker bg-surface-0 border border-border-default rounded px-1 py-1 text-text-primary focus:outline-none focus:border-accent"
                 >
                   {Object.entries(OPERATOR_LABELS).map(([k, v]) => (
                     <option key={k} value={k}>
@@ -583,7 +583,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                   placeholder="value"
                   type="number"
                   aria-label={`Alert condition ${idx + 1} threshold`}
-                  className="w-16 text-[10px] bg-surface-0 border border-border-default rounded px-1.5 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+                  className="w-16 text-kicker bg-surface-0 border border-border-default rounded px-1.5 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
                 />
                 <button
                   onClick={() => removeCondition(idx)}
@@ -597,7 +597,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
           </div>
 
           {editingId && (
-            <label className="flex items-center gap-2 text-[11px] text-text-secondary cursor-pointer">
+            <label className="flex items-center gap-2 text-meta text-text-secondary cursor-pointer">
               <input
                 type="checkbox"
                 checked={isActive}
@@ -611,14 +611,14 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
           <div className="flex gap-1.5 justify-end pt-1">
             <button
               onClick={() => { setShowForm(false); resetForm(); }}
-              className="text-[10px] px-2.5 py-1 rounded text-text-muted hover:text-text-secondary"
+              className="text-kicker px-2.5 py-1 rounded text-text-muted hover:text-text-secondary"
             >
               Cancel
             </button>
             <button
               onClick={handleSave}
               disabled={saving || !title.trim() || !sqlQuery.trim()}
-              className="text-[10px] px-2.5 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-50"
+              className="text-kicker px-2.5 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-50"
             >
               {saving ? "Saving..." : editingId ? "Update" : "Create"}
             </button>

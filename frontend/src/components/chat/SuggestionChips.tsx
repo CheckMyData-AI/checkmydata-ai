@@ -82,7 +82,7 @@ export function FollowupChips({ followups, onSelect }: FollowupChipsProps) {
         <button
           key={i}
           onClick={() => onSelect(text)}
-          className="px-2.5 py-1 text-[11px] text-text-secondary bg-surface-1/50 border border-border-default/30 rounded-full hover:bg-surface-2/80 hover:text-text-primary hover:border-border-default/40 transition-all duration-150 cursor-pointer"
+          className="px-2.5 py-1 text-meta text-text-secondary bg-surface-1/50 border border-border-default/30 rounded-full hover:bg-surface-2/80 hover:text-text-primary hover:border-border-default/40 transition-all duration-150 cursor-pointer"
         >
           {text}
         </button>

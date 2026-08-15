@@ -78,7 +78,7 @@ export function ActionCard({ actions, onDrillDown }: ActionCardProps) {
 
   return (
     <div className="mt-2 space-y-1.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-text-tertiary font-medium uppercase tracking-wider">
+      <div className="flex items-center gap-1.5 text-meta text-text-tertiary font-medium uppercase tracking-wider">
         <span>🎯</span>
         Recommended Actions ({actions.length})
       </div>
@@ -95,7 +95,7 @@ export function ActionCard({ actions, onDrillDown }: ActionCardProps) {
             <button
               onClick={() => handleToggle(idx)}
               aria-expanded={isExpanded}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] w-full text-left"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-meta w-full text-left"
             >
               <span className="shrink-0">{cfg.icon}</span>
               <span className={`font-medium truncate ${cfg.color}`} title={action.title}>
@@ -103,11 +103,11 @@ export function ActionCard({ actions, onDrillDown }: ActionCardProps) {
               </span>
               <span className="ml-auto flex items-center gap-1 shrink-0">
                 {action.impact_estimate_pct > 0 && (
-                  <span className="text-[10px] px-1 py-0.5 rounded bg-success-muted text-success">
+                  <span className="text-kicker px-1 py-0.5 rounded bg-success-muted text-success">
                     +{action.impact_estimate_pct}%
                   </span>
                 )}
-                <span className={`text-[10px] px-1 py-0.5 rounded ${effortClass}`}>
+                <span className={`text-kicker px-1 py-0.5 rounded ${effortClass}`}>
                   {action.effort}
                 </span>
               </span>
@@ -125,20 +125,20 @@ export function ActionCard({ actions, onDrillDown }: ActionCardProps) {
             {isExpanded && (
               <div className="px-2.5 pb-2 space-y-1.5 border-t border-border-subtle">
                 {action.what_to_do && (
-                  <div className="text-[11px] text-text-primary leading-relaxed pt-1.5">
+                  <div className="text-meta text-text-primary leading-relaxed pt-1.5">
                     📋 {action.what_to_do}
                   </div>
                 )}
 
                 {action.expected_impact && (
-                  <div className="flex gap-1.5 text-[11px]">
+                  <div className="flex gap-1.5 text-meta">
                     <span className="text-text-tertiary shrink-0">📊 Expected:</span>
                     <span className="text-success">{action.expected_impact}</span>
                   </div>
                 )}
 
                 {action.prerequisites.length > 0 && (
-                  <div className="text-[11px]">
+                  <div className="text-meta">
                     <span className="text-text-tertiary">Prerequisites: </span>
                     <span className="text-text-secondary">
                       {action.prerequisites.join(" • ")}
@@ -147,7 +147,7 @@ export function ActionCard({ actions, onDrillDown }: ActionCardProps) {
                 )}
 
                 {action.risks.length > 0 && (
-                  <div className="text-[11px]">
+                  <div className="text-meta">
                     <span className="text-text-tertiary">Risks: </span>
                     <span className="text-warning/80">
                       {action.risks.join(" • ")}
@@ -156,7 +156,7 @@ export function ActionCard({ actions, onDrillDown }: ActionCardProps) {
                 )}
 
                 {action.source_insight_title && (
-                  <div className="text-[10px] text-text-muted">
+                  <div className="text-kicker text-text-muted">
                     From: {action.source_insight_type} — {action.source_insight_title}
                   </div>
                 )}
@@ -170,7 +170,7 @@ export function ActionCard({ actions, onDrillDown }: ActionCardProps) {
                       );
                       setExpandedIdx(null);
                     }}
-                    className={`text-[10px] px-1.5 py-0.5 rounded border ${cfg.border} ${cfg.color} hover:brightness-125 transition-all`}
+                    className={`text-kicker px-1.5 py-0.5 rounded border ${cfg.border} ${cfg.color} hover:brightness-125 transition-all`}
                   >
                     Help me implement this
                   </button>

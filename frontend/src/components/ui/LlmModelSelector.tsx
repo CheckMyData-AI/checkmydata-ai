@@ -69,11 +69,11 @@ export function LlmModelSelector({
   return (
     <div className={`space-y-1.5 ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
       <div>
-        <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
+        <span className="text-kicker font-semibold text-text-secondary uppercase tracking-wider">
           {label}
         </span>
         {description && (
-          <span className="text-[10px] text-text-muted ml-1.5">{description}</span>
+          <span className="text-kicker text-text-muted ml-1.5">{description}</span>
         )}
       </div>
       <select
@@ -93,7 +93,7 @@ export function LlmModelSelector({
       {pair.provider && (
         loading ? (
           <div className={`${inputCls} flex items-center`}>
-            <span className="text-text-muted text-[10px] animate-pulse">
+            <span className="text-text-muted text-kicker animate-pulse">
               Loading models...
             </span>
           </div>
@@ -123,7 +123,7 @@ export function LlmModelSelector({
               aria-label={`${label} model name`}
             />
             {loadError && (
-              <p className="text-[10px] text-warning mt-0.5 px-1">Could not load models — type model name manually</p>
+              <p className="text-kicker text-warning mt-0.5 px-1">Could not load models — type model name manually</p>
             )}
           </div>
         )

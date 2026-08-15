@@ -75,7 +75,7 @@ export function LogsSpanRow({ span, depth = 0, childSpans }: Props) {
 
         <Icon name={cfg.icon} size={12} className={`${cfg.color} shrink-0`} />
 
-        <span className={`font-mono text-[10px] ${cfg.color} w-10 text-left shrink-0`}>
+        <span className={`font-mono text-kicker ${cfg.color} w-10 text-left shrink-0`}>
           {cfg.label}
         </span>
 
@@ -83,16 +83,16 @@ export function LogsSpanRow({ span, depth = 0, childSpans }: Props) {
           {span.name}
         </span>
 
-        <span className={`shrink-0 text-[10px] ${statusColor}`}>{span.status}</span>
+        <span className={`shrink-0 text-kicker ${statusColor}`}>{span.status}</span>
 
         {fmtMs(span.duration_ms) && (
-          <span className="text-[10px] text-text-muted tabular-nums shrink-0 w-14 text-right">
+          <span className="text-kicker text-text-muted tabular-nums shrink-0 w-14 text-right">
             {fmtMs(span.duration_ms)}
           </span>
         )}
 
         {tokenInfo && tokenInfo.total ? (
-          <span className="text-[10px] text-text-muted tabular-nums shrink-0 w-16 text-right">
+          <span className="text-kicker text-text-muted tabular-nums shrink-0 w-16 text-right">
             {tokenInfo.total.toLocaleString()} tok
           </span>
         ) : (
@@ -102,7 +102,7 @@ export function LogsSpanRow({ span, depth = 0, childSpans }: Props) {
 
       {expanded && hasDetail && (
         <div
-          className="mx-2 mb-1 rounded-md bg-surface-2/50 border border-border-subtle text-[11px] overflow-hidden"
+          className="mx-2 mb-1 rounded-md bg-surface-2/50 border border-border-subtle text-meta overflow-hidden"
           style={{ marginLeft: `${24 + depth * 16}px` }}
         >
           {span.detail && span.status === "failed" && (

@@ -155,7 +155,7 @@ export function ConfirmModal() {
 
         {needsTyping && (
           <div className="mb-4">
-            <label className="block text-[11px] text-text-muted mb-1.5">
+            <label className="block text-meta text-text-muted mb-1.5">
               Type <span className="font-mono text-text-primary">{confirmText}</span> to confirm
             </label>
             <input

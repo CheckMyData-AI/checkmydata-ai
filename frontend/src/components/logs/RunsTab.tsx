@@ -65,7 +65,7 @@ export function RunsTab({ projectId }: { projectId: string }) {
           <div className="p-6 text-center text-xs text-text-tertiary">No runs recorded</div>
         ) : (
           <table className="w-full text-xs">
-            <thead className="text-[10px] text-text-tertiary uppercase tracking-wider">
+            <thead className="text-kicker text-text-tertiary uppercase tracking-wider">
               <tr className="border-b border-border-subtle">
                 <th className="text-left px-4 py-2">Kind</th>
                 <th className="text-left px-2 py-2">Status</th>

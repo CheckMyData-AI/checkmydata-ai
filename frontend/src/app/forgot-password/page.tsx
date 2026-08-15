@@ -108,7 +108,7 @@ export default function ForgotPasswordPage() {
                   aria-invalid={emailInvalid || undefined}
                 />
                 {emailInvalid && (
-                  <p className="text-[10px] text-error mt-1 px-1">
+                  <p className="text-kicker text-error mt-1 px-1">
                     Please enter a valid email address
                   </p>
                 )}

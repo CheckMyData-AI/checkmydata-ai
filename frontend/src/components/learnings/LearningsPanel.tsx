@@ -253,7 +253,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
         <div className="flex items-center gap-1.5 pb-2 mb-2 border-b border-border-subtle overflow-x-auto">
           <button
             onClick={() => setFilterCategory(null)}
-            className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors whitespace-nowrap ${
+            className={`text-meta px-2.5 py-1 rounded-full font-medium transition-colors whitespace-nowrap ${
               filterCategory === null
                 ? "bg-accent/20 text-accent"
                 : "text-text-muted hover:text-text-primary hover:bg-surface-3"
@@ -265,7 +265,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
             <button
               key={cat}
               onClick={() => setFilterCategory(filterCategory === cat ? null : cat)}
-              className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors whitespace-nowrap ${
+              className={`text-meta px-2.5 py-1 rounded-full font-medium transition-colors whitespace-nowrap ${
                 filterCategory === cat
                   ? CATEGORY_COLORS[cat] || "bg-surface-3 text-text-primary"
                   : "text-text-muted hover:text-text-primary hover:bg-surface-3"
@@ -278,7 +278,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
             <select
               value={sortKey}
               onChange={(e) => setSortKey(e.target.value as SortKey)}
-              className="text-[11px] bg-surface-1 border border-border-subtle rounded-lg px-2 py-1 text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+              className="text-meta bg-surface-1 border border-border-subtle rounded-lg px-2 py-1 text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
             >
               <option value="confidence">Sort: Confidence</option>
               <option value="date">Sort: Newest</option>
@@ -320,13 +320,13 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
               <div key={category} className="px-1 py-2.5">
                 <div className="flex items-center gap-2 mb-2">
                   <span
-                    className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                    className={`text-meta px-2 py-0.5 rounded-full font-medium ${
                       CATEGORY_COLORS[category] || "text-text-muted bg-surface-3"
                     }`}
                   >
                     {CATEGORY_LABELS[category] || category}
                   </span>
-                  <span className="text-[11px] text-text-muted">{items.length}</span>
+                  <span className="text-meta text-text-muted">{items.length}</span>
                 </div>
                 <div className="space-y-2">
                   {items.map((l) => (
@@ -366,7 +366,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                         <>
                           <div className="flex items-start gap-2">
                             <div className="flex-1 min-w-0">
-                              <span className="text-[11px] font-mono text-text-tertiary">
+                              <span className="text-meta font-mono text-text-tertiary">
                                 {l.subject}
                               </span>
                               <p className="text-text-secondary leading-snug mt-0.5">
@@ -421,7 +421,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                               </div>
                             )}
                           </div>
-                          <div className="flex items-center gap-2.5 mt-1.5 text-[11px] text-text-muted">
+                          <div className="flex items-center gap-2.5 mt-1.5 text-meta text-text-muted">
                             <span className="flex items-center gap-1">
                               <span
                                 className="inline-block w-10 h-1.5 rounded-full bg-surface-3 overflow-hidden"

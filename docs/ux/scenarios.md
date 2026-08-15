@@ -137,6 +137,7 @@ human review moves them to `validated`.
 | SCN-122 | Every answer says how it is known — the seal | chat | analyst | draft | — |
 | SCN-123 | The interface reads as one design in light and in dark | settings | analyst | draft | — |
 | SCN-124 | A result reads as a ledger — aligned, labelled, and the same in both themes | chat | analyst | draft | — |
+| SCN-125 | The answer is the page, not a speech bubble | chat | analyst | draft | — |
 
 ## Personas
 
@@ -2072,3 +2073,18 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Errors & recovery:** an unsupported chart type is **named** and points at the table view rather than rendering nothing; a chart that throws falls back to the same suggestion. The per-row entrance cascade the table used to play was removed: a result table renders on every query, which is the frequency row where the motion doctrine cuts animation to the floor
 - **Status:** draft
 - **Coverage:** frontend/src/components/viz/DataTable.tsx; frontend/src/components/viz/table-columns.ts; frontend/src/components/viz/ChartRenderer.tsx; frontend/src/components/viz/chart-series.ts; frontend/src/__tests__/components/table-columns.test.ts; frontend/src/__tests__/components/chart-series.test.ts
+
+### SCN-125: The answer is the page, not a speech bubble
+- **Persona:** analyst
+- **Feature:** chat
+- **Entry point:** the chat transcript
+- **Preconditions:** a project with a connection; at least one exchange
+- **Steps:**
+  1. User asks a question
+  2. The agent works, then answers
+- **Expected result:** the reader's own turn is a filled bubble in **ink**, capped at 80% of the column (95% on a phone). The **answer is not a bubble at all** — it is drawn straight on the panel at full width, because an answer the reader is meant to audit is the page's content rather than a remark, and a card around it adds a wall to look past. Above it sit the response-type chip and the seal (SCN-122), both 10px monospace uppercase. While the answer streams, a caret **blinks** — `steps(1, end)`, a caret rather than a breathing bar — and it stops the moment the stream does. While the agent is still working, three thinking dots pulse; they stop when the run does
+- **UI elements:** user bubble, answer body, response-type chip, seal, streaming caret, thinking dots
+- **States covered:** working, streaming, complete, refused, failed
+- **Errors & recovery:** the three loops named here are the **only** ones this design permits, and every one of them is state: a caret while tokens arrive, dots while a run works, a heartbeat on a live indicator. All three stop under `prefers-reduced-motion: reduce`, which the global rule enforces by zeroing the duration tokens
+- **Status:** draft
+- **Coverage:** frontend/src/components/chat/ChatMessage.tsx; frontend/src/components/chat/ChatPanel.tsx; frontend/src/app/globals.css; frontend/src/__tests__/components/ChatMessage.test.tsx

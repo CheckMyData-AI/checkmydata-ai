@@ -43,7 +43,7 @@ export function ContextBudgetIndicator({ breakdown }: ContextBudgetIndicatorProp
       </div>
 
       {hoveredIdx !== null && (
-        <div className="absolute bottom-full left-0 mb-1 z-50 bg-surface-2 border border-border-default rounded px-2 py-1 text-[10px] text-text-primary shadow-lg whitespace-nowrap">
+        <div className="absolute bottom-full left-0 mb-1 z-50 bg-surface-2 border border-border-default rounded px-2 py-1 text-kicker text-text-primary shadow-lg whitespace-nowrap">
           {SEGMENTS[hoveredIdx].label}: {fmt(breakdown[SEGMENTS[hoveredIdx].key] || 0)} tokens
         </div>
       )}

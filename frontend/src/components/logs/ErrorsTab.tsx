@@ -99,7 +99,7 @@ export function ErrorsTab({ projectId }: { projectId: string }) {
           <div className="p-6 text-center text-xs text-text-tertiary">No errors recorded</div>
         ) : (
           <table className="w-full text-xs">
-            <thead className="text-[10px] text-text-tertiary uppercase tracking-wider">
+            <thead className="text-kicker text-text-tertiary uppercase tracking-wider">
               <tr className="border-b border-border-subtle">
                 <th className="text-left px-4 py-2">Message</th>
                 <th className="text-left px-2 py-2">Source</th>
@@ -123,7 +123,7 @@ export function ErrorsTab({ projectId }: { projectId: string }) {
                     <button
                       onClick={() => void cycleStatus(e)}
                       aria-label={`Cycle status for ${e.id}`}
-                      className={`text-[10px] px-2 py-0.5 rounded border border-border-subtle ${
+                      className={`text-kicker px-2 py-0.5 rounded border border-border-subtle ${
                         e.status === "resolved"
                           ? "text-success"
                           : e.status === "acknowledged"

@@ -84,14 +84,14 @@ export function MetricCatalogPanel({
         aria-label="Search metrics"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        className="w-full px-2 py-1 text-[11px] bg-surface-1 border border-border-subtle rounded-lg text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
+        className="w-full px-2 py-1 text-meta bg-surface-1 border border-border-subtle rounded-lg text-text-primary placeholder-text-muted focus:outline-none focus:border-accent"
       />
 
       {/* Category filters */}
       <div className="flex flex-wrap gap-1">
         <button
           onClick={() => setCategoryFilter(null)}
-          className={`text-[10px] px-1.5 py-0.5 rounded transition-all ${
+          className={`text-kicker px-1.5 py-0.5 rounded transition-all ${
             !categoryFilter
               ? "bg-surface-3 text-text-primary"
               : "bg-surface-1 text-text-tertiary hover:text-text-primary"
@@ -107,7 +107,7 @@ export function MetricCatalogPanel({
               onClick={() =>
                 setCategoryFilter(categoryFilter === cat ? null : cat)
               }
-              className={`text-[10px] px-1.5 py-0.5 rounded transition-all ${
+              className={`text-kicker px-1.5 py-0.5 rounded transition-all ${
                 categoryFilter === cat
                   ? "bg-surface-3 text-text-primary"
                   : "bg-surface-1 text-text-tertiary hover:text-text-primary"
@@ -122,7 +122,7 @@ export function MetricCatalogPanel({
       {/* Metric list */}
       <div className="flex-1 overflow-y-auto space-y-1">
         {error ? (
-          <div className="text-[11px] text-error py-4 text-center flex flex-col items-center gap-2">
+          <div className="text-meta text-error py-4 text-center flex flex-col items-center gap-2">
             <span>{error}</span>
             {onRetry && (
               <button
@@ -134,7 +134,7 @@ export function MetricCatalogPanel({
             )}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="text-[11px] text-text-muted py-4 text-center">
+          <div className="text-meta text-text-muted py-4 text-center">
             No metrics found
           </div>
         ) : null}
@@ -149,33 +149,33 @@ export function MetricCatalogPanel({
               className="w-full text-left px-2 py-1.5 rounded border border-border-subtle/50 bg-surface-1/50 hover:bg-surface-2/50 transition-all group"
             >
               <div className="flex items-center gap-1.5">
-                <span className="text-[10px]">{cfg.icon}</span>
+                <span className="text-kicker">{cfg.icon}</span>
                 <span
-                  className={`text-[11px] font-medium ${cfg.color} truncate`}
+                  className={`text-meta font-medium ${cfg.color} truncate`}
                   title={m.display_name}
                 >
                   {m.display_name}
                 </span>
                 {m.aggregation && (
-                  <span className="text-[10px] px-1 py-0.5 rounded bg-surface-2 text-text-tertiary shrink-0">
+                  <span className="text-kicker px-1 py-0.5 rounded bg-surface-2 text-text-tertiary shrink-0">
                     {m.aggregation}
                   </span>
                 )}
                 {m.unit && (
-                  <span className="text-[10px] text-text-muted shrink-0">
+                  <span className="text-kicker text-text-muted shrink-0">
                     {m.unit}
                   </span>
                 )}
-                <span className="ml-auto text-[10px] text-text-muted shrink-0">
+                <span className="ml-auto text-kicker text-text-muted shrink-0">
                   {Math.round(m.confidence * 100)}%
                 </span>
               </div>
               {m.description && (
-                <div className="text-[10px] text-text-muted mt-0.5 truncate">
+                <div className="text-kicker text-text-muted mt-0.5 truncate">
                   {m.description}
                 </div>
               )}
-              <div className="text-[10px] text-text-muted mt-0.5">
+              <div className="text-kicker text-text-muted mt-0.5">
                 {m.source_table && (
                   <span>
                     {m.source_table}

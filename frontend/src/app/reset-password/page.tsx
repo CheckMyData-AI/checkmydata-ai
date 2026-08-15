@@ -99,11 +99,11 @@ function ResetPasswordContent() {
             aria-invalid={passwordTooShort || undefined}
           />
           {passwordTooShort ? (
-            <p className="text-[10px] text-error mt-1 px-1">
+            <p className="text-kicker text-error mt-1 px-1">
               Password must be at least {MIN_PASSWORD} characters
             </p>
           ) : (
-            <p className="text-[10px] text-text-muted mt-1 px-1">
+            <p className="text-kicker text-text-muted mt-1 px-1">
               Min. {MIN_PASSWORD} characters
             </p>
           )}
@@ -125,7 +125,7 @@ function ResetPasswordContent() {
             aria-invalid={mismatch || undefined}
           />
           {mismatch && (
-            <p className="text-[10px] text-error mt-1 px-1">Passwords do not match</p>
+            <p className="text-kicker text-error mt-1 px-1">Passwords do not match</p>
           )}
         </div>
 

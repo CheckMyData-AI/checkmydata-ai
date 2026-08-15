@@ -225,7 +225,7 @@ export function DataStory({ fallback }: { fallback: ReactNode }) {
               {/* Scene 3 — SQL + self-heal */}
               <div data-scene="" className="absolute inset-0 flex items-center justify-center p-12">
                 <div className="w-full max-w-xl">
-                  <div className="rounded-xl border border-border-subtle bg-surface-0/70 p-6 font-mono text-[13px] leading-7">
+                  <div className="rounded-xl border border-border-subtle bg-surface-0/70 p-6 font-mono text-body leading-7">
                     {SQL_LINES.map((line) => (
                       <div
                         key={line.text}

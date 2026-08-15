@@ -135,7 +135,7 @@ export function BatchResults({ batchId, onClose, onBack }: BatchResultsProps) {
             <button
               onClick={handleExport}
               disabled={exporting || !hasEntries}
-              className="flex items-center gap-1 text-[11px] px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1 text-meta px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-40"
             >
               <Icon name={exporting ? "refresh-cw" : "download"} size={11} className={exporting ? "animate-spin" : ""} />
               Export
@@ -167,7 +167,7 @@ export function BatchResults({ batchId, onClose, onBack }: BatchResultsProps) {
               <p className="text-xs text-text-secondary">Couldn&apos;t load batch results</p>
               <button
                 onClick={load}
-                className="flex items-center gap-1 text-[11px] px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors"
+                className="flex items-center gap-1 text-meta px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors"
               >
                 <Icon name="refresh-cw" size={11} />
                 Retry
@@ -214,15 +214,15 @@ export function BatchResults({ batchId, onClose, onBack }: BatchResultsProps) {
                   <div className="flex items-center gap-2">
                     <Icon name="alert-triangle" size={12} className="text-error shrink-0" />
                     <span className="text-xs font-medium text-text-primary truncate flex-1">{title}</span>
-                    <span className="text-[10px] font-mono text-error uppercase shrink-0">
+                    <span className="text-kicker font-mono text-error uppercase shrink-0">
                       {entry.status || "failed"}
                     </span>
                   </div>
-                  <p className="text-[11px] text-error/90 leading-relaxed break-words">
+                  <p className="text-meta text-error/90 leading-relaxed break-words">
                     {entry.error || "Query failed with no error detail."}
                   </p>
                   {entry.sql && (
-                    <pre className="text-[10px] font-mono text-text-muted bg-surface-0 border border-border-subtle rounded px-2.5 py-2 overflow-x-auto whitespace-pre-wrap">
+                    <pre className="text-kicker font-mono text-text-muted bg-surface-0 border border-border-subtle rounded px-2.5 py-2 overflow-x-auto whitespace-pre-wrap">
                       {entry.sql}
                     </pre>
                   )}

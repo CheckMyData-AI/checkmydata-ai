@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ChatMessage as ChatMessageType } from "@/stores/app-store";
 
@@ -301,10 +301,22 @@ describe("ChatMessage", () => {
     expect(screen.getByText("Tap to view chart")).toBeInTheDocument();
   });
 
-  it("uses wider max-width on mobile (95%)", async () => {
+  // CHANGED with the ledger redesign, because the behaviour changed rather than
+  // the check being inconvenient: the reader's own turn is a filled bubble and
+  // stays capped, while the ANSWER is drawn straight on the panel with no bubble
+  // at all. An answer the reader is meant to audit is the page's content, not a
+  // remark, and a card around it adds a wall to look past. See SCN-125.
+  it("caps the reader's own turn and lets the answer run full width", async () => {
+    await renderMessage({ role: "user", content: "Ask" });
+    const userTurn = screen.getByText("Ask").closest("[class*='max-w-']");
+    expect(userTurn?.className).toContain("max-w-[95%]");
+    expect(userTurn?.className).toContain("bg-primary");
+
+    cleanup();
     await renderMessage({ role: "assistant", content: "Hello" });
-    const outer = screen.getByText("Hello").closest("[class*='max-w-']");
-    expect(outer?.className).toContain("max-w-[95%]");
+    const answer = screen.getByText("Hello").closest("[class*='max-w-']");
+    expect(answer?.className).toContain("max-w-full");
+    expect(answer?.className).not.toContain("bg-primary");
   });
 
   it("thumbs down on SQL result auto-sends investigation message", async () => {

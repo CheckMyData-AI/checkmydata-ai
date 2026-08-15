@@ -117,7 +117,7 @@ export function SyncStatusIndicator() {
   const ageStr = syncedAt ? timeAgo(syncedAt) : null;
 
   return (
-    <div className="mt-1 px-2 flex items-center gap-1.5 text-[10px] text-text-muted">
+    <div className="mt-1 px-2 flex items-center gap-1.5 text-kicker text-text-muted">
       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} />
       <span>SYNC</span>
       <span className="text-text-tertiary">&middot;</span>

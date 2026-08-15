@@ -771,7 +771,7 @@ export function ChatPanel() {
           <span className="text-xs text-accent">Knowledge Base Mode</span>
           <button
             onClick={() => useAppStore.getState().setChatMode("full")}
-            className="text-[10px] text-accent hover:text-accent-hover"
+            className="text-kicker text-accent hover:text-accent-hover"
             aria-label="Exit Knowledge Base Mode"
           >
             Exit
@@ -811,7 +811,7 @@ export function ChatPanel() {
               }).catch((err) => toast(err instanceof Error ? err.message : "Reconnect failed", "error"))
                 .finally(() => setReconnecting(false));
             }}
-            className="text-[10px] text-error hover:text-error/80 underline disabled:opacity-50"
+            className="text-kicker text-error hover:text-error/80 underline disabled:opacity-50"
           >
             {reconnecting ? "Retrying..." : "Retry"}
           </button>
@@ -917,11 +917,11 @@ export function ChatPanel() {
               <div className="bg-surface-2 rounded-xl px-4 py-3 max-w-[95%] md:max-w-[80%] overflow-hidden min-w-0">
                 <div className="chat-markdown overflow-hidden">
                   <Markdown components={mdComponents}>{streamingText}</Markdown>
-                  <span className="inline-block w-1.5 h-4 bg-accent ml-0.5 animate-pulse align-text-bottom" />
+                  <span className="ml-0.5 inline-block h-4 w-1.5 animate-cursor-blink bg-accent-mark align-text-bottom" />
                 </div>
                 <button
                   onClick={handleStop}
-                  className="mt-2 text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
+                  className="mt-2 text-kicker text-text-tertiary hover:text-text-primary transition-colors"
                   aria-label="Stop generating"
                 >
                   ■ Stop generating
@@ -941,7 +941,7 @@ export function ChatPanel() {
                 )}
                 <button
                   onClick={handleStop}
-                  className="text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
+                  className="text-kicker text-text-tertiary hover:text-text-primary transition-colors"
                   aria-label="Stop generating"
                 >
                   ■ Stop generating
@@ -968,7 +968,7 @@ export function ChatPanel() {
                   Processing in background&hellip;
                 </span>
               </div>
-              <p className="text-[11px] text-text-muted mt-1">
+              <p className="text-meta text-text-muted mt-1">
                 The response is being generated. It will appear here automatically.
               </p>
             </div>
@@ -989,7 +989,7 @@ export function ChatPanel() {
           <div className="flex items-center gap-3">
             <CostEstimator projectId={activeProject.id} connectionId={activeConnection.id} onEstimate={handleEstimate} />
             {sessionTokens > 0 && (
-              <span className="text-[11px] text-text-muted ml-auto">
+              <span className="text-meta text-text-muted ml-auto">
                 Session: {sessionTokens >= 1000 ? `${(sessionTokens / 1000).toFixed(1)}k` : sessionTokens} tokens
                 {sessionCost > 0 && (
                   <> / ${sessionCost < 0.01 ? sessionCost.toFixed(4) : sessionCost.toFixed(2)}</>

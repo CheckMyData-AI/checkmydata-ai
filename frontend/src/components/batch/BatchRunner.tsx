@@ -220,7 +220,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
           {queries.map((q, idx) => (
             <div key={q.id} className="bg-surface-1 border border-border-subtle rounded-lg p-3">
               <div className="flex items-center gap-2 mb-2">
-                <span className="text-[10px] font-mono text-text-muted w-5 text-center shrink-0">{idx + 1}</span>
+                <span className="text-kicker font-mono text-text-muted w-5 text-center shrink-0">{idx + 1}</span>
                 <input
                   type="text"
                   value={q.title}
@@ -265,7 +265,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
                 placeholder="SELECT ..."
                 aria-label={`Query ${idx + 1} SQL`}
                 rows={3}
-                className="w-full text-[11px] font-mono bg-surface-0 border border-border-default rounded px-2.5 py-2 text-text-secondary resize-y focus:outline-none focus:border-accent leading-relaxed"
+                className="w-full text-meta font-mono bg-surface-0 border border-border-default rounded px-2.5 py-2 text-text-secondary resize-y focus:outline-none focus:border-accent leading-relaxed"
               />
             </div>
           ))}
@@ -275,10 +275,10 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
         {isRunning && (
           <div className="shrink-0 px-5 py-3 border-t border-border-subtle" aria-live="polite" role="status">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] text-text-secondary">
+              <span className="text-meta text-text-secondary">
                 Running queries...
               </span>
-              <span className="text-[11px] font-mono text-text-muted">
+              <span className="text-meta font-mono text-text-muted">
                 {progress.current}/{progress.total}
               </span>
             </div>
@@ -297,7 +297,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
             <button
               onClick={addQuery}
               disabled={isRunning}
-              className="flex items-center gap-1 text-[11px] px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1 text-meta px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-40"
             >
               <Icon name="plus" size={11} />
               Add Query
@@ -305,7 +305,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
             <button
               onClick={() => setShowNotePicker(true)}
               disabled={isRunning || notes.length === 0}
-              className="flex items-center gap-1 text-[11px] px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1 text-meta px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-40"
             >
               <Icon name="bookmark" size={11} />
               From Saved Notes
@@ -395,20 +395,20 @@ function NotePicker({ notes, onSelect, onClose }: NotePickerProps) {
               />
               <div className="min-w-0">
                 <p className="text-xs font-medium text-text-primary truncate">{note.title}</p>
-                <p className="text-[10px] font-mono text-text-muted truncate mt-0.5">{note.sql_query}</p>
+                <p className="text-kicker font-mono text-text-muted truncate mt-0.5">{note.sql_query}</p>
               </div>
             </label>
           ))
         )}
       </div>
       <div className="px-5 py-3 border-t border-border-subtle flex justify-end gap-2">
-        <button onClick={onClose} className="text-[11px] px-3 py-1.5 rounded text-text-muted hover:text-text-secondary">
+        <button onClick={onClose} className="text-meta px-3 py-1.5 rounded text-text-muted hover:text-text-secondary">
           Cancel
         </button>
         <button
           onClick={handleAdd}
           disabled={selected.size === 0}
-          className="text-[11px] px-4 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-40"
+          className="text-meta px-4 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-40"
         >
           Add {selected.size > 0 ? `(${selected.size})` : ""}
         </button>

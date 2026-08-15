@@ -45,7 +45,7 @@ export function NotesPanel() {
             Saved Queries
           </h3>
           {notes.length > 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-2 text-text-muted">
+            <span className="text-kicker px-1.5 py-0.5 rounded-full bg-surface-2 text-text-muted">
               {notes.length}
             </span>
           )}
@@ -55,7 +55,7 @@ export function NotesPanel() {
             <button
               onClick={() => setShowBatchRunner(true)}
               title="Batch run all saved queries"
-              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-text-muted hover:text-accent hover:bg-accent-muted transition-colors"
+              className="flex items-center gap-1 px-2 py-1 rounded text-kicker text-text-muted hover:text-accent hover:bg-accent-muted transition-colors"
             >
               <Icon name="layers" size={11} />
               <span>Batch</span>
@@ -84,7 +84,7 @@ export function NotesPanel() {
           <button
             key={opt.value}
             onClick={() => setScope(opt.value)}
-            className={`px-2.5 py-1 rounded text-[10px] font-medium transition-colors ${
+            className={`px-2.5 py-1 rounded text-kicker font-medium transition-colors ${
               scope === opt.value
                 ? "bg-accent-muted text-accent"
                 : "text-text-muted hover:text-text-secondary hover:bg-surface-2"
@@ -115,7 +115,7 @@ export function NotesPanel() {
             <p className="text-xs text-text-secondary mb-1">
               {scope === "shared" ? "No shared queries yet" : "No saved queries yet"}
             </p>
-            <p className="text-[11px] text-text-muted leading-relaxed">
+            <p className="text-meta text-text-muted leading-relaxed">
               {scope === "shared"
                 ? "When team members share their queries, they will appear here."
                 : "When the agent returns SQL results, click the bookmark icon to save them here for quick access."}

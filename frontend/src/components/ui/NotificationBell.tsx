@@ -126,7 +126,7 @@ export function NotificationBell() {
       >
         <Icon name="bell" size={16} />
         {count > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] flex items-center justify-center rounded-full bg-error text-white text-[10px] font-bold leading-none px-0.5">
+          <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] flex items-center justify-center rounded-full bg-error text-white text-kicker font-bold leading-none px-0.5">
             {count > 99 ? "99+" : count}
           </span>
         )}
@@ -139,11 +139,11 @@ export function NotificationBell() {
             className="w-72 max-w-[calc(100vw-2rem)] max-h-80 bg-surface-1 border border-border-subtle rounded-lg shadow-lg overflow-hidden animate-fade-in"
           >
             <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle">
-              <span className="text-[11px] font-medium text-text-primary">Notifications</span>
+              <span className="text-meta font-medium text-text-primary">Notifications</span>
               {count > 0 && (
                 <button
                   onClick={handleMarkAllRead}
-                  className="text-[10px] text-accent hover:text-accent-hover transition-colors"
+                  className="text-kicker text-accent hover:text-accent-hover transition-colors"
                 >
                   Mark all read
                 </button>
@@ -151,9 +151,9 @@ export function NotificationBell() {
             </div>
             <div className="overflow-y-auto max-h-64">
               {loading ? (
-                <div className="px-3 py-4 text-center text-[11px] text-text-muted">Loading...</div>
+                <div className="px-3 py-4 text-center text-meta text-text-muted">Loading...</div>
               ) : notifications.length === 0 ? (
-                <div className="px-3 py-4 text-center text-[11px] text-text-muted">
+                <div className="px-3 py-4 text-center text-meta text-text-muted">
                   No notifications
                 </div>
               ) : (
@@ -170,16 +170,16 @@ export function NotificationBell() {
                         <span className="w-1.5 h-1.5 rounded-full bg-accent mt-1 shrink-0" />
                       )}
                       <div className="flex-1 min-w-0">
-                        <p className="text-[11px] font-medium text-text-primary truncate">
+                        <p className="text-meta font-medium text-text-primary truncate">
                           {n.title}
                         </p>
                         {n.body && (
-                          <p className="text-[10px] text-text-secondary line-clamp-2 mt-0.5">
+                          <p className="text-kicker text-text-secondary line-clamp-2 mt-0.5">
                             {n.body}
                           </p>
                         )}
                         {n.created_at && (
-                          <p className="text-[10px] text-text-muted mt-0.5">
+                          <p className="text-kicker text-text-muted mt-0.5">
                             {timeAgo(n.created_at)}
                           </p>
                         )}

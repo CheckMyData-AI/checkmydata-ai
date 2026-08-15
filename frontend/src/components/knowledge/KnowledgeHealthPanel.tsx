@@ -180,7 +180,7 @@ export function KnowledgeHealthPanel({ projectId, connectionId }: KnowledgeHealt
                 <span className="text-xs font-mono text-text-primary">
                   {health.artifact_counts[key]}
                 </span>
-                <span className="text-[10px] text-text-tertiary">{label}</span>
+                <span className="text-kicker text-text-tertiary">{label}</span>
               </div>
             ))}
           </div>
@@ -239,7 +239,7 @@ export function KnowledgeHealthPanel({ projectId, connectionId }: KnowledgeHealt
                       <button
                         onClick={() => runAction(action.kind, action.connection_id, key)}
                         disabled={running}
-                        className="shrink-0 text-[10px] px-2 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/92 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="shrink-0 text-kicker px-2 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/92 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {running ? "Running…" : action.label}
                       </button>

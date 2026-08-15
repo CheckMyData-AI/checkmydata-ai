@@ -105,7 +105,7 @@ function LlmBadges({ project }: { project: Project }) {
   }
   if (lines.length === 0) {
     return (
-      <span className="block text-[10px] text-text-muted italic">
+      <span className="block text-kicker text-text-muted italic">
         System defaults
       </span>
     );
@@ -115,7 +115,7 @@ function LlmBadges({ project }: { project: Project }) {
       {lines.map((l) => (
         <span
           key={l.label}
-          className="block text-[10px] text-text-tertiary leading-tight truncate"
+          className="block text-kicker text-text-tertiary leading-tight truncate"
         >
           <span className="text-text-muted">{l.label}:</span> {l.text}
         </span>
@@ -484,7 +484,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
           className={`${inputCls} ${nameError ? "border-error ring-1 ring-error" : ""}`}
         />
         {nameError && (
-          <p className="text-[10px] text-error mt-1 px-1">{nameError}</p>
+          <p className="text-kicker text-error mt-1 px-1">{nameError}</p>
         )}
       </div>
       <div className="space-y-1">
@@ -498,12 +498,12 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
         {form.repoUrl.trim() && (
           <div className="flex items-center gap-1.5 px-1 min-h-[18px]">
             {checking && (
-              <span className="text-[10px] text-text-muted animate-pulse">
+              <span className="text-kicker text-text-muted animate-pulse">
                 Checking access...
               </span>
             )}
             {!checking && accessResult?.accessible && (
-              <span className="text-[10px] text-success flex items-center gap-1">
+              <span className="text-kicker text-success flex items-center gap-1">
                 <Icon name="check" size={10} />
                 Access verified
                 {accessResult.branches.length > 0 && (
@@ -516,7 +516,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
             )}
             {!checking && accessResult && !accessResult.accessible && (
               <span
-                className="text-[10px] text-error flex items-center gap-1"
+                className="text-kicker text-error flex items-center gap-1"
                 title={accessResult.error || undefined}
               >
                 <Icon name="x" size={10} />
@@ -528,7 +528,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
               isSshUrl(form.repoUrl) &&
               !form.sshKeyId &&
               sshKeys.length === 0 && (
-                <span className="text-[10px] text-warning">
+                <span className="text-kicker text-warning">
                   SSH URL detected — add an SSH key first
                 </span>
               )}
@@ -537,7 +537,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
               isSshUrl(form.repoUrl) &&
               !form.sshKeyId &&
               sshKeys.length > 1 && (
-                <span className="text-[10px] text-warning">
+                <span className="text-kicker text-warning">
                   Select an SSH key to verify access
                 </span>
               )}
@@ -584,7 +584,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
         </>
       )}
       <details open={!!editingId} className="group/llm">
-        <summary className="flex items-center gap-1.5 cursor-pointer select-none py-1 text-[11px] font-medium text-text-secondary hover:text-text-primary transition-colors">
+        <summary className="flex items-center gap-1.5 cursor-pointer select-none py-1 text-meta font-medium text-text-secondary hover:text-text-primary transition-colors">
           <Icon
             name="chevron-right"
             size={12}
@@ -633,7 +633,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
                 }}
                 className="w-3 h-3 rounded border-border-default bg-surface-1 text-accent focus:ring-1 focus:ring-accent focus:ring-offset-0"
               />
-              <span className="text-[10px] text-text-muted">
+              <span className="text-kicker text-text-muted">
                 Use Agent model
               </span>
             </label>
@@ -675,7 +675,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
 
       {listLoading && <Spinner />}
       {!listLoading && projects.length === 0 && !isFormOpen && (
-        <p className="text-[11px] text-text-muted px-3 py-2">No projects yet</p>
+        <p className="text-meta text-text-muted px-3 py-2">No projects yet</p>
       )}
       <div>
         {projects.map((p) => {
@@ -719,7 +719,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
                   )}
                   {p.user_role && (
                     <span
-                      className={`shrink-0 px-1 py-0.5 rounded text-[10px] font-medium leading-none ${
+                      className={`shrink-0 px-1 py-0.5 rounded text-kicker font-medium leading-none ${
                         ROLE_STYLES[p.user_role] || ROLE_STYLES.viewer
                       }`}
                     >

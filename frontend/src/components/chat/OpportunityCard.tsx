@@ -87,7 +87,7 @@ export function OpportunityCard({
 
   return (
     <div className="mt-2 space-y-1.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-text-tertiary font-medium uppercase tracking-wider">
+      <div className="flex items-center gap-1.5 text-meta text-text-tertiary font-medium uppercase tracking-wider">
         <span>💰</span>
         Opportunities ({opportunities.length})
       </div>
@@ -103,7 +103,7 @@ export function OpportunityCard({
           >
             <button
               onClick={() => handleToggle(idx)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] w-full text-left"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-meta w-full text-left"
             >
               <span className="shrink-0">{cfg.icon}</span>
               <span
@@ -114,7 +114,7 @@ export function OpportunityCard({
               </span>
               <span className="ml-auto flex items-center gap-1 shrink-0">
                 <span
-                  className={`text-[10px] px-1 py-0.5 rounded ${
+                  className={`text-kicker px-1 py-0.5 rounded ${
                     opp.gap_pct > 0
                       ? "bg-success-muted text-success"
                       : "bg-error-muted text-error"
@@ -123,7 +123,7 @@ export function OpportunityCard({
                   {opp.gap_pct > 0 ? "+" : ""}
                   {opp.gap_pct}%
                 </span>
-                <span className="text-[10px] text-text-tertiary tabular-nums">
+                <span className="text-kicker text-text-tertiary tabular-nums">
                   {confidencePct}%
                 </span>
               </span>
@@ -144,12 +144,12 @@ export function OpportunityCard({
 
             {isExpanded && (
               <div className="px-2.5 pb-2 space-y-1.5 border-t border-border-subtle">
-                <p className="text-[11px] text-text-secondary leading-relaxed pt-1.5">
+                <p className="text-meta text-text-secondary leading-relaxed pt-1.5">
                   {opp.description}
                 </p>
 
                 {opp.estimated_impact && (
-                  <div className="flex gap-1.5 text-[11px]">
+                  <div className="flex gap-1.5 text-meta">
                     <span className="text-text-tertiary shrink-0">
                       📊 Impact:
                     </span>
@@ -160,7 +160,7 @@ export function OpportunityCard({
                 )}
 
                 {opp.suggested_action && (
-                  <div className="flex gap-1.5 text-[11px]">
+                  <div className="flex gap-1.5 text-meta">
                     <span className="text-text-tertiary shrink-0">
                       → Action:
                     </span>
@@ -175,7 +175,7 @@ export function OpportunityCard({
                     {opp.evidence.map((e, i) => (
                       <span
                         key={i}
-                        className="text-[10px] px-1.5 py-0.5 bg-surface-2 rounded text-text-tertiary"
+                        className="text-kicker px-1.5 py-0.5 bg-surface-2 rounded text-text-tertiary"
                       >
                         {e}
                       </span>
@@ -190,7 +190,7 @@ export function OpportunityCard({
                       onDrillDown(drillQuestion(opp));
                       setExpandedIdx(null);
                     }}
-                    className={`text-[10px] px-1.5 py-0.5 rounded border ${cfg.border} ${cfg.color} hover:brightness-125 transition-all`}
+                    className={`text-kicker px-1.5 py-0.5 rounded border ${cfg.border} ${cfg.color} hover:brightness-125 transition-all`}
                   >
                     Investigate further
                   </button>

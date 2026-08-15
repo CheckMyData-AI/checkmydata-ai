@@ -91,7 +91,7 @@ export function KnowledgeDocs() {
     <div className="px-1">
       {listLoading && <Spinner />}
       {!listLoading && docs.length === 0 && (
-        <p className="text-[10px] text-text-muted px-3 py-1">
+        <p className="text-kicker text-text-muted px-3 py-1">
           No indexed documents yet. Index your repository to generate knowledge
           docs.
         </p>
@@ -132,7 +132,7 @@ export function KnowledgeDocs() {
                 />
               )}
               <div className="flex-1 min-w-0 flex items-center gap-1.5">
-                <span className="text-[10px] text-text-muted uppercase font-mono shrink-0 leading-none">
+                <span className="text-kicker text-text-muted uppercase font-mono shrink-0 leading-none">
                   {d.doc_type}
                 </span>
                 <span className={`text-xs truncate ${isViewing ? "text-text-primary" : "text-text-secondary"}`}>
@@ -146,7 +146,7 @@ export function KnowledgeDocs() {
       {hasMore && (
         <button
           onClick={() => setShowAll((v) => !v)}
-          className="w-full text-[10px] text-text-muted hover:text-accent py-1 transition-colors"
+          className="w-full text-kicker text-text-muted hover:text-accent py-1 transition-colors"
         >
           {showAll ? "Show less" : `Show all ${docs.length}`} →
         </button>
@@ -155,7 +155,7 @@ export function KnowledgeDocs() {
       {viewingDoc && (
         <div className="mt-1.5 p-3 bg-surface-1 rounded-lg border border-border-subtle max-h-64 overflow-y-auto overflow-x-hidden sidebar-scroll">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] text-text-muted truncate flex-1 font-mono">
+            <span className="text-kicker text-text-muted truncate flex-1 font-mono">
               {viewingDoc.source_path}
             </span>
             <button
@@ -166,7 +166,7 @@ export function KnowledgeDocs() {
               <Icon name="x" size={12} />
             </button>
           </div>
-          <pre className="text-[10px] text-text-secondary whitespace-pre-wrap leading-relaxed">
+          <pre className="text-kicker text-text-secondary whitespace-pre-wrap leading-relaxed">
             {viewingDoc.content}
           </pre>
         </div>
