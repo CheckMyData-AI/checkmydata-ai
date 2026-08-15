@@ -12,20 +12,22 @@ import { describe, expect, it } from "vitest";
 
 const SRC = resolve(__dirname, "..");
 
-function tsxFiles(dir: string, out: string[] = []): string[] {
+function sourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) {
       if (entry === "__tests__" || entry === "node_modules") continue;
-      tsxFiles(p, out);
-    } else if (entry.endsWith(".tsx")) {
+      sourceFiles(p, out);
+    } else if (entry.endsWith(".tsx") || entry.endsWith(".ts")) {
+      // `.ts` as well as `.tsx`: the chart adapter is a plain module and it is
+      // exactly where a series colour would be hardcoded.
       out.push(p);
     }
   }
   return out;
 }
 
-const FILES = tsxFiles(SRC).map((p) => ({ path: relative(SRC, p), lines: readFileSync(p, "utf8").split("\n") }));
+const FILES = sourceFiles(SRC).map((p) => ({ path: relative(SRC, p), lines: readFileSync(p, "utf8").split("\n") }));
 
 /** `bg-accent` next to a foreground meant to sit ON a fill = a filled control. */
 const FILLED_CONTROL = /\bbg-accent\b(?!-)/;
@@ -48,6 +50,26 @@ describe("ledger pack bans", () => {
       lines
         .map((line, i) => ({ line, i }))
         .filter(({ line }) => /bg-gradient/.test(line) && ACCENT_GRADIENT.test(line))
+        .map(({ i }) => `${path}:${i + 1}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("paints no chart with a colour literal — a series follows the theme or it lies", () => {
+    // Recharts takes its colours as props, so a hex here is invisible to a
+    // rendering test (jsdom draws no series marks) and invisible to the token
+    // layer. The eight rgba() literals this replaced were the retired palette
+    // and painted the same chart in light and dark.
+    const viz = FILES.filter((f) => f.path.startsWith("components/viz/"));
+    expect(viz.length).toBeGreaterThan(2);
+    const offenders = viz.flatMap(({ path, lines }) =>
+      lines
+        .map((line, i) => ({ line, i }))
+        // ANY colour literal, not only one assigned to `fill`/`stroke`: a
+        // planted `const base = "#3b82f6"` in the ramp itself slipped past the
+        // narrower pattern, and the ramp is the one place that matters most.
+        .filter(({ line }) => !line.trimStart().startsWith("//") && !line.trimStart().startsWith("*"))
+        .filter(({ line }) => /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/.test(line))
         .map(({ i }) => `${path}:${i + 1}`),
     );
     expect(offenders).toEqual([]);

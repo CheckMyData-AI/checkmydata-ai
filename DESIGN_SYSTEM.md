@@ -622,8 +622,8 @@ Known optional/tokenization follow-ups (acceptable as-is, not blocking):
 
 | Area | File | Note |
 |------|------|------|
-| Chart palette | `components/viz/ChartRenderer.tsx` | Chart.js colour/grid/tick hex values duplicate theme colours. The pack ships `--chart-1…5` under the names a shadcn `ChartConfig` reads, and `components/shadcn/chart.tsx` is installed — this renderer has **not** been moved onto either. |
-| Chat panel and feature screens | `components/chat/`, and ~120 others | Re-skinned by the token swap, not yet rebuilt on the shadcn primitives. They read semantic tokens, so they are correct in both themes; their *geometry* (32px rows, hairline cards, concentric radii) is still the old system's. |
+| ~~Chart palette~~ | `components/viz/ChartRenderer.tsx` | **Done.** Runs on Recharts through `components/shadcn/chart.tsx`; series colour is `--chart-1…5`, and past the fifth series the ramp repeats darkened toward the ink — a derived rule, because the reference never shows more than five. chart.js and react-chartjs-2 are uninstalled. |
+| Chat panel and feature screens | `components/chat/`, and ~115 others | Re-skinned by the token swap, not yet rebuilt on the shadcn primitives. They read semantic tokens, so they are correct in both themes; their *geometry* (32px rows, hairline cards, concentric radii) is still the old system's. |
 
 When touching these files, prefer migrating to CSS-variable-driven values.
 

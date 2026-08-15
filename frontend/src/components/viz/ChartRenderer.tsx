@@ -2,229 +2,188 @@
 
 import { Component, type ReactNode } from "react";
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-} from "chart.js";
-import { Bar, Line, Pie, Scatter } from "react-chartjs-2";
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  Scatter,
+  ScatterChart,
+  XAxis,
+  YAxis,
+  ZAxis,
+} from "recharts";
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-);
+import {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@/components/shadcn/chart";
+import { hasPlottableData, toChartModel } from "./chart-series";
 
-const COLORS = [
-  "rgba(59,130,246,0.8)",
-  "rgba(16,185,129,0.8)",
-  "rgba(245,158,11,0.8)",
-  "rgba(239,68,68,0.8)",
-  "rgba(139,92,246,0.8)",
-  "rgba(236,72,153,0.8)",
-  "rgba(14,165,233,0.8)",
-  "rgba(168,162,158,0.8)",
-];
-
-const BORDER_COLORS = [
-  "rgba(59,130,246,1)",
-  "rgba(16,185,129,1)",
-  "rgba(245,158,11,1)",
-  "rgba(239,68,68,1)",
-  "rgba(139,92,246,1)",
-  "rgba(236,72,153,1)",
-  "rgba(14,165,233,1)",
-  "rgba(168,162,158,1)",
-];
-
-function truncateLabel(label: string, max: number = 20): string {
-  return label.length > max ? label.slice(0, max - 1) + "\u2026" : label;
-}
+/**
+ * Charts run on Recharts through the shadcn chart primitive, so a series colour
+ * is `var(--chart-1…5)` from the `ledger` pack rather than a hex in this file.
+ * The eight rgba() literals that used to live here were the retired blue/green/
+ * amber palette and painted the same chart in both themes.
+ */
 
 interface ChartRendererProps {
   config: Record<string, unknown>;
 }
 
-interface ChartErrorBoundaryState {
-  hasError: boolean;
-}
+class ChartErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
 
-class ChartErrorBoundary extends Component<
-  { children: ReactNode; chartType?: string },
-  ChartErrorBoundaryState
-> {
-  state: ChartErrorBoundaryState = { hasError: false };
-
-  static getDerivedStateFromError(): ChartErrorBoundaryState {
+  static getDerivedStateFromError() {
     return { hasError: true };
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <div className="bg-surface-1 rounded-lg p-4 min-h-[12rem] flex items-center justify-center">
-          <div className="text-center space-y-2">
-            <p className="text-sm text-text-secondary">
-              Chart could not be rendered
-            </p>
-            <p className="text-xs text-text-tertiary">
-              Try switching to Table view using the toolbar above
-            </p>
+        <Frame>
+          <div className="flex h-full items-center justify-center text-center">
+            <div className="space-y-2">
+              <p className="text-body text-text-secondary">Chart could not be rendered</p>
+              <p className="text-meta text-text-tertiary">
+                Try switching to Table view using the toolbar above
+              </p>
+            </div>
           </div>
-        </div>
+        </Frame>
       );
     }
     return this.props.children;
   }
 }
 
-function validateChartData(
-  chartData: { labels?: unknown[]; datasets?: Array<Record<string, unknown>> } | null | undefined,
-): boolean {
-  if (!chartData?.datasets || !Array.isArray(chartData.datasets)) return false;
-  if (chartData.datasets.length === 0) return false;
-  return chartData.datasets.some(
-    (ds) => Array.isArray(ds.data) && ds.data.length > 0,
+/** The pack's card: a hairline at 12% ink, radius 15, and no shadow. */
+function Frame({ children }: { children: ReactNode }) {
+  return (
+    <div className="min-h-[18rem] w-full min-w-0 rounded-card border border-border bg-panel p-4">
+      {children}
+    </div>
   );
 }
 
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+const AXIS = {
+  stroke: "var(--muted)",
+  fontSize: 12,
+  tickLine: false,
+  axisLine: false,
+} as const;
+
 export function ChartRenderer({ config }: ChartRendererProps) {
   const chartType = config.type as string;
-  const chartData = config.data as {
-    labels?: string[];
-    datasets?: Array<Record<string, unknown>>;
-  };
+  const chartData = config.data as
+    | { labels?: unknown[]; datasets?: Array<Record<string, unknown>> }
+    | null
+    | undefined;
 
-  if (!validateChartData(chartData)) {
+  if (!hasPlottableData(chartData)) {
     return (
-      <div className="bg-surface-1 rounded-lg p-4 min-h-[12rem] flex items-center justify-center">
-        <p className="text-sm text-text-secondary">No chart data available</p>
-      </div>
+      <Frame>
+        <div className="flex h-[16rem] items-center justify-center">
+          <p className="text-body text-text-secondary">No chart data available</p>
+        </div>
+      </Frame>
     );
   }
 
-  const isSingleSeries = chartData.datasets!.length === 1;
-
-  const coloredDatasets = chartData.datasets!.map((ds, i) => {
-    const dataLen = Array.isArray(ds.data) ? ds.data.length : 0;
-    const isPie = chartType === "pie";
-    return {
-      ...ds,
-      backgroundColor:
-        ds.backgroundColor ||
-        (isPie ? COLORS.slice(0, dataLen) : COLORS[i % COLORS.length]),
-      borderColor:
-        ds.borderColor ||
-        (isPie
-          ? BORDER_COLORS.slice(0, dataLen)
-          : BORDER_COLORS[i % BORDER_COLORS.length]),
-      borderWidth: ds.borderWidth ?? (isPie ? 2 : 1),
-    };
-  });
-
-  const truncatedLabels = chartData.labels?.map((l) =>
-    truncateLabel(String(l)),
+  const { rows, series } = toChartModel(chartData!);
+  const chartConfig: ChartConfig = Object.fromEntries(
+    series.map((s) => [s.key, { label: s.label, color: s.color }]),
   );
-  const data = { ...chartData, labels: truncatedLabels, datasets: coloredDatasets };
 
-  const reducedMotion =
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // The pack caps UI motion at 300ms and stops it entirely under reduced motion.
+  // The 800ms staggered draw-on this replaced was over that ceiling by 500ms.
+  const animate = !prefersReducedMotion();
+  const animation = { isAnimationActive: animate, animationDuration: 300 } as const;
 
-  const options: Record<string, unknown> = {
-    responsive: true,
-    maintainAspectRatio: false,
-    // Cinematic draw-on: bars/arcs grow with a light per-datum stagger.
-    // Disabled entirely under prefers-reduced-motion.
-    animation: reducedMotion
-      ? false
-      : {
-          duration: 800,
-          easing: "easeOutQuart",
-          delay: (ctx: { type?: string; mode?: string; dataIndex?: number }) =>
-            ctx.type === "data" && ctx.mode === "default"
-              ? Math.min(ctx.dataIndex ?? 0, 20) * 35
-              : 0,
-        },
-    plugins: {
-      legend: {
-        display: !isSingleSeries || chartType === "pie",
-        labels: { color: "#a1a1aa", boxWidth: 12, padding: 10, font: { size: 11 } },
-      },
-      tooltip: {
-        callbacks:
-          chartType === "pie"
-            ? {
-                label: (ctx: { label?: string; parsed?: number; dataset?: { data?: number[] } }) => {
-                  const val = ctx.parsed ?? 0;
-                  const total = (ctx.dataset?.data ?? []).reduce((s: number, v: number) => s + v, 0);
-                  const pct = total > 0 ? ((val / total) * 100).toFixed(1) : "0";
-                  return `${ctx.label}: ${val} (${pct}%)`;
-                },
-              }
-            : undefined,
-      },
-    },
-    scales:
-      chartType !== "pie"
-        ? {
-            x: {
-              ticks: {
-                color: "#71717a",
-                maxRotation: 45,
-                autoSkip: true,
-                maxTicksLimit: 30,
-              },
-              grid: { color: "#27272a" },
-            },
-            y: {
-              ticks: { color: "#71717a" },
-              grid: { color: "#27272a" },
-              beginAtZero: chartType === "bar",
-            },
-          }
-        : undefined,
-    ...(typeof config.options === "object" && config.options !== null
-      ? config.options
-      : {}),
-  };
+  // One series needs no legend: the axis already says what it is. Several do,
+  // and the reference draws exactly this — a coloured dot beside each name.
+  const showLegend = series.length > 1 || chartType === "pie";
 
   return (
-    <ChartErrorBoundary chartType={chartType}>
-      <div className="bg-surface-1 rounded-lg p-4 min-h-[18rem] max-h-96 min-w-0 w-full">
-        {chartType === "bar" && (
-          <Bar data={data as never} options={options as never} />
-        )}
-        {chartType === "line" && (
-          <Line data={data as never} options={options as never} />
-        )}
-        {chartType === "pie" && (
-          <Pie data={data as never} options={options as never} />
-        )}
-        {chartType === "scatter" && (
-          <Scatter data={data as never} options={options as never} />
-        )}
-        {!["bar", "line", "pie", "scatter"].includes(chartType) && (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-text-secondary">
-              Unsupported chart type: &ldquo;{chartType}&rdquo;. Try Table view.
-            </p>
-          </div>
-        )}
-      </div>
+    <ChartErrorBoundary>
+      <Frame>
+        <ChartContainer config={chartConfig} className="max-h-96 min-h-[16rem] w-full">
+          {chartType === "bar" ? (
+            <BarChart data={rows} accessibilityLayer>
+              <CartesianGrid vertical={false} stroke="var(--border)" />
+              <XAxis dataKey="label" {...AXIS} interval="preserveStartEnd" />
+              <YAxis {...AXIS} width={44} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              {showLegend && <ChartLegend content={<ChartLegendContent />} />}
+              {series.map((s) => (
+                <Bar key={s.key} dataKey={s.key} fill={`var(--color-${s.key})`} radius={2} {...animation} />
+              ))}
+            </BarChart>
+          ) : chartType === "line" ? (
+            <LineChart data={rows} accessibilityLayer>
+              <CartesianGrid vertical={false} stroke="var(--border)" />
+              <XAxis dataKey="label" {...AXIS} interval="preserveStartEnd" />
+              <YAxis {...AXIS} width={44} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              {showLegend && <ChartLegend content={<ChartLegendContent />} />}
+              {series.map((s) => (
+                <Line
+                  key={s.key}
+                  type="monotone"
+                  dataKey={s.key}
+                  stroke={`var(--color-${s.key})`}
+                  strokeWidth={2}
+                  dot={false}
+                  {...animation}
+                />
+              ))}
+            </LineChart>
+          ) : chartType === "pie" ? (
+            <PieChart accessibilityLayer>
+              <ChartTooltip content={<ChartTooltipContent nameKey="label" hideLabel />} />
+              <Pie data={rows} dataKey={series[0].key} nameKey="label" innerRadius={0} {...animation}>
+                {rows.map((row, i) => (
+                  <Cell key={String(row.label ?? i)} fill={`var(--chart-${(i % 5) + 1})`} />
+                ))}
+              </Pie>
+              <ChartLegend content={<ChartLegendContent nameKey="label" />} />
+            </PieChart>
+          ) : chartType === "scatter" ? (
+            <ScatterChart accessibilityLayer>
+              <CartesianGrid stroke="var(--border)" />
+              <XAxis dataKey="label" {...AXIS} />
+              <YAxis dataKey={series[0].key} {...AXIS} width={44} />
+              <ZAxis range={[40, 40]} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              {showLegend && <ChartLegend content={<ChartLegendContent />} />}
+              {series.map((s) => (
+                <Scatter key={s.key} data={rows} dataKey={s.key} fill={`var(--color-${s.key})`} {...animation} />
+              ))}
+            </ScatterChart>
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <p className="text-body text-text-secondary">
+                Unsupported chart type: &ldquo;{chartType}&rdquo;. Try Table view.
+              </p>
+            </div>
+          )}
+        </ChartContainer>
+      </Frame>
     </ChartErrorBoundary>
   );
 }

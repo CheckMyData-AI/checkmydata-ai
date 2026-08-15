@@ -101,10 +101,26 @@ export function Seal({ state, label, onOpenProof, className }: SealProps) {
     className,
   );
 
+  // One glyph per state, because a single ring with a bar through it reads as
+  // "forbidden" beside the word VERIFIED — seen in a screenshot of the real
+  // component. A check for what was computed, a hollow ring for what was
+  // derived, a bar for what the system cannot vouch for. The glyph is
+  // decoration on top of the word, never instead of it.
+  const glyph =
+    state === "verified" ? (
+      <svg viewBox="0 0 10 10" className="size-2.5" fill="none" stroke="currentColor" strokeWidth={1.6}>
+        <path d="M1.5 5.2 3.9 7.6 8.5 2.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ) : state === "inferred" ? (
+      <span className="block size-2 rounded-full border border-current" />
+    ) : (
+      <span className="block h-0.5 w-2.5 rounded-full bg-current" />
+    );
+
   const body = (
     <>
-      <span aria-hidden="true" className="grid size-2.5 place-items-center rounded-full border border-current">
-        <span className="block h-px w-1 bg-current" />
+      <span aria-hidden="true" className="grid size-2.5 place-items-center">
+        {glyph}
       </span>
       <span>{word}</span>
     </>

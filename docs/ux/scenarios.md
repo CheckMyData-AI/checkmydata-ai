@@ -136,6 +136,7 @@ human review moves them to `validated`.
 | SCN-121 | Attaching an SSH key you do not own is refused | connections | owner | draft | — |
 | SCN-122 | Every answer says how it is known — the seal | chat | analyst | draft | — |
 | SCN-123 | The interface reads as one design in light and in dark | settings | analyst | draft | — |
+| SCN-124 | A result reads as a ledger — aligned, labelled, and the same in both themes | chat | analyst | draft | — |
 
 ## Personas
 
@@ -2056,3 +2057,18 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Errors & recovery:** the theme is applied as **both** a `.dark` class and a `data-theme` attribute, because Tailwind's dark variant keys off the class while the pack's token layer switches on the attribute. Setting only one leaves half the app in the other theme, which reads as a rendering bug rather than a missing line — `theme-store.test.ts` fails if either stops being set
 - **Status:** draft
 - **Coverage:** frontend/src/app/globals.css; frontend/src/stores/theme-store.ts; frontend/src/__tests__/theme-tokens.test.ts; frontend/src/__tests__/pack-bans.test.ts
+
+### SCN-124: A result reads as a ledger — aligned, labelled, and the same in both themes
+- **Persona:** analyst
+- **Feature:** chat
+- **Entry point:** any answer that returns rows, and any chart drawn from them
+- **Preconditions:** a project with a database connection; a question that produces a result set
+- **Steps:**
+  1. User asks a question that returns rows
+  2. The result renders as a table, and — where the agent chose one — as a chart above it
+- **Expected result:** rows are 32px on the data plane with hairline dividers and a monospace row number; **numeric columns are right-aligned in the data face with tabular figures, and which columns those are is decided from the values rather than from the column name** — a date column or a column with one `N/A` in it stays left-aligned as text. An absent value renders as `NULL` in the faint ink, never as an empty cell. Charts take their series colours from the pack's five-hue ramp and follow the theme; a sixth series repeats the ramp darkened rather than reusing a hue exactly. A category the agent named but has no number for shows as a gap, not as a zero
+- **UI elements:** result table (row number column, export chips), chart card, legend with a coloured dot beside each series name
+- **States covered:** result, empty result ("No data returned"), capped result (>500 rows, with the count and a control to show all), unsupported chart type
+- **Errors & recovery:** an unsupported chart type is **named** and points at the table view rather than rendering nothing; a chart that throws falls back to the same suggestion. The per-row entrance cascade the table used to play was removed: a result table renders on every query, which is the frequency row where the motion doctrine cuts animation to the floor
+- **Status:** draft
+- **Coverage:** frontend/src/components/viz/DataTable.tsx; frontend/src/components/viz/table-columns.ts; frontend/src/components/viz/ChartRenderer.tsx; frontend/src/components/viz/chart-series.ts; frontend/src/__tests__/components/table-columns.test.ts; frontend/src/__tests__/components/chart-series.test.ts
