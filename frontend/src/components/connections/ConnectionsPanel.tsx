@@ -27,7 +27,7 @@ export function ConnectionsPanel() {
           </p>
         </div>
         <section
-          className="animate-slide-in-left rounded-lg border border-border-subtle bg-surface-1/50 p-3"
+          className="animate-slide-in-left rounded-card border border-border bg-panel p-4"
           style={{ animationDelay: "60ms", animationFillMode: "both" }}
         >
           <div className="flex items-center gap-2 mb-2 px-1">

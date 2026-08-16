@@ -60,7 +60,7 @@ export function SettingsPanel({ onClose, onNavigate }: SettingsPanelProps) {
         </div>
 
         {user && (
-          <section className="rounded-lg border border-border-subtle bg-surface-1/50 overflow-hidden">
+          <section className="rounded-card border border-border bg-panel overflow-hidden">
             <div className="px-4 py-2.5 border-b border-border-subtle">
               <h3 className="text-xs font-medium text-text-secondary uppercase tracking-wider">
                 Account
@@ -130,7 +130,7 @@ export function SettingsPanel({ onClose, onNavigate }: SettingsPanelProps) {
         )}
 
         {activeProject && (
-          <section className="rounded-lg border border-border-subtle bg-surface-1/50 overflow-hidden">
+          <section className="rounded-card border border-border bg-panel overflow-hidden">
             <div className="px-4 py-2.5 border-b border-border-subtle">
               <h3 className="text-xs font-medium text-text-secondary uppercase tracking-wider">
                 Project

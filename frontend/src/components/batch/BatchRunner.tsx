@@ -219,7 +219,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
         {/* Query list */}
         <div className="flex-1 overflow-y-auto p-5 space-y-3 sidebar-scroll">
           {queries.map((q, idx) => (
-            <div key={q.id} className="bg-surface-1 border border-border-subtle rounded-lg p-3">
+            <div key={q.id} className="bg-panel border border-border rounded-card p-4">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-kicker font-mono text-text-muted w-5 text-center shrink-0">{idx + 1}</span>
                 <input

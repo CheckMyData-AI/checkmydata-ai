@@ -90,6 +90,32 @@ describe("ledger pack bans", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("gives a card the card radius, not the control radius", () => {
+    // The drift that leaves a rebuilt screen still feeling like the old one: a
+    // container that holds a whole item — a schedule, a connection, a batch
+    // result, a settings section — drawn at the CONTROL radius. The pack's
+    // ramp has a step for each, and a card is 15.
+    //
+    // Recognised by shape: a panel fill plus a border plus a radius, on a
+    // container that is not a field (fields carry `h-[38px]` or come from
+    // `inputBaseCls`).
+    const offenders = FILES.filter(
+      (f) => f.path.startsWith("components/") && !f.path.includes("marketing") && !f.path.includes("shadcn"),
+    ).flatMap(({ path, lines }) =>
+      lines
+        .map((line, i) => ({ line, i }))
+        .filter(
+          ({ line }) =>
+            /\bbg-panel\b/.test(line) &&
+            /\bborder-border\b/.test(line) &&
+            /\brounded-(lg|md|sm)\b/.test(line) &&
+            !/h-\[38px\]|inputBaseCls|selectBaseCls/.test(line),
+        )
+        .map(({ i }) => `${path}:${i + 1}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
   it("never suppresses focus without putting the pack's ring back", () => {
     // The pack's focus contract is the one place this design overrules its
     // reference, which answers focus by swapping a border colour — a treatment

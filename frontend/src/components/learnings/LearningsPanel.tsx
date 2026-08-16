@@ -9,6 +9,8 @@ import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { usePermission } from "@/hooks/usePermission";
 import { selectBaseCls } from "@/components/ui/Input";
+import { cn } from "@/lib/utils";
+import { inputBaseCls } from "@/components/ui/Input";
 
 const CATEGORY_LABELS: Record<string, string> = {
   table_preference: "Table Preferences",
@@ -346,7 +348,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                             onChange={(e) => setEditLesson(e.target.value)}
                             rows={3}
                             aria-label="Edit learning"
-                            className="w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary resize-y min-h-[60px] focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:ring-1 focus:ring-accent"
+                            className={cn(inputBaseCls, "h-auto min-h-[60px] resize-y py-2")}
                           />
                           <div className="flex gap-1.5">
                             <button

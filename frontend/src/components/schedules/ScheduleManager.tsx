@@ -357,7 +357,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
       )}
 
       {schedules.map((s) => (
-        <div key={s.id} className="bg-surface-1 border border-border-subtle rounded-lg overflow-hidden">
+        <div key={s.id} className="bg-panel border border-border rounded-card overflow-hidden">
           <div className="px-2.5 py-2 flex items-center gap-2">
             {(() => {
               const st = scheduleStatus(s);

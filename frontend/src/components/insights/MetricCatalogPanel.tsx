@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
+import { inputBaseCls } from "@/components/ui/Input";
 
 export interface CatalogMetric {
   id: string;
@@ -84,7 +85,7 @@ export function MetricCatalogPanel({
         aria-label="Search metrics"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        className="w-full px-2 py-1 text-meta bg-surface-1 border border-border-subtle rounded-lg text-text-primary placeholder-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
+        className={inputBaseCls}
       />
 
       {/* Category filters */}

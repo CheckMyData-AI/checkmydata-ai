@@ -209,7 +209,7 @@ export function BatchResults({ batchId, onClose, onBack }: BatchResultsProps) {
               return (
                 <div
                   key={idx}
-                  className="bg-surface-1 border border-error/30 rounded-lg p-3 space-y-1.5"
+                  className="bg-panel border border-danger/40 rounded-card p-4 space-y-1.5"
                 >
                   <div className="flex items-center gap-2">
                     <Icon name="alert-triangle" size={12} className="text-error shrink-0" />

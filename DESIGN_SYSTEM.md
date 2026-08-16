@@ -657,7 +657,7 @@ Known optional/tokenization follow-ups (acceptable as-is, not blocking):
 | Area | File | Note |
 |------|------|------|
 | ~~Chart palette~~ | `components/viz/ChartRenderer.tsx` | **Done.** Runs on Recharts through `components/shadcn/chart.tsx`; series colour is `--chart-1…5`, and past the fifth series the ramp repeats darkened toward the ink — a derived rule, because the reference never shows more than five. chart.js and react-chartjs-2 are uninstalled. |
-| Chat panel and feature screens | `components/chat/`, and ~110 others | Re-skinned by the token swap, not yet rebuilt on the shadcn primitives. They read semantic tokens, so they are correct in both themes; their *geometry* (32px rows, hairline cards, concentric radii) is still the old system's. |
+| Feature panels | `components/{insights,schedules,notes,learnings,batch,usage,billing,settings,connections}/` | **Measured rather than assumed:** those nine directories held **eleven** card-shaped containers between them, not the wall of hand-rolled cards the file count suggested. Six were cards at the *control* radius and are now at `--r-card`; two were further copies of the one field and now compose from `inputBaseCls`; the rest were already correct. What remains in them is layout, not geometry. |
 
 When touching these files, prefer migrating to CSS-variable-driven values.
 
