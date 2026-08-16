@@ -306,6 +306,18 @@ describe("ChatMessage", () => {
   // stays capped, while the ANSWER is drawn straight on the panel with no bubble
   // at all. An answer the reader is meant to audit is the page's content, not a
   // remark, and a card around it adds a wall to look past. See SCN-125.
+  // AUD-2026-08-16-01: the seal used to be inside a block guarded on
+  // `responseType !== "text"`, so a plain text answer — the very case that
+  // derives `unverified` — carried no seal at all. The derivation was tested;
+  // the render was not, which is how a state stayed unreachable while its unit
+  // test stayed green.
+  it("seals a plain text answer as unverified, and names no type for it", async () => {
+    await renderMessage({ role: "assistant", content: "Here is a thought.", responseType: "text" });
+    expect(screen.getByText("Unverified")).toBeInTheDocument();
+    expect(screen.queryByText("Knowledge")).not.toBeInTheDocument();
+    expect(screen.queryByText("SQL Result")).not.toBeInTheDocument();
+  });
+
   it("caps the reader's own turn and lets the answer run full width", async () => {
     await renderMessage({ role: "user", content: "Ask" });
     const userTurn = screen.getByText("Ask").closest("[class*='max-w-']");

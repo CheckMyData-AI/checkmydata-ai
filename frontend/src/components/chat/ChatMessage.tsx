@@ -331,9 +331,14 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
           </div>
         )}
 
-        {/* Response type badge for non-text responses */}
-        {!isUser && responseType !== "text" && responseType !== "error" && (
+        {/* The provenance row. The SEAL rides on every answer, including a plain
+            text one — that case derives `unverified`, which is the honest state
+            and the one a reader most needs to meet; guarding the whole row on
+            `responseType !== "text"` hid it (AUD-2026-08-16-01). The TYPE CHIP
+            stays suppressed there, because "text" is not a type worth naming. */}
+        {!isUser && responseType !== "error" && (
           <div className="mb-1.5 flex items-center gap-1.5">
+            {responseType !== "text" && (
             <span
               className={cn(
                 "inline-flex items-center rounded-control border px-2 py-0.5 font-mono text-kicker uppercase tracking-kicker",
@@ -350,6 +355,7 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
                 ? "Partial Result"
                 : "Knowledge"}
             </span>
+            )}
             {/* The pack's signature element. Its three states are DERIVED from
                 the answer's own evidence — the query it ran, the staleness the
                 backend reported, whether the run reached a verdict at all — so

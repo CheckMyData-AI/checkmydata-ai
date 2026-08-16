@@ -119,7 +119,7 @@ human review moves them to `validated`.
 | SCN-104 | Revoke an MCP token | mcp-tokens | api-consumer | implemented | 2026-07-19 PASS |
 | SCN-105 | Background tasks — view/cancel/retry/dismiss | tasks | analyst | implemented | 2026-07-19 PASS |
 | SCN-106 | Request history & trace detail | logs | owner | implemented | 2026-07-19 PASS |
-| SCN-107 | Runs & Errors log tabs | logs | owner | implemented | 2026-07-19 PASS |
+| SCN-107 | Runs & Errors log tabs | logs | owner | implemented | 2026-08-16 PASS |
 | SCN-108 | Live activity log stream | logs | analyst | implemented | 2026-07-19 PASS |
 | SCN-109 | Landing page → Get Started | marketing | visitor | implemented | 2026-07-19 PASS |
 | SCN-110 | Pricing CTA (logged out) | marketing | visitor | implemented | 2026-07-19 PASS |
@@ -134,10 +134,10 @@ human review moves them to `validated`.
 | SCN-119 | Unsupported analytics source refused at creation | analytics-sources | owner | draft | — |
 | SCN-120 | Database does not answer — honest stop instead of a silent grind | chat | analyst | draft | — |
 | SCN-121 | Attaching an SSH key you do not own is refused | connections | owner | draft | — |
-| SCN-122 | Every answer says how it is known — the seal | chat | analyst | draft | — |
-| SCN-123 | The interface reads as one design in light and in dark | settings | analyst | draft | — |
-| SCN-124 | A result reads as a ledger — aligned, labelled, and the same in both themes | chat | analyst | draft | — |
-| SCN-125 | The answer is the page, not a speech bubble | chat | analyst | draft | — |
+| SCN-122 | Every answer says how it is known — the seal | chat | analyst | implemented | 2026-08-16 PARTIAL → fixed |
+| SCN-123 | The interface reads as one design in light and in dark | settings | analyst | implemented | 2026-08-16 PASS |
+| SCN-124 | A result reads as a ledger — aligned, labelled, and the same in both themes | chat | analyst | implemented | 2026-08-16 PASS |
+| SCN-125 | The answer is the page, not a speech bubble | chat | analyst | implemented | 2026-08-16 PARTIAL → fixed |
 
 ## Personas
 
@@ -2042,8 +2042,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** the seal (10px monospace, uppercase, in the state's own colour, **always with its word** — the colour never carries the meaning alone), the SQL details panel, the sources list
 - **States covered:** verified, inferred, unverified
 - **Errors & recovery:** a failed or budget-exhausted run seals **Unverified** even when a query is attached to it, because a partial run's evidence proves nothing about the answer. The seal it replaced was fed `response_type === "sql_result" ? "unverified" : undefined` — two of its three words were unreachable, so it told the reader the same thing about every answer
-- **Status:** draft
-- **Coverage:** frontend/src/components/ui/Seal.tsx; frontend/src/components/chat/ChatMessage.tsx; frontend/src/__tests__/components/Seal.test.tsx
+- **Status:** implemented
+- **Audit note (2026-08-16):** PARTIAL on the first pass — the derivation was right and tested, but the row that renders the seal was guarded on `responseType !== "text"`, so a plain text answer carried **no seal at all** while deriving exactly the `unverified` state this scenario calls the honest one. Fixed in the same change (`ChatMessage.tsx`), and the check that was missing is now a render-level one, not another unit test of the derivation
+- **Coverage:** frontend/src/components/ui/Seal.tsx; frontend/src/components/chat/ChatMessage.tsx; frontend/src/__tests__/components/Seal.test.tsx; frontend/src/__tests__/components/ChatMessage.test.tsx
 
 ### SCN-123: The interface reads as one design in light and in dark
 - **Persona:** analyst
@@ -2056,7 +2057,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** every surface; the theme toggle
 - **States covered:** light, dark, system
 - **Errors & recovery:** the theme is applied as **both** a `.dark` class and a `data-theme` attribute, because Tailwind's dark variant keys off the class while the pack's token layer switches on the attribute. Setting only one leaves half the app in the other theme, which reads as a rendering bug rather than a missing line — `theme-store.test.ts` fails if either stops being set
-- **Status:** draft
+- **Status:** implemented
 - **Coverage:** frontend/src/app/globals.css; frontend/src/stores/theme-store.ts; frontend/src/__tests__/theme-tokens.test.ts; frontend/src/__tests__/pack-bans.test.ts
 
 ### SCN-124: A result reads as a ledger — aligned, labelled, and the same in both themes
@@ -2071,7 +2072,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** result table (row number column, export chips), chart card, legend with a coloured dot beside each series name
 - **States covered:** result, empty result ("No data returned"), capped result (>500 rows, with the count and a control to show all), unsupported chart type
 - **Errors & recovery:** an unsupported chart type is **named** and points at the table view rather than rendering nothing; a chart that throws falls back to the same suggestion. The per-row entrance cascade the table used to play was removed: a result table renders on every query, which is the frequency row where the motion doctrine cuts animation to the floor
-- **Status:** draft
+- **Status:** implemented
 - **Coverage:** frontend/src/components/viz/DataTable.tsx; frontend/src/components/viz/table-columns.ts; frontend/src/components/viz/ChartRenderer.tsx; frontend/src/components/viz/chart-series.ts; frontend/src/__tests__/components/table-columns.test.ts; frontend/src/__tests__/components/chart-series.test.ts
 
 ### SCN-125: The answer is the page, not a speech bubble
@@ -2086,5 +2087,6 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** user bubble, answer body, response-type chip, seal, streaming caret, thinking dots
 - **States covered:** working, streaming, complete, refused, failed
 - **Errors & recovery:** the three loops named here are the **only** ones this design permits, and every one of them is state: a caret while tokens arrive, dots while a run works, a heartbeat on a live indicator. All three stop under `prefers-reduced-motion: reduce`, which the global rule enforces by zeroing the duration tokens
-- **Status:** draft
+- **Status:** implemented
+- **Audit note (2026-08-16):** PARTIAL on the first pass, same root cause as SCN-122 — "above it sit the response-type chip and the seal" did not hold for a plain text answer. One guard, one fix, deliberately filed as one finding rather than two
 - **Coverage:** frontend/src/components/chat/ChatMessage.tsx; frontend/src/components/chat/ChatPanel.tsx; frontend/src/app/globals.css; frontend/src/__tests__/components/ChatMessage.test.tsx
