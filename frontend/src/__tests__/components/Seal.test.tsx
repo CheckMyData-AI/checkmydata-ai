@@ -71,6 +71,23 @@ describe("Seal", () => {
     expect(word.className).not.toMatch(/\bsr-only\b/);
   });
 
+  // The contrast test measures TOKENS; it cannot see which class a component
+  // hangs on a word. A planted revert — the word back in the state's colour —
+  // walked straight past it, which is why this assertion is here and not there.
+  it.each(["verified", "inferred", "unverified"] as const)(
+    "paints the %s word in ink and puts the state's colour on the glyph only",
+    (state) => {
+      const { container } = render(<Seal state={state} />);
+      const root = container.firstElementChild as HTMLElement;
+      expect(root.className).toContain("text-ink");
+      // `Unverified` in --warn measures 2.13:1 on the light panel. The word is
+      // never the coloured part.
+      expect(root.className).not.toMatch(/\btext-(warn|info|accent)\b/);
+      const glyph = container.querySelector("[aria-hidden='true']") as HTMLElement;
+      expect(glyph.className).toMatch(/\btext-(warn|info|accent)\b/);
+    },
+  );
+
   it("becomes the link to the proof when there is one", async () => {
     const onOpenProof = vi.fn();
     render(<Seal state="verified" onOpenProof={onOpenProof} />);

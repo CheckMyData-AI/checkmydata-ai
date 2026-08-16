@@ -190,6 +190,14 @@ can name), `Unverified` (it cannot say). It is `Seal.tsx`, its state comes from
 `sealStateFor()` — derived from the answer's own evidence, never from a second
 guess — and the scenario is SCN-122.
 
+**The word is `--ink`; the glyph carries the state's colour.** Measured
+2026-08-16: with the word painted in the state's hue, `Unverified` sat at
+**2.13:1** on the light panel and `Verified` at **3.63:1** — the first under even
+the 3:1 floor for a mark. In ink, over the same tints, the badges measure
+16–18:1. `contrast.test.ts` computes this from the token layer on every run, and
+`Seal.test.tsx` asserts which element wears the colour, because the token maths
+cannot see a component's class list.
+
 Three rules decide whether it is honest rather than decorative: every state must
 be reachable, the label must be derivable from something real, and it seals a
 **card**, not a screen. The badge it replaced was fed

@@ -45,7 +45,10 @@ export function Button({
         // The pack's destructive control is a bordered ghost that fills only on
         // hover — a red slab is a decision made for the reader.
         variant === "destructive" &&
-          "border border-danger bg-transparent text-danger hover:bg-danger-weak hover:text-danger",
+          // On hover the fill arrives and the WORD goes to ink: `--danger` on
+          // `--danger-weak` measures 3.05:1, which is a mark's floor, not a
+          // word's. The border keeps the colour.
+          "border border-danger bg-transparent text-danger hover:bg-danger-weak hover:text-ink",
         className,
       )}
       {...props}
