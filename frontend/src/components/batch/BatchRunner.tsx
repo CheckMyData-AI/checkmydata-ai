@@ -9,6 +9,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { connectionSourceLabel } from "@/lib/connection-source";
 import { BatchResults } from "./BatchResults";
+import { selectBaseCls } from "@/components/ui/Input";
 
 interface QueryRow {
   id: string;
@@ -176,7 +177,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center lg-scrim" onClick={(e) => { if (e.target === e.currentTarget && !isRunning) onClose(); }}>
-      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Batch Query Runner" className="bg-surface-0 border border-border-subtle rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 shadow-xl animate-in fade-in zoom-in-95 duration-150">
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Batch Query Runner" className="bg-surface-0 border border-border-subtle rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 shadow-(--shadow-1) animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="shrink-0 px-5 py-4 border-b border-border-subtle flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -204,7 +205,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
             value={selectedConnId}
             onChange={(e) => setSelectedConnId(e.target.value)}
             aria-label="Select connection"
-            className="text-xs bg-surface-1 border border-border-default rounded px-3 py-1.5 text-text-primary focus:outline-none focus:border-accent"
+            className={selectBaseCls}
           >
             <option value="">Select connection...</option>
             {connections.map((c) => (

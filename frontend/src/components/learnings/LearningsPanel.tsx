@@ -8,6 +8,7 @@ import { ListError } from "@/components/ui/ListError";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { usePermission } from "@/hooks/usePermission";
+import { selectBaseCls } from "@/components/ui/Input";
 
 const CATEGORY_LABELS: Record<string, string> = {
   table_preference: "Table Preferences",
@@ -278,7 +279,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
             <select
               value={sortKey}
               onChange={(e) => setSortKey(e.target.value as SortKey)}
-              className="text-meta bg-surface-1 border border-border-subtle rounded-lg px-2 py-1 text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+              className={selectBaseCls}
             >
               <option value="confidence">Sort: Confidence</option>
               <option value="date">Sort: Newest</option>

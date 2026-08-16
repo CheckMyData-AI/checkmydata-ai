@@ -497,6 +497,32 @@ select:focus-visible {
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* The chevron on a native <select>.
+
+   The pack's reference styles a native select rather than reaching for a
+   listbox widget, and paints its own chevron — so this project does the same.
+   The pack itself has no slot for the mark, which is a GAP in the pack rather
+   than a decision here: it belongs in `tokens/ledger.css` next time that file
+   is edited. Until then it lives in the app layer and says so.
+
+   Two data URIs rather than one with `currentColor`: a data: URI is a separate
+   document and cannot see the page's variables. */
+:root {
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='rgba(20,16,12,0.55)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+}
+[data-theme="dark"] {
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='rgba(255,252,248,0.5)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+}
+
+.lg-select {
+  appearance: none;
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 16px 16px;
+  padding-right: 28px;
+}
+
 /* The scrim behind every overlay: the INK at 45%, never black. A black wash
    over a cream field reads as another product's modal; over a near-black field
    it does nothing at all. Nine surfaces had their own `bg-black/40…60` before

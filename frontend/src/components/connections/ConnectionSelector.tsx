@@ -45,6 +45,7 @@ import {
   inputCls,
   safePort,
 } from "./connection-form-helpers";
+import { selectBaseCls } from "@/components/ui/Input";
 
 interface ConnectionSelectorProps {
   createRequested?: boolean;
@@ -929,7 +930,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               };
             });
           }}
-          className={inputCls}
+          className={selectBaseCls}
         >
           {engineOptions.map((t) => (
             <option key={t} value={t}>
@@ -955,7 +956,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
             onChange={(e) =>
               setForm({ ...form, mcp_transport_type: e.target.value as "stdio" | "sse" })
             }
-            className={inputCls}
+            className={selectBaseCls}
           >
             <option value="stdio">stdio (local command)</option>
             <option value="sse">SSE (remote URL)</option>
@@ -1034,7 +1035,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                 vendor_credential_id: e.target.value,
               });
             }}
-            className={inputCls}
+            className={selectBaseCls}
           >
             <option value="">Select a stored credential…</option>
             {ga4Credentials.map((c) => (
@@ -1126,7 +1127,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   collection_hour: e.target.value,
                 })
               }
-              className={halfInputCls}
+              className={selectBaseCls}
             >
               {COLLECTION_HOURS.map((h) => (
                 <option key={h} value={String(h)}>
@@ -1306,7 +1307,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               onChange={(e) =>
                 setForm({ ...form, ssh_key_id: e.target.value })
               }
-              className={halfInputCls}
+              className={selectBaseCls}
             >
               <option value="">SSH Key (none)</option>
               {sshKeys.map((k) => (
@@ -1391,7 +1392,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                           }));
                         }
                       }}
-                      className="flex-1 bg-surface-1 border border-border-subtle rounded-lg px-2 py-1.5 text-text-secondary text-kicker"
+                      className={selectBaseCls}
                       defaultValue=""
                     >
                       <option value="" disabled>

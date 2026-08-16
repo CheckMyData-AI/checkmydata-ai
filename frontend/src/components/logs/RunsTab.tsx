@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/shadcn/table";
 import { StatusDot } from "@/components/ui/StatusDot";
+import { selectBaseCls } from "@/components/ui/Input";
 
 const KINDS = ["", "index_repo", "db_index", "code_db_sync", "daily_sync"];
 
@@ -48,7 +49,7 @@ export function RunsTab({ projectId }: { projectId: string }) {
           aria-label="Filter by kind"
           value={kind}
           onChange={(e) => setKind(e.target.value)}
-          className="text-xs bg-surface-1 border border-border-subtle rounded px-2 py-1 text-text-secondary"
+          className={selectBaseCls}
         >
           {KINDS.map((k) => (
             <option key={k} value={k}>

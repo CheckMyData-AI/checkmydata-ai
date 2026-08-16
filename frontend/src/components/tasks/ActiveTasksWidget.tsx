@@ -272,7 +272,7 @@ export function ActiveTasksWidget() {
 
       {expanded && (
         <div
-          className="absolute right-0 top-full mt-1.5 w-80 bg-surface-1 border border-border-subtle rounded-lg shadow-xl z-50 overflow-hidden animate-[slideDown_0.15s_ease-out]"
+          className="absolute right-0 top-full mt-1.5 w-80 bg-surface-1 border border-border-subtle rounded-lg shadow-(--shadow-1) z-50 overflow-hidden animate-[slideDown_0.15s_ease-out]"
           role="region"
           aria-label="Background tasks"
         >

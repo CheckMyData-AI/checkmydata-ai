@@ -9,6 +9,7 @@ import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
 import { RequestAccessModal } from "@/components/projects/RequestAccessModal";
 import { inputBaseCls as inputCls } from "@/components/ui/Input";
+import { selectBaseCls } from "@/components/ui/Input";
 
 const TOTAL_STEPS = 5;
 
@@ -476,7 +477,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                       SSH Key
                     </label>
                     <select
-                      className={inputCls}
+                      className={selectBaseCls}
                       value={sshKeyId}
                       onChange={(e) => setSshKeyId(e.target.value)}
                       aria-label="SSH key"
@@ -616,7 +617,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   SSH Key for repo access
                 </label>
                 <select
-                  className={inputCls}
+                  className={selectBaseCls}
                   value={sshKeyId}
                   onChange={(e) => setSshKeyId(e.target.value)}
                   aria-label="SSH key for repo access"
@@ -708,7 +709,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="onboarding-title"
-        className="w-full max-w-lg mx-4 bg-surface-1 rounded-lg border border-border-default shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+        className="w-full max-w-lg mx-4 bg-surface-1 rounded-lg border border-border-default shadow-(--shadow-1) overflow-hidden animate-in fade-in zoom-in-95 duration-150"
       >
         <div className="px-6 pt-6 pb-4">
           <div className="flex items-center justify-center gap-2 mb-6">

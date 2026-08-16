@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, type LLMModel } from "@/lib/api";
 import { toast } from "@/stores/toast-store";
+import { selectBaseCls } from "@/components/ui/Input";
 
 export interface LlmPair {
   provider: string;
@@ -79,7 +80,7 @@ export function LlmModelSelector({
       <select
         value={pair.provider}
         onChange={(e) => onChange({ provider: e.target.value, model: "" })}
-        className={inputCls}
+        className={selectBaseCls}
         disabled={disabled}
         aria-label={`${label} provider`}
       >
@@ -101,7 +102,7 @@ export function LlmModelSelector({
           <select
             value={pair.model}
             onChange={(e) => onChange({ ...pair, model: e.target.value })}
-            className={inputCls}
+            className={selectBaseCls}
             disabled={disabled}
             aria-label={`${label} model`}
           >

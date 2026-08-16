@@ -110,7 +110,7 @@ export function BatchResults({ batchId, onClose, onBack }: BatchResultsProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Batch Results"
-        className="bg-surface-0 border border-border-subtle rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 shadow-xl animate-in fade-in zoom-in-95 duration-150"
+        className="bg-surface-0 border border-border-subtle rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 shadow-(--shadow-1) animate-in fade-in zoom-in-95 duration-150"
       >
         {/* Header */}
         <div className="shrink-0 px-5 py-4 border-b border-border-subtle flex items-center justify-between gap-3">

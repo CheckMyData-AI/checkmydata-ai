@@ -22,6 +22,7 @@ import {
   type LlmPair,
 } from "@/components/ui/LlmModelSelector";
 import { inputBaseCls as inputCls } from "@/components/ui/Input";
+import { selectBaseCls } from "@/components/ui/Input";
 
 function isSshUrl(url: string): boolean {
   const trimmed = url.trim();
@@ -549,7 +550,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
           <select
             value={form.sshKeyId}
             onChange={(e) => setForm({ ...form, sshKeyId: e.target.value })}
-            className={inputCls}
+            className={selectBaseCls}
             aria-label="SSH key"
           >
             <option value="">SSH Key (none)</option>
@@ -563,7 +564,7 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
             <select
               value={form.branch}
               onChange={(e) => setForm({ ...form, branch: e.target.value })}
-              className={inputCls}
+              className={selectBaseCls}
               aria-label="Branch"
             >
               {accessResult.branches.map((b) => (

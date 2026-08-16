@@ -41,7 +41,7 @@ export function ToastContainer() {
         <div
           key={t.id}
           role="alert"
-          className={`px-4 py-2.5 rounded-lg border text-xs shadow-lg animate-[slideIn_0.2s_ease-out] flex items-start gap-2 ${TYPE_STYLES[t.type] || TYPE_STYLES.info}`}
+          className={`px-4 py-2.5 rounded-lg border text-xs shadow-(--shadow-1) animate-[slideIn_0.2s_ease-out] flex items-start gap-2 ${TYPE_STYLES[t.type] || TYPE_STYLES.info}`}
         >
           <span className="flex-1 leading-relaxed">{renderToastMessage(t.message)}</span>
           <button

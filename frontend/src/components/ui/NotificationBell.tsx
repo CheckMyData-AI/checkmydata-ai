@@ -136,7 +136,7 @@ export function NotificationBell() {
         <PopoverPortal triggerRef={triggerRef} placement="bottom-right" gap={6}>
           <div
             ref={panelRef}
-            className="w-72 max-w-[calc(100vw-2rem)] max-h-80 bg-surface-1 border border-border-subtle rounded-lg shadow-lg overflow-hidden animate-fade-in"
+            className="w-72 max-w-[calc(100vw-2rem)] max-h-80 bg-surface-1 border border-border-subtle rounded-lg shadow-(--shadow-1) overflow-hidden animate-fade-in"
           >
             <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle">
               <span className="text-meta font-medium text-text-primary">Notifications</span>

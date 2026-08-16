@@ -16,6 +16,7 @@ import {
 } from "@/components/shadcn/table";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { cn } from "@/lib/utils";
+import { selectBaseCls } from "@/components/ui/Input";
 
 const SOURCES = ["", "run", "query", "span", "system"];
 const STATUSES = ["", "open", "acknowledged", "resolved"];
@@ -71,7 +72,7 @@ export function ErrorsTab({ projectId }: { projectId: string }) {
           aria-label="Filter by source"
           value={source}
           onChange={(e) => setSource(e.target.value)}
-          className="text-xs bg-surface-1 border border-border-subtle rounded px-2 py-1 text-text-secondary"
+          className={selectBaseCls}
         >
           {SOURCES.map((s) => (
             <option key={s} value={s}>
@@ -83,7 +84,7 @@ export function ErrorsTab({ projectId }: { projectId: string }) {
           aria-label="Filter by status"
           value={status}
           onChange={(e) => setStatus(e.target.value)}
-          className="text-xs bg-surface-1 border border-border-subtle rounded px-2 py-1 text-text-secondary"
+          className={selectBaseCls}
         >
           {STATUSES.map((s) => (
             <option key={s} value={s}>

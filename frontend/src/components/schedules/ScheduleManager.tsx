@@ -10,6 +10,7 @@ import { Icon } from "@/components/ui/Icon";
 import { FormModal } from "@/components/ui/FormModal";
 import { ListError } from "@/components/ui/ListError";
 import { StatusDot } from "@/components/ui/StatusDot";
+import { selectBaseCls } from "@/components/ui/Input";
 
 const CRON_PRESETS: { label: string; value: string }[] = [
   { label: "Every hour", value: "0 * * * *" },
@@ -489,7 +490,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
               value={connectionId}
               onChange={(e) => setConnectionId(e.target.value)}
               aria-label="Connection"
-              className="w-full text-meta bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
+              className={selectBaseCls}
             >
               {connections.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -527,7 +528,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                 value={cronPreset}
                 onChange={(e) => setCronPreset(e.target.value)}
                 aria-label="Schedule frequency"
-                className="w-full text-meta bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary focus:outline-none focus:border-accent"
+                className={selectBaseCls}
               >
                 {CRON_PRESETS.map((p) => (
                   <option key={p.value} value={p.value}>
@@ -569,7 +570,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                   value={cond.operator}
                   onChange={(e) => updateCondition(idx, "operator", e.target.value)}
                   aria-label={`Alert condition ${idx + 1} operator`}
-                  className="text-kicker bg-surface-0 border border-border-default rounded px-1 py-1 text-text-primary focus:outline-none focus:border-accent"
+                  className={selectBaseCls}
                 >
                   {Object.entries(OPERATOR_LABELS).map(([k, v]) => (
                     <option key={k} value={k}>

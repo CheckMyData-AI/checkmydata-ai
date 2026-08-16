@@ -19,6 +19,14 @@ export const inputBaseCls =
   "transition-colors duration-(--dur) ease-(--ease) placeholder-text-muted " +
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:outline-none";
 
+/**
+ * The same field, as a <select>. Native rather than a listbox widget, which is
+ * what the pack's reference does — it keeps the platform's keyboard behaviour
+ * and its mobile picker for free, and the only thing it costs is the chevron,
+ * which `.lg-select` draws.
+ */
+export const selectBaseCls = `${inputBaseCls} lg-select cursor-pointer`;
+
 export function Input({ className, invalid, hint, "aria-label": ariaLabel, ...props }: InputProps) {
   return (
     <div className="w-full">

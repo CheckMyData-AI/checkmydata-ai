@@ -207,7 +207,7 @@ export function ChatSearch() {
       </div>
 
       {showDropdown && (
-        <div className="absolute z-50 left-0 right-0 mt-1 mx-0 max-h-64 overflow-y-auto bg-surface-1 border border-border-subtle rounded-lg shadow-lg">
+        <div className="absolute z-50 left-0 right-0 mt-1 mx-0 max-h-64 overflow-y-auto bg-surface-1 border border-border-subtle rounded-lg shadow-(--shadow-1)">
           {loading && results.length === 0 && (
             <div className="flex items-center justify-center py-4 gap-2">
               <div className="w-3 h-3 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />

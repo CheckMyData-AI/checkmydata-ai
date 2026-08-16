@@ -90,6 +90,53 @@ describe("ledger pack bans", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("reaches for one shadow token, never Tailwind's ramp", () => {
+    // The pack allows a shadow on exactly one kind of thing — a true overlay —
+    // and ships exactly one token for it. Fifteen surfaces were using
+    // `shadow-lg`/`shadow-xl`, which are the ramp of a different design system
+    // and do not change with the theme.
+    const offenders = FILES.filter(
+      (f) => f.path.startsWith("components/") && !f.path.includes("marketing"),
+    ).flatMap(({ path, lines }) =>
+      lines
+        .map((line, i) => ({ line, i }))
+        .filter(({ line }) => /\bshadow-(sm|md|lg|xl|2xl)\b/.test(line))
+        .map(({ i }) => `${path}:${i + 1}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("styles every native select through the one field class", () => {
+    // Twelve files had twelve slightly different select styles. A `<select>`
+    // stays native on purpose — it is what the pack's reference does, and it
+    // keeps the platform's keyboard behaviour and mobile picker — but its
+    // geometry comes from `selectBaseCls`, not from whatever the file felt like.
+    //
+    // The window is scanned rather than the tag parsed: a first attempt read to
+    // the next `>`, which lands inside `onChange={(e) => …}` long before the tag
+    // closes, so it never saw the className at all and a planted defect walked
+    // straight past it.
+    const offenders = FILES.filter(
+      (f) => f.path.startsWith("components/") && !f.path.includes("marketing"),
+    ).flatMap(({ path, lines }) => {
+      const src = lines.join("\n");
+      const out: string[] = [];
+      for (let at = src.indexOf("<select"); at >= 0; at = src.indexOf("<select", at + 7)) {
+        // `<select>` with no space after it is prose, not markup — a JSX select
+        // always carries attributes. Without this the check flagged its own
+        // documentation in Input.tsx.
+        if (!/\s/.test(src[at + 7] ?? "")) continue;
+        const window = src.slice(at, at + 500);
+        const cls = window.match(/className=(\{[^}]*\}|"[^"]*")/);
+        if (cls && cls[1] !== "{selectBaseCls}") {
+          out.push(`${path}:${src.slice(0, at).split("\n").length}`);
+        }
+      }
+      return out;
+    });
+    expect(offenders).toEqual([]);
+  });
+
   it("paints no surface in raw black or white — a scrim follows the theme too", () => {
     // The defect: `bg-black/50` on the dialog overlay. Over a cream field it
     // reads as another product's modal, and over a near-black one it does

@@ -148,6 +148,22 @@ and with them two gaps neither version covered: inert background content, and
 focus restored to whatever opened the dialog. Both keep their `open`/`onClose`
 API, so call sites did not move.
 
+### 1.4b Fields and selects
+
+A field is 38px on `--panel-2`, radius 10, hairline border, and focus is the 2px
+accent ring at 2px offset — `inputBaseCls` in `components/ui/Input.tsx`.
+
+A `<select>` stays **native**. That is what the pack's reference does, and it
+keeps the platform's keyboard behaviour and its mobile picker for free; the only
+thing it costs is the chevron, which `.lg-select` draws from
+`--select-chevron`. Twenty-two selects across eleven files had eleven slightly
+different field styles before they all pointed at `selectBaseCls`, and
+`pack-bans.test.ts` fails if a twelfth appears.
+
+**`--select-chevron` is a gap in the pack, not a decision here.** The pack has no
+slot for the mark, so it lives in this project's layer and should move into
+`tokens/ledger.css` the next time that file is edited.
+
 ### 1.5 Motion
 
 One curve carries the interface: `--ease` = `cubic-bezier(0.22, 1, 0.36, 1)`,

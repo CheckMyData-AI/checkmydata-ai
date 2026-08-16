@@ -51,7 +51,7 @@ export function CostEstimator({ projectId, connectionId, onEstimate }: CostEstim
       >
         <span>~{formatTokens(estimated_total_tokens)} tokens</span>
         {showTooltip && (
-          <div className="absolute bottom-full left-0 mb-1.5 z-50 w-52 bg-surface-2 border border-border-default rounded-lg p-2.5 text-kicker text-text-primary shadow-xl">
+          <div className="absolute bottom-full left-0 mb-1.5 z-50 w-52 bg-surface-2 border border-border-default rounded-lg p-2.5 text-kicker text-text-primary shadow-(--shadow-1)">
             <div className="space-y-1">
               <Row label="Schema" value={breakdown.schema_context} />
               <Row label="Rules" value={breakdown.rules} />

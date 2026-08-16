@@ -163,7 +163,7 @@ export function PersistentLogToggle() {
     <div className="absolute bottom-3 right-3 z-10">
       <button
         onClick={toggle}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-2 border border-border-subtle rounded-lg text-meta text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors shadow-lg"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-2 border border-border-subtle rounded-lg text-meta text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors shadow-(--shadow-1)"
         title="Open Live Activity"
       >
         <StatusDot

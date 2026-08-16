@@ -22,6 +22,7 @@ import {
   vendorProviderSecretLabel,
   type VendorCredential,
 } from "@/lib/api/vendor-credentials";
+import { selectBaseCls } from "@/components/ui/Input";
 
 /**
  * Vendor credentials panel (spec §6, SCN-114 / SCN-116).
@@ -128,7 +129,7 @@ export function VendorCredentialFields({
           value={provider}
           onChange={(e) => setProvider(e.target.value)}
           aria-label="Credential provider"
-          className={inputCls}
+          className={selectBaseCls}
         >
           {VENDOR_PROVIDERS.map((p) => (
             <option key={p.value} value={p.value}>

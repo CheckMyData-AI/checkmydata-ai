@@ -6,6 +6,7 @@ import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { Spinner } from "@/components/ui/Spinner";
 import { Icon } from "@/components/ui/Icon";
+import { selectBaseCls } from "@/components/ui/Input";
 
 const inputCls =
   "w-full bg-surface-1 border border-border-default rounded-lg px-3 py-1.5 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent";
@@ -167,7 +168,7 @@ export function InviteManager({ projectId, onClose }: Props) {
   const pendingInvites = invites.filter((i) => i.status === "pending");
 
   return (
-    <div className="space-y-3 p-4 bg-surface-1 rounded-lg border border-border-default shadow-xl">
+    <div className="space-y-3 p-4 bg-surface-1 rounded-lg border border-border-default shadow-(--shadow-1)">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-medium text-text-primary uppercase tracking-wider">
           Manage Access
@@ -196,7 +197,7 @@ export function InviteManager({ projectId, onClose }: Props) {
           value={role}
           onChange={(e) => setRole(e.target.value)}
           aria-label="Member role"
-          className="bg-surface-1 border border-border-default rounded-lg px-2 py-1.5 text-xs text-text-primary focus:outline-none"
+          className={selectBaseCls}
         >
           <option value="editor">Editor</option>
           <option value="viewer">Viewer</option>
@@ -246,7 +247,7 @@ export function InviteManager({ projectId, onClose }: Props) {
                     onChange={(e) => handleRoleChange(m.user_id, e.target.value, m.role)}
                     disabled={updatingRoleId === m.user_id}
                     aria-label={`Change role for ${m.email || m.display_name || "member"}`}
-                    className={`px-1.5 py-0.5 rounded text-kicker font-medium shrink-0 border-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent transition-colors ${ROLE_COLORS[m.role] || ROLE_COLORS.viewer} ${updatingRoleId === m.user_id ? "opacity-50" : ""}`}
+                    className={selectBaseCls}
                   >
                     <option value="editor">editor</option>
                     <option value="viewer">viewer</option>
