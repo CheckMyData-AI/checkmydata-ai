@@ -199,7 +199,7 @@ export function WrongDataModal({
                   value={expectedValue}
                   onChange={(e) => setExpectedValue(e.target.value)}
                   placeholder="e.g., ~150,000"
-                  className="w-full px-3 py-1.5 rounded-md text-xs bg-surface-2 border border-border-default text-text-primary placeholder:text-text-muted focus:outline-none focus:border-warning"
+                  className="w-full px-3 py-1.5 rounded-md text-xs bg-surface-2 border border-border-default text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-warning"
                 />
               </div>
 

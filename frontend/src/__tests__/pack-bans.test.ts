@@ -90,6 +90,32 @@ describe("ledger pack bans", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("never suppresses focus without putting the pack's ring back", () => {
+    // The pack's focus contract is the one place this design overrules its
+    // reference, which answers focus by swapping a border colour — a treatment
+    // that survives on a bordered control and vanishes on anything else.
+    // Twenty-seven controls still carried that idiom and were found by the
+    // close-out walk, not by any check.
+    //
+    // A container focused programmatically (`tabIndex={-1}` on a dialog panel,
+    // a tab panel) is the legitimate exception: a ring around the whole panel
+    // is noise, and those lines carry no `focus:` replacement at all.
+    const offenders = FILES.filter(
+      (f) => f.path.startsWith("components/") && !f.path.includes("marketing"),
+    ).flatMap(({ path, lines }) =>
+      lines
+        .map((line, i) => ({ line, i }))
+        .filter(
+          ({ line }) =>
+            /\bfocus:outline-none\b/.test(line) &&
+            /\bfocus:(border|ring)-/.test(line) &&
+            !/focus-visible:(outline|ring)/.test(line),
+        )
+        .map(({ i }) => `${path}:${i + 1}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
   it("reaches for one shadow token, never Tailwind's ramp", () => {
     // The pack allows a shadow on exactly one kind of thing — a true overlay —
     // and ships exactly one token for it. Fifteen surfaces were using

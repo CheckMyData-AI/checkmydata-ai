@@ -251,7 +251,7 @@ export function NoteCard({ note }: NoteCardProps) {
               rows={2}
               maxLength={5000}
               aria-label="Add a comment"
-              className="w-full text-meta bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-secondary resize-none focus:outline-none focus:border-accent"
+              className="w-full text-meta bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-secondary resize-none focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
               placeholder="Add a comment..."
             />
             <div className="flex gap-1 justify-end">

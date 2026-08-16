@@ -603,7 +603,7 @@ Global rule in `globals.css`:
 All CSS animations, transitions, and stagger delays are neutralized. JS-driven motion opts out separately:
 - Framer Motion: `<MotionConfig reducedMotion="user">` at the `/app` root.
 - GSAP/Lenis (marketing): components check `useReducedMotion` / `matchMedia` before animating; `DataStory` swaps to a static fallback via the `.cmd-story` media query.
-- Chart.js: `ChartRenderer` sets `animation: false` when reduced motion is detected.
+- Recharts: `ChartRenderer` passes `isAnimationActive: false` when reduced motion is detected, and caps the draw-on at 300 ms otherwise — the pack's ceiling, where the Chart.js version it replaced ran 800 ms with a per-datum stagger.
 
 ### 4.4 ARIA Patterns
 

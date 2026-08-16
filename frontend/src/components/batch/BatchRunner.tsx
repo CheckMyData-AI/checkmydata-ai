@@ -199,7 +199,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
             onChange={(e) => setBatchTitle(e.target.value)}
             placeholder="Batch title..."
             aria-label="Batch title"
-            className="flex-1 text-xs bg-surface-1 border border-border-default rounded px-3 py-1.5 text-text-primary focus:outline-none focus:border-accent"
+            className="flex-1 text-xs bg-surface-1 border border-border-default rounded px-3 py-1.5 text-text-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
           />
           <select
             value={selectedConnId}
@@ -228,7 +228,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
                   onChange={(e) => updateQuery(q.id, "title", e.target.value)}
                   placeholder="Query title..."
                   aria-label={`Query ${idx + 1} title`}
-                  className="flex-1 text-xs bg-surface-0 border border-border-default rounded px-2 py-1 text-text-primary focus:outline-none focus:border-accent"
+                  className="flex-1 text-xs bg-surface-0 border border-border-default rounded px-2 py-1 text-text-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
                 />
                 <div className="flex gap-0.5 shrink-0">
                   <button
@@ -266,7 +266,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
                 placeholder="SELECT ..."
                 aria-label={`Query ${idx + 1} SQL`}
                 rows={3}
-                className="w-full text-meta font-mono bg-surface-0 border border-border-default rounded px-2.5 py-2 text-text-secondary resize-y focus:outline-none focus:border-accent leading-relaxed"
+                className="w-full text-meta font-mono bg-surface-0 border border-border-default rounded px-2.5 py-2 text-text-secondary resize-y focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent leading-relaxed"
               />
             </div>
           ))}

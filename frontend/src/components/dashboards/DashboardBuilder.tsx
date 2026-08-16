@@ -135,7 +135,7 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
           aria-label="Dashboard title"
           aria-required="true"
           maxLength={200}
-          className="flex-1 text-sm bg-surface-1 border border-border-default rounded-lg px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+          className="flex-1 text-sm bg-surface-1 border border-border-default rounded-lg px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
         />
         <div className="flex items-center gap-1 bg-surface-1 border border-border-subtle rounded-lg p-0.5">
           {([2, 3] as const).map((n) => (

@@ -346,7 +346,7 @@ export function LearningsPanel({ connectionId, onClose, onCountChange }: Learnin
                             onChange={(e) => setEditLesson(e.target.value)}
                             rows={3}
                             aria-label="Edit learning"
-                            className="w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary resize-y min-h-[60px] focus:outline-none focus:ring-1 focus:ring-accent"
+                            className="w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary resize-y min-h-[60px] focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:ring-1 focus:ring-accent"
                           />
                           <div className="flex gap-1.5">
                             <button

@@ -7,11 +7,17 @@ these bind the run. Hard cap: **ten** standing instructions. Prune before adding
 
 1. **A test that has never run is not a check — whether it skipped, or was simply never
    seen red. And assert on behaviour, not on source text.** Plant the defect it claims
-   to catch and watch it fail. *(2026-08-08: a `finalize_trace` test asserted on source
-   text; a blanket-overwrite defect preserved the text it looked for and passed green.
+   to catch and watch it fail; **if the plant survives, the check is wrong, not the
+   plant.** *(2026-08-08: a `finalize_trace` test asserted on source text; a
+   blanket-overwrite defect preserved the text it looked for and passed green.
    2026-08-12: a worker test would have skipped forever because CI installs only
    `[dev]` and `app/worker.py` imports `arq` from the `redis` extra — check what CI
-   actually installs before trusting a green.)*
+   actually installs before trusting a green. 2026-08-16: six checks were watched
+   failing and **five survived their first plant** — one could not fail at all
+   (Recharts draws no series marks under jsdom, so a hardcoded `fill` reaches no DOM
+   node), and one shared a parser bug with the sweep it guarded, so it certified
+   exactly the blind spot that produced the defect. **A sweep and the check that
+   guards it must not share a parser.**)*
 2. **Before merging, verify the branch contains the docs it owes** — especially
    `docs/ux/scenarios.md`. *(2026-08-08: the branch was green, complete, and had no
    scenario for its own user-facing change; caught one command before the merge. A
@@ -31,12 +37,23 @@ these bind the run. Hard cap: **ten** standing instructions. Prune before adding
 6. **`grep` for a call site is not a survey of call sites.** Follow the value.
    *(2026-08-08: three `classify` sites named, two real, and a fourth `ssh_key_id` write
    site found only after the first sweep declared itself done.)*
-7. **Never read an exit code through a pipe.** `pytest … | tail` reports `tail`'s status.
-   *(2026-08-08 and twice since: a run with `1 failed` announced as exit code 0.)*
+7. **Never read an exit code through a pipe, and never read a summary INSTEAD of one.**
+   `pytest … | tail` reports `tail`'s status. *(2026-08-08 and twice since: a run with
+   `1 failed` announced as exit code 0. 2026-08-16: vitest printed `Tests 654 passed`
+   and exited **1** — three `EnvironmentTeardownError`s from a floating `void import`
+   in a test. Every test passed and the runner was red; a report built from the summary
+   line would have called it green.)*
 8. **A flake on the deploy path is a gate that fails at random, not noise.** Reproduce it
-   under the load that exposed it. *(2026-08-12: CPU contention did not reproduce it —
-   concurrent pytest processes did, 1 in 10. The earlier fix hardened SQLite locking
-   while the contended resource was the scheduler, and passed its own verification.)*
+   under the load that exposed it, and **measure a gate's determinism before quoting a
+   green from it** — one sample of a coin flip is not evidence. *(2026-08-12: CPU
+   contention did not reproduce it — concurrent pytest processes did, 1 in 10. The
+   earlier fix hardened SQLite locking while the contended resource was the scheduler,
+   and passed its own verification. 2026-08-16: `npm test` was failing **two runs in
+   three** at HEAD, and three commits had already reported "suite green" from a single
+   run each. Cause measured rather than guessed — vitest spawns one worker per core and
+   90 jsdom environments thrash on 14 of them — and `maxWorkers: "50%"` made it
+   deterministic AND 3–6× faster. The first measurement was itself contaminated by two
+   background loops the measurer had started.)*
 9. **Set a ratchet from what the check itself measures.** *(2026-08-12: a floor of 13
    came from a script counting raw lines while the test counted distinct triples —
    actual 10. Three of slack silently absorbed a deliberately reintroduced bug during
@@ -62,8 +79,42 @@ these bind the run. Hard cap: **ten** standing instructions. Prune before adding
 |---|---|---|
 | 2026-08-08 | `b4a6ca0` | yes — entries 1, 2, 3, 4, 7 written from this run |
 | 2026-08-12 | `0162e2a` | yes — pruned to 10; #9 and #10 earned here, three entries retired |
+| 2026-08-16 | `e85803b` | yes — no entry added; #1, #7 and #8 each earned a new case and the list held at ten |
 
 ## Recent log
+
+**2026-08-16 — the product UI onto the `ledger` pack, and the gate that was not one.**
+The console moved off zinc/blue onto a style pack extracted from `basedash.com` by
+reading its live computed styles, and the component base became shadcn/ui. Six modules
+shipped: token layer + primitives, charts and the result table, the chat surface,
+overlays, the shell's shadows/fields/selects, and this close-out. 149 files,
++7273/−1636, backend untouched.
+
+**What the work found that nobody had asked about.** The primary button rendered as a
+black slab with an INVISIBLE LABEL, because `tailwind-merge` does not know this
+project's custom font sizes and filed `text-body` beside `text-primary-foreground` in
+one conflict group. Nine surfaces each carried their own `bg-black/60` scrim. Fifteen
+reached into Tailwind's shadow ramp for a design that ships one shadow token. 484
+ad-hoc bracket font sizes sat outside a ramp that exists precisely so they need not.
+Twenty-two selects had eleven different field styles. Twenty-eight controls answered
+focus with a border colour swap — the reference's own weak treatment, and the one thing
+the pack overrules. None of these was in any brief; all were found by applying a
+measured pack to a codebase that had drifted, and by looking at the running app rather
+than at the diff.
+
+**The most expensive finding was about the checks, not the code.** `npm test` was
+failing two runs in three — at HEAD, before this branch touched anything — and three
+commits had already reported "suite green" from one sample each. Six new checks were
+watched failing against planted defects; five survived their first plant and were
+rewritten. One could not fail at all. One shared a parser bug with the sweep it was
+guarding.
+
+**Not done, and stated rather than implied:** the feature panels' internal composition
+(insights, schedules, notes, learnings, batch, usage, billing) is re-skinned by the
+token layer but not rebuilt on the primitives; the marketing surface inherited the
+palette without being designed for it; `--select-chevron` is a gap in the pack rather
+than a decision in the app; and the skill release (v1.35.0) is on `main` but not
+published to npm, so `sshlg-skills`' pin still names the previous version.
 
 **2026-08-12 — audit, re-plan, and ten backlog items.** The operator's answer that the
 product is *pre-launch* inverted several rankings: what was justified by "users are

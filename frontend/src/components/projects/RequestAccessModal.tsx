@@ -8,7 +8,7 @@ import { FormModal } from "@/components/ui/FormModal";
 import { Icon } from "@/components/ui/Icon";
 
 const inputCls =
-  "w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent transition-colors";
+  "w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:ring-1 focus:ring-accent focus:border-accent transition-colors";
 
 interface RequestAccessModalProps {
   open: boolean;

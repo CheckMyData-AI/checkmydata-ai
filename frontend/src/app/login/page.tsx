@@ -170,7 +170,7 @@ function LoginPageContent() {
   };
 
   const inputCls =
-    "w-full px-3.5 py-2.5 bg-surface-1 text-text-primary rounded-lg text-sm border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-colors placeholder-text-muted";
+    "w-full px-3.5 py-2.5 bg-surface-1 text-text-primary rounded-lg text-sm border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors placeholder-text-muted";
 
   return (
     <div className="min-h-screen bg-surface-0 flex items-center justify-center p-4">

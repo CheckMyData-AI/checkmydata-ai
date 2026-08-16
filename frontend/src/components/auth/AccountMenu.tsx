@@ -131,7 +131,7 @@ function PasswordForm({ onClose }: { onClose: () => void }) {
   };
 
   const inputCls =
-    "w-full px-2.5 py-1.5 bg-surface-0 text-text-primary rounded text-xs border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-colors placeholder-text-muted";
+    "w-full px-2.5 py-1.5 bg-surface-0 text-text-primary rounded text-xs border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors placeholder-text-muted";
 
   return (
     <form onSubmit={handleSubmit} className="p-3 space-y-2.5">
@@ -206,7 +206,7 @@ function DeleteConfirm({ onClose }: { onClose: () => void }) {
         placeholder='Type "DELETE" to confirm'
         value={confirm}
         onChange={(e) => setConfirm(e.target.value)}
-        className="w-full px-2.5 py-1.5 bg-surface-0 text-text-primary rounded text-xs border border-border-subtle focus:border-error focus:ring-1 focus:ring-error focus:outline-none transition-colors placeholder-text-muted"
+        className="w-full px-2.5 py-1.5 bg-surface-0 text-text-primary rounded text-xs border border-border-subtle focus:border-error focus:ring-1 focus:ring-error focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors placeholder-text-muted"
         aria-label="Confirm deletion"
       />
       <div className="flex gap-2">

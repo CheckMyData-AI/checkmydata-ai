@@ -9,7 +9,7 @@ import { Icon } from "@/components/ui/Icon";
 import { selectBaseCls } from "@/components/ui/Input";
 
 const inputCls =
-  "w-full bg-surface-1 border border-border-default rounded-lg px-3 py-1.5 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent";
+  "w-full bg-surface-1 border border-border-default rounded-lg px-3 py-1.5 text-xs text-text-primary placeholder-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:ring-1 focus:ring-accent";
 
 const ROLE_COLORS: Record<string, string> = {
   owner: "bg-warning-muted text-warning",

@@ -59,7 +59,7 @@ export function ChatInput({ onSend, disabled, placeholder, rightSlot }: ChatInpu
             rows={1}
             maxLength={MAX_LENGTH}
             aria-label="Message input"
-            className="flex-1 resize-none max-h-40 overflow-y-auto bg-transparent border border-border-default/50 rounded-lg px-4 py-3 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent/40 focus:border-accent/40 disabled:opacity-50 transition-colors"
+            className="flex-1 resize-none max-h-40 overflow-y-auto bg-transparent border border-border-default/50 rounded-lg px-4 py-3 text-sm text-text-primary placeholder-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:ring-1 focus:ring-accent/40 focus:border-accent/40 disabled:opacity-50 transition-colors"
           />
           <button
             onClick={handleSend}

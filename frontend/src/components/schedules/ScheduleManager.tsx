@@ -471,7 +471,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             maxLength={255}
             aria-label="Schedule title"
             aria-required="true"
-            className="w-full text-meta bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+            className="w-full text-meta bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
           />
 
           <textarea
@@ -482,7 +482,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
             maxLength={10000}
             aria-label="SQL query"
             aria-required="true"
-            className="w-full text-meta font-mono bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:border-accent"
+            className="w-full text-meta font-mono bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
           />
 
           {connections.length > 1 && (
@@ -542,7 +542,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                 onChange={(e) => setCronCustom(e.target.value)}
                 placeholder="e.g. 0 */2 * * *"
                 aria-label="Custom cron expression"
-                className="w-full text-meta font-mono bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+                className="w-full text-meta font-mono bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
               />
             )}
           </div>
@@ -564,7 +564,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                   onChange={(e) => updateCondition(idx, "column", e.target.value)}
                   placeholder="column"
                   aria-label={`Alert condition ${idx + 1} column`}
-                  className="flex-1 text-kicker bg-surface-0 border border-border-default rounded px-1.5 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+                  className="flex-1 text-kicker bg-surface-0 border border-border-default rounded px-1.5 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
                 />
                 <select
                   value={cond.operator}
@@ -584,7 +584,7 @@ export function ScheduleManager({ createRequested, onCreateHandled }: ScheduleMa
                   placeholder="value"
                   type="number"
                   aria-label={`Alert condition ${idx + 1} threshold`}
-                  className="w-16 text-kicker bg-surface-0 border border-border-default rounded px-1.5 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+                  className="w-16 text-kicker bg-surface-0 border border-border-default rounded px-1.5 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
                 />
                 <button
                   onClick={() => removeCondition(idx)}
