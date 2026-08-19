@@ -125,15 +125,15 @@ human review moves them to `validated`.
 | SCN-110 | Pricing CTA (logged out) | marketing | visitor | implemented | 2026-07-19 PASS |
 | SCN-111 | Support / Contact / Legal pages | marketing | visitor | implemented | 2026-07-19 PASS |
 | SCN-112 | Logged-in visitor auto-redirect to /app | marketing | analyst | implemented | 2026-07-19 PASS |
-| SCN-113 | Add a Google Analytics 4 connection | analytics-sources | owner | draft | — |
-| SCN-114 | Add / delete a vendor credential | analytics-sources | owner | draft | — |
-| SCN-115 | Analytics collection status — ok / partial / pending periods | analytics-sources | editor | draft | — |
-| SCN-116 | Vendor credential delete blocked while in use | analytics-sources | owner | draft | — |
-| SCN-117 | Ask about analytics data in chat — grounded answer or honest refusal | analytics-sources | analyst | draft | — |
-| SCN-118 | Analytics answer renders a chart | analytics-sources | analyst | draft | — |
-| SCN-119 | Unsupported analytics source refused at creation | analytics-sources | owner | draft | — |
-| SCN-120 | Database does not answer — honest stop instead of a silent grind | chat | analyst | draft | — |
-| SCN-121 | Attaching an SSH key you do not own is refused | connections | owner | draft | — |
+| SCN-113 | Add a Google Analytics 4 connection | analytics-sources | owner | implemented | 2026-08-19 PASS |
+| SCN-114 | Add / delete a vendor credential | analytics-sources | owner | implemented | 2026-08-19 PASS |
+| SCN-115 | Analytics collection status — ok / partial / pending periods | analytics-sources | editor | implemented | 2026-08-19 PASS |
+| SCN-116 | Vendor credential delete blocked while in use | analytics-sources | owner | implemented | 2026-08-19 PASS |
+| SCN-117 | Ask about analytics data in chat — grounded answer or honest refusal | analytics-sources | analyst | implemented | 2026-08-19 PASS |
+| SCN-118 | Analytics answer renders a chart | analytics-sources | analyst | implemented | 2026-08-19 PASS |
+| SCN-119 | Unsupported analytics source refused at creation | analytics-sources | owner | implemented | 2026-08-19 PASS |
+| SCN-120 | Database does not answer — honest stop instead of a silent grind | chat | analyst | implemented | 2026-08-19 PASS |
+| SCN-121 | Attaching an SSH key you do not own is refused | connections | owner | implemented | 2026-08-19 PASS |
 | SCN-122 | Every answer says how it is known — the seal | chat | analyst | implemented | 2026-08-16 PARTIAL → fixed |
 | SCN-123 | The interface reads as one design in light and in dark | settings | analyst | implemented | 2026-08-16 PASS |
 | SCN-124 | A result reads as a ledger — aligned, labelled, and the same in both themes | chat | analyst | implemented | 2026-08-16 PASS |
@@ -1906,7 +1906,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** source-type select ("Google Analytics 4"), credential select + "＋ new credential" affordance, property-ID input, backfill-days input, collection-hour select, "Collect automatically" toggle, Save button
 - **States covered:** loading, empty (no credentials saved yet), error, success
 - **Errors & recovery:** submitting without a credential → toast and the credential select is marked invalid; a property not shared with the service account → 403 → `AnalyticsPermissionError` surfaced as "grant Viewer on this property"; a credential owned by another user → 404 (owner-strict); create fails → toast, form keeps its values
-- **Status:** draft
+- **Status:** implemented
+- **Audit note (2026-08-19):** verified against shipped code, AUD-0819-15. These nine shipped in `[1.16.0]` and stayed `draft` with `Last audit: —` for a month, which is the drift the scenario-first rule exists to prevent: the base is the source of truth only while it is kept current.
 - **Coverage:** components/connections/ConnectionSelector.tsx
 
 ### SCN-114: Add / delete a vendor credential
@@ -1923,7 +1924,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** "Add" button, name input, provider select, service-account JSON textarea (`aria-label`, write-only), "Add credential" button, credential rows with provider badge + fingerprint, trash ActionButton, ConfirmModal
 - **States covered:** loading, empty, error, success
 - **Errors & recovery:** malformed service-account JSON → 422 with a specific inline message and nothing stored; create fails → inline error; the secret is never echoed back — reopening a row shows only the fingerprint; another user's credential is never listed; delete refused while a connection still uses it → SCN-116
-- **Status:** draft
+- **Status:** implemented
+- **Audit note (2026-08-19):** verified against shipped code, AUD-0819-15. These nine shipped in `[1.16.0]` and stayed `draft` with `Last audit: —` for a month, which is the drift the scenario-first rule exists to prevent: the base is the source of truth only while it is kept current.
 - **Coverage:** components/settings/VendorCredentialsPanel.tsx
 
 ### SCN-115: Analytics collection status — ok / partial / pending periods
@@ -1939,7 +1941,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** collection row, outcome badge (ok/partial/failed), last-run timestamp, per-report latest-ok period, pending-period list, next scheduled hour, "Collect now" button (`aria-label` + Tooltip)
 - **States covered:** loading, empty (never collected), success, partial, error
 - **Errors & recovery:** a period collected with zero rows reads as collected-zero, **not** as pending — the never-collected and the zero cases must render differently; a period that failed stays pending and is refilled on the next run; status fetch fails → inline error + Retry; "Collect now" fails → toast
-- **Status:** draft
+- **Status:** implemented
+- **Audit note (2026-08-19):** verified against shipped code, AUD-0819-15. These nine shipped in `[1.16.0]` and stayed `draft` with `Last audit: —` for a month, which is the drift the scenario-first rule exists to prevent: the base is the source of truth only while it is kept current.
 - **Coverage:** components/connections/ConnectionHealth.tsx
 
 ### SCN-116: Vendor credential delete blocked while in use
@@ -1954,7 +1957,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** trash ActionButton, ConfirmModal, error toast naming the conflict, the unchanged credential row
 - **States covered:** error
 - **Errors & recovery:** this scenario IS the error path; recovery is to delete the referencing connection (SCN-032) or re-point it at another credential (SCN-113), then retry the credential delete
-- **Status:** draft
+- **Status:** implemented
+- **Audit note (2026-08-19):** verified against shipped code, AUD-0819-15. These nine shipped in `[1.16.0]` and stayed `draft` with `Last audit: —` for a month, which is the drift the scenario-first rule exists to prevent: the base is the source of truth only while it is kept current.
 - **Coverage:** components/settings/VendorCredentialsPanel.tsx; components/connections/ConnectionSelector.tsx
 
 ### SCN-117: Ask about analytics data in chat — grounded answer or honest refusal
@@ -1969,7 +1973,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** chat answer, caveat lines, reasoning panel
 - **States covered:** success, partial, refusal, error
 - **Errors & recovery:** the model answering without reading data → it is re-prompted once and then refused, and no invented figure is shown; a window with periods that failed → `⚠️ PARTIAL DATA` naming them, and those periods are excluded from the totals; a window the vendor truncated → the numbers are shown as a real lower bound, explicitly not a complete measurement; a window whose collection record aged out of retention → the numbers are shown and counted, and only the record is reported missing; a period never collected → reported as unknown, never as zero
-- **Status:** draft
+- **Status:** implemented
+- **Audit note (2026-08-19):** verified against shipped code, AUD-0819-15. These nine shipped in `[1.16.0]` and stayed `draft` with `Last audit: —` for a month, which is the drift the scenario-first rule exists to prevent: the base is the source of truth only while it is kept current.
 - **Coverage:** backend/app/agents/analytics_agent.py
 
 ### SCN-118: Analytics answer renders a chart
@@ -1984,7 +1989,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** chart, result block, chart-type controls
 - **States covered:** success, partial, empty
 - **Errors & recovery:** a truncated or partially-collected window marks the result truncated so the chart is not presented as complete; a result with no rows produces no chart rather than an empty one implying zero
-- **Status:** draft
+- **Status:** implemented
+- **Audit note (2026-08-19):** verified against shipped code, AUD-0819-15. These nine shipped in `[1.16.0]` and stayed `draft` with `Last audit: —` for a month, which is the drift the scenario-first rule exists to prevent: the base is the source of truth only while it is kept current.
 - **Coverage:** backend/app/agents/orchestrator.py
 
 ### SCN-119: Unsupported analytics source refused at creation
@@ -1998,7 +2004,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** source-type select, error toast
 - **States covered:** error
 - **Errors & recovery:** 422 naming the source as not yet available, rather than creating a connection that would fail silently every day; the credential providers remain selectable so keys can be stored ahead of support landing
-- **Status:** draft
+- **Status:** implemented
+- **Audit note (2026-08-19):** verified against shipped code, AUD-0819-15. These nine shipped in `[1.16.0]` and stayed `draft` with `Last audit: —` for a month, which is the drift the scenario-first rule exists to prevent: the base is the source of truth only while it is kept current.
 - **Coverage:** backend/app/services/connection_service.py
 
 ### SCN-120: Database does not answer — honest stop instead of a silent grind
@@ -2014,7 +2021,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** in-transcript error bubble (the SCN-046 surface), Retry button — a timeout is retryable
 - **States covered:** running, error, partial (narrowed query succeeded)
 - **Errors & recovery:** two distinct outcomes, never conflated. (a) *Database did not answer* — "The database didn't answer within 30 s — twice in a row. That points at the database rather than at your question. Try again in a few minutes, or check the connection." (b) *Narrowed and succeeded* — the answer carries the existing partial-data caveat saying it covers a narrower range than asked. The SQL, the attempt count and the connection id are logged, never shown. A run killed by the outer request timeout is recorded with `failure_kind`, not as a stub row
-- **Status:** draft
+- **Status:** implemented
+- **Audit note (2026-08-19):** verified against shipped code, AUD-0819-15. These nine shipped in `[1.16.0]` and stayed `draft` with `Last audit: —` for a month, which is the drift the scenario-first rule exists to prevent: the base is the source of truth only while it is kept current.
 - **Coverage:** backend/app/core/validation_loop.py; backend/app/core/error_classifier.py; backend/app/agents/sql_agent.py; frontend/src/components/chat/ChatMessage.tsx
 
 ### SCN-121: Attaching an SSH key you do not own is refused
@@ -2028,7 +2036,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** error toast on the connection/project form
 - **States covered:** error
 - **Errors & recovery:** 404 rather than 403 is deliberate: the lookup is owner-strict, so "someone else's key" and "no such key" answer identically and neither confirms that an id exists. Before this change the reference was accepted unchecked, and `GitAgent` / the repo indexer later decrypted it with no owner filter — so the server would open a tunnel or clone a repository with another tenant's private key. The key itself was never exposed; its *use* was
-- **Status:** draft
+- **Status:** implemented
+- **Audit note (2026-08-19):** verified against shipped code, AUD-0819-15. These nine shipped in `[1.16.0]` and stayed `draft` with `Last audit: —` for a month, which is the drift the scenario-first rule exists to prevent: the base is the source of truth only while it is kept current.
 - **Coverage:** backend/app/api/routes/connections.py; backend/app/api/routes/projects.py; backend/app/services/ssh_key_service.py; backend/tests/integration/test_ssh_key_ownership.py
 
 ### SCN-122: Every answer says how it is known — the seal
@@ -2044,6 +2053,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** the seal (10px monospace, uppercase, in the state's own colour, **always with its word** — the colour never carries the meaning alone), the SQL details panel, the sources list
 - **States covered:** verified, inferred, unverified
 - **Errors & recovery:** a failed or budget-exhausted run seals **Unverified** even when a query is attached to it, because a partial run's evidence proves nothing about the answer. The seal it replaced was fed `response_type === "sql_result" ? "unverified" : undefined` — two of its three words were unreachable, so it told the reader the same thing about every answer
+- **Degraded retrieval (2026-08-19, AUD-0819-03):** when a retrieval leg comes back empty the answer carries a line naming it in the reader's words — "keyword search returned nothing for this question, so the answer rests on the other half of the index" — on its own row above the seal, not folded into the freshness warning. The **seal state is unchanged**: sources *were* retrieved, so `inferred` is still the honest word, and fusing the two facts would also downgrade a SQL answer whose proof is its own query. This closes a signal that existed end-to-end and surfaced nowhere: `emit_retrieval_degraded` fed the metrics and the SSE stream, `PIPELINE_EVENTS` did not list the event, and the handler had no case for it — so an answer built on one leg of two rendered exactly like one built on both. In production that is the normal case, because the BM25 snapshot lives on the dyno's ephemeral disk (F-KNOW-07). The allowlist/handler seam is now held together by a test that reads both sides (`__tests__/sse.test.ts`)
 - **Status:** implemented
 - **Audit note (2026-08-16):** PARTIAL on the first pass — the derivation was right and tested, but the row that renders the seal was guarded on `responseType !== "text"`, so a plain text answer carried **no seal at all** while deriving exactly the `unverified` state this scenario calls the honest one. Fixed in the same change (`ChatMessage.tsx`), and the check that was missing is now a render-level one, not another unit test of the derivation
 - **Coverage:** frontend/src/components/ui/Seal.tsx; frontend/src/components/chat/ChatMessage.tsx; frontend/src/__tests__/components/Seal.test.tsx; frontend/src/__tests__/components/ChatMessage.test.tsx

@@ -11,7 +11,12 @@ import type {
 } from "./types";
 
 const STREAM_IDLE_TIMEOUT_MS = 120_000;
-const PIPELINE_EVENTS = new Set([
+/**
+ * Event types routed to the pipeline handler. Exported so a test can hold the two
+ * sides together: an event the handler has a `case` for but this set omits is
+ * dropped in silence, and neither file shows the omission (AUD-0819-03).
+ */
+export const PIPELINE_EVENTS = new Set([
   "plan",
   "plan_summary",
   "stage_start",
@@ -21,6 +26,15 @@ const PIPELINE_EVENTS = new Set([
   "checkpoint",
   "stage_retry",
   "data_gate",
+  // AUD-0819-03. This allowlist is the seam the whole chain hangs on: the
+  // backend emitted `retrieval_degraded`, the handler had no case for it, and
+  // neither omission was visible from the other side — an event not listed here
+  // is dropped in silence. Listed and covered by a test for exactly that reason.
+  "retrieval_degraded",
+  // AUD-0819-03. This allowlist is the seam the whole chain hangs on: the
+  // backend emitted `retrieval_degraded`, the handler had no case for it, and
+  // neither omission was visible from the other side — an event not listed here
+  // is dropped in silence. Listed and covered by a test for exactly that reason.
 ]);
 
 export interface AskStreamInput {

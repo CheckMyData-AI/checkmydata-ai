@@ -331,6 +331,16 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
           </div>
         )}
 
+        {/* AUD-0819-03: a retrieval leg came back empty, so this answer rests on
+            less than the index holds. Its own line rather than folded into the
+            staleness warning above: a stale index and a missing search leg are
+            different facts, and the seal must not treat one as the other. */}
+        {message.retrievalWarning && (
+          <div className="mb-2 px-2 py-1.5 rounded bg-warning-muted border border-border-default text-warning text-xs">
+            {message.retrievalWarning}
+          </div>
+        )}
+
         {/* The provenance row. The SEAL rides on every answer, including a plain
             text one — that case derives `unverified`, which is the honest state
             and the one a reader most needs to meet; guarding the whole row on

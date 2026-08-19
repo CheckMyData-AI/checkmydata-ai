@@ -498,4 +498,30 @@ describe("ChatMessage", () => {
 
     expect(screen.getByText("Question")).toBeInTheDocument();
   });
+
+  // AUD-0819-03: an answer built on half the index must say so. Before this the
+  // signal reached the metrics and the SSE stream and stopped there, so an answer
+  // retrieved from one leg of two rendered exactly like an answer retrieved from
+  // both — and in production that is the normal case, because the BM25 snapshot
+  // lives on the dyno's ephemeral disk.
+  it("shows the retrieval warning, on its own line from the staleness warning", async () => {
+    await renderMessage({
+      role: "assistant",
+      content: "Signups rose 12%.",
+      responseType: "knowledge",
+      stalenessWarning: "The code index is 6 days old.",
+      retrievalWarning: "keyword search returned nothing for this question, so the answer rests on the other half of the index.",
+    });
+    expect(screen.getByText(/The code index is 6 days old\./)).toBeInTheDocument();
+    expect(screen.getByText(/keyword search returned nothing/)).toBeInTheDocument();
+  });
+
+  it("says nothing when retrieval was whole", async () => {
+    await renderMessage({
+      role: "assistant",
+      content: "Signups rose 12%.",
+      responseType: "knowledge",
+    });
+    expect(screen.queryByText(/rests on the other half/)).not.toBeInTheDocument();
+  });
 });

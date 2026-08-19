@@ -105,6 +105,25 @@ class Settings(BaseSettings):
     # sizes to this, not chars/4. Changing the model requires a full re-embed (W2).
     embedder_max_tokens: int = 512
 
+    # AUD-0819-01: how many documents reach one `collection.upsert` call. This is
+    # the knob that decides peak worker memory, and it is not obvious why.
+    # ChromaDB's bundled ONNX MiniLM pads EVERY document to 256 tokens and runs
+    # its own inner batch of 32, so the transformer's intermediate activations are
+    # sized by the batch and nothing else — content length does not matter.
+    # Measured through `VectorStore.add_documents` itself, 960 chunks, macOS
+    # (`chromadb` 1.x, ONNXMiniLM_L6_V2, base RSS 290 MiB):
+    #
+    #     batch=200 -> peak 967.1 MiB,  9.27 s
+    #     batch=8   -> peak 414.5 MiB, 10.86 s
+    #
+    # So 8 costs about 17% more wall clock and saves ~552 MiB — the difference
+    # between finishing and being SIGKILLed. This is what killed the production
+    # worker at `code_symbol_embed` (R15, 1053 MiB against a 512 MiB quota) with
+    # no run ever reaching `pipeline_end`. Raise it only on a dyno with headroom.
+    # (A raw-chroma probe made the small batch look *faster*; that was warm-up
+    # noise in the probe, not a property of the batch size.)
+    embedding_upsert_batch_size: int = 8
+
     default_llm_provider: str = "openai"
     openai_api_key: str = ""
     anthropic_api_key: str = ""
@@ -989,6 +1008,8 @@ class Settings(BaseSettings):
             raise ValueError("ANALYTICS_HTTP_ATTEMPTS must be >= 1.")
         if self.analytics_journal_retention_days < 1:
             raise ValueError("ANALYTICS_JOURNAL_RETENTION_DAYS must be >= 1.")
+        if self.embedding_upsert_batch_size < 1:
+            raise ValueError("EMBEDDING_UPSERT_BATCH_SIZE must be >= 1.")
         return self
 
 

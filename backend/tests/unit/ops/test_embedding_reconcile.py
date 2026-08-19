@@ -27,7 +27,12 @@ async def session_factory():
 
 
 def _current():
-    return f"{settings.chroma_embedding_model}|{settings.embedder_max_tokens}"
+    # Delegate rather than restate. This helper used to carry its own copy of the
+    # formula, so adding the symbol-UID schema to the fingerprint (AUD-0819-02)
+    # broke five tests that were only ever asserting that two copies of one
+    # expression still matched. The shape is pinned once, in
+    # `test_fingerprint_format` below.
+    return recon.embedding_fingerprint()
 
 
 async def _seed_marker(sf, value):
@@ -44,7 +49,15 @@ async def _add_projects(sf, n):
 
 
 def test_fingerprint_format():
-    assert recon.embedding_fingerprint() == _current()
+    # The shape, asserted where it belongs: the model, the token window, and the
+    # symbol-UID schema — each one a reason a stored index needs rebuilding.
+    fp = recon.embedding_fingerprint()
+    assert fp == (
+        f"{settings.chroma_embedding_model}"
+        f"|{settings.embedder_max_tokens}"
+        f"|uid{recon.SYMBOL_UID_SCHEMA}"
+    )
+    assert fp.count("|") == 2
 
 
 async def test_unchanged_no_reindex(session_factory, monkeypatch):

@@ -12,7 +12,20 @@ export interface PipelineTransition {
   setStages?: PipelineStage[];
   mapStages?: StageListUpdate;
   checkpointStageId?: string;
+  /**
+   * A retrieval leg came back empty, so the answer rests on less than the index
+   * holds (AUD-0819-03). Phrased for a reader, not for the retriever: "keyword"
+   * and "semantic" are what the two legs mean, and `bm25` / `dense` are not words
+   * a reader owes anyone.
+   */
+  retrievalNote?: string;
 }
+
+/** The reader-facing name of each retrieval leg. */
+const LEG_LABEL: Record<string, string> = {
+  bm25: "keyword search",
+  dense: "semantic search",
+};
 
 type ExtraBag = Record<string, unknown>;
 
@@ -140,6 +153,20 @@ export function pipelineEventToTransition(
           ),
       };
     }
+    case "retrieval_degraded": {
+      // The event used to arrive over SSE and fall through this switch, so an
+      // answer retrieved from one leg of two rendered exactly like an answer
+      // retrieved from both. In production that is the normal case rather than
+      // the exception — the BM25 snapshot lives on the dyno's ephemeral disk.
+      const leg = extra.leg as string | undefined;
+      const label = leg ? LEG_LABEL[leg] : undefined;
+      return {
+        retrievalNote: label
+          ? `${label} returned nothing for this question, so the answer rests on the other half of the index.`
+          : "Part of the search index did not answer, so this rests on less than the full index.",
+      };
+    }
+
     case "data_gate": {
       const sid = extra.stage_id as string;
       const gateStatus = event.status as string;

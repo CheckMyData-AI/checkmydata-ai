@@ -85,6 +85,9 @@ export function ChatPanel() {
 
   useSessionPolling();
 
+  // Retrieval-degradation notes collected while the answer streams (AUD-0819-03).
+  const retrievalNotesRef = useRef<Set<string>>(new Set());
+
   const handlePipelineEvent = useCallback(
     (eventType: string, event: Record<string, unknown>) => {
       const transition = pipelineEventToTransition(eventType, event);
@@ -102,6 +105,12 @@ export function ChatPanel() {
       }
       if (transition.checkpointStageId !== undefined) {
         setCheckpointStageId(transition.checkpointStageId);
+      }
+      if (transition.retrievalNote) {
+        // AUD-0819-03: held on a ref rather than in state — it is read once, when
+        // the finished answer is added below, and re-rendering the panel for it
+        // would say nothing the answer does not already carry.
+        retrievalNotesRef.current.add(transition.retrievalNote);
       }
     },
     [reasoningSetPlan],
@@ -436,6 +445,9 @@ export function ChatPanel() {
       setPipelineStages([]);
       setPipelineRunId(undefined);
       setCheckpointStageId(undefined);
+      // Per question, not per session: a leg that came back empty for the last
+      // question says nothing about this one (AUD-0819-03).
+      retrievalNotesRef.current.clear();
 
       const tempMsgId = `stream-${sessionId}-${Date.now()}`;
       streamingMsgIdRef.current = tempMsgId;
@@ -544,6 +556,9 @@ export function ChatPanel() {
             visualization: result.visualization,
             error: result.error,
             stalenessWarning: result.staleness_warning,
+            retrievalWarning: retrievalNotesRef.current.size
+              ? Array.from(retrievalNotesRef.current).join(" ")
+              : undefined,
             responseType: result.response_type,
             metadataJson: JSON.stringify(metadataObj),
             rawResult: rawResult ?? undefined,

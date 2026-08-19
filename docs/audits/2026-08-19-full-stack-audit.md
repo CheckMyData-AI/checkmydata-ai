@@ -280,3 +280,58 @@ nobody has watched fail is not evidence of anything.
   says it exports `EXPECTED_SYMBOLS` / `EXPECTED_EXTENDS` "for the Task 11 graph
   benchmark". Nothing imports them (`grep -rn 'EXPECTED_SYMBOLS' app/ tests/` outside
   that file returns nothing). A docstring naming a consumer that does not exist.
+
+---
+
+## 7. Findings the remediation itself produced
+
+Three of these were found by fixing the others, which is the argument for doing the
+fixing rather than filing the list.
+
+### AUD-0819-17 — `CLAUDE.md` contradicted itself about `reranker_enabled` (minor)
+
+The 2026-08-10 correction moved the flag to default-OFF in the flags table
+(`CLAUDE.md:295`) and in the deploy notes (`:115`), and **missed the summary line**
+(`:13`), which kept listing it among "Benchmark-gated default-on flags". So one document
+answered the same question two ways, and `config.py:602` (`reranker_enabled: bool = False`)
+agreed with only one of them. A partial correction is worse than none: it leaves a reader
+choosing between two sentences with equal authority. Fixed in this change.
+
+### AUD-0819-18 — a test's docstring names a consumer that does not exist (minor)
+
+`tests/integration/test_code_graph_end_to_end.py:11-12` says it exports
+`EXPECTED_SYMBOLS` / `EXPECTED_EXTENDS` "for the Task 11 graph benchmark".
+`grep -rn 'EXPECTED_SYMBOLS' app/ tests/` returns nothing outside that file. Recorded,
+not fixed — deleting the sentence is right, but it is not this change's business.
+
+### AUD-0819-19 — a test carried its own copy of the fingerprint formula (minor, fixed)
+
+`tests/unit/ops/test_embedding_reconcile.py:29-30` restated
+`f"{chroma_embedding_model}|{embedder_max_tokens}"` in a helper, so adding the symbol-UID
+schema to the fingerprint broke five tests that were only asserting two copies of one
+expression still matched. The helper now delegates to `embedding_fingerprint()`, and the
+shape is pinned once, in the test whose name says it pins the shape.
+
+---
+
+## 8. What remains, and what would confirm it
+
+The block of sixteen is closed except where closing it was the wrong move.
+
+| Item | State |
+|---|---|
+| AUD-0819-01 | **Fixed in code, unconfirmed in production.** Peak measured 967 → 415 MiB through the real path, which is under the 512 MiB quota. The claim that survives a deploy is a run reaching `pipeline_end`; until one does, this is a measurement on a laptop, not a working index in production. |
+| AUD-0819-06 | **Half closed by design.** The false claim is gone and the condition is stated once per process. The protection is not restored, and `docs/adr/0002-ssh-host-key-store.md` says why that is a separate change rather than an improvisation inside a sweep. |
+| AUD-0819-03 | Fixed end-to-end and held together by a test that reads both sides of the allowlist seam. Not replayed in a browser. |
+| AUD-0819-15 | Nine scenarios audited against code (`docs/ux/audits/2026-08-19-analytics-and-honesty.md`). Its own "did not check" section names the gap: no live GA4 property, so SCN-113's 403 branch is unverified. |
+| AUD-0819-18 | Recorded, not fixed. |
+| F-KNOW-09 residuals | Recorded in `docs/qa-audit/issues.md`: unbounded fan-out (8541 concurrent tasks) and discarded `return_exceptions` results. Neither was the reported defect and neither is fixed here. |
+
+**The verification that matters is one command against production after deploy:**
+
+```bash
+heroku logs --app checkmydata-api -n 1500 | grep -c 'pipeline_end'
+```
+
+It returned `0` on 2026-08-19 across a two-hour window. Anything above zero is the
+finding closed; zero again means the memory fix was necessary but not sufficient.

@@ -218,3 +218,39 @@ describe("pipelineEventToTransition", () => {
     expect(pipelineEventToTransition("unknown_event", {})).toBeNull();
   });
 });
+
+describe("retrieval_degraded — AUD-0819-03", () => {
+  it("turns the event into a note naming the missing leg", () => {
+    // Before this, the event arrived over SSE and was dropped: `switch` had no
+    // case for it, so an answer retrieved from one leg of two rendered exactly
+    // like an answer retrieved from both. In production that is the normal case,
+    // because the BM25 snapshot sits on the dyno's ephemeral disk (F-KNOW-07).
+    const t = pipelineEventToTransition("retrieval_degraded", {
+      status: "in_progress",
+      detail: "retrieval leg 'bm25' degraded: empty_result",
+      extra: { leg: "bm25", reason: "empty_result" },
+    });
+    expect(t?.retrievalNote).toBeTruthy();
+    expect(t!.retrievalNote).toMatch(/keyword/i);
+  });
+
+  it("names the dense leg in the reader's words, not the implementation's", () => {
+    const t = pipelineEventToTransition("retrieval_degraded", {
+      status: "in_progress",
+      detail: "retrieval leg 'dense' degraded: empty_result",
+      extra: { leg: "dense", reason: "empty_result" },
+    });
+    expect(t!.retrievalNote).toMatch(/semantic|meaning/i);
+    expect(t!.retrievalNote).not.toMatch(/\bdense\b/);
+  });
+
+  it("still produces a note when extra is absent", () => {
+    // A degraded retrieval the client cannot describe precisely is still one the
+    // reader must be told about; silence is the failure being fixed.
+    const t = pipelineEventToTransition("retrieval_degraded", {
+      status: "in_progress",
+      detail: "retrieval degraded",
+    });
+    expect(t?.retrievalNote).toBeTruthy();
+  });
+});

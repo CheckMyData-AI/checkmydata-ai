@@ -11,9 +11,13 @@ Design notes:
       node types to our normalized symbol kinds.
     * Files that exceed ``ast_max_file_bytes``, look binary/minified, or have
       too many ``ERROR`` AST nodes are skipped and counted in ``ParsedFile.errors``.
-    * Symbol UIDs are deterministic: ``{lang}:{rel_path}:{kind}:{name}``.
-      The definition line is intentionally excluded (CODEIDX-C7) — a line shift
-      above an untouched symbol must not change its UID or orphan inbound edges.
+    * Symbol UIDs are deterministic: ``{lang}:{rel_path}:{kind}:{scope.}{name}``,
+      where the scope is the enclosing class for a nested symbol and absent for a
+      module-level one. The definition line is intentionally excluded (CODEIDX-C7)
+      — a line shift above an untouched symbol must not change its UID or orphan
+      inbound edges — but the scope is a name, not a line, and without it two
+      classes declaring the same method in one file collided (AUD-0819-02). See
+      :data:`SYMBOL_UID_SCHEMA` for the version and what a bump costs.
     * Method symbols carry ``parent_uid`` referencing the enclosing class.
 """
 
@@ -49,8 +53,9 @@ class Symbol:
     """A code symbol extracted from an AST.
 
     Attributes:
-        uid: Stable identifier ``{lang}:{rel_path}:{kind}:{name}``.
-            The definition line is stored in ``start_line`` (CODEIDX-C7).
+        uid: Stable identifier ``{lang}:{rel_path}:{kind}:{scope.}{name}`` — the
+            enclosing scope is part of identity, the definition line is not; the
+            line is stored in ``start_line`` (CODEIDX-C7, AUD-0819-02).
         kind: One of function/method/class/interface/enum/type_alias.
         name: Symbol name (e.g. "validate_user", "UserService").
         file_path: Repository-relative path (forward slashes).
@@ -371,6 +376,21 @@ def _looks_minified(content: bytes) -> bool:
             line_len += 1
     longest = max(longest, line_len)
     return longest > _MINIFIED_LINE_LEN_THRESHOLD
+
+
+#: Version of the symbol-UID format. Bump whenever `_make_uid` changes shape:
+#: existing `code_graph_symbols` rows keep the old form until their file changes
+#: (`save_incremental` merges by FILE, not by UID), so a cross-file edge to a
+#: method in an untouched file dangles and gets pruned until a full rebuild. The
+#: version rides `app.ops.embedding_reconcile.embedding_fingerprint`, so a deploy
+#: that changes it enqueues one idempotent `force_full` reindex by itself rather
+#: than owing an operator a manual step.
+#:
+#: 1 — `{lang}:{path}:{kind}:{name}` (through 2026-08-18)
+#: 2 — `{lang}:{path}:{kind}:{scope.}{name}` — the enclosing scope joins identity,
+#:     because without it two classes declaring the same method in one file
+#:     collided and every UID-keyed consumer lost one of them (AUD-0819-02).
+SYMBOL_UID_SCHEMA = 2
 
 
 def _make_uid(
