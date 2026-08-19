@@ -214,7 +214,7 @@ passes because of where the file sits, not because the codebase is clean.
 
 | ID | Sev | Finding | Measured |
 |---|---|---|---|
-| AUD-0819-14 | minor | `CLAUDE.md:12` states "~6,634 total (6,028 backend collected + 606 frontend Vitest across 86 files)" | 6087 backend, 667 frontend across 91 files → 6754 total |
+| AUD-0819-14 | minor | `CLAUDE.md:12` states "~6,634 total (6,028 backend collected + 606 frontend Vitest across 86 files)" | 6,108 backend, 682 frontend across 92 files → **6,790** total. The coverage figure beside it turned out to be **right**: re-measuring gave 78% (39,830 statements, 8,625 missed), so the corrected line states the measurement rather than dropping the number |
 | AUD-0819-15 | minor | `docs/ux/scenarios.md` carries SCN-113…121 as `draft` with `Last audit: —`, though the code shipped in `[1.16.0]` and is covered | `VendorCredentialsPanel.tsx` (363 lines), `ConnectionHealth.tsx` (474 lines), 36 `ga4`/`analytics` hits in `ConnectionSelector.tsx`, `analytics/source_types.py:32`, `ssh_key_service.py:68-92` |
 | AUD-0819-16 | minor | `docs/qa-audit/issues.md` F-KNOW-09 says `pipeline_runner.py:1428` leaves `asyncio.create_task(_parse_one(rp))` untracked | The site moved to `pipeline_runner.py:1526` and **is** gathered (`:1531`); residual issues are unbounded fan-out (8541 tasks in production) and `return_exceptions=True` results never inspected |
 
@@ -260,11 +260,11 @@ nobody has watched fail is not evidence of anything.
 | AUD-0819-06 | `warn_if_known_hosts_ephemeral()` says it once per process; `config.py` no longer claims a guarantee the host cannot keep; durable store specified in `docs/adr/0002-ssh-host-key-store.md` | `test_ssh_known_hosts_durability.py` (7 tests) | yes — import error, then the behaviour |
 | AUD-0819-07 | Ratchet widened past `components/`; the last scrim tokenised to `lg-scrim` | `pack-bans.test.ts` | **yes — the defect was re-planted and the widened check named `app/app/page.tsx:353`** |
 | AUD-0819-08 | `aria-label` with the full question on the chip | `SuggestionChips.test.tsx` | yes — re-planted; failed on the accessible name, not on a stray reference |
-| AUD-0819-09 | `aria-expanded` + `aria-controls` on the insight toggle, `id` on the detail region | covered by the pack/a11y suites | no dedicated red — structural attribute, asserted by inspection |
+| AUD-0819-09 | `aria-expanded` + `aria-controls` on the insight toggle, `id` on the detail region | `InsightCardA11y.test.tsx` — renders the panel, asserts collapsed→expanded and that the named region is genuinely absent while collapsed | **yes, added after the ladder walk found the gap.** The first pass shipped it with no test and the remediation log said so; the walk turned that admission into a fix |
 | AUD-0819-10 | `useLayoutEffect` commits before paint | `useMobileLayout.test.tsx` | yes, **and the first attempt was thrown away**: under jsdom both hooks flush inside `act()`, so the behavioural test passed against the defect. Replaced with a source ratchet that states plainly what a unit test can and cannot hold here |
 | AUD-0819-11 | The client uses the payload's `upgrade_url` rather than relying on prose | `api.test.ts` "plan paywall (402)" (3 tests) | yes |
 | AUD-0819-12 | A non-401 logout failure says the server session may still be active; HTTP status now rides on client errors | `auth-store.test.ts` (2 tests) | yes, **after the first assertion was found not to discriminate** — it matched a string the code never emits, so it passed with the guard removed; sharpened, then verified red-with-guard-removed and green-with-guard |
-| AUD-0819-13 | `except (TimeoutError, Exception)` → `except Exception`, with `CancelledError` re-raised | existing git-agent suite (16 passed) | no — a dead tuple member; removing it cannot change behaviour, which is the reason it was only ever misleading |
+| AUD-0819-13 | `except (TimeoutError, Exception)` → `except Exception`. **The `CancelledError` re-raise this row first claimed was removed again** — see below | `test_git_agent_auto_pull_handler.py` (4 tests) | yes, and it refuted the fix: the suite stayed green with the re-raise deleted, because `CancelledError` derives from `BaseException` and `except Exception` never caught it. The test now pins the invariant that does exist — it fires on `except BaseException` |
 
 ### Corrections to this audit, made by the work
 
@@ -335,3 +335,39 @@ heroku logs --app checkmydata-api -n 1500 | grep -c 'pipeline_end'
 
 It returned `0` on 2026-08-19 across a two-hour window. Anything above zero is the
 finding closed; zero again means the memory fix was necessary but not sufficient.
+
+---
+
+## 9. The ladder walk, and the two things it found
+
+Run after the coverage table rather than instead of it, because a table compares two
+sides and cannot see an absence. Each finding was walked change → test → document, and
+the seams were checked mechanically:
+
+```bash
+for id in AUD-0819-01 … AUD-0819-17; do
+  code=$(grep -rl "$id" backend/app frontend/src --include='*.py' --include='*.ts' --include='*.tsx' | grep -v '__tests__\|/tests/' | wc -l)
+  test=$(grep -rl "$id" backend/tests frontend/src/__tests__ | wc -l)
+  doc=$(grep -rl "$id" docs *.md | wc -l)
+  printf "%-14s code=%s test=%s doc=%s\n" "$id" "$code" "$test" "$doc"
+done
+```
+
+Two rows came back `test=0` on findings that had shipped code, and both were real:
+
+1. **AUD-0819-09 had no test.** The remediation log admitted it in prose ("no dedicated
+   red — structural attribute, asserted by inspection"), which is how an untested a11y
+   attribute survives to be deleted by the next refactor. Closed with a render-level test
+   that was watched failing with the attribute removed.
+2. **AUD-0819-13's fix was wrong, and writing its test proved it.** The row claimed the
+   handler had been swallowing `asyncio.CancelledError`. It had not:
+   `CancelledError` derives from `BaseException`, so `except Exception` never caught it,
+   and deleting the re-raise left the suite green. The guard was asserting a protection
+   that already existed — the exact species of claim this audit was convened to remove,
+   reintroduced by the audit's own remediation. The clause is gone; the test stays,
+   because it fires on `except BaseException`, which is the way the invariant can
+   actually be broken.
+
+The doc-only findings (14, 15, 16, 17) correctly report `code=0 test=0`. AUD-0819-07
+reports `code=0` because its fix is a one-token swap to `lg-scrim`; the durable record is
+the widened ratchet, not a comment.
