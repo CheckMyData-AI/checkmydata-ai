@@ -562,3 +562,32 @@ collection, the client computes vectors and ships them, so the per-batch activat
 stays in the worker. It is bounded and measured (~125 MiB over baseline at batch 8). It
 also does not touch the BM25 snapshots, which are separate pickles on the same ephemeral
 disk — that half of F-KNOW-07 stands.
+
+### §10 second addendum — the 87 warnings were one number repeated, and it sharpens the diagnosis
+
+A later log window showed **87** `R14` events and briefly looked like a contradiction of
+the "no leak at rest" finding above. It is not. Every one of them is stamped
+**20:11:02 → 20:39:41**, before the v224 worker restarted at 20:39:55, and every one
+reports the *same* value: `mem=747M(125.5%)`, re-emitted every four minutes.
+
+That flat repetition is the fact worth keeping. The index job had already died at
+12:23:55; nothing was running; and the old worker still held 747 MiB for the next
+half hour until the release replaced it. **A finished job did not give the memory back.**
+
+Both windows after a restart are clean:
+
+| Window | Worker | `R14`/`R15` |
+|---|---|---|
+| 20:11 → 20:39 | pre-v224 (post-failed-index) | 87, all at a flat `747M(125.5%)` |
+| 20:40 → 21:41 | v224 | **0** |
+| 21:42 → (v225 restart at 21:41:43) | v225 | **0** |
+
+So the shape is: baseline fits, the workload does not, and the memory the workload takes
+stays taken for the life of the process. That is what an in-process HNSW index does — it
+is resident, not transient — and it is the strongest argument yet for
+`CHROMA_SERVER_URL`: not that the worker is short of memory in general, but that the
+vector index has no business being inside a process that is supposed to finish a job and
+move on.
+
+Recorded because the raw count read the other way. `grep -c` over a log window answers a
+question about the window, not about now.
