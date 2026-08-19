@@ -186,13 +186,24 @@ def test_daily_sync_registered_with_timeout_when_arq_available(monkeypatch):
     worker_mod.func = fake_func
     w = _import_worker_with_arq_stub(monkeypatch, worker_mod)
 
-    registration = next(f for f in w.WorkerSettings.functions if isinstance(f, tuple))
+    # Select by NAME, not by position. This used to take the first tuple in the
+    # list, which silently meant "the only wrapped function" — so registering a
+    # second one (run_repo_index, AUD-0819-20) broke a test that was never about
+    # ordering.
+    registration = next(
+        f
+        for f in w.WorkerSettings.functions
+        if isinstance(f, tuple) and f[1] == "run_daily_project_knowledge_sync"
+    )
     assert registration == (
         "Function",
         "run_daily_project_knowledge_sync",
         {"timeout": 7200},
     )
-    assert captured and captured[0][1] == {"timeout": 7200}
+    # `captured` holds the coroutine object, not its name.
+    assert {c.__name__: kw for c, kw in captured}["run_daily_project_knowledge_sync"] == {
+        "timeout": 7200
+    }
 
 
 @pytest.mark.asyncio
@@ -249,3 +260,68 @@ async def test_dispatch_db_index_falls_back_in_process(monkeypatch):
     assert "connA" in conn_routes._db_index_tasks
     await asyncio.sleep(0.05)
     assert ran["connection_id"] == "connA"
+
+
+def test_repo_index_registered_with_its_own_configurable_timeout(monkeypatch):
+    """AUD-0819-20: the longest job in the system had the only unconfigurable ceiling.
+
+    `run_repo_index` inherited the class-level `job_timeout = 1800` while its two
+    newer siblings read `daily_knowledge_sync_job_timeout_seconds` and
+    `analytics_collect_job_timeout_seconds`. Production hit that hardcoded ceiling
+    on 2026-08-19: `1800.09s ! run_repo_index failed, TimeoutError` with
+    `code_symbol_embed` still running after 29 minutes on a repo of 8,552 files.
+    The default stays 1800 — a knob, not a silent behaviour change — but a repo
+    that genuinely needs longer can now say so without a code edit.
+    """
+    import types
+
+    captured: list = []
+
+    def fake_func(coroutine, **kwargs):
+        captured.append((coroutine.__name__, kwargs))
+        return ("Function", coroutine.__name__, kwargs)
+
+    worker_mod = types.ModuleType("arq.worker")
+    worker_mod.func = fake_func
+    w = _import_worker_with_arq_stub(monkeypatch, worker_mod)
+
+    names = {n: kw for n, kw in captured}
+    assert "run_repo_index" in names, (
+        "run_repo_index must be registered with an explicit timeout, not left on the "
+        "class-level job_timeout"
+    )
+    assert names["run_repo_index"] == {"timeout": 1800}
+    # The raw coroutine must no longer be registered bare beside the wrapped one.
+    bare = [f for f in w.WorkerSettings.functions if getattr(f, "__name__", "") == "run_repo_index"]
+    assert bare == []
+
+
+def test_repo_index_timeout_reads_the_setting(monkeypatch):
+    """The value comes from config, so an operator can raise it for a huge repo."""
+    import types
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "repo_index_job_timeout_seconds", 5400, raising=False)
+
+    captured: list = []
+
+    def fake_func(coroutine, **kwargs):
+        captured.append((coroutine.__name__, kwargs))
+        return ("Function", coroutine.__name__, kwargs)
+
+    worker_mod = types.ModuleType("arq.worker")
+    worker_mod.func = fake_func
+    w = _import_worker_with_arq_stub(monkeypatch, worker_mod)
+    assert w is not None
+    assert dict(captured)["run_repo_index"] == {"timeout": 5400}
+
+
+def test_a_non_positive_repo_index_timeout_is_refused_at_boot():
+    """Project convention: a non-positive bound reads as configured and idles."""
+    import pytest as _pytest
+
+    from app.config import Settings
+
+    with _pytest.raises(ValueError, match="REPO_INDEX_JOB_TIMEOUT_SECONDS"):
+        Settings(repo_index_job_timeout_seconds=0)
