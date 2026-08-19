@@ -55,7 +55,7 @@ class TestKeyValueSecrets:
         assert "abcdef1234567890" not in out
 
     def test_an_ordinary_message_is_returned_unchanged(self):
-        raw = "relation \"users\" does not exist"
+        raw = 'relation "users" does not exist'
         assert scrub_text(raw) == raw
 
 
@@ -74,7 +74,7 @@ class TestConnectorSites:
                 if re.search(r"error=str\((?:e|exc)\)", line):
                     offenders.append(f"connectors/{path.name}:{i}")
         assert offenders == [], (
-            "these sites return an unredacted exception string to the caller: " f"{offenders}"
+            f"these sites return an unredacted exception string to the caller: {offenders}"
         )
 
     def test_the_sentry_hook_still_uses_the_same_patterns(self):
