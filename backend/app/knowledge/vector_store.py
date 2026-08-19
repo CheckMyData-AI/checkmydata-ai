@@ -2,6 +2,7 @@ import importlib.util
 import logging
 import threading
 from pathlib import Path
+from urllib.parse import urlparse
 
 import chromadb
 from chromadb.api.types import EmbeddingFunction
@@ -99,6 +100,47 @@ def _get_embedding_function() -> EmbeddingFunction | None:
         return None
 
 
+def _parse_chroma_server_url(value: str) -> tuple[str, int, bool]:
+    """Split ``CHROMA_SERVER_URL`` into the ``(host, port, ssl)`` HttpClient wants.
+
+    AUD-0819-23. ``chromadb.HttpClient`` takes a HOSTNAME, not a URL, and this
+    setting's name invites a URL — the value was passed straight through as
+    ``host``, so ``https://chroma.example.com`` became
+    ``http://https://chroma.example.com:8000``. Every test mocked ``chromadb``
+    wholesale, so the construction was never exercised.
+
+    A bare host keeps the historical ``port=8000, ssl=False`` so an existing
+    deployment is not silently repointed. An unparseable value raises rather than
+    falling back to localhost: a typo that quietly reads an empty index looks
+    exactly like a working deployment with no data.
+    """
+    # Strip whitespace first, but test for the scheme BEFORE trimming slashes:
+    # `rstrip("/")` turns "https://" into "https:", which no longer contains
+    # "://" and would then parse as a bare host named "https".
+    stripped = (value or "").strip()
+    if "://" in stripped:
+        parsed = urlparse(stripped.rstrip("/"))
+        host = parsed.hostname
+        if not host:
+            raise ValueError(
+                f"CHROMA_SERVER_URL is not a usable address: {value!r}. "
+                "Expected e.g. https://chroma.example.com or chroma.internal:8000."
+            )
+        secure = parsed.scheme == "https"
+        return host, parsed.port or (443 if secure else 80), secure
+    host, _, port_text = stripped.rstrip("/").partition(":")
+    if not host:
+        raise ValueError(
+            f"CHROMA_SERVER_URL is not a usable address: {value!r}. "
+            "Expected e.g. https://chroma.example.com or chroma.internal:8000."
+        )
+    try:
+        port = int(port_text) if port_text else 8000
+    except ValueError as exc:
+        raise ValueError(f"CHROMA_SERVER_URL has a non-numeric port: {value!r}.") from exc
+    return host, port, False
+
+
 class VectorStore:
     """ChromaDB-backed vector store for RAG retrieval.
 
@@ -110,9 +152,8 @@ class VectorStore:
 
     def __init__(self):
         if settings.chroma_server_url:
-            self._client = chromadb.HttpClient(
-                host=settings.chroma_server_url,
-            )
+            host, port, ssl = _parse_chroma_server_url(settings.chroma_server_url)
+            self._client = chromadb.HttpClient(host=host, port=port, ssl=ssl)
             logger.debug("ChromaDB: using remote server at %s", settings.chroma_server_url)
         else:
             persist_dir = Path(settings.chroma_persist_dir)

@@ -53,7 +53,12 @@ class TestInit:
         mock_settings.chroma_server_url = "http://chroma:8000"
         chroma_mod, _ = mock_chromadb
         VectorStore()
-        chroma_mod.HttpClient.assert_called_once_with(host="http://chroma:8000")
+        # The URL is split into what HttpClient actually takes (AUD-0819-23). This
+        # assertion used to be `host="http://chroma:8000"`, which is what the code
+        # did and not what the client wants — with the real chromadb that resolves
+        # to `http://http://chroma:8000:8000`. The whole suite mocked `chromadb`,
+        # so the construction was never exercised and the mock agreed with the bug.
+        chroma_mod.HttpClient.assert_called_once_with(host="chroma", port=8000, ssl=False)
 
 
 class TestCollectionName:
