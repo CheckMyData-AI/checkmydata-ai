@@ -371,3 +371,69 @@ Two rows came back `test=0` on findings that had shipped code, and both were rea
 The doc-only findings (14, 15, 16, 17) correctly report `code=0 test=0`. AUD-0819-07
 reports `code=0` because its fix is a one-token swap to `lg-scrim`; the durable record is
 the widened ratchet, not a comment.
+
+---
+
+## 10. The production verdict — measured after v223
+
+Deployed 2026-08-19 11:53 UTC (`checkmydata-api` v222 → **v223**, new web *and* worker
+images; `checkmydata-web` v173 → v174) via PR #179 → CI green → the Deploy workflow.
+§8 said the claims that mattered could only be settled against production. They were.
+
+### Confirmed fixed
+
+| Finding | Before | After v223 |
+|---|---|---|
+| AUD-0819-02 — chunk batches dropped to `DuplicateIDError` | **9 per run**, ~1800 chunks lost silently | **0**, and `failed to upsert`: **0** |
+| AUD-0819-02 — symbols lost to UID collisions in the graph | 24,752 persisted from 25,192 parsed | **25,161** persisted |
+| Self-completing reindex (D3, the `SYMBOL_UID_SCHEMA` fingerprint) | n/a | fired unprompted at boot: `queue_embedding_reindex: dropping collections and re-enqueuing 2 project(s)` — no operator step was owed or taken |
+| AUD-0819-01 — the OOM kill | `R15 mem=1053M(203.3%)` → `SIGKILL` → `exit 137` → crashed | **no `R15`, no `137`.** Peak now oscillates 613–676 MiB |
+
+### Not fixed — and the constraint moved rather than closing
+
+The run still does not reach `pipeline_end`. It now dies of something else:
+
+```
+12:23:55: 1800.09s ! 02ae2117…:run_repo_index failed, TimeoutError
+  … pipeline_runner.py:1437 in _run_code_symbol_embed
+  asyncio.exceptions.CancelledError → arq/worker.py:599 asyncio.wait_for(task, timeout_s)
+```
+
+`code_symbol_embed` started 11:54:55 and was still running 29 minutes later, when arq's
+job ceiling cancelled it. The cause is visible in the memory samples: after the fix the
+worker sits at **102–111% of its 512 MiB quota, continuously** (613, 625, 642, 645, 647,
+661, 663, 665, 673, 676 MiB) — so Heroku swaps the whole time and a stage that costs
+~5 minutes of CPU on a laptop takes over 29 on a swapping dyno.
+
+**So the batch fix bought survival, not completion.** It was necessary — the process no
+longer dies and the incremental upserts do land — and it is not sufficient.
+
+**Lowering the batch further is now counter-productive.** `EMBEDDING_UPSERT_BATCH_SIZE=4`
+would shave tens of MiB and make the stage slower, and slowness is the binding
+constraint now, not peak. The measured curve says peak is asymptotic below 8 while time
+keeps rising.
+
+### What would actually close it
+
+The worker is **Standard-1X — 512 MiB** (`heroku ps`), running an ONNX transformer over
+8,552 files and 25,161 symbols. Observed peak 676 MiB. It does not fit, and
+`CLAUDE.md` has said "the worker already runs over quota" since before this audit.
+
+| Option | Effect | Cost |
+|---|---|---|
+| **Worker → Standard-2X (1 GB)** | 676 MiB peak fits with ~35% headroom, swapping stops, the stage returns to CPU-bound | ~$25/mo more — **a spend decision, not an engineering one** |
+| Raise arq's job ceiling | The stage finishes eventually, still swapping; a 30-min crawl becomes 60+ and collides with the hourly cron | free, treats the symptom |
+| Split `code_symbol_embed` into checkpointed sub-jobs | Each sub-job fits the ceiling; still slow while swapping | real work, does not remove the swap |
+
+### A related finding this surfaced
+
+**AUD-0819-20 (minor)** — `job_timeout = 1800` is hardcoded in `WorkerSettings`
+(`app/worker.py:391`) while its two siblings read configurable settings
+(`daily_knowledge_sync_job_timeout_seconds`, `analytics_collect_job_timeout_seconds`).
+`run_repo_index` — the longest job in the system — is the one with no knob.
+
+**AUD-0819-21 (minor)** — the `pipeline_start` de-duplication (AUD-0819-04) did not cover
+**step** events: `graph_build: completed` still arrives twice per process, once from the
+coordinator's run-scoped `_record` and once from `tracker.step`'s own completion. Same
+class of amplification, different site; missed by the original finding, which named only
+`pipeline_start`.
