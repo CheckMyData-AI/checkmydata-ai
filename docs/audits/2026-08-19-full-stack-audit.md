@@ -511,3 +511,54 @@ recorded so the next flake in that suite is not diagnosed from scratch.
 
 Note the shape: a redundant statement is not harmless. This one had no effect except to
 be the place where an unrelated infrastructure weakness became a red build.
+
+### AUD-0819-23 — the escape hatch could not parse its own setting (minor, fixed)
+
+Found while evaluating the third option in §10, which is the point of writing options
+down: `chromadb.HttpClient(host, port=8000, ssl=False, …)` takes a **hostname**, the
+setting is named `chroma_server_url`, and the value was passed straight through as
+`host`. So `CHROMA_SERVER_URL=https://chroma.example.com` resolved to
+`http://https://chroma.example.com:8000`.
+
+The whole suite mocked `chromadb` wholesale, so the construction was never exercised —
+and `tests/unit/test_vector_store.py` asserted `HttpClient(host="http://chroma:8000")`,
+i.e. **the test agreed with the bug**. A green suite was evidence that the code did what
+the test said, and nothing more.
+
+Now split into `(host, port, ssl)` with a full URL, a bare host (keeping the historical
+port 8000 / no TLS so an existing deployment is not silently repointed), and a refusal
+rather than a localhost fallback for an unparseable value — a typo that quietly reads an
+empty index looks exactly like a working deployment with no data. `CHROMA_SERVER_URL` is
+documented in `.env.example` for the first time.
+
+### §10 addendum — the idle worker fits; the workload does not
+
+Measured after v224, and it corrects the reading in §10 twice over.
+
+First, the mechanism: Heroku emits `Process running mem=…` **only** as part of the
+over-quota warning — in the pre-deploy log, `mem=` lines and `R14`/`R15` lines number 5
+and 5, and every `mem=` line has an `R14` within two lines. So the absence of samples is
+not missing data; it is the dyno being under quota.
+
+Second, the reading: the three `747M(125.5%)` samples timestamped after the v224 release
+came from the **old** dyno — the worker restarted at 20:39:55 and Heroku's sampler
+reports the last known value with a lag. Across the following 17 minutes the freshly
+started worker logged **0** `R14` and **0** samples.
+
+So the baseline is fine and there is no leak at rest: the 613 → 747 MiB climb was the
+indexing workload — the ONNX activations per batch (fixed, and bounded now) plus Chroma's
+in-memory HNSW filling with 25,161 vectors (inherent to the corpus, not to any setting).
+
+That makes a **third** option the architecturally right one rather than merely cheapest:
+
+| Option | What it closes | Cost |
+|---|---|---|
+| Worker → Standard-2X | the symptom; index completes | ~$25/mo |
+| `CODE_GRAPH_ENABLED=false` | index completes without code symbols | free; loses a feature |
+| **`CHROMA_SERVER_URL` → a Chroma service** | the HNSW graph leaves the worker **and** the store stops being ephemeral, so `repair_embeddings` stops running after every restart — AUD-0819-01 and the Chroma half of AUD-0819-03 at once | running one service |
+
+The third does **not** move the ONNX embedding work: with an `embedding_function` on the
+collection, the client computes vectors and ships them, so the per-batch activation peak
+stays in the worker. It is bounded and measured (~125 MiB over baseline at batch 8). It
+also does not touch the BM25 snapshots, which are separate pickles on the same ephemeral
+disk — that half of F-KNOW-07 stands.
