@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 
 _ACTIVE_STATUSES = ("queued", "running", "cancelling")
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled")
+# Bound for RunCoordinator._last_journalled (AUD-0819-21).
+_LAST_JOURNALLED_MAX = 512
 
 
 class RunAlreadyActiveError(Exception):
@@ -125,6 +127,9 @@ class RunCoordinator:
     _error_log = ErrorLogService()
     _attached = False
     _wf_to_run: dict[str, str] = {}
+    #: Last ``(step, status)`` journalled per run, for the AUD-0819-21 guard in
+    #: ``_journal``. FIFO-bounded so an abandoned run cannot leak an entry forever.
+    _last_journalled: dict[str, tuple[str, str]] = {}
 
     def __init__(self) -> None:
         self._manifests: dict[str, list[Step]] = {}
@@ -526,6 +531,33 @@ class RunCoordinator:
         elapsed_ms: float | None = None,
         level: str = "info",
     ) -> None:
+        # AUD-0819-21: eight of the pipeline's fourteen steps announce their own
+        # terminal event AND run inside `tracker.step`, whose context manager emits
+        # a second one — so the run detail an operator reads (SCN-107) showed each of
+        # them twice, and `run.version` was bumped twice for one step. Measured in
+        # production on 2026-08-19: two `graph_build: completed` 4 ms apart, the first
+        # carrying "Persisted 25161 symbols", the second echoing the start label.
+        # Fixing the eight emitters changes the pipeline's event contract and belongs
+        # on its own change; the durable artifact is made idempotent here, because
+        # that is the half a reader sees.
+        #
+        # Held in memory rather than read back from the journal: `IndexingRunEvent.id`
+        # is a UUID and `ts` resolves to whole seconds on SQLite, so "the previous
+        # row" is not a question the table can answer unambiguously — a query-based
+        # guard would be flaky by construction. It also keeps a SELECT off every
+        # journal write. A restart or a second dyno loses the marker, which lets a
+        # duplicate through; that degrades the de-duplication, never correctness.
+        #
+        # Only the IMMEDIATELY preceding entry is compared. A genuine re-run emits
+        # `started` first, which breaks the adjacency and is journalled in full.
+        key = (step, status)
+        if RunCoordinator._last_journalled.get(run.id) == key:
+            logger.debug("run journal: dropped a repeated %s/%s for run %s", step, status, run.id)
+            return
+        RunCoordinator._last_journalled[run.id] = key
+        if len(RunCoordinator._last_journalled) > _LAST_JOURNALLED_MAX:
+            for old in list(RunCoordinator._last_journalled)[: _LAST_JOURNALLED_MAX // 2]:
+                RunCoordinator._last_journalled.pop(old, None)
         db.add(
             IndexingRunEvent(
                 run_id=run.id,

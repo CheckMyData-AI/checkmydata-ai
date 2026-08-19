@@ -401,9 +401,19 @@ The run still does not reach `pipeline_end`. It now dies of something else:
 
 `code_symbol_embed` started 11:54:55 and was still running 29 minutes later, when arq's
 job ceiling cancelled it. The cause is visible in the memory samples: after the fix the
-worker sits at **102–111% of its 512 MiB quota, continuously** (613, 625, 642, 645, 647,
-661, 663, 665, 673, 676 MiB) — so Heroku swaps the whole time and a stage that costs
-~5 minutes of CPU on a laptop takes over 29 on a swapping dyno.
+worker sits over quota continuously (613, 625, 642, 645, 647, 661, 663, 665, 673,
+676 MiB) — so Heroku swaps the whole time and a stage that costs ~5 minutes of CPU on
+a laptop takes over 29 on a swapping dyno.
+
+**Correction, measured half an hour later:** the figure above is not a ceiling. A wider
+sample shows memory still **rising** — **747 MiB (125.5%)** — with `R14` logged **382
+times** since the release and `pipeline_end` still at **0**. So there are two separate
+costs, and the fix addressed one of them: the per-batch activation peak (real — the
+`SIGKILL` at 1053 MiB stopped) and a slower growth across the worker's lifetime. The
+second is Chroma's in-memory HNSW index growing as 25,161 vectors are added
+(~38 MiB of raw vectors plus graph overhead), which is inherent to the work and cannot
+be tuned away with a batch size. The first reading of "613–676 MiB, capped" was a
+short window mistaken for a plateau.
 
 **So the batch fix bought survival, not completion.** It was necessary — the process no
 longer dies and the incremental upserts do land — and it is not sufficient.
@@ -424,6 +434,11 @@ The worker is **Standard-1X — 512 MiB** (`heroku ps`), running an ONNX transfo
 | **Worker → Standard-2X (1 GB)** | 676 MiB peak fits with ~35% headroom, swapping stops, the stage returns to CPU-bound | ~$25/mo more — **a spend decision, not an engineering one** |
 | Raise arq's job ceiling | The stage finishes eventually, still swapping; a 30-min crawl becomes 60+ and collides with the hourly cron | free, treats the symptom |
 | Split `code_symbol_embed` into checkpointed sub-jobs | Each sub-job fits the ceiling; still slow while swapping | real work, does not remove the swap |
+| `CODE_GRAPH_ENABLED=false` + `LINEAGE_ENABLED=false` | `code_symbol_embed` is gated on non-empty `parsed_files` (`pipeline_runner.py:566`), which only fill when `code_graph_enabled` — so the stage is skipped and **the index completes**, at the cost of code-symbol retrieval | free, but a **product** decision: it trades a default-on feature for a working index |
+
+The dyno resize was attempted from this session and refused by the safety classifier as a
+production-mutating action, which is the correct gate for it. It is recorded here as the
+one step this remediation could not take itself.
 
 ### A related finding this surfaced
 
@@ -432,8 +447,38 @@ The worker is **Standard-1X — 512 MiB** (`heroku ps`), running an ONNX transfo
 (`daily_knowledge_sync_job_timeout_seconds`, `analytics_collect_job_timeout_seconds`).
 `run_repo_index` — the longest job in the system — is the one with no knob.
 
-**AUD-0819-21 (minor)** — the `pipeline_start` de-duplication (AUD-0819-04) did not cover
+**AUD-0819-21 (minor, now fixed)** — the `pipeline_start` de-duplication (AUD-0819-04) did not cover
 **step** events: `graph_build: completed` still arrives twice per process, once from the
 coordinator's run-scoped `_record` and once from `tracker.step`'s own completion. Same
 class of amplification, different site; missed by the original finding, which named only
 `pipeline_start`.
+
+### AUD-0819-20 and AUD-0819-21 — closed in the same session
+
+**AUD-0819-20** — `run_repo_index` now carries `repo_index_job_timeout_seconds`
+(`REPO_INDEX_JOB_TIMEOUT_SECONDS`, default **1800 — unchanged**, so this is a knob and
+not a behaviour change smuggled in as a refactor). Tests:
+`test_task_queue.py::test_repo_index_registered_with_its_own_configurable_timeout` and
+two siblings. Fixing it exposed a brittle neighbour: the daily-sync registration test
+selected "the first tuple" in `WorkerSettings.functions`, which silently meant "the only
+wrapped function" — registering a second one broke a test that was never about ordering.
+It now selects by name.
+
+**AUD-0819-21** — the run journal is idempotent about a repeated `(step, status)`.
+Measured extent: **8 of the pipeline's 14 steps** emit their own terminal event *and* run
+inside `tracker.step` — `ast_parse`, `code_symbol_embed`, `cross_file_analysis`,
+`detect_changes`, `graph_build`, `graph_clustering`, `graph_db_bridge`,
+`project_profile` — so `_apply_event` wrote two `IndexingRunEvent` rows and bumped
+`run.version` twice for one step, and the Runs tab (SCN-107) showed each of them twice.
+
+The first implementation of the guard was **thrown away**: it read "the previous row"
+back from the table, and `IndexingRunEvent.id` is a UUID while `ts` resolves to whole
+seconds on SQLite — so "which row came last" is not a question that table can answer, and
+the guard would have been flaky by construction rather than by accident. The replacement
+holds the marker in memory, which is also one SELECT fewer on every journal write; a
+restart or a second dyno loses it, which degrades de-duplication and never correctness.
+Watched failing with the guard removed.
+
+Fixing the eight emitters is a change to the pipeline's event contract and is left to its
+own change, with the eight sites and their line numbers recorded above so it needs no
+re-derivation.

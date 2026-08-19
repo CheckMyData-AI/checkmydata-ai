@@ -359,6 +359,12 @@ def _analytics_collect_timeout() -> int:  # pragma: no cover
     return settings.analytics_collect_job_timeout_seconds
 
 
+def _repo_index_timeout() -> int:  # pragma: no cover
+    from app.config import settings
+
+    return settings.repo_index_job_timeout_seconds
+
+
 def _redis_settings():  # pragma: no cover
     """Build ARQ RedisSettings from REDIS_URL env var."""
     from app.core.redis_tls import arq_redis_settings
@@ -373,8 +379,15 @@ class WorkerSettings:  # pragma: no cover
     functions = [
         run_db_index,
         run_code_db_sync,
-        run_repo_index,
         run_batch,
+        # AUD-0819-20: the repo index gets its own ceiling rather than inheriting
+        # the class-level `job_timeout` below. It is the longest job here, and it
+        # was the only long one with no knob — production hit the hardcoded 1800 s
+        # with `code_symbol_embed` still running after 29 minutes.
+        _arq_func_with_timeout(
+            run_repo_index,
+            _repo_index_timeout(),
+        ),
         _arq_func_with_timeout(
             run_daily_project_knowledge_sync,
             _daily_sync_timeout(),

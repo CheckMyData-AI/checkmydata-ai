@@ -445,6 +445,15 @@ class Settings(BaseSettings):
     # Wall-clock budget for one connection's collection job. Registered on the
     # ARQ function (arq has no per-enqueue timeout) and passed to the in-process
     # fallback for parity.
+    # AUD-0819-20: the repo index is the longest job in the system and was the only
+    # one without a configurable ceiling — it inherited ARQ's class-level
+    # `job_timeout = 1800` while its two newer siblings read their own settings.
+    # Production hit exactly that on 2026-08-19: `1800.09s ! run_repo_index failed,
+    # TimeoutError` with `code_symbol_embed` still running after 29 minutes over
+    # 8,552 files. The default is unchanged; a repo that genuinely needs longer can
+    # now say so without a code edit. Note that raising this is only a fix when the
+    # worker is not swapping — on an over-quota dyno it buys a longer crawl.
+    repo_index_job_timeout_seconds: int = 1800
     analytics_collect_job_timeout_seconds: int = 1800
     # Attempts per vendor HTTP call before it is reported as transient. Only
     # transient/quota failures are retried — auth and permission never are.
@@ -1010,6 +1019,8 @@ class Settings(BaseSettings):
             raise ValueError("ANALYTICS_JOURNAL_RETENTION_DAYS must be >= 1.")
         if self.embedding_upsert_batch_size < 1:
             raise ValueError("EMBEDDING_UPSERT_BATCH_SIZE must be >= 1.")
+        if self.repo_index_job_timeout_seconds <= 0:
+            raise ValueError("REPO_INDEX_JOB_TIMEOUT_SECONDS must be positive.")
         return self
 
 
