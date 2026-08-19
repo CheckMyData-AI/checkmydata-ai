@@ -482,3 +482,32 @@ Watched failing with the guard removed.
 Fixing the eight emitters is a change to the pipeline's event contract and is left to its
 own change, with the eight sites and their line numbers recorded above so it needs no
 re-derivation.
+
+### AUD-0819-22 — the integration suite shares one database connection (minor, recorded)
+
+Found by a CI failure on `main` that the same tree had passed on the branch —
+`git diff ea03303 e20141b` is empty, so it was a flake, not a regression:
+
+```
+FAILED tests/integration/test_auth_cascade.py::test_core_delete_project_cascades_to_connections
+  sqlalchemy.exc.InvalidRequestError: Could not refresh instance '<Project ...>'
+```
+
+The refresh was one statement after a successful `commit()`, so the row it could not
+find had just been written. `tests/integration/conftest.py:50-79` explains why that is
+possible: `engine` is **session-scoped** over a `StaticPool`, deliberately, because a
+bare in-memory SQLite gives every pooled connection its own empty database. The
+consequence is not written down there: **every integration test shares one connection**,
+committed rows outlive their test, and a background task leaked by an earlier test can
+roll back or delete on that connection between two statements of a later one. This
+codebase spawns background tasks, and the `client` fixture points
+`app.models.base.async_session_factory` at that same shared connection.
+
+The immediate exposure was removed by deleting a redundant round-trip (`Project.id` has
+a Python-side default and the session is `expire_on_commit=False`, so the refresh
+returned nothing it did not already have). The shared-connection design is **not** fixed
+here — per-test isolation is a change to the whole integration harness — and it is
+recorded so the next flake in that suite is not diagnosed from scratch.
+
+Note the shape: a redundant statement is not harmless. This one had no effect except to
+be the place where an unrelated infrastructure weakness became a red build.
