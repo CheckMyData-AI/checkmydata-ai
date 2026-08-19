@@ -165,9 +165,15 @@ class RunCoordinator:
             raise RunAlreadyActiveError(existing.id)
 
         manifest = resolve_manifest(kind, flags=_manifest_flags())
+        # broadcast=False: `_record` below emits the canonical `pipeline_start`,
+        # the one carrying `run_id` so the UI can attach the step to this run.
+        # Letting both fire is AUD-0819-04 — four log lines and a doubled step in
+        # every SSE stream. The terminal path already works this way; see the
+        # note above `tracker.end` in `finish`.
         wf_id = await tracker.begin(
             kind,
             {"project_id": project_id, "connection_id": connection_id or "", "trigger": trigger},
+            broadcast=False,
         )
         run = IndexingRun(
             workflow_id=wf_id,

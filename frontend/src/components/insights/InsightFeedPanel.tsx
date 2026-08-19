@@ -90,6 +90,11 @@ function InsightCard({
     <div className={`rounded-xl border ${cfg.border} ${cfg.bg} transition-all`}>
       <button
         onClick={() => setExpanded((p) => !p)}
+        // AUD-0819-09: sixteen other toggles in this tree announce their state;
+        // this one did not, so a screen reader could not tell an open card from a
+        // closed one, and the chevron that shows it visually is aria-hidden.
+        aria-expanded={expanded}
+        aria-controls={`insight-detail-${insight.id}`}
         className={`flex items-start gap-2 px-3 py-2 w-full text-left`}
       >
         <Icon name={iconName} size={14} className={`${cfg.color} mt-0.5 shrink-0`} />
@@ -115,7 +120,7 @@ function InsightCard({
       </button>
 
       {expanded && (
-        <div className="px-3 pb-2.5 space-y-2">
+        <div id={`insight-detail-${insight.id}`} className="px-3 pb-2.5 space-y-2">
           <p className="text-xs text-text-secondary leading-relaxed">
             {insight.description}
           </p>

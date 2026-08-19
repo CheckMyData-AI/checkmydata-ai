@@ -350,7 +350,7 @@ function AppPageContent() {
         {isMobile && notesOpen && (
           <div className="fixed inset-0 z-50 md:hidden">
             <div
-              className="absolute inset-0 bg-black/60 animate-fade-in"
+              className="absolute inset-0 lg-scrim animate-fade-in"
               onClick={toggleNotes}
               aria-hidden="true"
             />

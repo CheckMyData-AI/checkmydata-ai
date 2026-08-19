@@ -786,13 +786,24 @@ class Settings(BaseSettings):
     # R1-2 / F-SEC-4: SSH host-key verification policy.
     #   "tofu"      — trust-on-first-use: pin the host key on first connect into
     #                 ``ssh_known_hosts_path`` and verify against it thereafter
-    #                 (secure default; a *changed* key is rejected)
+    #                 (a *changed* key is then rejected)
     #   "strict"    — verify against ``ssh_known_hosts_path`` only; reject unknown hosts
     #   "disabled"  — known_hosts=None (no verification; MITM-exposed; explicit,
     #                 logged, non-production-only override)
     # Use the ``SSH_HOST_KEY_POLICY`` env var to override.
+    #
+    # AUD-0819-06 — the guarantee above is only as durable as the store. "tofu"
+    # rejects a changed key only while the pin from the previous connect still
+    # exists; on a host whose ``ssh_known_hosts_path`` is emptied between
+    # restarts, first use runs again every boot and no rejection can occur. That
+    # is the case on Heroku with the default path below, so ``tofu`` is NOT a
+    # secure default there — it degrades to "verified within one dyno lifetime".
+    # ``connect_with_policy`` says so once per process; a durable store is
+    # docs/adr/0002-ssh-host-key-store.md.
     ssh_host_key_policy: str = "tofu"
-    # Where TOFU/strict host keys are stored (writable path).
+    # Where TOFU/strict host keys are stored (writable path). ``/tmp`` is chosen
+    # because it is the only reliably writable location on the deploy target —
+    # not because it is durable. Point this at real storage where one exists.
     ssh_known_hosts_path: str = "/tmp/checkmydata_known_hosts"
     # F-SEC-5: restrict ssh_pre_commands to a safe allowlist (export/source/cd)
     # and reject shell metacharacters. Disable only as an emergency escape hatch.

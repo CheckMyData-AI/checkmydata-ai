@@ -373,12 +373,34 @@ def _looks_minified(content: bytes) -> bool:
     return longest > _MINIFIED_LINE_LEN_THRESHOLD
 
 
-def _make_uid(language: str, rel_path: str, kind: str, name: str) -> str:
+def _make_uid(
+    language: str,
+    rel_path: str,
+    kind: str,
+    name: str,
+    parent_uid: str | None = None,
+) -> str:
     # Normalize separators so UIDs are stable across OSes. The definition line
     # is intentionally NOT part of identity (CODEIDX-C7): it is stored as the
     # ``start_line`` attribute so a line shift above an untouched symbol does
     # not orphan its inbound edges on an incremental merge.
-    return f"{language}:{rel_path.replace(chr(92), '/')}:{kind}:{name}"
+    #
+    # The enclosing scope IS part of identity. Without it, two classes in one
+    # file that both declare ``run`` produce the same UID, and every consumer
+    # keyed on UID loses one of them — ``CodeGraph`` builds ``{s.uid: s}``
+    # (code_graph.py), so the twin is silently overwritten. Laravel's
+    # ``_ide_helper.php`` is the shape that surfaced it in production on
+    # 2026-08-18: many classes, each carrying ``macro`` / ``make`` / ``mixin``.
+    # The scope is a name, not a line, so it keeps the CODEIDX-C7 property.
+    #
+    # ``parent_uid`` already carries its own qualified tail, so nesting composes:
+    # ``Outer`` -> ``Outer.Inner`` -> ``Outer.Inner.method``.
+    qualname = name
+    if parent_uid:
+        parent_qualname = parent_uid.rsplit(":", 1)[-1]
+        if parent_qualname:
+            qualname = f"{parent_qualname}.{name}"
+    return f"{language}:{rel_path.replace(chr(92), '/')}:{kind}:{qualname}"
 
 
 def _node_text(node, source: bytes) -> str:
@@ -674,7 +696,7 @@ def _node_to_symbol(
             kind = _SYMBOL_KIND_FUNCTION
     start_line = node.start_point[0] + 1
     end_line = node.end_point[0] + 1
-    uid = _make_uid(grammar.slug, rel_path, kind, name)
+    uid = _make_uid(grammar.slug, rel_path, kind, name, parent_uid)
     decorators = _extract_decorators(node, grammar, source)
     signature = _extract_signature(node, source)
     docstring = ""

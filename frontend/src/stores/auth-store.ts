@@ -146,8 +146,21 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (typeof window !== "undefined" && window.google?.accounts?.id) {
       window.google.accounts.id.disableAutoSelect();
     }
-    // Clear the httpOnly session + CSRF cookies server-side (best effort).
-    void api.auth.logout().catch(() => {});
+    // Clear the httpOnly session + CSRF cookies server-side. The local teardown
+    // below runs unconditionally — a failing call must never trap someone in a
+    // session they asked to leave — but a failure means the server cookie may
+    // still be valid, and saying "signed out" without qualification is the lie
+    // vision.md §7 forbids (AUD-0819-12). A 401 is excluded on purpose: it means
+    // the session is already gone, which is the outcome that was asked for, and a
+    // warning beside it is the noise that teaches people to ignore warnings.
+    void api.auth.logout().catch((err: { status?: number } | undefined) => {
+      if (err?.status === 401) return;
+      toast(
+        "Signed out on this device, but the server session may still be active. " +
+          "If you are on a shared computer, sign out again from a working connection.",
+        "error",
+      );
+    });
     storage.removeItem("auth_token");
     storage.removeItem("auth_user");
     storage.removeItem("active_project_id");

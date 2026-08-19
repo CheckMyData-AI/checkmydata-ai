@@ -54,16 +54,43 @@ class BackupManager:
         manifest["total_size_bytes"] = db_size + chroma_size + rules_size
         manifest["backup_path"] = str(dest)
 
+        # AUD-0819-05: a run that skipped a component is not a completed backup.
+        # The per-component `skipped` flags were always honest; the verdict the
+        # operator reads was not — the log said "Backup complete" and both
+        # callers persisted `BackupRecord(status="success")` even when the
+        # database had been delegated to `heroku pg:backups`. The vocabulary is
+        # the analytics collector's, so the two exit contracts read alike.
+        manifest["skipped"] = sorted(
+            name
+            for name, info in manifest["files"].items()
+            if isinstance(info, dict) and info.get("skipped")
+        )
+        # `database_captured` is called out separately on purpose. A fresh
+        # install has no chroma dir, so `partial` would otherwise be the
+        # permanent resting state — and a warning that is always on is one an
+        # operator learns to scroll past, including the once it matters. This
+        # flag is the single fact a restore depends on.
+        db_info = manifest["files"].get("database")
+        manifest["database_captured"] = not (isinstance(db_info, dict) and db_info.get("skipped"))
+        if manifest["errors"]:
+            manifest["status"] = "failed"
+        elif manifest["skipped"]:
+            manifest["status"] = "partial"
+        else:
+            manifest["status"] = "ok"
+
         manifest_path = dest / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
 
         await self._prune_old_backups()
 
         logger.info(
-            "Backup complete: reason=%s, size=%d bytes, path=%s",
+            "Backup %s: reason=%s, size=%d bytes, path=%s%s",
+            manifest["status"],
             reason,
             manifest["total_size_bytes"],
             dest,
+            f", skipped={','.join(manifest['skipped'])}" if manifest["skipped"] else "",
         )
         return manifest
 

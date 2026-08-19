@@ -295,7 +295,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** stores/storage cleared, `user=null`, a "Signed out" success toast shown, AuthGate redirects to `/login`
 - **UI elements:** "Sign Out" button, success toast
 - **States covered:** success
-- **Errors & recovery:** server logout is best-effort and swallowed by design (`auth-store.ts:147`); the user-initiated Sign Out now confirms with a "Signed out" success toast. No confirm dialog (immediate, non-destructive) — intentional. Session-expiry (SCN-011) and account-deletion paths keep their own distinct toasts (no double-toast)
+- **Errors & recovery:** the local teardown is unconditional — a failing call must never trap someone in a session they asked to leave — but a non-401 failure now says the server session may still be active (`auth-store.ts:148-165`), because "Signed out" alone is a claim the client cannot make on its own (AUD-0819-12). A 401 stays quiet: the session is already gone, which is the outcome asked for, and a warning beside it is the noise that teaches people to ignore warnings. No confirm dialog (immediate, non-destructive) — intentional. Session-expiry (SCN-011) and account-deletion paths keep their own distinct toasts (no double-toast)
 - **Status:** implemented
 - **Coverage:** components/auth/AccountMenu.tsx:80-89; components/settings/SettingsPanel.tsx:104-113; stores/auth-store.ts:138-172
 
@@ -850,6 +850,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** animated hero ("Ready to query" / "Knowledge Base Mode"), SuggestionChips (skeleton while loading)
 - **States covered:** empty, loading, error, success
 - **Errors & recovery:** suggestions fetch fails → toast "Could not load suggestions"; chips hidden (`ChatPanel.tsx:334`)
+- **Accessibility:** a chip longer than 60 chars is cut **in the DOM**, not merely clipped by CSS, so it carries `aria-label` with the full question (`SuggestionChips.tsx:55-64`). `title` cannot serve as the accessible name here — the button has text content, and content wins (AUD-0819-08)
 - **Status:** implemented
 - **Coverage:** components/chat/ChatPanel.tsx:824-851,982-988; components/chat/SuggestionChips.tsx:11-63
 
@@ -1175,6 +1176,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** Confirm / Dismiss / Resolved buttons
 - **States covered:** error, success
 - **Errors & recovery:** each action fails → its own toast (`InsightFeedPanel.tsx:230-260`). Note: Dismiss has no confirm dialog. "Investigate" drill-down is not wired at this entry point
+- **Accessibility:** the card's expand toggle carries `aria-expanded` + `aria-controls` pointing at the detail region (`InsightFeedPanel.tsx:94-97,123`); the chevron that shows the state visually is `aria-hidden`, so without them an open card was indistinguishable from a closed one (AUD-0819-09)
 - **Status:** implemented
 - **Coverage:** components/insights/InsightFeedPanel.tsx:138-175,223-263
 
@@ -1693,9 +1695,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** the caller surfaces "Plan limit reached. Upgrade at /pricing to continue." (typically a toast / chat error bubble)
 - **UI elements:** toast / chat error message
 - **States covered:** error
-- **Errors & recovery:** the 402 message keeps its "/pricing" hint, and the toast surface renders any "/pricing" mention as a clickable upgrade link to the pricing page (`lib/api/_client.ts:127-135`, `components/ui/ToastContainer.tsx:20-40`)
+- **Errors & recovery:** the client appends the paywall payload's own `upgrade_url` when the message does not already name it, and the toast surface renders any "/pricing" mention as a clickable upgrade link (`lib/api/_client.ts:140-159`, `components/ui/ToastContainer.tsx:18-30`). Before 2026-08-19 the link depended on the prose happening to contain the route, so the token-budget message (`usage_service.py:140`) was actionable while the connection/project quota messages ("Plan 'free' allows 1 connection(s); you have 1.") were not — AUD-0819-11
 - **Status:** implemented
-- **Coverage:** lib/api/_client.ts:127-135
+- **Coverage:** lib/api/_client.ts:140-159; `__tests__/api.test.ts` "plan paywall (402)"
 
 ### SCN-101: Billing disabled (self-hosted) degradation
 - **Persona:** owner

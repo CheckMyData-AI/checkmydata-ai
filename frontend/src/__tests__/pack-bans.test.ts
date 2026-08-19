@@ -200,12 +200,18 @@ describe("ledger pack bans", () => {
     // red it sits on is the same hex in both themes, so white is correct there.
     // `[stroke='#ccc']` in chart.tsx is an attribute SELECTOR matching
     // Recharts' defaults in order to override them, not a colour being painted.
-    const offenders = FILES.filter((f) => f.path.startsWith("components/")).flatMap(
-      ({ path, lines }) =>
-        lines
-          .map((line, i) => ({ line, i }))
-          .filter(({ line }) => /\b(bg-black|bg-white)(\/\d+)?\b/.test(line))
-          .map(({ i }) => `${path}:${i + 1}`),
+    //
+    // Scoped to `components/` until 2026-08-19, when the audit found the only
+    // remaining offender in the tree living at `app/app/page.tsx:353` — a
+    // `bg-black/60` mobile-drawer scrim, precisely the case above, passing
+    // because of where its file sat rather than because it was clean
+    // (AUD-0819-07). A ratchet with a blind spot reads as a guarantee and is
+    // not one, so it now covers every source file.
+    const offenders = FILES.flatMap(({ path, lines }) =>
+      lines
+        .map((line, i) => ({ line, i }))
+        .filter(({ line }) => /\b(bg-black|bg-white)(\/\d+)?\b/.test(line))
+        .map(({ i }) => `${path}:${i + 1}`),
     );
     expect(offenders).toEqual([]);
   });

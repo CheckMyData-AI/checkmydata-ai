@@ -113,7 +113,22 @@ class WorkflowTracker:
         """Register an async callback invoked on every broadcast (fire-and-forget)."""
         self._persistence_hooks.append(callback)
 
-    async def begin(self, pipeline: str, context: dict[str, Any] | None = None) -> str:
+    async def begin(
+        self,
+        pipeline: str,
+        context: dict[str, Any] | None = None,
+        *,
+        broadcast: bool = True,
+    ) -> str:
+        """Open a workflow and, by default, announce its start.
+
+        Pass ``broadcast=False`` when the caller will emit the canonical
+        ``pipeline_start`` itself — :class:`RunCoordinator` does, because only it
+        knows the ``run_id`` the UI needs to attach the step to a run. Without
+        the opt-out both fire and every subscriber sees the step twice
+        (AUD-0819-04). The workflow is registered either way; only the event is
+        withheld.
+        """
         wf_id = str(uuid.uuid4())
         workflow_id_var.set(wf_id)
 
@@ -137,15 +152,16 @@ class WorkflowTracker:
                 "extra": extra,
             }
 
-        event = WorkflowEvent(
-            workflow_id=wf_id,
-            step="pipeline_start",
-            status="started",
-            detail=f"Starting {pipeline}",
-            pipeline=pipeline,
-            extra=extra,
-        )
-        await self._broadcast(event)
+        if broadcast:
+            event = WorkflowEvent(
+                workflow_id=wf_id,
+                step="pipeline_start",
+                status="started",
+                detail=f"Starting {pipeline}",
+                pipeline=pipeline,
+                extra=extra,
+            )
+            await self._broadcast(event)
         return wf_id
 
     async def end(

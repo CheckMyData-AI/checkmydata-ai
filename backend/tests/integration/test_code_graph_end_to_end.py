@@ -49,10 +49,13 @@ _FILES: dict[str, str] = {
 EXPECTED_SYMBOLS: frozenset[str] = frozenset(
     {
         "python:svc/base.py:class:Base",
-        "python:svc/base.py:method:ping",
+        # Methods carry their enclosing class since 2026-08-19 (AUD-0819-02):
+        # without it two classes declaring the same method in one file collided
+        # and every UID-keyed consumer dropped one of them.
+        "python:svc/base.py:method:Base.ping",
         "python:svc/worker.py:function:helper",
         "python:svc/worker.py:class:Worker",
-        "python:svc/worker.py:method:run",
+        "python:svc/worker.py:method:Worker.run",
         "typescript:web/app.ts:variable:MAX",
         "typescript:web/app.ts:function:Btn",
     }
