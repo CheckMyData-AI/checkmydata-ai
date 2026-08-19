@@ -25,7 +25,7 @@ function ResetPasswordContent() {
   const mismatch = confirm.length > 0 && confirm !== password;
 
   const inputCls =
-    "w-full px-3.5 py-2.5 bg-surface-1 text-text-primary rounded-lg text-sm border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-colors placeholder-text-muted";
+    "w-full px-3.5 py-2.5 bg-surface-1 text-text-primary rounded-lg text-sm border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors placeholder-text-muted";
 
   // No token in the URL — the link is malformed; steer the user to request a fresh one.
   if (!token) {
@@ -41,7 +41,7 @@ function ResetPasswordContent() {
           </p>
           <Link
             href="/forgot-password"
-            className="mt-2 w-full py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover transition-colors"
+            className="mt-2 w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/92 transition-colors"
           >
             Request a new link
           </Link>
@@ -99,11 +99,11 @@ function ResetPasswordContent() {
             aria-invalid={passwordTooShort || undefined}
           />
           {passwordTooShort ? (
-            <p className="text-[10px] text-error mt-1 px-1">
+            <p className="text-kicker text-error mt-1 px-1">
               Password must be at least {MIN_PASSWORD} characters
             </p>
           ) : (
-            <p className="text-[10px] text-text-muted mt-1 px-1">
+            <p className="text-kicker text-text-muted mt-1 px-1">
               Min. {MIN_PASSWORD} characters
             </p>
           )}
@@ -125,7 +125,7 @@ function ResetPasswordContent() {
             aria-invalid={mismatch || undefined}
           />
           {mismatch && (
-            <p className="text-[10px] text-error mt-1 px-1">Passwords do not match</p>
+            <p className="text-kicker text-error mt-1 px-1">Passwords do not match</p>
           )}
         </div>
 
@@ -147,7 +147,7 @@ function ResetPasswordContent() {
         <button
           type="submit"
           disabled={submitting}
-          className="w-full py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover disabled:opacity-50 transition-colors"
+          className="w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/92 disabled:opacity-50 transition-colors"
         >
           {submitting ? "Resetting…" : "Reset password"}
         </button>

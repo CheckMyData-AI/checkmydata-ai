@@ -63,7 +63,7 @@ function RunRow({ run, isLatest }: { run: SyncHistoryRun; isLatest: boolean }) {
         <Icon name={iconName} size={12} className={`shrink-0 ${statusColor}`} />
         <span className={`text-xs flex-1 min-w-0 truncate ${statusColor}`}>{summary}</span>
         {run.duration_seconds !== null && (
-          <span className="text-[10px] text-text-tertiary shrink-0">
+          <span className="text-kicker text-text-tertiary shrink-0">
             {run.duration_seconds}s
           </span>
         )}
@@ -81,7 +81,7 @@ function RunRow({ run, isLatest }: { run: SyncHistoryRun; isLatest: boolean }) {
 
       {expanded && (
         <div className="px-2.5 pb-2 space-y-1 border-t border-border-subtle/50 pt-2">
-          <div className="flex items-center gap-1.5 text-[10px] text-text-tertiary">
+          <div className="flex items-center gap-1.5 text-kicker text-text-tertiary">
             <Icon name="clock" size={10} />
             <span>{new Date(run.created_at).toLocaleString()}</span>
             {run.trigger && (
@@ -92,10 +92,10 @@ function RunRow({ run, isLatest }: { run: SyncHistoryRun; isLatest: boolean }) {
             )}
           </div>
           {run.error_message && (
-            <p className="text-[10px] text-error break-all">{run.error_message}</p>
+            <p className="text-kicker text-error break-all">{run.error_message}</p>
           )}
           {counts && (
-            <p className="text-[10px] text-text-secondary">{counts}</p>
+            <p className="text-kicker text-text-secondary">{counts}</p>
           )}
         </div>
       )}
@@ -194,7 +194,7 @@ export function SyncHistoryPanel({ projectId }: SyncHistoryPanelProps) {
           {(runs?.length ?? 0) > 5 && (
             <button
               onClick={() => setShowAll((v) => !v)}
-              className="text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
+              className="text-kicker text-text-tertiary hover:text-text-primary transition-colors"
             >
               {showAll ? "Show less" : `Show all ${runs?.length} runs`}
             </button>

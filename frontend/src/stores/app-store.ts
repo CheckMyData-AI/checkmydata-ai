@@ -27,6 +27,13 @@ interface ChatMessage {
   error?: string | null;
   metadataJson?: string | null;
   stalenessWarning?: string | null;
+  /**
+   * A retrieval leg came back empty, so the answer rests on less than the index
+   * holds (AUD-0819-03). Kept separate from `stalenessWarning` on purpose: a
+   * stale index and a missing search leg are different facts, and fusing them
+   * would also downgrade the seal on a SQL answer whose proof is its query.
+   */
+  retrievalWarning?: string | null;
   responseType?: "text" | "sql_result" | "knowledge" | "error" | "clarification_request" | "stage_checkpoint" | "stage_failed" | "session_continuation" | "step_limit_reached";
   userRating?: number | null;
   toolCallsJson?: string | null;
@@ -38,7 +45,6 @@ interface ChatMessage {
     options?: string[];
     context?: string;
   } | null;
-  verificationStatus?: "verified" | "unverified" | "flagged" | null;
   isRetryable?: boolean;
   stepsUsed?: number;
   stepsTotal?: number;

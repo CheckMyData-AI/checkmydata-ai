@@ -298,7 +298,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             <>
               <div className="flex justify-between items-center">
                 <span className="text-text-tertiary">Commit</span>
-                <span className="text-text-primary font-mono text-[11px]">
+                <span className="text-text-primary font-mono text-meta">
                   {repoStatus.last_indexed_commit.slice(0, 7)}
                 </span>
               </div>
@@ -312,7 +312,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               )}
               <div className="flex justify-between items-center">
                 <span className="text-text-tertiary">Branch</span>
-                <span className="text-text-secondary font-mono text-[11px]">
+                <span className="text-text-secondary font-mono text-meta">
                   {repoStatus.branch}
                 </span>
               </div>
@@ -324,12 +324,12 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               </div>
             </>
           ) : (
-            <p className="text-text-muted italic text-[11px]">
+            <p className="text-text-muted italic text-meta">
               Not yet indexed
             </p>
           )}
           {repoIsIndexing && (
-            <p className="text-warning text-[11px] flex items-center gap-1.5">
+            <p className="text-warning text-meta flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse-dot" />
               Indexing in progress...
             </p>
@@ -363,7 +363,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
 
       {updateCheck && (
         <p
-          className={`text-[11px] px-1 ${
+          className={`text-meta px-1 ${
             updateCheck.has_updates ? "text-warning" : "text-success"
           }`}
         >
@@ -389,7 +389,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
       )}
       {indexResult && (
         <p
-          className={`text-[11px] px-1 ${
+          className={`text-meta px-1 ${
             indexResult.startsWith("Error") ? "text-error" : "text-success"
           }`}
         >
@@ -437,7 +437,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
       <>
         {/* Backdrop */}
         <div
-          className={`fixed inset-0 z-50 bg-black/60 transition-opacity duration-200 ${
+          className={`fixed inset-0 z-50 lg-scrim transition-opacity duration-200 ${
             isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
           }`}
           onClick={onClose}
@@ -455,14 +455,14 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
         >
           {/* Mobile drawer header with close button */}
           <div className="shrink-0 px-3 py-3 border-b border-border-subtle flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-accent-strong flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-control bg-ink text-on-ink flex items-center justify-center shrink-0">
               <Icon name="zap" size={16} className="text-white" />
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-text-primary leading-tight">
                 DB Agent
               </p>
-              <p className="text-[10px] text-text-muted leading-tight">
+              <p className="text-kicker text-text-muted leading-tight">
                 AI Query Assistant
               </p>
             </div>
@@ -481,15 +481,15 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
 
             {showOnboarding && (
               <div className="mx-3 p-3 bg-accent-muted border border-accent/20 rounded-lg space-y-2.5 animate-slide-in-left">
-                <p className="text-[11px] font-semibold text-accent">Getting Started</p>
-                <div className="space-y-2 text-[11px]">
+                <p className="text-meta font-semibold text-accent">Getting Started</p>
+                <div className="space-y-2 text-meta">
                   {[
                     { done: projects.length > 0, step: 1, label: "Create your first project" },
                     { done: connections.length > 0, step: 2, label: "Add a database connection" },
                     { done: projects.some((p) => p.repo_url), step: 3, label: "Connect your code (optional)" },
                   ].map((item) => (
                     <div key={item.step} className="flex items-center gap-2.5">
-                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 ${
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-kicker font-medium shrink-0 ${
                         item.done ? "bg-success-muted text-success" : "bg-surface-2 text-text-muted"
                       }`}>
                         {item.done ? <Icon name="check" size={10} /> : item.step}
@@ -613,19 +613,19 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                   <img src={user.picture_url} alt="" referrerPolicy="no-referrer" className="w-7 h-7 rounded-full border border-border-default shrink-0 object-cover" />
                 ) : (
                   <div className="w-7 h-7 rounded-full bg-surface-2 border border-border-default flex items-center justify-center shrink-0">
-                    <span className="text-[10px] font-semibold text-text-secondary">{userInitials}</span>
+                    <span className="text-kicker font-semibold text-text-secondary">{userInitials}</span>
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-text-primary truncate leading-tight">{user.display_name || user.email?.split("@")[0] || "User"}</p>
-                  <p className="text-[10px] text-text-muted truncate leading-tight">{user.email || ""}</p>
+                  <p className="text-kicker text-text-muted truncate leading-tight">{user.email || ""}</p>
                 </div>
                 <AccountMenu />
               </div>
               <div className="flex items-center gap-2 px-0.5">
-                <Link href="/terms" className="text-[10px] text-text-muted hover:text-text-tertiary transition-colors">Terms</Link>
-                <span className="text-text-muted/40 text-[10px]">&middot;</span>
-                <Link href="/privacy" className="text-[10px] text-text-muted hover:text-text-tertiary transition-colors">Privacy</Link>
+                <Link href="/terms" className="text-kicker text-text-muted hover:text-text-tertiary transition-colors">Terms</Link>
+                <span className="text-text-muted/40 text-kicker">&middot;</span>
+                <Link href="/privacy" className="text-kicker text-text-muted hover:text-text-tertiary transition-colors">Privacy</Link>
               </div>
             </div>
           )}
@@ -642,7 +642,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
     >
       {/* Header */}
       <div className="shrink-0 px-3 py-3 border-b border-border-subtle flex items-center gap-2.5">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-accent-strong flex items-center justify-center shrink-0">
+        <div className="w-8 h-8 rounded-control bg-ink text-on-ink flex items-center justify-center shrink-0">
           <Icon name="zap" size={16} className="text-white" />
         </div>
         {!collapsed && (
@@ -650,7 +650,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             <p className="text-sm font-semibold text-text-primary leading-tight">
               DB Agent
             </p>
-            <p className="text-[10px] text-text-muted leading-tight">
+            <p className="text-kicker text-text-muted leading-tight">
               AI Query Assistant
             </p>
           </div>
@@ -677,10 +677,10 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
         {/* Onboarding guide */}
         {showOnboarding && !collapsed && (
           <div className="mx-3 p-3 bg-accent-muted border border-accent/20 rounded-lg space-y-2.5 animate-slide-in-left">
-            <p className="text-[11px] font-semibold text-accent">
+            <p className="text-meta font-semibold text-accent">
               Getting Started
             </p>
-            <div className="space-y-2 text-[11px]">
+            <div className="space-y-2 text-meta">
               {[
                 {
                   done: projects.length > 0,
@@ -700,7 +700,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               ].map((item) => (
                 <div key={item.step} className="flex items-center gap-2.5">
                   <span
-                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 ${
+                    className={`w-5 h-5 rounded-full flex items-center justify-center text-kicker font-medium shrink-0 ${
                       item.done
                         ? "bg-success-muted text-success"
                         : "bg-surface-2 text-text-muted"
@@ -930,7 +930,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               />
             ) : (
               <div className="w-7 h-7 rounded-full bg-surface-2 border border-border-default flex items-center justify-center shrink-0">
-                <span className="text-[10px] font-semibold text-text-secondary">
+                <span className="text-kicker font-semibold text-text-secondary">
                   {userInitials}
                 </span>
               </div>
@@ -939,18 +939,18 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               <p className="text-xs text-text-primary truncate leading-tight">
                 {user.display_name || user.email?.split("@")[0] || "User"}
               </p>
-              <p className="text-[10px] text-text-muted truncate leading-tight">
+              <p className="text-kicker text-text-muted truncate leading-tight">
                 {user.email || ""}
               </p>
             </div>
             <AccountMenu />
           </div>
           <div className="flex items-center gap-2 px-0.5">
-            <Link href="/terms" className="text-[10px] text-text-muted hover:text-text-tertiary transition-colors">
+            <Link href="/terms" className="text-kicker text-text-muted hover:text-text-tertiary transition-colors">
               Terms
             </Link>
-            <span className="text-text-muted/40 text-[10px]">&middot;</span>
-            <Link href="/privacy" className="text-[10px] text-text-muted hover:text-text-tertiary transition-colors">
+            <span className="text-text-muted/40 text-kicker">&middot;</span>
+            <Link href="/privacy" className="text-kicker text-text-muted hover:text-text-tertiary transition-colors">
               Privacy
             </Link>
           </div>
@@ -964,7 +964,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               aria-label="Sign out"
               className="w-8 h-8 rounded-full bg-surface-2 border border-border-default flex items-center justify-center hover:border-accent/50 hover:bg-surface-3 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
-              <span className="text-[10px] font-semibold text-text-secondary">
+              <span className="text-kicker font-semibold text-text-secondary">
                 {userInitials}
               </span>
             </button>

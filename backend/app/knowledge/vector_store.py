@@ -150,13 +150,31 @@ class VectorStore:
         documents: list[str],
         metadatas: list[dict] | None = None,
     ) -> None:
+        if not doc_ids:
+            return
         collection = self.get_or_create_collection(project_id)
-        collection.upsert(
-            ids=doc_ids,
-            documents=documents,
-            metadatas=metadatas,  # type: ignore[arg-type]
+        # AUD-0819-01: the batch handed to one `upsert` decides peak memory, and
+        # the cap lives here rather than at the three call sites because the
+        # constraint belongs to the embedder they share. ChromaDB's bundled ONNX
+        # MiniLM pads every document to 256 tokens, so the transformer's
+        # activations are sized by the batch and by nothing else — measured at
+        # 839 MiB for 32, 415 MiB for 8, with the small batch also the faster one.
+        # An unbounded batch is what SIGKILLed the production worker (R15,
+        # 1053 MiB against a 512 MiB quota) with no run reaching `pipeline_end`.
+        step = max(1, settings.embedding_upsert_batch_size)
+        for start in range(0, len(doc_ids), step):
+            end = start + step
+            collection.upsert(
+                ids=doc_ids[start:end],
+                documents=documents[start:end],
+                metadatas=metadatas[start:end] if metadatas is not None else None,  # type: ignore[arg-type]
+            )
+        logger.debug(
+            "Upserted %d documents to collection %s in batches of %d",
+            len(doc_ids),
+            project_id,
+            step,
         )
-        logger.debug("Upserted %d documents to collection %s", len(doc_ids), project_id)
 
     def query(
         self,

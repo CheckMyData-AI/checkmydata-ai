@@ -72,7 +72,8 @@ This file also folds in the **2026-06-23 codebase audit** (`code-reviewer` basel
 review). Its findings map as: **H1** = F-KNOW-01 (fixed); **M2** = F-KNOW-02 (fixed); **M1** =
 the read-only cluster (F-SQL-08 / F-CONN-01/02, open — denylist hardened in `e642c67` but the
 DB-session backstop is still owed); **M3** partially fixed (`projects.py`/`runs.py` via
-`spawn_tracked`; the `pipeline_runner` site remains = F-KNOW-09); **M4/M5/L1/L2** are the
+`spawn_tracked`; the `pipeline_runner` site is gathered rather than untracked — see the
+restated F-KNOW-09); **M4/M5/L1/L2** are the
 codebase-wide items in §7. Automated baseline grades: backend **B** (1,934 smells, 55 SOLID),
 frontend **A** (563 smells, 7 SOLID).
 
@@ -216,7 +217,7 @@ gate, durable AuditLog, idempotency).
 | F-KNOW-06 | 🟢 | `pickle.load` for BM25 is a latent RCE primitive (swap to safe format **before** F-KNOW-07) |
 | F-KNOW-07 | 🟡 | BM25 snapshots on local ephemeral disk → hybrid silently dense-only in prod (needs shared storage; add `load()`-miss metric first) |
 | F-KNOW-08 | 🟡 | Git clone dir not removed on project delete → orphaned source on disk |
-| F-KNOW-09 | 🟡 | Fire-and-forget `asyncio.create_task(_parse_one(rp))` in a loop (`pipeline_runner.py:1428`) → tasks GC'd / exceptions dropped (codebase-audit M3; `projects.py`/`runs.py` already fixed via `spawn_tracked`, this site not) |
+| ~~F-KNOW-09~~ | 🟢 | **Restated 2026-08-19 (AUD-0819-16) — the original finding is stale.** The site moved to `pipeline_runner.py:1526` and the tasks **are** collected and awaited (`asyncio.gather(*tasks, return_exceptions=True)` at `:1531`), so nothing is GC'd mid-flight. Two residuals stand and are real: (a) the fan-out is **unbounded** — one task per file, 8541 of them in production; (b) `return_exceptions=True` results are never inspected, so an exception raised outside `_parse_one`'s own handler is dropped with no log. Neither is the reported defect. |
 
 ### 08 — GitAgent (live Git)
 | ID | Sev | Issue |

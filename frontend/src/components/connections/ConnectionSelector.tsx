@@ -45,6 +45,7 @@ import {
   inputCls,
   safePort,
 } from "./connection-form-helpers";
+import { selectBaseCls } from "@/components/ui/Input";
 
 interface ConnectionSelectorProps {
   createRequested?: boolean;
@@ -889,12 +890,12 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         // `source_type`, the backend merged the old `ga4` back in, and the user
         // was told the update succeeded (H6). Read-only is the honest control.
         <div className="flex items-center gap-2 px-1 py-1">
-          <span className="text-[10px] text-text-muted uppercase tracking-wider">
+          <span className="text-kicker text-text-muted uppercase tracking-wider">
             Source type
           </span>
           <span
             data-testid="connection-source-type"
-            className="text-[11px] text-text-secondary font-mono"
+            className="text-meta text-text-secondary font-mono"
           >
             {connectionSourceFullLabel({
               db_type: form.db_type,
@@ -929,7 +930,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               };
             });
           }}
-          className={inputCls}
+          className={selectBaseCls}
         >
           {engineOptions.map((t) => (
             <option key={t} value={t}>
@@ -940,7 +941,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         </select>
       )}
       {editingId && (
-        <p className="text-[10px] text-text-muted px-1">
+        <p className="text-kicker text-text-muted px-1">
           {sourceTypeLocked
             ? "A connection's source type is fixed at creation — create a new connection to use a different source."
             : "Engines can be switched here; the source type is fixed at creation — create a new connection for a different source."}
@@ -955,7 +956,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
             onChange={(e) =>
               setForm({ ...form, mcp_transport_type: e.target.value as "stdio" | "sse" })
             }
-            className={inputCls}
+            className={selectBaseCls}
           >
             <option value="stdio">stdio (local command)</option>
             <option value="sse">SSE (remote URL)</option>
@@ -1002,9 +1003,9 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
             onChange={(e) => setForm({ ...form, mcp_env: e.target.value })}
             placeholder={'Environment variables (JSON, optional):\n{"API_KEY": "..."}'}
             rows={2}
-            className={inputCls + " font-mono text-[10px] resize-y"}
+            className={inputCls + " font-mono text-kicker resize-y"}
           />
-          <p className="text-[10px] text-text-muted px-1">
+          <p className="text-kicker text-text-muted px-1">
             Connect to an external MCP server to query data from services
             without a first-class connector.
           </p>
@@ -1012,13 +1013,13 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
       ) : isGA4 ? (
         <div className="space-y-2.5">
           {credentialsLoading && (
-            <p className="text-[10px] text-text-muted px-1">Loading credentials…</p>
+            <p className="text-kicker text-text-muted px-1">Loading credentials…</p>
           )}
           {credentialsError && (
             <ListError
               message={credentialsError}
               onRetry={() => void loadGa4Credentials()}
-              className="px-1 py-1 text-[10px] text-error flex flex-col items-start gap-1"
+              className="px-1 py-1 text-kicker text-error flex flex-col items-start gap-1"
             />
           )}
 
@@ -1034,7 +1035,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                 vendor_credential_id: e.target.value,
               });
             }}
-            className={inputCls}
+            className={selectBaseCls}
           >
             <option value="">Select a stored credential…</option>
             {ga4Credentials.map((c) => (
@@ -1045,13 +1046,13 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
           </select>
 
           {selectedCredential && (
-            <p className="text-[10px] text-text-muted px-1 font-mono">
+            <p className="text-kicker text-text-muted px-1 font-mono">
               Fingerprint {shortFingerprint(selectedCredential.fingerprint)}
             </p>
           )}
 
           {!credentialsLoading && !credentialsError && ga4Credentials.length === 0 && (
-            <p className="text-[10px] text-warning px-1">
+            <p className="text-kicker text-warning px-1">
               No Google Analytics credentials yet — add one below, or from
               Setup → Vendor Credentials in the sidebar.
             </p>
@@ -1077,7 +1078,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
             <button
               type="button"
               onClick={() => setShowNewCredential(true)}
-              className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors px-1"
+              className="flex items-center gap-1 text-meta text-accent hover:text-accent-hover transition-colors px-1"
             >
               <Icon name="plus" size={12} />
               New credential
@@ -1100,7 +1101,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
           />
 
           {carriedPropertyIds.length > 0 && (
-            <p className="text-[10px] text-text-muted px-1">
+            <p className="text-kicker text-text-muted px-1">
               Also collecting {carriedPropertyIds.join(", ")} — kept on save.
             </p>
           )}
@@ -1126,7 +1127,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   collection_hour: e.target.value,
                 })
               }
-              className={halfInputCls}
+              className={selectBaseCls}
             >
               {COLLECTION_HOURS.map((h) => (
                 <option key={h} value={String(h)}>
@@ -1155,7 +1156,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
             </span>
           </label>
 
-          <p className="text-[10px] text-text-muted px-1">
+          <p className="text-kicker text-text-muted px-1">
             GA4 is collected up to yesterday — today is always partial. Grant the
             service account Viewer on the property first.
           </p>
@@ -1199,7 +1200,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   maxLength={500}
                 />
                 {detectedType && (
-                  <p className="text-[10px] text-success px-1">
+                  <p className="text-kicker text-success px-1">
                     Detected: {detectedType} — fields filled below, review &amp; add password if needed.
                   </p>
                 )}
@@ -1267,7 +1268,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
       )}
 
       {isDatabase && (useConnString ? (
-        <p className="text-[10px] text-text-muted px-1">
+        <p className="text-kicker text-text-muted px-1">
           SSH tunnel is not used with connection strings. Switch to individual
           fields to configure SSH.
         </p>
@@ -1306,7 +1307,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               onChange={(e) =>
                 setForm({ ...form, ssh_key_id: e.target.value })
               }
-              className={halfInputCls}
+              className={selectBaseCls}
             >
               <option value="">SSH Key (none)</option>
               {sshKeys.map((k) => (
@@ -1317,7 +1318,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
             </select>
           </div>
           {hasSSH && (!form.ssh_user.trim() || !form.ssh_key_id) && (
-            <p className="text-[10px] text-warning px-1">
+            <p className="text-kicker text-warning px-1">
               SSH tunnel requires a user and key.
             </p>
           )}
@@ -1325,7 +1326,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
             form.ssh_user.trim() &&
             form.ssh_key_id &&
             !form.ssh_exec_mode && (
-              <p className="text-[10px] text-text-muted px-1">
+              <p className="text-kicker text-text-muted px-1">
                 SSH tunnel mode: connects via port-forwarding and a native
                 driver.
               </p>
@@ -1359,18 +1360,18 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   <Icon name="terminal" size={12} />
                   SSH Exec Mode
                   {form.db_type === "mongodb" ? (
-                    <span className="text-[10px] text-text-muted">
+                    <span className="text-kicker text-text-muted">
                       (not supported for MongoDB)
                     </span>
                   ) : (
-                    <span className="text-[10px] text-text-muted">
+                    <span className="text-kicker text-text-muted">
                       (CLI on server)
                     </span>
                   )}
                 </span>
               </label>
               {!form.ssh_exec_mode && (
-                <p className="text-[10px] text-text-muted px-1">
+                <p className="text-kicker text-text-muted px-1">
                   Enable only if port forwarding is blocked or you need specific
                   CLI options.
                 </p>
@@ -1379,7 +1380,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               {form.ssh_exec_mode && (
                 <>
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-text-muted shrink-0">
+                    <span className="text-kicker text-text-muted shrink-0">
                       Template:
                     </span>
                     <select
@@ -1391,7 +1392,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                           }));
                         }
                       }}
-                      className="flex-1 bg-surface-1 border border-border-subtle rounded-lg px-2 py-1.5 text-text-secondary text-[10px]"
+                      className={selectBaseCls}
                       defaultValue=""
                     >
                       <option value="" disabled>
@@ -1416,9 +1417,9 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                     }
                     placeholder="Command template, e.g.: mysql -h {db_host} ..."
                     rows={2}
-                    className={inputCls + " font-mono text-[10px] resize-y"}
+                    className={inputCls + " font-mono text-kicker resize-y"}
                   />
-                  <p className="text-[10px] text-text-muted px-1">
+                  <p className="text-kicker text-text-muted px-1">
                     Placeholders: {"{db_host}"} {"{db_port}"} {"{db_user}"}{" "}
                     {"{db_password}"} {"{db_name}"}. Query piped via stdin.
                   </p>
@@ -1431,7 +1432,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                       "Pre-commands (one per line, optional):\nsource ~/.bashrc"
                     }
                     rows={2}
-                    className={inputCls + " font-mono text-[10px] resize-y"}
+                    className={inputCls + " font-mono text-kicker resize-y"}
                   />
                 </>
               )}
@@ -1461,7 +1462,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         <button
           onClick={editingId ? handleUpdate : handleCreate}
           disabled={saving}
-          className="flex-1 px-3 py-2 bg-accent text-white font-medium rounded-lg hover:bg-accent-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="flex-1 px-3 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/92 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {saving && <span className="w-3.5 h-3.5 border-2 border-text-primary/30 border-t-text-primary rounded-full animate-spin" />}
           {saving ? "Saving…" : editingId ? "Save Changes" : "Create Connection"}
@@ -1510,13 +1511,13 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         <ListError
           message={connectionsError}
           onRetry={() => void handleRetryLoad()}
-          className="px-2 py-3 text-center text-[10px] text-error flex flex-col items-center gap-1"
+          className="px-2 py-3 text-center text-kicker text-error flex flex-col items-center gap-1"
         />
       )}
 
       {!formIsOpen && connections.length === 0 && !connectionsError && (
         <div className="px-2 py-3 text-center">
-          <p className="text-[10px] text-text-muted">No connections yet</p>
+          <p className="text-kicker text-text-muted">No connections yet</p>
         </div>
       )}
 
@@ -1571,21 +1572,21 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                     {c.name}
                   </span>
                   <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                    <span className="text-[10px] text-text-muted font-mono uppercase">
+                    <span className="text-kicker text-text-muted font-mono uppercase">
                       {connectionSourceLabel(c)}
                     </span>
                     {c.is_read_only && (
-                      <span className="text-[10px] px-1 py-px rounded-full bg-surface-3/50 text-text-tertiary leading-none">
+                      <span className="text-kicker px-1 py-px rounded-full bg-surface-3/50 text-text-tertiary leading-none">
                         RO
                       </span>
                     )}
                     {c.ssh_exec_mode && (
-                      <span className="text-[10px] px-1 py-px rounded-full bg-accent-muted text-accent leading-none">
+                      <span className="text-kicker px-1 py-px rounded-full bg-accent-muted text-accent leading-none">
                         EXEC
                       </span>
                     )}
                     {idx?.is_indexing ? (
-                      <span className="text-[10px] px-1 py-px rounded-full bg-warning-muted text-warning animate-pulse-dot leading-none">
+                      <span className="text-kicker px-1 py-px rounded-full bg-warning-muted text-warning animate-pulse-dot leading-none">
                         IDX...
                       </span>
                     ) : idx?.is_indexed ? (
@@ -1594,7 +1595,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                           <button
                             type="button"
                             aria-label={idx.is_partial ? "Re-index database (last index was partial)" : "Re-index database"}
-                            className={`text-[10px] px-1 py-px rounded-full cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none ${idx.is_partial ? "bg-warning-muted text-warning hover:bg-warning/20" : "bg-success-muted text-success hover:bg-success/20"}`}
+                            className={`text-kicker px-1 py-px rounded-full cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none ${idx.is_partial ? "bg-warning-muted text-warning hover:bg-warning/20" : "bg-success-muted text-success hover:bg-success/20"}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleIndexDb(c.id);
@@ -1605,7 +1606,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         </Tooltip>
                       ) : (
                         <Tooltip label={`${idx.is_partial ? "Indexed (PARTIAL — some tables failed sampling; results may be incomplete)" : "Indexed"}: ${idx.active_tables ?? "?"}/${idx.total_tables ?? "?"} active${idx.indexed_at ? ` (${formatAge(idx.indexed_at)})` : ""}`} position="bottom">
-                          <span className={`text-[10px] px-1 py-px rounded-full leading-none ${idx.is_partial ? "bg-warning-muted text-warning" : "bg-success-muted text-success"}`}>
+                          <span className={`text-kicker px-1 py-px rounded-full leading-none ${idx.is_partial ? "bg-warning-muted text-warning" : "bg-success-muted text-success"}`}>
                             {idx.is_partial ? "IDX*" : "IDX"}
                           </span>
                         </Tooltip>
@@ -1615,7 +1616,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         <button
                           type="button"
                           aria-label="Index database schema"
-                          className="text-[10px] px-1 py-px rounded-full bg-surface-3/50 text-text-muted cursor-pointer hover:text-text-secondary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          className="text-kicker px-1 py-px rounded-full bg-surface-3/50 text-text-muted cursor-pointer hover:text-text-secondary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleIndexDb(c.id);
@@ -1626,7 +1627,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                       </Tooltip>
                     ) : null}
                     {sync?.is_syncing ? (
-                      <span className="text-[10px] px-1 py-px rounded-full bg-warning-muted text-warning animate-pulse-dot leading-none">
+                      <span className="text-kicker px-1 py-px rounded-full bg-warning-muted text-warning animate-pulse-dot leading-none">
                         SYNC...
                       </span>
                     ) : sync?.is_synced ? (
@@ -1635,7 +1636,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                           <button
                             type="button"
                             aria-label="Re-sync database"
-                            className="text-[10px] px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                            className="text-kicker px-1 py-px rounded-full bg-success-muted text-success cursor-pointer hover:bg-success/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
                             onClick={(e) => {
                               e.stopPropagation();
                               handleSync(c.id);
@@ -1646,7 +1647,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         </Tooltip>
                       ) : (
                         <Tooltip label={`Synced: ${sync.synced_tables ?? "?"}/${sync.total_tables ?? "?"} tables${sync.synced_at ? ` (${formatAge(sync.synced_at)})` : ""}`} position="bottom">
-                          <span className="text-[10px] px-1 py-px rounded-full bg-success-muted text-success leading-none">
+                          <span className="text-kicker px-1 py-px rounded-full bg-success-muted text-success leading-none">
                             SYNC
                           </span>
                         </Tooltip>
@@ -1657,7 +1658,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                           <button
                             type="button"
                             aria-label="Re-sync stale data"
-                            className="text-[10px] px-1 py-px rounded-full bg-warning-muted text-warning cursor-pointer hover:bg-warning/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                            className="text-kicker px-1 py-px rounded-full bg-warning-muted text-warning cursor-pointer hover:bg-warning/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
                             onClick={(e) => {
                               e.stopPropagation();
                               handleSync(c.id);
@@ -1668,7 +1669,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         </Tooltip>
                       ) : (
                         <Tooltip label="Sync data is stale" position="bottom">
-                          <span className="text-[10px] px-1 py-px rounded-full bg-warning-muted text-warning leading-none">
+                          <span className="text-kicker px-1 py-px rounded-full bg-warning-muted text-warning leading-none">
                             SYNC
                           </span>
                         </Tooltip>
@@ -1678,7 +1679,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         <button
                           type="button"
                           aria-label="Run Code-DB Sync"
-                          className="text-[10px] px-1 py-px rounded-full bg-surface-3/50 text-text-muted cursor-pointer hover:text-text-secondary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          className="text-kicker px-1 py-px rounded-full bg-surface-3/50 text-text-muted cursor-pointer hover:text-text-secondary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleSync(c.id);
@@ -1710,7 +1711,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         <button
                           type="button"
                           aria-label="Manage agent learnings"
-                          className="text-[10px] px-1 py-px rounded-full bg-accent-muted text-accent cursor-pointer hover:bg-accent-muted outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
+                          className="text-kicker px-1 py-px rounded-full bg-accent-muted text-accent cursor-pointer hover:bg-accent-muted outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none"
                           onClick={(e) => {
                             e.stopPropagation();
                             setShowLearnings(showLearnings === c.id ? null : c.id);
@@ -1760,7 +1761,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
               </div>
               {isAnalytics && <CollectionStatusRow connectionId={c.id} />}
               {healthStatuses[c.id] === "down" && (
-                <div className="mx-3 mb-1 px-2 py-1 rounded bg-error-muted text-error text-[10px] flex items-center gap-1">
+                <div className="mx-3 mb-1 px-2 py-1 rounded bg-error-muted text-error text-kicker flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-error shrink-0" />
                   Connection is unreachable
                 </div>

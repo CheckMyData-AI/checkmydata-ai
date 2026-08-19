@@ -6,6 +6,17 @@ import type { ErrorLogItem } from "@/lib/api/types";
 import { Icon } from "@/components/ui/Icon";
 import { ListError } from "@/components/ui/ListError";
 import { toast } from "@/stores/toast-store";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/shadcn/table";
+import { StatusDot } from "@/components/ui/StatusDot";
+import { cn } from "@/lib/utils";
+import { selectBaseCls } from "@/components/ui/Input";
 
 const SOURCES = ["", "run", "query", "span", "system"];
 const STATUSES = ["", "open", "acknowledged", "resolved"];
@@ -61,7 +72,7 @@ export function ErrorsTab({ projectId }: { projectId: string }) {
           aria-label="Filter by source"
           value={source}
           onChange={(e) => setSource(e.target.value)}
-          className="text-xs bg-surface-1 border border-border-subtle rounded px-2 py-1 text-text-secondary"
+          className={selectBaseCls}
         >
           {SOURCES.map((s) => (
             <option key={s} value={s}>
@@ -73,7 +84,7 @@ export function ErrorsTab({ projectId }: { projectId: string }) {
           aria-label="Filter by status"
           value={status}
           onChange={(e) => setStatus(e.target.value)}
-          className="text-xs bg-surface-1 border border-border-subtle rounded px-2 py-1 text-text-secondary"
+          className={selectBaseCls}
         >
           {STATUSES.map((s) => (
             <option key={s} value={s}>
@@ -98,46 +109,62 @@ export function ErrorsTab({ projectId }: { projectId: string }) {
         ) : items.length === 0 ? (
           <div className="p-6 text-center text-xs text-text-tertiary">No errors recorded</div>
         ) : (
-          <table className="w-full text-xs">
-            <thead className="text-[10px] text-text-tertiary uppercase tracking-wider">
-              <tr className="border-b border-border-subtle">
-                <th className="text-left px-4 py-2">Message</th>
-                <th className="text-left px-2 py-2">Source</th>
-                <th className="text-left px-2 py-2">Kind</th>
-                <th className="text-right px-2 py-2">Count</th>
-                <th className="text-left px-2 py-2">Status</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="pl-4">Message</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead>Kind</TableHead>
+                <TableHead className="text-right">Count</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {items.map((e) => (
-                <tr key={e.id} className="border-b border-border-subtle hover:bg-surface-1/50">
-                  <td className="px-4 py-2 max-w-md truncate text-text-primary" title={e.message}>
+                <TableRow key={e.id}>
+                  <TableCell className="max-w-md truncate pl-4 text-text-primary" title={e.message}>
                     {e.message}
-                  </td>
-                  <td className="px-2 py-2 text-text-tertiary">{e.source}</td>
-                  <td className="px-2 py-2 text-text-tertiary">{e.kind}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-text-secondary">
+                  </TableCell>
+                  <TableCell className="text-text-tertiary">{e.source}</TableCell>
+                  <TableCell className="text-text-tertiary">{e.kind}</TableCell>
+                  <TableCell className="text-right font-mono text-text-primary tabular-nums">
                     {e.occurrences}
-                  </td>
-                  <td className="px-2 py-2">
+                  </TableCell>
+                  <TableCell>
+                    {/* The status is a control here — it cycles. Its hue rides
+                        the border and the dot; the word stays in --ink, because
+                        every one of these three sits under AA on the field. */}
                     <button
                       onClick={() => void cycleStatus(e)}
                       aria-label={`Cycle status for ${e.id}`}
-                      className={`text-[10px] px-2 py-0.5 rounded border border-border-subtle ${
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-control border px-2 py-0.5",
+                        "font-mono text-kicker uppercase tracking-kicker text-ink",
+                        "transition-colors duration-(--dur) ease-(--ease) hover:bg-inset",
                         e.status === "resolved"
-                          ? "text-success"
+                          ? "border-ok/40"
                           : e.status === "acknowledged"
-                            ? "text-warning"
-                            : "text-error"
-                      }`}
+                            ? "border-warn/40"
+                            : "border-danger/40",
+                      )}
                     >
+                      <StatusDot
+                        status={
+                          e.status === "resolved"
+                            ? "success"
+                            : e.status === "acknowledged"
+                              ? "warning"
+                              : "error"
+                        }
+                        title={e.status}
+                      />
                       {e.status}
                     </button>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
       </div>
     </div>

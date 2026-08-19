@@ -61,7 +61,7 @@ export function ActionButton({
       `}
     >
       <Icon name={icon} size={sizeConfig.icon} />
-      {label && <span className="text-[10px]">{label}</span>}
+      {label && <span className="text-kicker">{label}</span>}
     </button>
   );
 

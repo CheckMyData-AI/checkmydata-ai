@@ -249,7 +249,7 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
                     className="flex-1 text-sm text-left text-accent hover:text-accent-hover hover:underline cursor-pointer transition-colors"
                   >
                     {STEP_LABELS[step] || step}
-                    <span className="ml-1.5 text-[10px] opacity-60">→</span>
+                    <span className="ml-1.5 text-kicker opacity-60">→</span>
                   </button>
                 ) : (
                   <span className={`flex-1 text-sm ${done ? "text-text-primary" : "text-text-tertiary"}`}>
@@ -257,13 +257,13 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
                   </span>
                 )}
                 {done && (
-                  <span className="text-[10px] text-success/70 shrink-0">Done</span>
+                  <span className="text-kicker text-success/70 shrink-0">Done</span>
                 )}
                 {canAct && (
                   <button
                     onClick={() => handleAction(step)}
                     disabled={isRunning || !prevDone}
-                    className="text-[10px] px-2 py-1 rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="text-kicker px-2 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isRunning ? "Running..." : "Run"}
                   </button>
@@ -274,7 +274,7 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
         </div>
 
         {readiness.last_indexed_at && (
-          <div className="text-[11px] text-text-tertiary">
+          <div className="text-meta text-text-tertiary">
             Last indexed {timeAgo(readiness.last_indexed_at)}
             {readiness.commits_behind > 0 && (
               <span className="text-warning/80 ml-1">
@@ -292,7 +292,7 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
             <button
               onClick={() => handleAction("index_repo")}
               disabled={actionInProgress === "index_repo"}
-              className="shrink-0 text-[10px] px-2 py-1 rounded bg-warning text-white hover:bg-warning disabled:opacity-50"
+              className="shrink-0 text-kicker px-2 py-1 rounded bg-warning text-white hover:bg-warning disabled:opacity-50"
             >
               {actionInProgress === "index_repo" ? "Running..." : "Re-index"}
             </button>
@@ -317,7 +317,7 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
           <div className="border-t border-border-default pt-3">
             <button
               onClick={onBypass}
-              className="w-full text-sm px-4 py-2 rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors"
+              className="w-full text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/92 transition-colors"
             >
               Start chatting
             </button>

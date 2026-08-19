@@ -9,6 +9,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { connectionSourceLabel } from "@/lib/connection-source";
 import { BatchResults } from "./BatchResults";
+import { selectBaseCls } from "@/components/ui/Input";
 
 interface QueryRow {
   id: string;
@@ -175,8 +176,8 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={(e) => { if (e.target === e.currentTarget && !isRunning) onClose(); }}>
-      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Batch Query Runner" className="bg-surface-0 border border-border-subtle rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 shadow-xl animate-in fade-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center lg-scrim" onClick={(e) => { if (e.target === e.currentTarget && !isRunning) onClose(); }}>
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Batch Query Runner" className="bg-surface-0 border border-border-subtle rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 shadow-(--shadow-1) animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="shrink-0 px-5 py-4 border-b border-border-subtle flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -198,13 +199,13 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
             onChange={(e) => setBatchTitle(e.target.value)}
             placeholder="Batch title..."
             aria-label="Batch title"
-            className="flex-1 text-xs bg-surface-1 border border-border-default rounded px-3 py-1.5 text-text-primary focus:outline-none focus:border-accent"
+            className="flex-1 text-xs bg-surface-1 border border-border-default rounded px-3 py-1.5 text-text-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
           />
           <select
             value={selectedConnId}
             onChange={(e) => setSelectedConnId(e.target.value)}
             aria-label="Select connection"
-            className="text-xs bg-surface-1 border border-border-default rounded px-3 py-1.5 text-text-primary focus:outline-none focus:border-accent"
+            className={selectBaseCls}
           >
             <option value="">Select connection...</option>
             {connections.map((c) => (
@@ -218,16 +219,16 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
         {/* Query list */}
         <div className="flex-1 overflow-y-auto p-5 space-y-3 sidebar-scroll">
           {queries.map((q, idx) => (
-            <div key={q.id} className="bg-surface-1 border border-border-subtle rounded-lg p-3">
+            <div key={q.id} className="bg-panel border border-border rounded-card p-4">
               <div className="flex items-center gap-2 mb-2">
-                <span className="text-[10px] font-mono text-text-muted w-5 text-center shrink-0">{idx + 1}</span>
+                <span className="text-kicker font-mono text-text-muted w-5 text-center shrink-0">{idx + 1}</span>
                 <input
                   type="text"
                   value={q.title}
                   onChange={(e) => updateQuery(q.id, "title", e.target.value)}
                   placeholder="Query title..."
                   aria-label={`Query ${idx + 1} title`}
-                  className="flex-1 text-xs bg-surface-0 border border-border-default rounded px-2 py-1 text-text-primary focus:outline-none focus:border-accent"
+                  className="flex-1 text-xs bg-surface-0 border border-border-default rounded px-2 py-1 text-text-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
                 />
                 <div className="flex gap-0.5 shrink-0">
                   <button
@@ -265,7 +266,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
                 placeholder="SELECT ..."
                 aria-label={`Query ${idx + 1} SQL`}
                 rows={3}
-                className="w-full text-[11px] font-mono bg-surface-0 border border-border-default rounded px-2.5 py-2 text-text-secondary resize-y focus:outline-none focus:border-accent leading-relaxed"
+                className="w-full text-meta font-mono bg-surface-0 border border-border-default rounded px-2.5 py-2 text-text-secondary resize-y focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent leading-relaxed"
               />
             </div>
           ))}
@@ -275,10 +276,10 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
         {isRunning && (
           <div className="shrink-0 px-5 py-3 border-t border-border-subtle" aria-live="polite" role="status">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] text-text-secondary">
+              <span className="text-meta text-text-secondary">
                 Running queries...
               </span>
-              <span className="text-[11px] font-mono text-text-muted">
+              <span className="text-meta font-mono text-text-muted">
                 {progress.current}/{progress.total}
               </span>
             </div>
@@ -297,7 +298,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
             <button
               onClick={addQuery}
               disabled={isRunning}
-              className="flex items-center gap-1 text-[11px] px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1 text-meta px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-40"
             >
               <Icon name="plus" size={11} />
               Add Query
@@ -305,7 +306,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
             <button
               onClick={() => setShowNotePicker(true)}
               disabled={isRunning || notes.length === 0}
-              className="flex items-center gap-1 text-[11px] px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1 text-meta px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-40"
             >
               <Icon name="bookmark" size={11} />
               From Saved Notes
@@ -314,7 +315,7 @@ export function BatchRunner({ onClose, connectionId, preselectedNoteIds }: Batch
           <button
             onClick={handleRun}
             disabled={isRunning || queries.every((q) => !q.sql.trim())}
-            className="flex items-center gap-1.5 text-xs px-4 py-1.5 rounded bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-40"
+            className="flex items-center gap-1.5 text-xs px-4 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/92 transition-colors disabled:opacity-40"
           >
             {isRunning ? (
               <>
@@ -395,20 +396,20 @@ function NotePicker({ notes, onSelect, onClose }: NotePickerProps) {
               />
               <div className="min-w-0">
                 <p className="text-xs font-medium text-text-primary truncate">{note.title}</p>
-                <p className="text-[10px] font-mono text-text-muted truncate mt-0.5">{note.sql_query}</p>
+                <p className="text-kicker font-mono text-text-muted truncate mt-0.5">{note.sql_query}</p>
               </div>
             </label>
           ))
         )}
       </div>
       <div className="px-5 py-3 border-t border-border-subtle flex justify-end gap-2">
-        <button onClick={onClose} className="text-[11px] px-3 py-1.5 rounded text-text-muted hover:text-text-secondary">
+        <button onClick={onClose} className="text-meta px-3 py-1.5 rounded text-text-muted hover:text-text-secondary">
           Cancel
         </button>
         <button
           onClick={handleAdd}
           disabled={selected.size === 0}
-          className="text-[11px] px-4 py-1.5 rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-40"
+          className="text-meta px-4 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-40"
         >
           Add {selected.size > 0 ? `(${selected.size})` : ""}
         </button>

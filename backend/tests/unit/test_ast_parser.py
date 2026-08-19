@@ -406,13 +406,22 @@ def test_uid_is_stable_across_line_shift(parser: ASTParser):
 
 
 def test_method_uid_excludes_line_but_keeps_parent(parser: ASTParser):
-    """Method UIDs must not carry a line suffix; parent_uid linkage must still hold."""
+    """Method UIDs must not carry a line suffix; parent_uid linkage must still hold.
+
+    The enclosing scope IS in the UID (``Svc.run``, not ``run``) — a name, not a
+    line, so CODEIDX-C7 still holds: shifting the method down the file does not
+    change its identity. The scope was added on 2026-08-19 because without it two
+    classes declaring ``run`` in one file collided and every UID-keyed consumer
+    dropped one of them; see
+    ``test_same_named_methods_in_different_classes_keep_distinct_uids`` below.
+    """
     src = b"class Svc:\n    def run(self):\n        return 1\n"
     pf = parser.parse_bytes("s.py", src)
     cls = next(s for s in pf.symbols if s.kind == "class")
     method = next(s for s in pf.symbols if s.kind == "method")
     assert cls.uid == "python:s.py:class:Svc"
-    assert method.uid == "python:s.py:method:run"
+    assert method.uid == "python:s.py:method:Svc.run"
+    assert ":1" not in method.uid.rsplit(":", 1)[-1]  # no line component
     assert method.parent_uid == cls.uid
 
 
@@ -585,3 +594,32 @@ def test_python_consts_not_extracted_by_c5(parser: ASTParser):
     assert "MAX_ROWS" not in syms
     assert "LOCAL" not in syms
     assert "helper" in syms
+
+
+def test_same_named_methods_in_different_classes_keep_distinct_uids(parser: ASTParser):
+    """Two classes declaring ``run`` in one file must not share a UID.
+
+    This is the shape that broke production on 2026-08-18: Laravel's
+    ``_ide_helper.php`` declares many classes each carrying ``macro``, ``make``
+    and friends, so ``{lang}:{path}:{kind}:{name}`` collided and
+    ``code_graph.py`` silently overwrote one symbol with its twin. The enclosing
+    scope disambiguates them without reintroducing the definition line that
+    CODEIDX-C7 deliberately keeps out of identity.
+    """
+    src = (
+        b"class Alpha:\n"
+        b"    def run(self):\n"
+        b"        return 1\n"
+        b"\n"
+        b"class Beta:\n"
+        b"    def run(self):\n"
+        b"        return 2\n"
+    )
+    pf = parser.parse_bytes("svc.py", src)
+    runs = [s for s in pf.symbols if s.name == "run"]
+    assert len(runs) == 2
+    assert len({s.uid for s in runs}) == 2, f"methods collapsed to one UID: {runs}"
+    # The parent linkage still resolves to the right class for each.
+    by_parent = {s.parent_uid: s.uid for s in runs}
+    assert by_parent["python:svc.py:class:Alpha"].endswith("Alpha.run")
+    assert by_parent["python:svc.py:class:Beta"].endswith("Beta.run")

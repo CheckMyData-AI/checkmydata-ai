@@ -6,9 +6,10 @@ import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { Spinner } from "@/components/ui/Spinner";
 import { Icon } from "@/components/ui/Icon";
+import { selectBaseCls } from "@/components/ui/Input";
 
 const inputCls =
-  "w-full bg-surface-1 border border-border-default rounded-lg px-3 py-1.5 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent";
+  "w-full bg-surface-1 border border-border-default rounded-lg px-3 py-1.5 text-xs text-text-primary placeholder-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:ring-1 focus:ring-accent";
 
 const ROLE_COLORS: Record<string, string> = {
   owner: "bg-warning-muted text-warning",
@@ -167,7 +168,7 @@ export function InviteManager({ projectId, onClose }: Props) {
   const pendingInvites = invites.filter((i) => i.status === "pending");
 
   return (
-    <div className="space-y-3 p-4 bg-surface-1 rounded-lg border border-border-default shadow-xl">
+    <div className="space-y-3 p-4 bg-surface-1 rounded-lg border border-border-default shadow-(--shadow-1)">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-medium text-text-primary uppercase tracking-wider">
           Manage Access
@@ -196,7 +197,7 @@ export function InviteManager({ projectId, onClose }: Props) {
           value={role}
           onChange={(e) => setRole(e.target.value)}
           aria-label="Member role"
-          className="bg-surface-1 border border-border-default rounded-lg px-2 py-1.5 text-xs text-text-primary focus:outline-none"
+          className={selectBaseCls}
         >
           <option value="editor">Editor</option>
           <option value="viewer">Viewer</option>
@@ -204,7 +205,7 @@ export function InviteManager({ projectId, onClose }: Props) {
         <button
           onClick={handleInvite}
           disabled={loading || !email.trim()}
-          className="px-3 py-1.5 bg-accent text-white text-xs rounded-lg hover:bg-accent-hover disabled:opacity-50 whitespace-nowrap transition-colors"
+          className="px-3 py-1.5 bg-primary text-primary-foreground text-xs rounded-lg hover:bg-primary/92 disabled:opacity-50 whitespace-nowrap transition-colors"
         >
           Invite
         </button>
@@ -215,7 +216,7 @@ export function InviteManager({ projectId, onClose }: Props) {
       {/* Members */}
       {members.length > 0 && (
         <div className="space-y-1">
-          <p className="text-[10px] text-text-tertiary uppercase tracking-wider">
+          <p className="text-kicker text-text-tertiary uppercase tracking-wider">
             Members ({members.length})
           </p>
           {members.map((m) => (
@@ -229,14 +230,14 @@ export function InviteManager({ projectId, onClose }: Props) {
                     {m.display_name || m.email || m.user_id}
                   </span>
                   {m.display_name && m.email && (
-                    <span className="text-text-muted text-[10px] truncate block">
+                    <span className="text-text-muted text-kicker truncate block">
                       {m.email}
                     </span>
                   )}
                 </div>
                 {m.role === "owner" ? (
                   <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${ROLE_COLORS.owner}`}
+                    className={`px-1.5 py-0.5 rounded text-kicker font-medium shrink-0 ${ROLE_COLORS.owner}`}
                   >
                     owner
                   </span>
@@ -246,7 +247,7 @@ export function InviteManager({ projectId, onClose }: Props) {
                     onChange={(e) => handleRoleChange(m.user_id, e.target.value, m.role)}
                     disabled={updatingRoleId === m.user_id}
                     aria-label={`Change role for ${m.email || m.display_name || "member"}`}
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 border-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent transition-colors ${ROLE_COLORS[m.role] || ROLE_COLORS.viewer} ${updatingRoleId === m.user_id ? "opacity-50" : ""}`}
+                    className={selectBaseCls}
                   >
                     <option value="editor">editor</option>
                     <option value="viewer">viewer</option>
@@ -257,7 +258,7 @@ export function InviteManager({ projectId, onClose }: Props) {
                 <button
                   onClick={() => handleRemoveMember(m.user_id, m.email)}
                   aria-label={`Remove ${m.email || m.display_name || "member"}`}
-                  className="ml-2 px-2 py-0.5 text-[10px] text-text-muted hover:text-error hover:bg-error/10 rounded transition-colors shrink-0"
+                  className="ml-2 px-2 py-0.5 text-kicker text-text-muted hover:text-error hover:bg-error/10 rounded transition-colors shrink-0"
                 >
                   Remove
                 </button>
@@ -270,7 +271,7 @@ export function InviteManager({ projectId, onClose }: Props) {
       {/* Pending invites */}
       {pendingInvites.length > 0 && (
         <div className="space-y-1">
-          <p className="text-[10px] text-text-tertiary uppercase tracking-wider">
+          <p className="text-kicker text-text-tertiary uppercase tracking-wider">
             Pending Invites ({pendingInvites.length})
           </p>
           {pendingInvites.map((inv) => (
@@ -281,12 +282,12 @@ export function InviteManager({ projectId, onClose }: Props) {
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <div className="min-w-0 flex-1">
                   <span className="text-text-primary truncate block">{inv.email}</span>
-                  <span className="text-text-muted text-[10px]">
+                  <span className="text-text-muted text-kicker">
                     {inv.created_at ? `Sent ${relativeTime(inv.created_at)}` : "pending"}
                   </span>
                 </div>
                 <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${ROLE_COLORS[inv.role] || ROLE_COLORS.viewer}`}
+                  className={`px-1.5 py-0.5 rounded text-kicker font-medium shrink-0 ${ROLE_COLORS[inv.role] || ROLE_COLORS.viewer}`}
                 >
                   {inv.role}
                 </span>
@@ -296,7 +297,7 @@ export function InviteManager({ projectId, onClose }: Props) {
                   onClick={() => handleResend(inv.id)}
                   disabled={resending === inv.id || resentIds.has(inv.id)}
                   aria-label={`Resend invite to ${inv.email}`}
-                  className="px-2 py-0.5 text-[10px] text-accent hover:text-accent-hover hover:bg-accent/10 rounded transition-colors disabled:opacity-50 disabled:cursor-default"
+                  className="px-2 py-0.5 text-kicker text-accent hover:text-accent-hover hover:bg-accent/10 rounded transition-colors disabled:opacity-50 disabled:cursor-default"
                 >
                   {resending === inv.id
                     ? "..."
@@ -307,7 +308,7 @@ export function InviteManager({ projectId, onClose }: Props) {
                 <button
                   onClick={() => handleRevoke(inv.id, inv.email)}
                   aria-label={`Delete invite for ${inv.email}`}
-                  className="px-2 py-0.5 text-[10px] text-text-muted hover:text-error hover:bg-error/10 rounded transition-colors"
+                  className="px-2 py-0.5 text-kicker text-text-muted hover:text-error hover:bg-error/10 rounded transition-colors"
                 >
                   Delete
                 </button>

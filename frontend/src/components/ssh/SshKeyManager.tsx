@@ -36,7 +36,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={copy}
-      className="absolute top-1 right-1 px-1.5 py-0.5 rounded text-[10px] bg-surface-2 text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors"
+      className="absolute top-1 right-1 px-1.5 py-0.5 rounded text-kicker bg-surface-2 text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors"
       title="Copy to clipboard"
     >
       {copied ? (
@@ -55,7 +55,7 @@ function CopyButton({ text }: { text: string }) {
 function CodeBlock({ command }: { command: string }) {
   return (
     <div className="relative mt-1">
-      <pre className="bg-surface-0 border border-border-subtle rounded-lg px-2.5 py-1.5 pr-14 font-mono text-[10px] text-success overflow-x-auto">
+      <pre className="bg-surface-0 border border-border-subtle rounded-lg px-2.5 py-1.5 pr-14 font-mono text-kicker text-success overflow-x-auto">
         {command}
       </pre>
       <CopyButton text={command} />
@@ -65,7 +65,7 @@ function CodeBlock({ command }: { command: string }) {
 
 function SshKeyHelp() {
   return (
-    <div className="space-y-3 p-2.5 bg-surface-1 border border-border-subtle rounded-lg text-[11px] text-text-tertiary leading-relaxed">
+    <div className="space-y-3 p-2.5 bg-surface-1 border border-border-subtle rounded-lg text-meta text-text-tertiary leading-relaxed">
       <div>
         <p className="text-text-secondary font-medium">
           1. Check for existing keys
@@ -116,7 +116,7 @@ function SshKeyHelp() {
         </p>
       </div>
 
-      <div className="pt-1 border-t border-border-subtle text-[10px] space-y-0.5 text-text-muted">
+      <div className="pt-1 border-t border-border-subtle text-kicker space-y-0.5 text-text-muted">
         <p>
           Use the <span className="text-text-tertiary">private</span> key — not
           the{" "}
@@ -222,7 +222,7 @@ export function SshKeyManager() {
             setError(null);
             setShowHelp(false);
           }}
-          className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
+          className="flex items-center gap-1 text-meta text-accent hover:text-accent-hover transition-colors"
         >
           <Icon name="plus" size={12} />
           Add
@@ -242,7 +242,7 @@ export function SshKeyManager() {
           <button
             type="button"
             onClick={() => setShowHelp(!showHelp)}
-            className="flex items-center gap-1.5 text-[10px] text-text-muted hover:text-accent transition-colors"
+            className="flex items-center gap-1.5 text-kicker text-text-muted hover:text-accent transition-colors"
           >
             <Icon name="help-circle" size={12} />
             {showHelp ? "Hide guide" : "Need help finding your SSH key?"}
@@ -260,7 +260,7 @@ export function SshKeyManager() {
             rows={5}
             className={
               inputCls +
-              " font-mono text-[10px] leading-relaxed resize-y"
+              " font-mono text-kicker leading-relaxed resize-y"
             }
           />
           <input
@@ -272,7 +272,7 @@ export function SshKeyManager() {
             className={inputCls}
           />
           {error && (
-            <p className="text-error text-[10px] flex items-center gap-1">
+            <p className="text-error text-kicker flex items-center gap-1">
               <Icon name="x" size={10} />
               {error}
             </p>
@@ -282,7 +282,7 @@ export function SshKeyManager() {
             disabled={
               creating || !form.name.trim() || !form.private_key.trim()
             }
-            className="w-full px-3 py-2 bg-accent text-white font-medium rounded-lg hover:bg-accent-hover disabled:opacity-50 transition-colors"
+            className="w-full px-3 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/92 disabled:opacity-50 transition-colors"
           >
             {creating ? "Adding..." : "Add Key"}
           </button>
@@ -302,12 +302,12 @@ export function SshKeyManager() {
                 <span className="text-xs font-medium text-text-secondary truncate">
                   {k.name}
                 </span>
-                <span className="shrink-0 text-[10px] px-1 py-px rounded-full bg-accent-muted text-accent leading-none font-mono uppercase">
+                <span className="shrink-0 text-kicker px-1 py-px rounded-full bg-accent-muted text-accent leading-none font-mono uppercase">
                   {k.key_type}
                 </span>
               </div>
               <span
-                className="text-[10px] text-text-muted font-mono truncate block mt-0.5"
+                className="text-kicker text-text-muted font-mono truncate block mt-0.5"
                 title={k.fingerprint}
               >
                 {truncateFingerprint(k.fingerprint)}
@@ -325,7 +325,7 @@ export function SshKeyManager() {
           </div>
         ))}
         {sshKeys.length === 0 && !showCreate && (
-          <p className="text-[10px] text-text-muted px-3 py-1">
+          <p className="text-kicker text-text-muted px-3 py-1">
             No SSH keys added yet
           </p>
         )}

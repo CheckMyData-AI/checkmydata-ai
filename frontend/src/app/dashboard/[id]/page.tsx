@@ -53,7 +53,7 @@ function timeAgo(iso: string | null): string {
 function ResultTable({ data }: { data: { columns: string[]; rows: unknown[][]; total_rows: number } }) {
   return (
     <div className="overflow-x-auto max-h-64 overflow-y-auto">
-      <table className="text-[10px] border-collapse w-full" aria-label="Query results">
+      <table className="text-kicker border-collapse w-full" aria-label="Query results">
         <thead className="sticky top-0 bg-surface-1">
           <tr className="border-b border-border-subtle">
             {data.columns.map((col, idx) => (
@@ -76,7 +76,7 @@ function ResultTable({ data }: { data: { columns: string[]; rows: unknown[][]; t
         </tbody>
       </table>
       {data.total_rows > 50 && (
-        <p className="text-[10px] text-text-muted mt-1 px-1.5">
+        <p className="text-kicker text-text-muted mt-1 px-1.5">
           Showing 50 of {data.total_rows} rows
         </p>
       )}
@@ -257,7 +257,7 @@ function DashboardPageContent() {
           <div>
             <h1 className="text-sm font-semibold text-text-primary">{dashboard.title}</h1>
             {dashboard.updated_at && (
-              <p className="text-[10px] text-text-muted">Updated {timeAgo(dashboard.updated_at)}</p>
+              <p className="text-kicker text-text-muted">Updated {timeAgo(dashboard.updated_at)}</p>
             )}
           </div>
         </div>
@@ -273,7 +273,7 @@ function DashboardPageContent() {
           {canEditDashboard && (
             <button
               onClick={() => setEditing(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent-hover transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:bg-primary/92 transition-colors"
             >
               <Icon name="edit" size={12} />
               Edit
@@ -316,7 +316,7 @@ function DashboardPageContent() {
                   <div className="bg-surface-1 border border-border-subtle rounded-lg overflow-hidden">
                     <div className="px-4 py-3 border-b border-border-subtle flex items-center justify-between">
                       <h3 className="text-xs font-medium text-text-primary truncate">{note.title}</h3>
-                      <span className="text-[10px] text-text-muted shrink-0 ml-2">
+                      <span className="text-kicker text-text-muted shrink-0 ml-2">
                         {timeAgo(note.last_executed_at)}
                       </span>
                     </div>
@@ -324,7 +324,7 @@ function DashboardPageContent() {
                       {result ? (
                         <ResultTable data={result} />
                       ) : (
-                        <p className="text-[11px] text-text-muted py-4 text-center">No data</p>
+                        <p className="text-meta text-text-muted py-4 text-center">No data</p>
                       )}
                     </div>
                   </div>

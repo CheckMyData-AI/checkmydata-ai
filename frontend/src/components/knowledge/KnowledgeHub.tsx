@@ -82,7 +82,7 @@ export function KnowledgeHub() {
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`flex-1 text-[10px] py-1 rounded transition-colors ${
+            className={`flex-1 text-kicker py-1 rounded transition-colors ${
               tab === t.id
                 ? "bg-surface-2 text-text-primary font-medium"
                 : "text-text-muted hover:text-text-secondary"
@@ -102,7 +102,7 @@ export function KnowledgeHub() {
         {tab === "metrics" && (
           <div className="px-1 pb-2">
             {metricsLoading ? (
-              <p className="text-[10px] text-text-tertiary animate-pulse px-2 py-2">
+              <p className="text-kicker text-text-tertiary animate-pulse px-2 py-2">
                 Loading metrics...
               </p>
             ) : (

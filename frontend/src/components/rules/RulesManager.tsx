@@ -193,7 +193,7 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
         ) : (
           <div className="space-y-2.5">
             {editingRule?.is_default && (
-              <p className="text-[10px] text-warning/70 px-1 flex items-center gap-1">
+              <p className="text-kicker text-warning/70 px-1 flex items-center gap-1">
                 <Icon name="zap" size={10} />
                 This is the default metrics guide. Edit it to match your project.
               </p>
@@ -213,13 +213,13 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
               aria-label="Rule content"
               rows={12}
               maxLength={50000}
-              className={inputCls + " resize-y min-h-[200px] font-mono text-[13px]"}
+              className={inputCls + " resize-y min-h-[200px] font-mono text-body"}
             />
             <div className="flex gap-2 pt-1">
               <button
                 onClick={editingId ? handleUpdate : handleCreate}
                 disabled={saving || (editingId !== null && !isDirty)}
-                className="flex-1 px-3 py-2 bg-accent text-white text-xs font-medium rounded-lg hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex-1 px-3 py-2 bg-primary text-primary-foreground text-xs font-medium rounded-lg hover:bg-primary/92 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {saving ? "Saving..." : editingId ? "Save" : "Create"}
               </button>
@@ -257,12 +257,12 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
                   {rule.name}
                 </span>
                 {rule.is_default && (
-                  <span className="shrink-0 text-[10px] px-1 py-px rounded-full bg-warning-muted text-warning leading-none">
+                  <span className="shrink-0 text-kicker px-1 py-px rounded-full bg-warning-muted text-warning leading-none">
                     default
                   </span>
                 )}
                 {!rule.project_id && (
-                  <span className="shrink-0 text-[10px] px-1 py-px rounded-full bg-surface-3/50 text-text-muted leading-none">
+                  <span className="shrink-0 text-kicker px-1 py-px rounded-full bg-surface-3/50 text-text-muted leading-none">
                     global
                   </span>
                 )}
@@ -290,7 +290,7 @@ export function RulesManager({ createRequested, onCreateHandled }: RulesManagerP
           </div>
         ))}
         {rules.length === 0 && (
-          <p className="text-[10px] text-text-muted px-3 py-1">
+          <p className="text-kicker text-text-muted px-3 py-1">
             No custom rules yet
           </p>
         )}

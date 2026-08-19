@@ -7,6 +7,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.config import settings
+from app.knowledge.ast_parser import SYMBOL_UID_SCHEMA
 from app.models.base import async_session_factory
 from app.models.deploy_state import DeployState
 from app.models.project import Project
@@ -27,8 +28,18 @@ class ReconcileResult:
 
 
 def embedding_fingerprint() -> str:
-    """Deterministic string identifying the current embedding config."""
-    return f"{settings.chroma_embedding_model}|{settings.embedder_max_tokens}"
+    """Deterministic string identifying the current embedding + index config.
+
+    The symbol-UID schema is part of it (AUD-0819-02): changing `_make_uid`'s
+    shape leaves every unchanged file's symbols on the old form, because
+    `save_incremental` merges by FILE rather than by UID, so cross-file edges to
+    them dangle until a clean rebuild. Riding this fingerprint means the rebuild
+    is enqueued by `reconcile_embeddings` at startup — idempotent, advisory-locked
+    across dynos, `force_full=True` — instead of being owed to an operator.
+    """
+    return (
+        f"{settings.chroma_embedding_model}|{settings.embedder_max_tokens}|uid{SYMBOL_UID_SCHEMA}"
+    )
 
 
 async def reconcile_embeddings(

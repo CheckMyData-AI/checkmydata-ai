@@ -76,7 +76,7 @@ function TaskItem({ task }: { task: BgTask }) {
 
           <div className="flex items-center gap-1.5 mt-0.5">
             {targetName && (
-              <span className="text-[10px] text-text-tertiary truncate max-w-[140px]">
+              <span className="text-kicker text-text-tertiary truncate max-w-[140px]">
                 {targetName}
               </span>
             )}
@@ -84,20 +84,20 @@ function TaskItem({ task }: { task: BgTask }) {
               <span className="text-text-muted">·</span>
             )}
             {task.status === "running" && stepLabel && (
-              <span className="text-[10px] text-text-secondary truncate">
+              <span className="text-kicker text-text-secondary truncate">
                 {stepLabel}
               </span>
             )}
             {task.status === "running" && task.totalSteps > 0 && (
-              <span className="text-[10px] text-text-tertiary tabular-nums">
+              <span className="text-kicker text-text-tertiary tabular-nums">
                 {task.stepIndex}/{task.totalSteps}
               </span>
             )}
             {task.status === "completed" && (
-              <span className="text-[10px] text-success/70">Completed</span>
+              <span className="text-kicker text-success/70">Completed</span>
             )}
             {task.status === "failed" && (
-              <span className="text-[10px] text-error/70 truncate max-w-[180px]" title={task.error}>
+              <span className="text-kicker text-error/70 truncate max-w-[180px]" title={task.error}>
                 {task.error || "Failed"}
               </span>
             )}
@@ -114,7 +114,7 @@ function TaskItem({ task }: { task: BgTask }) {
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
-          <span className="text-[10px] text-text-muted tabular-nums">
+          <span className="text-kicker text-text-muted tabular-nums">
             {elapsed}
           </span>
           {task.status === "running" && (
@@ -272,7 +272,7 @@ export function ActiveTasksWidget() {
 
       {expanded && (
         <div
-          className="absolute right-0 top-full mt-1.5 w-80 bg-surface-1 border border-border-subtle rounded-lg shadow-xl z-50 overflow-hidden animate-[slideDown_0.15s_ease-out]"
+          className="absolute right-0 top-full mt-1.5 w-80 bg-surface-1 border border-border-subtle rounded-lg shadow-(--shadow-1) z-50 overflow-hidden animate-[slideDown_0.15s_ease-out]"
           role="region"
           aria-label="Background tasks"
         >

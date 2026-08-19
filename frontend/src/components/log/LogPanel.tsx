@@ -146,7 +146,7 @@ export function LogToggleButton() {
       <Icon name="activity" size={12} />
       Live Activity
       {unreadCount > 0 && (
-        <span className="bg-accent text-white text-[10px] px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+        <span className="bg-primary text-primary-foreground text-kicker px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
           {unreadCount > 99 ? "99+" : unreadCount}
         </span>
       )}
@@ -163,7 +163,7 @@ export function PersistentLogToggle() {
     <div className="absolute bottom-3 right-3 z-10">
       <button
         onClick={toggle}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-2 border border-border-subtle rounded-lg text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors shadow-lg"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-2 border border-border-subtle rounded-lg text-meta text-text-tertiary hover:text-text-primary hover:bg-surface-3 transition-colors shadow-(--shadow-1)"
         title="Open Live Activity"
       >
         <StatusDot
@@ -173,7 +173,7 @@ export function PersistentLogToggle() {
         <Icon name="activity" size={11} />
         <span>Log</span>
         {unreadCount > 0 && (
-          <span className="bg-accent text-white text-[10px] px-1 py-0.5 rounded-full min-w-[14px] text-center leading-none">
+          <span className="bg-primary text-primary-foreground text-kicker px-1 py-0.5 rounded-full min-w-[14px] text-center leading-none">
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         )}
@@ -222,23 +222,23 @@ export function LogPanel() {
           title={isConnected ? "Live updates connected" : "Disconnected"}
         />
         <Icon name="activity" size={12} className="text-text-tertiary" />
-        <span className="text-[11px] font-medium text-text-tertiary uppercase tracking-wider">
+        <span className="text-meta font-medium text-text-tertiary uppercase tracking-wider">
           Live Activity
         </span>
-        <span className="text-[10px] text-text-muted tabular-nums">
+        <span className="text-kicker text-text-muted tabular-nums">
           {entries.length} entries
         </span>
         <div className="ml-auto flex items-center gap-1">
           <button
             onClick={clear}
-            className="text-[10px] text-text-muted hover:text-text-secondary transition-colors px-1.5 py-0.5"
+            className="text-kicker text-text-muted hover:text-text-secondary transition-colors px-1.5 py-0.5"
             title="Clear log"
           >
             Clear
           </button>
           <button
             onClick={toggle}
-            className="text-[10px] text-text-muted hover:text-text-secondary transition-colors px-1.5 py-0.5"
+            className="text-kicker text-text-muted hover:text-text-secondary transition-colors px-1.5 py-0.5"
             title="Close log panel"
           >
             Close
@@ -249,7 +249,7 @@ export function LogPanel() {
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto overflow-x-hidden font-mono text-[11px] py-1"
+        className="flex-1 overflow-y-auto overflow-x-hidden font-mono text-meta py-1"
       >
         {entries.length === 0 ? (
           <div className="flex items-center justify-center h-full text-text-muted text-xs">

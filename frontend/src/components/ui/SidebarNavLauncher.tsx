@@ -43,9 +43,9 @@ export function SidebarNavLauncher({
         className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left rounded-md hover:bg-surface-1 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset group"
       >
         <Icon name={icon} size={14} className="text-text-tertiary shrink-0" />
-        <span className="flex-1 text-[11px] font-medium text-text-secondary">{title}</span>
+        <span className="flex-1 text-meta font-medium text-text-secondary">{title}</span>
         {subtitle && (
-          <span className="text-[10px] text-text-muted truncate max-w-[80px]">{subtitle}</span>
+          <span className="text-kicker text-text-muted truncate max-w-[80px]">{subtitle}</span>
         )}
         <Icon
           name="chevron-right"

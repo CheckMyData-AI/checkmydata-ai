@@ -170,7 +170,7 @@ function LoginPageContent() {
   };
 
   const inputCls =
-    "w-full px-3.5 py-2.5 bg-surface-1 text-text-primary rounded-lg text-sm border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-colors placeholder-text-muted";
+    "w-full px-3.5 py-2.5 bg-surface-1 text-text-primary rounded-lg text-sm border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors placeholder-text-muted";
 
   return (
     <div className="min-h-screen bg-surface-0 flex items-center justify-center p-4">
@@ -236,7 +236,7 @@ function LoginPageContent() {
               }
             />
             {emailTouched && email && !emailRegex.test(email) && (
-              <p className="text-[10px] text-error mt-1 px-1">
+              <p className="text-kicker text-error mt-1 px-1">
                 Please enter a valid email address
               </p>
             )}
@@ -260,11 +260,11 @@ function LoginPageContent() {
               }
             />
             {mode === "register" && password.length > 0 && password.length < 8 ? (
-              <p className="text-[10px] text-error mt-1 px-1">
+              <p className="text-kicker text-error mt-1 px-1">
                 Password must be at least 8 characters
               </p>
             ) : mode === "register" ? (
-              <p className="text-[10px] text-text-muted mt-1 px-1">
+              <p className="text-kicker text-text-muted mt-1 px-1">
                 Min. 8 characters
               </p>
             ) : null}
@@ -291,7 +291,7 @@ function LoginPageContent() {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover disabled:opacity-50 transition-colors"
+            className="w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/92 disabled:opacity-50 transition-colors"
           >
             {isLoading
               ? mode === "login"
@@ -306,7 +306,7 @@ function LoginPageContent() {
             <>
               <div className="flex items-center gap-3">
                 <div className="flex-1 border-t border-border-subtle" />
-                <span className="text-[10px] text-text-muted uppercase tracking-wider">
+                <span className="text-kicker text-text-muted uppercase tracking-wider">
                   or
                 </span>
                 <div className="flex-1 border-t border-border-subtle" />
@@ -350,7 +350,7 @@ function LoginPageContent() {
           </p>
         </form>
 
-        <p className="text-center text-[11px] text-text-muted mt-4">
+        <p className="text-center text-meta text-text-muted mt-4">
           <Link
             href="/terms"
             className="hover:text-text-tertiary transition-colors"

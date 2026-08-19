@@ -18,6 +18,11 @@ def mock_settings():
         m.chroma_server_url = ""
         m.chroma_persist_dir = "/tmp/test_chroma"
         m.chroma_embedding_model = ""
+        # A real int, because `add_documents` sizes its upsert batches from this
+        # (AUD-0819-01) and a MagicMock cannot be compared to one. The value is
+        # the production default; the batching contract itself is covered by
+        # tests/unit/knowledge/test_vector_store_batching.py.
+        m.embedding_upsert_batch_size = 8
         yield m
 
 

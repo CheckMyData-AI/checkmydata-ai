@@ -43,7 +43,7 @@ export function ResultDiffView({
       {/* Root cause */}
       <div className={`p-3 rounded-xl border ${categoryColor}`}>
         <div className="flex items-center gap-2 mb-1.5">
-          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${categoryColor}`}>
+          <span className={`text-kicker px-1.5 py-0.5 rounded border ${categoryColor}`}>
             {categoryLabel}
           </span>
         </div>
@@ -53,14 +53,14 @@ export function ResultDiffView({
       {/* Queries comparison */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
         <div className="min-w-0">
-          <div className="text-[10px] font-medium text-error mb-1">Original Query</div>
-          <pre className="p-2 rounded bg-error-muted border border-border-default text-[10px] text-text-secondary overflow-x-auto max-h-32">
+          <div className="text-kicker font-medium text-error mb-1">Original Query</div>
+          <pre className="p-2 rounded bg-error-muted border border-border-default text-kicker text-text-secondary overflow-x-auto max-h-32">
             {originalQuery || "N/A"}
           </pre>
         </div>
         <div className="min-w-0">
-          <div className="text-[10px] font-medium text-success mb-1">Corrected Query</div>
-          <pre className="p-2 rounded bg-success-muted border border-border-default text-[10px] text-text-primary overflow-x-auto max-h-32">
+          <div className="text-kicker font-medium text-success mb-1">Corrected Query</div>
+          <pre className="p-2 rounded bg-success-muted border border-border-default text-kicker text-text-primary overflow-x-auto max-h-32">
             {correctedQuery || "Generating..."}
           </pre>
         </div>

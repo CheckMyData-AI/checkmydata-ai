@@ -65,7 +65,7 @@ export function PendingInvites() {
 
   return (
     <div className="space-y-1 p-2 bg-accent-muted border border-accent/20 rounded-lg">
-      <p className="text-[10px] text-accent uppercase tracking-wider font-medium">
+      <p className="text-kicker text-accent uppercase tracking-wider font-medium">
         Pending Invitations ({invites.length})
       </p>
       {invites.map((inv) => {
@@ -86,7 +86,7 @@ export function PendingInvites() {
                 onClick={() => handleDecline(inv.id)}
                 disabled={busy}
                 aria-label={`Decline invitation to ${projectLabel}`}
-                className="px-2 py-1 text-text-secondary text-[10px] rounded hover:text-text-primary hover:bg-surface-2 disabled:opacity-50 transition-colors"
+                className="px-2 py-1 text-text-secondary text-kicker rounded hover:text-text-primary hover:bg-surface-2 disabled:opacity-50 transition-colors"
               >
                 {declining === inv.id ? "..." : "Decline"}
               </button>
@@ -94,7 +94,7 @@ export function PendingInvites() {
                 onClick={() => handleAccept(inv.id)}
                 disabled={busy}
                 aria-label={`Accept invitation to ${projectLabel}`}
-                className="px-2 py-1 bg-accent text-white text-[10px] rounded hover:bg-accent-hover disabled:opacity-50 transition-colors"
+                className="px-2 py-1 bg-primary text-primary-foreground text-kicker rounded hover:bg-primary/92 disabled:opacity-50 transition-colors"
               >
                 {accepting === inv.id ? "..." : "Accept"}
               </button>

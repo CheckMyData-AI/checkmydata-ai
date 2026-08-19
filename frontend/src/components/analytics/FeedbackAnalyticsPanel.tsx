@@ -53,7 +53,7 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
 
   if (loading) {
     return (
-      <div className="px-2 py-1 text-[10px] text-text-tertiary animate-pulse">
+      <div className="px-2 py-1 text-kicker text-text-tertiary animate-pulse">
         Loading analytics...
       </div>
     );
@@ -61,7 +61,7 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
 
   if (error) {
     return (
-      <div className="px-2 py-1 text-[10px] text-error flex items-center gap-2">
+      <div className="px-2 py-1 text-kicker text-error flex items-center gap-2">
         <span>Failed to load analytics</span>
         <button onClick={() => load()} className="text-text-secondary hover:text-text-primary underline">Retry</button>
       </div>
@@ -71,7 +71,7 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
   if (!data || data.validations.total === 0) {
     return (
       <div className="px-2 py-2">
-        <p className="text-[11px] text-text-tertiary leading-relaxed">
+        <p className="text-meta text-text-tertiary leading-relaxed">
           No validation data yet. Rate query results with thumbs up/down to start tracking data quality.
         </p>
       </div>
@@ -110,9 +110,9 @@ export function FeedbackAnalyticsPanel({ projectId }: FeedbackAnalyticsPanelProp
 
       {validations.top_error_patterns.length > 0 && (
         <div className="space-y-1">
-          <div className="text-[10px] text-text-tertiary">Top errors</div>
+          <div className="text-kicker text-text-tertiary">Top errors</div>
           {validations.top_error_patterns.slice(0, 3).map((p, i) => (
-            <div key={i} className="flex items-center justify-between text-[10px]">
+            <div key={i} className="flex items-center justify-between text-kicker">
               <span className="text-text-secondary truncate mr-2">{p.reason}</span>
               <span className="text-text-muted tabular-nums shrink-0">{p.count}x</span>
             </div>
@@ -127,7 +127,7 @@ function ConfidenceScore({ accuracy }: { accuracy: number | null }) {
   if (accuracy == null) {
     return (
       <div className="bg-surface-2/50 rounded-md px-2.5 py-2">
-        <div className="text-[10px] text-text-tertiary">Data Confidence</div>
+        <div className="text-kicker text-text-tertiary">Data Confidence</div>
         <div className="text-sm font-medium text-text-secondary mt-0.5">No data yet</div>
       </div>
     );
@@ -153,7 +153,7 @@ function ConfidenceScore({ accuracy }: { accuracy: number | null }) {
   return (
     <div className="bg-surface-2/50 rounded-md px-2.5 py-2">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] text-text-tertiary">Data Confidence</span>
+        <span className="text-kicker text-text-tertiary">Data Confidence</span>
         <span className={`text-sm font-semibold tabular-nums ${textColor}`}>
           {accuracy}%
         </span>
@@ -180,7 +180,7 @@ function VerdictBar({ verdicts, total }: { verdicts: Record<string, number>; tot
 
   return (
     <div className="space-y-1.5">
-      <div className="text-[10px] text-text-tertiary">Verdict breakdown</div>
+      <div className="text-kicker text-text-tertiary">Verdict breakdown</div>
       <div className="flex h-2 rounded-full overflow-hidden gap-[1px]">
         {entries.map(([verdict, count]) => {
           const cfg = VERDICT_CONFIG[verdict];
@@ -201,7 +201,7 @@ function VerdictBar({ verdicts, total }: { verdicts: Record<string, number>; tot
           return (
             <div key={verdict} className="flex items-center gap-1">
               <span className={`w-1.5 h-1.5 rounded-full ${cfg?.color ?? "bg-surface-3"}`} />
-              <span className="text-[10px] text-text-tertiary">
+              <span className="text-kicker text-text-tertiary">
                 {cfg?.label ?? verdict} {count}
               </span>
             </div>
@@ -215,7 +215,7 @@ function VerdictBar({ verdicts, total }: { verdicts: Record<string, number>; tot
 function MiniStat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="bg-surface-2/50 rounded-md px-2 py-1.5">
-      <div className="text-[10px] text-text-tertiary">{label}</div>
+      <div className="text-kicker text-text-tertiary">{label}</div>
       <div className="text-sm font-medium text-text-primary tabular-nums mt-0.5">
         {value}
       </div>

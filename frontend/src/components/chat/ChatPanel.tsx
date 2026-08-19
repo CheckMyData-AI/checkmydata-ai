@@ -85,6 +85,9 @@ export function ChatPanel() {
 
   useSessionPolling();
 
+  // Retrieval-degradation notes collected while the answer streams (AUD-0819-03).
+  const retrievalNotesRef = useRef<Set<string>>(new Set());
+
   const handlePipelineEvent = useCallback(
     (eventType: string, event: Record<string, unknown>) => {
       const transition = pipelineEventToTransition(eventType, event);
@@ -102,6 +105,12 @@ export function ChatPanel() {
       }
       if (transition.checkpointStageId !== undefined) {
         setCheckpointStageId(transition.checkpointStageId);
+      }
+      if (transition.retrievalNote) {
+        // AUD-0819-03: held on a ref rather than in state — it is read once, when
+        // the finished answer is added below, and re-rendering the panel for it
+        // would say nothing the answer does not already carry.
+        retrievalNotesRef.current.add(transition.retrievalNote);
       }
     },
     [reasoningSetPlan],
@@ -436,6 +445,9 @@ export function ChatPanel() {
       setPipelineStages([]);
       setPipelineRunId(undefined);
       setCheckpointStageId(undefined);
+      // Per question, not per session: a leg that came back empty for the last
+      // question says nothing about this one (AUD-0819-03).
+      retrievalNotesRef.current.clear();
 
       const tempMsgId = `stream-${sessionId}-${Date.now()}`;
       streamingMsgIdRef.current = tempMsgId;
@@ -544,12 +556,14 @@ export function ChatPanel() {
             visualization: result.visualization,
             error: result.error,
             stalenessWarning: result.staleness_warning,
+            retrievalWarning: retrievalNotesRef.current.size
+              ? Array.from(retrievalNotesRef.current).join(" ")
+              : undefined,
             responseType: result.response_type,
             metadataJson: JSON.stringify(metadataObj),
             rawResult: rawResult ?? undefined,
             timestamp: Date.now(),
             clarificationData: result.clarification_data ?? undefined,
-            verificationStatus: result.response_type === "sql_result" ? "unverified" : undefined,
             stepsUsed: result.steps_used ?? undefined,
             stepsTotal: result.steps_total ?? undefined,
             continuationContext: result.continuation_context ?? undefined,
@@ -756,7 +770,7 @@ export function ChatPanel() {
         <p>No database connection configured.</p>
         <button
           onClick={() => useAppStore.getState().setChatMode("knowledge_only")}
-          className="px-4 py-2 bg-accent text-white text-sm rounded-lg hover:bg-accent-hover transition-colors"
+          className="px-4 py-2 bg-primary text-primary-foreground text-sm rounded-lg hover:bg-primary/92 transition-colors"
           aria-label="Chat with Knowledge Base"
         >
           Chat with Knowledge Base
@@ -772,7 +786,7 @@ export function ChatPanel() {
           <span className="text-xs text-accent">Knowledge Base Mode</span>
           <button
             onClick={() => useAppStore.getState().setChatMode("full")}
-            className="text-[10px] text-accent hover:text-accent-hover"
+            className="text-kicker text-accent hover:text-accent-hover"
             aria-label="Exit Knowledge Base Mode"
           >
             Exit
@@ -812,7 +826,7 @@ export function ChatPanel() {
               }).catch((err) => toast(err instanceof Error ? err.message : "Reconnect failed", "error"))
                 .finally(() => setReconnecting(false));
             }}
-            className="text-[10px] text-error hover:text-error/80 underline disabled:opacity-50"
+            className="text-kicker text-error hover:text-error/80 underline disabled:opacity-50"
           >
             {reconnecting ? "Retrying..." : "Retry"}
           </button>
@@ -918,11 +932,11 @@ export function ChatPanel() {
               <div className="bg-surface-2 rounded-xl px-4 py-3 max-w-[95%] md:max-w-[80%] overflow-hidden min-w-0">
                 <div className="chat-markdown overflow-hidden">
                   <Markdown components={mdComponents}>{streamingText}</Markdown>
-                  <span className="inline-block w-1.5 h-4 bg-accent ml-0.5 animate-pulse align-text-bottom" />
+                  <span className="ml-0.5 inline-block h-4 w-1.5 animate-cursor-blink bg-accent-mark align-text-bottom" />
                 </div>
                 <button
                   onClick={handleStop}
-                  className="mt-2 text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
+                  className="mt-2 text-kicker text-text-tertiary hover:text-text-primary transition-colors"
                   aria-label="Stop generating"
                 >
                   ■ Stop generating
@@ -942,7 +956,7 @@ export function ChatPanel() {
                 )}
                 <button
                   onClick={handleStop}
-                  className="text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
+                  className="text-kicker text-text-tertiary hover:text-text-primary transition-colors"
                   aria-label="Stop generating"
                 >
                   ■ Stop generating
@@ -969,7 +983,7 @@ export function ChatPanel() {
                   Processing in background&hellip;
                 </span>
               </div>
-              <p className="text-[11px] text-text-muted mt-1">
+              <p className="text-meta text-text-muted mt-1">
                 The response is being generated. It will appear here automatically.
               </p>
             </div>
@@ -990,7 +1004,7 @@ export function ChatPanel() {
           <div className="flex items-center gap-3">
             <CostEstimator projectId={activeProject.id} connectionId={activeConnection.id} onEstimate={handleEstimate} />
             {sessionTokens > 0 && (
-              <span className="text-[11px] text-text-muted ml-auto">
+              <span className="text-meta text-text-muted ml-auto">
                 Session: {sessionTokens >= 1000 ? `${(sessionTokens / 1000).toFixed(1)}k` : sessionTokens} tokens
                 {sessionCost > 0 && (
                   <> / ${sessionCost < 0.01 ? sessionCost.toFixed(4) : sessionCost.toFixed(2)}</>

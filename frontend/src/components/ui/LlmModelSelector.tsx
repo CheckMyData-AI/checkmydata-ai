@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, type LLMModel } from "@/lib/api";
 import { toast } from "@/stores/toast-store";
+import { selectBaseCls } from "@/components/ui/Input";
 
 export interface LlmPair {
   provider: string;
@@ -18,7 +19,7 @@ const LLM_PROVIDERS: { value: string; label: string }[] = [
 ];
 
 const inputCls =
-  "w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-1.5 text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent transition-colors";
+  "w-full bg-surface-1 border border-border-subtle rounded-lg px-3 py-1.5 text-xs text-text-primary placeholder-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:ring-1 focus:ring-accent transition-colors";
 
 export function LlmModelSelector({
   label,
@@ -69,17 +70,17 @@ export function LlmModelSelector({
   return (
     <div className={`space-y-1.5 ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
       <div>
-        <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">
+        <span className="text-kicker font-semibold text-text-secondary uppercase tracking-wider">
           {label}
         </span>
         {description && (
-          <span className="text-[10px] text-text-muted ml-1.5">{description}</span>
+          <span className="text-kicker text-text-muted ml-1.5">{description}</span>
         )}
       </div>
       <select
         value={pair.provider}
         onChange={(e) => onChange({ provider: e.target.value, model: "" })}
-        className={inputCls}
+        className={selectBaseCls}
         disabled={disabled}
         aria-label={`${label} provider`}
       >
@@ -93,7 +94,7 @@ export function LlmModelSelector({
       {pair.provider && (
         loading ? (
           <div className={`${inputCls} flex items-center`}>
-            <span className="text-text-muted text-[10px] animate-pulse">
+            <span className="text-text-muted text-kicker animate-pulse">
               Loading models...
             </span>
           </div>
@@ -101,7 +102,7 @@ export function LlmModelSelector({
           <select
             value={pair.model}
             onChange={(e) => onChange({ ...pair, model: e.target.value })}
-            className={inputCls}
+            className={selectBaseCls}
             disabled={disabled}
             aria-label={`${label} model`}
           >
@@ -123,7 +124,7 @@ export function LlmModelSelector({
               aria-label={`${label} model name`}
             />
             {loadError && (
-              <p className="text-[10px] text-warning mt-0.5 px-1">Could not load models — type model name manually</p>
+              <p className="text-kicker text-warning mt-0.5 px-1">Could not load models — type model name manually</p>
             )}
           </div>
         )

@@ -112,7 +112,7 @@ export function Tooltip({ label, position = "bottom", children }: TooltipProps) 
             id={id}
             role="tooltip"
             style={style}
-            className="pointer-events-none whitespace-nowrap px-2 py-1 rounded-md text-[10px] font-medium leading-none bg-surface-3 text-text-primary border border-border-default animate-tooltip-in"
+            className="pointer-events-none whitespace-nowrap px-2 py-1 rounded-md text-kicker font-medium leading-none bg-surface-3 text-text-primary border border-border-default animate-tooltip-in"
           >
             {label}
           </span>,

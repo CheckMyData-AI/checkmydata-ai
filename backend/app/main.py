@@ -1207,7 +1207,7 @@ async def _backup_cron_loop() -> None:
                     session.add(
                         BackupRecord(
                             reason="scheduled",
-                            status="success",
+                            status=manifest.get("status", "ok"),
                             size_bytes=manifest.get("total_size_bytes", 0),
                             manifest_json=manifest,
                         )

@@ -22,6 +22,7 @@ import {
   vendorProviderSecretLabel,
   type VendorCredential,
 } from "@/lib/api/vendor-credentials";
+import { selectBaseCls } from "@/components/ui/Input";
 
 /**
  * Vendor credentials panel (spec §6, SCN-114 / SCN-116).
@@ -120,7 +121,7 @@ export function VendorCredentialFields({
       />
 
       {lockProvider ? (
-        <p className="text-[10px] text-text-muted px-1">
+        <p className="text-kicker text-text-muted px-1">
           Provider: {vendorProviderLabel(lockProvider)}
         </p>
       ) : (
@@ -128,7 +129,7 @@ export function VendorCredentialFields({
           value={provider}
           onChange={(e) => setProvider(e.target.value)}
           aria-label="Credential provider"
-          className={inputCls}
+          className={selectBaseCls}
         >
           {VENDOR_PROVIDERS.map((p) => (
             <option key={p.value} value={p.value}>
@@ -148,15 +149,15 @@ export function VendorCredentialFields({
         rows={5}
         spellCheck={false}
         autoComplete="off"
-        className={inputCls + " font-mono text-[10px] leading-relaxed resize-y"}
+        className={inputCls + " font-mono text-kicker leading-relaxed resize-y"}
       />
-      <p className="text-[10px] text-text-muted px-1">
+      <p className="text-kicker text-text-muted px-1">
         Stored encrypted and never shown again — only its fingerprint and the
         service-account address come back.
       </p>
 
       {error && (
-        <p role="alert" className="text-error text-[10px] flex items-start gap-1">
+        <p role="alert" className="text-error text-kicker flex items-start gap-1">
           <Icon name="x" size={10} />
           <span>{error}</span>
         </p>
@@ -167,7 +168,7 @@ export function VendorCredentialFields({
           type="button"
           onClick={handleCreate}
           disabled={creating}
-          className="flex-1 px-3 py-2.5 bg-accent text-white font-medium rounded-lg hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="flex-1 px-3 py-2.5 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/92 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {creating ? "Adding…" : submitLabel}
         </button>
@@ -266,7 +267,7 @@ export function VendorCredentialsPanel() {
         <button
           type="button"
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-1 text-[11px] text-accent hover:text-accent-hover transition-colors"
+          className="flex items-center gap-1 text-meta text-accent hover:text-accent-hover transition-colors"
         >
           <Icon name="plus" size={12} />
           Add
@@ -293,12 +294,12 @@ export function VendorCredentialsPanel() {
         <ListError
           message={loadError}
           onRetry={() => void load()}
-          className="px-2 py-3 text-center text-[10px] text-error flex flex-col items-center gap-1"
+          className="px-2 py-3 text-center text-kicker text-error flex flex-col items-center gap-1"
         />
       )}
 
       {!loading && !loadError && credentials.length === 0 && (
-        <p className="text-[10px] text-text-muted px-3 py-1">
+        <p className="text-kicker text-text-muted px-3 py-1">
           No vendor credentials added yet
         </p>
       )}
@@ -317,20 +318,20 @@ export function VendorCredentialsPanel() {
                       {c.name}
                     </span>
                     <span
-                      className="shrink-0 text-[10px] px-1 py-px rounded-full bg-accent-muted text-accent leading-none font-mono"
+                      className="shrink-0 text-kicker px-1 py-px rounded-full bg-accent-muted text-accent leading-none font-mono"
                       title={vendorProviderLabel(c.provider)}
                     >
                       {c.provider.toUpperCase()}
                     </span>
                   </div>
                   <span
-                    className="text-[10px] text-text-muted font-mono truncate block mt-0.5"
+                    className="text-kicker text-text-muted font-mono truncate block mt-0.5"
                     title={c.fingerprint}
                   >
                     {shortFingerprint(c.fingerprint)}
                   </span>
                   {email && (
-                    <span className="text-[10px] text-text-tertiary truncate block">
+                    <span className="text-kicker text-text-tertiary truncate block">
                       {email}
                     </span>
                   )}
@@ -348,7 +349,7 @@ export function VendorCredentialsPanel() {
               {rowError && (
                 <p
                   role="alert"
-                  className="mx-3 mb-1 px-2 py-1 rounded bg-error-muted text-error text-[10px]"
+                  className="mx-3 mb-1 px-2 py-1 rounded bg-error-muted text-error text-kicker"
                 >
                   {rowError}
                 </p>

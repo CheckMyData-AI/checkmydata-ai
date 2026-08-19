@@ -28,7 +28,7 @@ function UsageBar({
   const nearLimit = pct >= 80;
   return (
     <div>
-      <div className="flex items-center justify-between text-[11px] text-text-tertiary">
+      <div className="flex items-center justify-between text-meta text-text-tertiary">
         <span>{label}</span>
         <span className="font-mono">
           {fmt(used)} / {fmt(limit)}
@@ -107,7 +107,7 @@ export function BillingPanel() {
           <span className="text-xs font-semibold text-text-primary">{ent.plan_name} plan</span>
           <span
             role="status"
-            className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+            className={`px-1.5 py-0.5 rounded text-kicker font-medium ${
               ent.status === "past_due"
                 ? "bg-warning/10 text-warning"
                 : ent.status === "canceled"
@@ -121,12 +121,12 @@ export function BillingPanel() {
       </div>
 
       {ent.status === "past_due" && (
-        <p className="text-[11px] text-warning leading-snug">
+        <p className="text-meta text-warning leading-snug">
           Your last payment failed — update your card to keep your plan.
         </p>
       )}
       {ent.cancel_at_period_end && ent.current_period_end && (
-        <p className="text-[11px] text-text-tertiary leading-snug">
+        <p className="text-meta text-text-tertiary leading-snug">
           Cancels on {new Date(ent.current_period_end).toLocaleDateString()}.
         </p>
       )}
@@ -146,14 +146,14 @@ export function BillingPanel() {
             type="button"
             onClick={openPortal}
             disabled={portalBusy}
-            className="flex-1 px-2.5 py-1.5 text-[11px] font-semibold text-text-primary border border-border-default hover:border-accent hover:text-accent rounded-lg transition-colors disabled:opacity-60"
+            className="flex-1 px-2.5 py-1.5 text-meta font-semibold text-text-primary border border-border-default hover:border-accent hover:text-accent rounded-lg transition-colors disabled:opacity-60"
           >
             {portalBusy ? "Opening…" : "Manage billing"}
           </button>
         ) : (
           <Link
             href="/pricing"
-            className="flex-1 px-2.5 py-1.5 text-[11px] font-semibold text-center text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors"
+            className="flex-1 px-2.5 py-1.5 text-meta font-semibold text-center text-primary-foreground bg-primary hover:bg-primary/92 rounded-lg transition-colors"
           >
             Upgrade
           </Link>

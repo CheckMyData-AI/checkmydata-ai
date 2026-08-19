@@ -168,7 +168,7 @@ export function LogsScreen({ onClose }: LogsScreenProps) {
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* User sidebar */}
         <div className="w-48 lg:w-56 border-r border-border-subtle overflow-y-auto shrink-0 py-2 px-1.5 hidden sm:block">
-          <div className="text-[10px] text-text-tertiary uppercase tracking-wider px-2 py-1 mb-1">
+          <div className="text-kicker text-text-tertiary uppercase tracking-wider px-2 py-1 mb-1">
             Users ({users.length})
           </div>
           <LogsUserFilter

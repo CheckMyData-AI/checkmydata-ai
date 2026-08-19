@@ -21,6 +21,7 @@ describe("theme-store", () => {
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.classList.remove("dark");
+    document.documentElement.removeAttribute("data-theme");
     mockMatchMedia(false);
     useThemeStore.setState({ theme: "light", resolvedTheme: "light" });
   });
@@ -30,6 +31,20 @@ describe("theme-store", () => {
     expect(useThemeStore.getState().theme).toBe("light");
     expect(useThemeStore.getState().resolvedTheme).toBe("light");
     expect(document.documentElement.classList.contains("dark")).toBe(false);
+  });
+
+  // The `ledger` token layer is copied verbatim from the pack and switches on
+  // [data-theme]; Tailwind's dark variant here keys off the .dark class. If the
+  // store ever sets only one of them, half the app changes theme and the other
+  // half does not — which reads as a rendering bug rather than a missing line.
+  it("sets BOTH the .dark class and the pack's data-theme attribute", () => {
+    useThemeStore.getState().setTheme("dark");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+
+    useThemeStore.getState().setTheme("light");
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
   });
 
   it("setTheme('dark') applies the .dark class and persists", () => {

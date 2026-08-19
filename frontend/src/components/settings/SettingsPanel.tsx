@@ -60,7 +60,7 @@ export function SettingsPanel({ onClose, onNavigate }: SettingsPanelProps) {
         </div>
 
         {user && (
-          <section className="rounded-lg border border-border-subtle bg-surface-1/50 overflow-hidden">
+          <section className="rounded-card border border-border bg-panel overflow-hidden">
             <div className="px-4 py-2.5 border-b border-border-subtle">
               <h3 className="text-xs font-medium text-text-secondary uppercase tracking-wider">
                 Account
@@ -130,7 +130,7 @@ export function SettingsPanel({ onClose, onNavigate }: SettingsPanelProps) {
         )}
 
         {activeProject && (
-          <section className="rounded-lg border border-border-subtle bg-surface-1/50 overflow-hidden">
+          <section className="rounded-card border border-border bg-panel overflow-hidden">
             <div className="px-4 py-2.5 border-b border-border-subtle">
               <h3 className="text-xs font-medium text-text-secondary uppercase tracking-wider">
                 Project
@@ -139,7 +139,7 @@ export function SettingsPanel({ onClose, onNavigate }: SettingsPanelProps) {
             <div className="px-4 py-3 border-b border-border-subtle">
               <p className="text-sm text-text-primary">{activeProject.name}</p>
               {activeProject.repo_url && (
-                <p className="text-[11px] text-text-muted font-mono truncate mt-0.5">
+                <p className="text-meta text-text-muted font-mono truncate mt-0.5">
                   {activeProject.repo_url}
                 </p>
               )}
@@ -220,7 +220,7 @@ function PasswordForm({ onDone }: { onDone: () => void }) {
   };
 
   const inputCls =
-    "w-full px-2.5 py-1.5 bg-surface-0 text-text-primary rounded text-xs border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-colors placeholder-text-muted";
+    "w-full px-2.5 py-1.5 bg-surface-0 text-text-primary rounded text-xs border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors placeholder-text-muted";
 
   return (
     <form onSubmit={handleSubmit} className="px-4 pb-4 space-y-2.5 border-t border-border-subtle pt-3">
@@ -254,7 +254,7 @@ function PasswordForm({ onDone }: { onDone: () => void }) {
         <button
           type="submit"
           disabled={loading}
-          className="flex-1 py-1.5 text-xs text-white bg-accent rounded hover:bg-accent-hover disabled:opacity-50 transition-colors"
+          className="flex-1 py-1.5 text-xs text-primary-foreground bg-primary rounded hover:bg-primary/92 disabled:opacity-50 transition-colors"
         >
           {loading ? "Saving..." : "Save"}
         </button>
@@ -283,7 +283,7 @@ function DeleteConfirm({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="px-4 pb-4 space-y-2.5 border-t border-border-subtle pt-3">
-      <p className="text-[11px] text-text-secondary leading-relaxed">
+      <p className="text-meta text-text-secondary leading-relaxed">
         This will permanently delete your account and all associated data.
       </p>
       <input
@@ -291,7 +291,7 @@ function DeleteConfirm({ onDone }: { onDone: () => void }) {
         placeholder='Type "DELETE" to confirm'
         value={confirm}
         onChange={(e) => setConfirm(e.target.value)}
-        className="w-full px-2.5 py-1.5 bg-surface-0 text-text-primary rounded text-xs border border-border-subtle focus:border-error focus:ring-1 focus:ring-error focus:outline-none transition-colors placeholder-text-muted"
+        className="w-full px-2.5 py-1.5 bg-surface-0 text-text-primary rounded text-xs border border-border-subtle focus:border-error focus:ring-1 focus:ring-error focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors placeholder-text-muted"
         aria-label="Confirm deletion"
       />
       <div className="flex gap-2">

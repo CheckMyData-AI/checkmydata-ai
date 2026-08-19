@@ -81,4 +81,23 @@ describe("SuggestionChips and FollowupChips", async () => {
     );
     expect(container).toBeEmptyDOMElement();
   });
+
+  // AUD-0819-08: the chip truncates in the DOM, not just visually, so a screen
+  // reader was handed the cut string. `title` cannot stand in for the accessible
+  // name here — the button HAS text content, and content wins over `title`.
+  it("gives a truncated chip its full question as the accessible name", () => {
+    const long =
+      "Show me the total revenue by month for the last twelve months, broken out by plan tier";
+    expect(long.length).toBeGreaterThan(60);
+    render(
+      <SuggestionChips
+        suggestions={[{ text: long } as never]}
+        onSelect={vi.fn()}
+      />,
+    );
+    // The visible label is allowed to be short; the announced name is not.
+    const btn = screen.getByRole("button", { name: long });
+    expect(btn).toBeInTheDocument();
+    expect(btn.textContent!.length).toBeLessThan(long.length);
+  });
 });

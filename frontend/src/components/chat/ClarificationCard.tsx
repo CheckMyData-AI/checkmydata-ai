@@ -87,12 +87,12 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
             placeholder="Type your answer..."
             aria-label="Your answer"
             maxLength={2000}
-            className="flex-1 px-3 py-1.5 rounded-md text-xs bg-surface-1 border border-border-default text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+            className="flex-1 px-3 py-1.5 rounded-md text-xs bg-surface-1 border border-border-default text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
           />
           <button
             onClick={handleSubmit}
             disabled={!answer.trim()}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Submit
           </button>
@@ -108,12 +108,12 @@ export function ClarificationCard({ data, onSubmit }: ClarificationCardProps) {
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             placeholder="Enter a number..."
             aria-label="Numeric answer"
-            className="flex-1 px-3 py-1.5 rounded-md text-xs bg-surface-1 border border-border-default text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+            className="flex-1 px-3 py-1.5 rounded-md text-xs bg-surface-1 border border-border-default text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
           />
           <button
             onClick={handleSubmit}
             disabled={!answer.trim()}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Submit
           </button>

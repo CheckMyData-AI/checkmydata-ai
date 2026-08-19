@@ -27,6 +27,14 @@ class BackupTriggerResponse(BaseModel):
     timestamp: str
     size_bytes: int
     errors: list[str] = []
+    #: "ok" | "partial" | "failed" — the manifest's verdict (AUD-0819-05). `ok`
+    #: is not a claim that everything was captured; read `skipped` for that.
+    status: str = "ok"
+    #: Components the run did not capture, e.g. ["database"] on Heroku.
+    skipped: list[str] = []
+    #: The single fact a restore depends on. False whenever the database dump
+    #: was delegated or skipped, whatever `status` says.
+    database_captured: bool = True
 
 
 class BackupListResponse(BaseModel):
@@ -66,9 +74,13 @@ async def trigger_backup(
     try:
         manifest = await _mgr.run_backup("manual")
 
+        # AUD-0819-05: the verdict is the manifest's, not a constant. A run that
+        # delegated the database to `heroku pg:backups` was being stored as
+        # "success", so the history an operator consults to decide whether a
+        # restore is possible was the least reliable place to ask.
         record = BackupRecord(
             reason="manual",
-            status="success",
+            status=manifest.get("status", "ok"),
             size_bytes=manifest.get("total_size_bytes", 0),
             manifest_json=manifest,
             backup_path=manifest.get("backup_path"),
@@ -81,6 +93,9 @@ async def trigger_backup(
             "timestamp": manifest["timestamp"],
             "size_bytes": manifest.get("total_size_bytes", 0),
             "errors": manifest.get("errors", []),
+            "status": manifest.get("status", "ok"),
+            "skipped": manifest.get("skipped", []),
+            "database_captured": manifest.get("database_captured", True),
         }
     except Exception as e:
         record = BackupRecord(

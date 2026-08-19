@@ -205,3 +205,55 @@ describe("auth store", () => {
     resetSessionExpiredFlag();
   });
 });
+
+describe("logout honesty — AUD-0819-12", () => {
+  it("says so when the server session could not be cleared", async () => {
+    const toastMod = await import("@/stores/toast-store");
+    const spy = vi.spyOn(toastMod, "toast");
+    spy.mockClear();
+    // POST /auth/logout answers 500: the httpOnly cookie may still be valid.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ detail: "boom" }),
+    });
+    useAuthStore.setState({
+      user: { id: "u1", email: "a@b.com", display_name: "A" },
+      token: "jwt",
+    });
+
+    useAuthStore.getState().logout();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The local teardown is unconditional — a failed call must never trap the
+    // user in a session they asked to leave. But the server cookie may have
+    // survived, and saying "you are signed out" without qualification is the lie.
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(spy.mock.calls.map(([m]) => String(m)).join(" | ")).toMatch(/sign|session/i);
+  });
+
+  it("stays quiet when the session was already gone (401)", async () => {
+    const toastMod = await import("@/stores/toast-store");
+    const spy = vi.spyOn(toastMod, "toast");
+    spy.mockClear();
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ detail: "Unauthorized" }),
+    });
+    useAuthStore.setState({
+      user: { id: "u1", email: "a@b.com", display_name: "A" },
+      token: "jwt",
+    });
+
+    useAuthStore.getState().logout();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // A 401 here means the session is already gone, which is exactly what the
+    // user asked for. A warning beside that outcome is noise, and noise is how a
+    // real warning gets ignored.
+    expect(spy.mock.calls.map(([m]) => String(m)).join(" | ")).not.toMatch(
+      /may still be active/i,
+    );
+  });
+});

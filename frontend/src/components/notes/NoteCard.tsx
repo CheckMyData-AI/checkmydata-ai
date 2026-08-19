@@ -166,24 +166,24 @@ export function NoteCard({ note }: NoteCardProps) {
               {note.title}
             </h4>
             {note.is_shared && (
-              <span className="shrink-0 text-[10px] px-1 py-0.5 rounded bg-accent-muted text-accent font-medium">
+              <span className="shrink-0 text-kicker px-1 py-0.5 rounded bg-accent-muted text-accent font-medium">
                 Shared
               </span>
             )}
           </div>
           <div className="flex items-center gap-1.5 mt-0.5">
             {!isOwner && note.shared_by && (
-              <span className="text-[10px] text-text-tertiary">
+              <span className="text-kicker text-text-tertiary">
                 by {note.shared_by}
               </span>
             )}
             {note.last_executed_at && (
-              <span className="text-[10px] text-text-muted">
+              <span className="text-kicker text-text-muted">
                 {timeAgo(note.last_executed_at)}
               </span>
             )}
             {vizType && vizType !== "text" && (
-              <span className="text-[10px] px-1 py-0.5 rounded bg-surface-2 text-text-muted">
+              <span className="text-kicker px-1 py-0.5 rounded bg-surface-2 text-text-muted">
                 {vizType}
               </span>
             )}
@@ -211,7 +211,7 @@ export function NoteCard({ note }: NoteCardProps) {
                 onClick={handleExecute}
                 disabled={executing || !note.connection_id}
                 title={note.connection_id ? "Refresh data" : "No connection"}
-                className="flex items-center gap-1 px-1.5 py-1 rounded text-text-muted hover:text-accent hover:bg-accent-muted transition-colors disabled:opacity-40 text-[10px]"
+                className="flex items-center gap-1 px-1.5 py-1 rounded text-text-muted hover:text-accent hover:bg-accent-muted transition-colors disabled:opacity-40 text-kicker"
               >
                 <Icon name="refresh-cw" size={11} className={executing ? "animate-spin" : ""} />
                 <span>Refresh</span>
@@ -231,7 +231,7 @@ export function NoteCard({ note }: NoteCardProps) {
               onClick={handleExecute}
               disabled={executing || !note.connection_id}
               title={note.connection_id ? "Refresh data" : "No connection"}
-              className="flex items-center gap-1 px-1.5 py-1 rounded text-text-muted hover:text-accent hover:bg-accent-muted transition-colors disabled:opacity-40 text-[10px]"
+              className="flex items-center gap-1 px-1.5 py-1 rounded text-text-muted hover:text-accent hover:bg-accent-muted transition-colors disabled:opacity-40 text-kicker"
             >
               <Icon name="refresh-cw" size={11} className={executing ? "animate-spin" : ""} />
               <span>Refresh</span>
@@ -251,19 +251,19 @@ export function NoteCard({ note }: NoteCardProps) {
               rows={2}
               maxLength={5000}
               aria-label="Add a comment"
-              className="w-full text-[11px] bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-secondary resize-none focus:outline-none focus:border-accent"
+              className="w-full text-meta bg-surface-0 border border-border-default rounded px-2 py-1.5 text-text-secondary resize-none focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
               placeholder="Add a comment..."
             />
             <div className="flex gap-1 justify-end">
               <button
                 onClick={() => { setEditingComment(false); setCommentDraft(note.comment ?? ""); }}
-                className="text-[10px] px-2 py-0.5 rounded text-text-muted hover:text-text-secondary"
+                className="text-kicker px-2 py-0.5 rounded text-text-muted hover:text-text-secondary"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveComment}
-                className="text-[10px] px-2 py-0.5 rounded bg-accent text-white hover:bg-accent-hover"
+                className="text-kicker px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/92"
               >
                 Save
               </button>
@@ -272,12 +272,12 @@ export function NoteCard({ note }: NoteCardProps) {
         ) : isOwner ? (
           <button
             onClick={() => { setCommentDraft(note.comment ?? ""); setEditingComment(true); }}
-            className="text-[11px] text-text-muted hover:text-text-secondary transition-colors text-left w-full"
+            className="text-meta text-text-muted hover:text-text-secondary transition-colors text-left w-full"
           >
             {note.comment || "Add comment..."}
           </button>
         ) : note.comment ? (
-          <p className="text-[11px] text-text-muted">{note.comment}</p>
+          <p className="text-meta text-text-muted">{note.comment}</p>
         ) : null}
       </div>
 
@@ -286,13 +286,13 @@ export function NoteCard({ note }: NoteCardProps) {
         <div className="border-t border-border-subtle">
           <button
             onClick={() => setShowAnswer((v) => !v)}
-            className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-text-tertiary hover:text-text-secondary transition-colors"
+            className="w-full flex items-center gap-1.5 px-3 py-1.5 text-kicker text-text-tertiary hover:text-text-secondary transition-colors"
           >
             <Icon name={showAnswer ? "chevron-down" : "chevron-right"} size={10} />
             Agent Response
           </button>
           {showAnswer && (
-            <div className="px-3 pb-2 text-[11px] text-text-secondary leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">
+            <div className="px-3 pb-2 text-meta text-text-secondary leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap">
               {note.answer_text}
             </div>
           )}
@@ -304,7 +304,7 @@ export function NoteCard({ note }: NoteCardProps) {
         <div className="border-t border-border-subtle">
           <button
             onClick={() => setShowViz((v) => !v)}
-            className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-text-tertiary hover:text-text-secondary transition-colors"
+            className="w-full flex items-center gap-1.5 px-3 py-1.5 text-kicker text-text-tertiary hover:text-text-secondary transition-colors"
           >
             <Icon name={showViz ? "chevron-down" : "chevron-right"} size={10} />
             <Icon name="bar-chart-2" size={10} />
@@ -320,7 +320,7 @@ export function NoteCard({ note }: NoteCardProps) {
 
       {/* SQL toggle */}
       <div className="border-t border-border-subtle">
-        <div className="flex items-center px-3 py-1.5 text-[10px] text-text-tertiary">
+        <div className="flex items-center px-3 py-1.5 text-kicker text-text-tertiary">
           <button
             onClick={() => setShowSql((v) => !v)}
             className="flex items-center gap-1.5 hover:text-text-secondary transition-colors"
@@ -338,7 +338,7 @@ export function NoteCard({ note }: NoteCardProps) {
           </button>
         </div>
         {showSql && (
-          <pre className="px-3 pb-2 text-[10px] font-mono text-text-secondary overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap">
+          <pre className="px-3 pb-2 text-kicker font-mono text-text-secondary overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap">
             {note.sql_query}
           </pre>
         )}
@@ -349,18 +349,18 @@ export function NoteCard({ note }: NoteCardProps) {
         <div className="border-t border-border-subtle">
           <button
             onClick={() => setShowResult((v) => !v)}
-            className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-text-tertiary hover:text-text-secondary transition-colors"
+            className="w-full flex items-center gap-1.5 px-3 py-1.5 text-kicker text-text-tertiary hover:text-text-secondary transition-colors"
           >
             <Icon name={showResult ? "chevron-down" : "chevron-right"} size={10} />
             Result ({result.total_rows} row{result.total_rows !== 1 ? "s" : ""}, {result.columns.length} col{result.columns.length !== 1 ? "s" : ""})
           </button>
           {showResult && (
             <div className="px-2 pb-2 overflow-x-auto">
-              <table className="text-[10px] border-collapse w-full">
+              <table className="w-full border-collapse text-meta">
                 <thead>
-                  <tr className="border-b border-border-subtle">
+                  <tr className="border-b border-border">
                     {result.columns.map((col) => (
-                      <th key={col} className="text-left px-1.5 py-1 text-text-tertiary font-medium whitespace-nowrap">
+                      <th key={col} className="h-7 whitespace-nowrap px-1.5 text-left text-meta font-normal text-text-tertiary">
                         {col}
                       </th>
                     ))}
@@ -368,9 +368,9 @@ export function NoteCard({ note }: NoteCardProps) {
                 </thead>
                 <tbody>
                   {result.rows.slice(0, 20).map((row, i) => (
-                    <tr key={i} className="border-b border-border-subtle/50">
+                    <tr key={i} className="border-b border-border last:border-0">
                       {row.map((cell, j) => (
-                        <td key={j} className="px-1.5 py-0.5 text-text-secondary whitespace-nowrap max-w-[150px] truncate">
+                        <td key={j} className="h-7 max-w-[150px] truncate whitespace-nowrap px-1.5 font-mono text-text-primary">
                           {cell == null ? <span className="text-text-muted italic">null</span> : String(cell)}
                         </td>
                       ))}
@@ -379,7 +379,7 @@ export function NoteCard({ note }: NoteCardProps) {
                 </tbody>
               </table>
               {result.total_rows > 20 && (
-                <p className="text-[10px] text-text-muted mt-1 px-1.5">
+                <p className="text-kicker text-text-muted mt-1 px-1.5">
                   Showing 20 of {result.total_rows} rows
                 </p>
               )}

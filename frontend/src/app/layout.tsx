@@ -1,32 +1,36 @@
 import type { Metadata, Viewport } from "next";
-import { DM_Sans, JetBrains_Mono, Space_Grotesk } from "next/font/google";
+import { Inter, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { ClientShell } from "@/components/ui/ClientShell";
 import { THEME_STORAGE_KEY } from "@/stores/theme-store";
 import { ThemeWatcher } from "@/components/theme/ThemeWatcher";
 
-const dmSans = DM_Sans({
+/* The `ledger` pack's UI face. It fills `--font-ui-webfont`, which globals.css
+   puts in front of the pack's own `--font-ui` stack — the pack keeps the
+   fallback, the webfont is the preference. */
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-sans",
+  variable: "--font-ui-webfont",
   display: "swap",
 });
 
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  display: "swap",
-});
-
-/* Display face for marketing headlines only — the product UI stays DM Sans. */
+/* Display face for marketing headlines only — the product UI never uses it.
+   The pack's own display face is licensed and self-hosted by its reference,
+   so per the pack this project points the product display at the UI face and
+   leaves the marketing layer its own. */
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
-  variable: "--font-display",
+  variable: "--font-display-webfont",
   display: "swap",
   weight: ["500", "600", "700"],
 });
 
+/* JetBrains Mono was dropped with the redesign: the pack sets ALL data in the
+   reader's own `ui-monospace` stack (`--font-data`), which is what its
+   reference does and what removes a webfont from every page. */
+
 export const viewport: Viewport = {
-  themeColor: "#3b82f6",
+  themeColor: "#fcf9f5",
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
@@ -90,13 +94,13 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const themeScript = `(function(){try{var k='${THEME_STORAGE_KEY}';var t=localStorage.getItem(k)||'light';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d);}catch(e){}})();`;
+  const themeScript = `(function(){try{var k='${THEME_STORAGE_KEY}';var t=localStorage.getItem(k)||'light';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);var e=document.documentElement;e.classList.toggle('dark',d);e.setAttribute('data-theme',d?'dark':'light');}catch(e){}})();`;
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${dmSans.variable} ${jetbrainsMono.variable} ${spaceGrotesk.variable} font-sans antialiased`}>
+      <body className={`${inter.variable} ${spaceGrotesk.variable} font-sans antialiased`}>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <ThemeWatcher />
-        <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:bg-accent focus:text-white focus:rounded-lg focus:text-sm">
+        <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-lg focus:text-sm">
           Skip to main content
         </a>
         <ClientShell>{children}</ClientShell>

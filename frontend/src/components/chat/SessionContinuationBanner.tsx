@@ -47,7 +47,7 @@ export function SessionContinuationBanner({
               {topics.map((t) => (
                 <span
                   key={t}
-                  className="px-1.5 py-0.5 bg-surface-3 rounded text-[10px] text-text-secondary"
+                  className="px-1.5 py-0.5 bg-surface-3 rounded text-kicker text-text-secondary"
                 >
                   {t}
                 </span>

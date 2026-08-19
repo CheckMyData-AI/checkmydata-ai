@@ -179,7 +179,18 @@ class GitAgent(BaseAgent):
                 ),
                 timeout=settings.git_clone_pull_timeout_s,
             )
-        except (TimeoutError, Exception):  # noqa: BLE001 — auto-pull is best-effort
+        except Exception:  # noqa: BLE001 — auto-pull is best-effort
+            # AUD-0819-13: was `except (TimeoutError, Exception)`, which reads as a
+            # narrowing and is not one — `TimeoutError` has been an `Exception`
+            # subclass since 3.11, so the tuple's first member was dead. The breadth
+            # is deliberate: a failed optional pull must not fail the answer.
+            #
+            # No `except CancelledError: raise` is needed above, and one was tried
+            # and removed: `asyncio.CancelledError` derives from `BaseException`, so
+            # `except Exception` never caught it and the guard was asserting a
+            # protection that already existed. The invariant is worth pinning
+            # though, because widening this to `BaseException` would break it —
+            # tests/unit/test_git_agent_auto_pull_handler.py does the pinning.
             logger.warning("GitAgent auto-pull failed for %s", project_id, exc_info=True)
 
     # ------------------------------------------------------------------

@@ -141,16 +141,31 @@ export async function request<T>(
         // Plan paywall (T-BILL-2): backend returns a structured payload.
         const body = await res.json().catch(() => ({}));
         const detail = body.detail ?? {};
-        throw new Error(
-          (typeof detail === "object" && detail.message) ||
-            "Plan limit reached. Upgrade at /pricing to continue.",
-        );
+        const isObj = typeof detail === "object" && detail !== null;
+        let message: string =
+          (isObj && detail.message) || "Plan limit reached. Upgrade at /pricing to continue.";
+        // AUD-0819-11: the payload has always carried `upgrade_url`, and the
+        // client used to drop it. ToastContainer linkifies a literal "/pricing"
+        // (SCN-100), so only the token-budget path — whose prose happens to name
+        // the route — came out actionable, while the connection/project quota
+        // messages ("Plan 'free' allows 1 connection(s); you have 1.") did not. A
+        // link that appears when prose happens to contain a route is an accident,
+        // not a design, so the URL the server sent is used.
+        const upgradeUrl: string | undefined = isObj ? detail.upgrade_url : undefined;
+        if (upgradeUrl && !message.includes(upgradeUrl)) {
+          message = `${message} Upgrade at ${upgradeUrl} to continue.`;
+        }
+        throw new Error(message);
       }
       const body = await res.json().catch(() => ({}));
       const detail = Array.isArray(body.detail)
         ? body.detail.map((e: { msg?: string; message?: string }) => e.msg ?? e.message ?? "Validation error").join("; ")
         : body.detail || `Request failed: ${res.status}`;
-      throw new Error(detail);
+      // The HTTP status rides along on the error (AUD-0819-12). Additive: the
+      // message is unchanged, so callers matching on it are unaffected — but a
+      // caller that must treat 401 differently from 500 can now ask, instead of
+      // pattern-matching prose that is free to be rewritten.
+      throw Object.assign(new Error(detail), { status: res.status });
     }
     return res.json();
   }

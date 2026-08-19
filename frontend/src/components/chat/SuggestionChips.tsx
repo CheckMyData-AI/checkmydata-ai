@@ -56,6 +56,11 @@ export function SuggestionChips({ suggestions, loading, onSelect }: SuggestionCh
             key={i}
             onClick={() => onSelect(s.text)}
             title={s.text}
+            // AUD-0819-08: the label below is cut in the DOM, not merely clipped
+            // by CSS, so without this a screen reader is handed the truncated
+            // string. `title` cannot cover it — the button has text content, and
+            // content wins over `title` for the accessible name.
+            aria-label={s.text}
             className="shrink-0 max-w-[280px] truncate px-3 py-1.5 text-xs text-text-primary bg-surface-2/60 border border-border-default/40 rounded-full hover:bg-surface-3/60 hover:border-border-default/50 hover:text-text-primary transition-all duration-150 cursor-pointer"
           >
             {s.text.length > 60 ? s.text.slice(0, 57) + "..." : s.text}
@@ -82,7 +87,7 @@ export function FollowupChips({ followups, onSelect }: FollowupChipsProps) {
         <button
           key={i}
           onClick={() => onSelect(text)}
-          className="px-2.5 py-1 text-[11px] text-text-secondary bg-surface-1/50 border border-border-default/30 rounded-full hover:bg-surface-2/80 hover:text-text-primary hover:border-border-default/40 transition-all duration-150 cursor-pointer"
+          className="px-2.5 py-1 text-meta text-text-secondary bg-surface-1/50 border border-border-default/30 rounded-full hover:bg-surface-2/80 hover:text-text-primary hover:border-border-default/40 transition-all duration-150 cursor-pointer"
         >
           {text}
         </button>

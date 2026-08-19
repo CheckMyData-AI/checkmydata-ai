@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchMock = vi.fn();
 globalThis.fetch = fetchMock;
@@ -24,6 +24,21 @@ beforeEach(() => {
   vi.mocked(toast).mockClear();
   sessionStorage.clear();
   resetSessionExpiredFlag();
+});
+
+/**
+ * `handleSessionExpired` fires a deliberately floating `void import(…)` — the
+ * lazy import that keeps `auth-store` out of a module cycle. In a browser the
+ * document is unloading a line later and nobody waits for it; under vitest the
+ * test finishes first, the environment tears down, and the import lands in a
+ * dead realm as an `EnvironmentTeardownError`. Every test still PASSED and the
+ * runner still exited 1, which is exactly the kind of red nobody reads.
+ *
+ * One turn of the event loop is all it needs, and it is a test-side wait rather
+ * than a change to production semantics.
+ */
+afterEach(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 0));
 });
 
 describe("session flash (FA-010)", () => {

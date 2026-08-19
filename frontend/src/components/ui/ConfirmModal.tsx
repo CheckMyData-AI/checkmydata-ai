@@ -1,7 +1,11 @@
 "use client";
 
 import { create } from "zustand";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+
+import { Dialog, DialogContent, DialogTitle } from "@/components/shadcn/dialog";
+import { Button } from "./Button";
+import { inputBaseCls } from "./Input";
 
 type Severity = "normal" | "warning" | "critical";
 
@@ -87,83 +91,72 @@ export function ConfirmModal() {
   const { open, message, destructive, detail, severity, confirmText, close } =
     useConfirmStore();
   const [typed, setTyped] = useState("");
-  const dialogRef = useRef<HTMLDivElement>(null);
-
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      close(false);
-      return;
-    }
-    if (e.key === "Tab" && dialogRef.current) {
-      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      );
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-  }, [close]);
 
   useEffect(() => {
-    if (!open) {
-      setTyped("");
-      return;
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    dialogRef.current?.querySelector<HTMLElement>("button, input")?.focus();
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, handleKeyDown]);
-
-  if (!open) return null;
+    if (!open) setTyped("");
+  }, [open]);
 
   const needsTyping = !!confirmText;
   const canConfirm = !needsTyping || typed === confirmText;
   const icon = SEVERITY_ICON[severity];
 
+  /**
+   * On Radix through the shadcn primitive. The ~30 lines of focus trap this
+   * replaced were a `keydown` listener on `window` plus a `querySelectorAll`
+   * per Tab; Radix adds what the hand-rolled version never had — inert
+   * background content and focus restored to whatever opened the dialog.
+   *
+   * `showCloseButton={false}`: a confirmation has exactly two ways out, and a
+   * third one in the corner is how a destructive dialog gets dismissed by
+   * accident. Escape and the overlay both resolve `false`, as before.
+   */
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="confirm-modal-title"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) close(false);
-      }}
-    >
-      <div ref={dialogRef} className="bg-surface-1 border border-border-default rounded-lg p-5 max-w-sm w-full mx-4 shadow-xl animate-in fade-in zoom-in-95 duration-150">
+    <Dialog open={open} onOpenChange={(next) => !next && close(false)}>
+      <DialogContent
+        showCloseButton={false}
+        className="max-w-sm gap-0"
+        aria-labelledby="confirm-modal-title"
+      >
         {severity !== "normal" && (
-          <div className="flex justify-center mb-3">
-            <svg className={`w-8 h-8 ${icon.color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <div className="mb-3 flex justify-center">
+            <svg
+              className={`h-8 w-8 ${icon.color}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              aria-hidden="true"
+            >
               <path strokeLinecap="round" strokeLinejoin="round" d={icon.path} />
             </svg>
           </div>
         )}
 
-        <p id="confirm-modal-title" className="text-sm text-text-primary mb-1 leading-relaxed">{message}</p>
+        <DialogTitle
+          id="confirm-modal-title"
+          className="mb-1 text-body leading-relaxed font-normal text-text-primary"
+        >
+          {message}
+        </DialogTitle>
 
-        {detail && (
-          <p className="text-xs text-text-secondary mb-4 leading-relaxed">{detail}</p>
+        {detail ? (
+          <p className="mb-4 text-meta leading-relaxed text-text-secondary">{detail}</p>
+        ) : (
+          <div className="mb-4" />
         )}
-        {!detail && <div className="mb-4" />}
 
         {needsTyping && (
           <div className="mb-4">
-            <label className="block text-[11px] text-text-muted mb-1.5">
+            <label className="mb-1.5 block text-meta text-text-tertiary" htmlFor="confirm-phrase">
               Type <span className="font-mono text-text-primary">{confirmText}</span> to confirm
             </label>
             <input
+              id="confirm-phrase"
               type="text"
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
-              className="w-full px-3 py-1.5 text-sm bg-surface-2 border border-border-default rounded-lg text-text-primary focus:outline-none focus:ring-1 focus:ring-accent placeholder-text-muted transition-colors"
-              placeholder={confirmText}
+              className={inputBaseCls}
+              placeholder={confirmText ?? undefined}
               aria-label="Type confirmation phrase"
               autoFocus
             />
@@ -171,25 +164,18 @@ export function ConfirmModal() {
         )}
 
         <div className="flex justify-end gap-2">
-          <button
-            onClick={() => close(false)}
-            className="px-4 py-1.5 text-xs text-text-secondary hover:text-text-primary rounded-lg border border-border-default hover:border-border-default transition-colors focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1"
-          >
+          <Button variant="secondary" onClick={() => close(false)}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            variant={destructive ? "destructive" : "primary"}
             onClick={() => close(true)}
             disabled={!canConfirm}
-            className={`px-4 py-1.5 text-xs text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 ${
-              destructive
-                ? "bg-error hover:bg-error-hover"
-                : "bg-accent hover:bg-accent-hover"
-            }`}
           >
             Confirm
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

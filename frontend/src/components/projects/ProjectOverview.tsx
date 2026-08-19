@@ -68,7 +68,7 @@ export function ProjectOverview() {
                   className="text-text-tertiary"
                 />
                 <span>{activeConnection.name}</span>
-                <span className="text-[10px] text-text-muted uppercase font-mono">
+                <span className="text-kicker text-text-muted uppercase font-mono">
                   {connectionSourceLabel(activeConnection)}
                 </span>
               </div>
@@ -106,10 +106,10 @@ export function ProjectOverview() {
                   <Icon name="alert-triangle" size={12} className="text-error shrink-0 mt-0.5" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-text-secondary">
-                      <span className="font-mono text-[10px] text-text-muted">
+                      <span className="font-mono text-kicker text-text-muted">
                         {formatTime(entry.timestamp)}
                       </span>
-                      <span className="text-[10px] uppercase text-text-tertiary">
+                      <span className="text-kicker uppercase text-text-tertiary">
                         {entry.pipeline}
                       </span>
                     </div>

@@ -112,14 +112,14 @@ export function InsightCards({ insights, onDrillDown }: InsightCardsProps) {
           <div key={idx} className={`rounded-xl border ${cfg.border} ${cfg.bg} transition-all`}>
             <button
               onClick={() => handleToggle(idx)}
-              className={`flex items-center gap-1.5 px-2 py-1 text-[11px] ${cfg.color} w-full text-left`}
+              className={`flex items-center gap-1.5 px-2 py-1 text-meta ${cfg.color} w-full text-left`}
             >
               {cfg.icon}
               <span className="font-medium truncate max-w-[200px]" title={insight.title}>{insight.title}</span>
             </button>
             {isExpanded && (
               <div className="px-2 pb-1.5 space-y-1">
-                <p className="text-[11px] text-text-secondary leading-relaxed">
+                <p className="text-meta text-text-secondary leading-relaxed">
                   {insight.description}
                 </p>
                 {onDrillDown && insight.type !== "summary" && (
@@ -129,7 +129,7 @@ export function InsightCards({ insights, onDrillDown }: InsightCardsProps) {
                       onDrillDown(drillDownQuestion(insight));
                       setExpandedIdx(null);
                     }}
-                    className={`text-[10px] px-1.5 py-0.5 rounded border ${cfg.border} ${cfg.color} hover:brightness-125 transition-all`}
+                    className={`text-kicker px-1.5 py-0.5 rounded border ${cfg.border} ${cfg.color} hover:brightness-125 transition-all`}
                   >
                     Drill down
                   </button>

@@ -97,7 +97,7 @@ export function SQLResultSection({ block, index, total, onSendMessage }: SQLResu
   return (
     <div className={total > 1 ? "mt-3 pt-3 border-t border-border-subtle first:mt-0 first:pt-0 first:border-t-0" : ""}>
       {total > 1 && (
-        <div className="mb-2 text-[10px] font-medium text-text-secondary uppercase tracking-wide">
+        <div className="mb-2 text-kicker font-medium text-text-secondary uppercase tracking-wide">
           Query {index + 1} of {total}
         </div>
       )}
@@ -107,7 +107,7 @@ export function SQLResultSection({ block, index, total, onSendMessage }: SQLResu
           <summary className="cursor-pointer text-text-secondary hover:text-text-primary flex items-center gap-2">
             View SQL Query
             {sqlComplexity && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${complexityBadgeColors[sqlComplexity] || ""}`}>
+              <span className={`text-kicker px-1.5 py-0.5 rounded font-medium ${complexityBadgeColors[sqlComplexity] || ""}`}>
                 {sqlComplexity.charAt(0).toUpperCase() + sqlComplexity.slice(1)}
               </span>
             )}
@@ -128,7 +128,7 @@ export function SQLResultSection({ block, index, total, onSendMessage }: SQLResu
             <button
               onClick={() => setViewMode("viz")}
               aria-label="Show visualization"
-              className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
+              className={`px-2 py-1 rounded-md text-meta transition-colors ${
                 viewMode === "viz"
                   ? "bg-surface-3 text-text-primary"
                   : "text-text-secondary hover:text-text-primary"
@@ -139,7 +139,7 @@ export function SQLResultSection({ block, index, total, onSendMessage }: SQLResu
             <button
               onClick={() => setViewMode("text")}
               aria-label="Show data as text"
-              className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
+              className={`px-2 py-1 rounded-md text-meta transition-colors ${
                 viewMode === "text"
                   ? "bg-surface-3 text-text-primary"
                   : "text-text-secondary hover:text-text-primary"
@@ -166,7 +166,7 @@ export function SQLResultSection({ block, index, total, onSendMessage }: SQLResu
                 <VizRenderer data={overrideViz ?? block.visualization!} />
                 <button
                   onClick={() => setMobileVizExpanded(false)}
-                  className="mt-1.5 text-[10px] text-text-secondary hover:text-text-primary transition-colors"
+                  className="mt-1.5 text-kicker text-text-secondary hover:text-text-primary transition-colors"
                 >
                   Collapse chart
                 </button>

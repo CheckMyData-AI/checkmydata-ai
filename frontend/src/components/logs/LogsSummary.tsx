@@ -68,7 +68,7 @@ function Card({
     <div className="bg-surface-1 border border-border-subtle rounded-lg px-3 py-2.5">
       <div className="flex items-center gap-1.5 mb-1">
         <Icon name={icon} size={12} className="text-text-tertiary" />
-        <span className="text-[10px] text-text-tertiary uppercase tracking-wider">{label}</span>
+        <span className="text-kicker text-text-tertiary uppercase tracking-wider">{label}</span>
       </div>
       <span className={`text-lg font-semibold tabular-nums ${valueColor}`}>{value}</span>
     </div>

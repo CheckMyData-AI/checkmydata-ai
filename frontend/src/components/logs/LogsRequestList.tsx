@@ -71,14 +71,14 @@ export function LogsRequestList({
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle">
-        <span className="text-[10px] text-text-tertiary uppercase tracking-wider">Filter:</span>
+        <span className="text-kicker text-text-tertiary uppercase tracking-wider">Filter:</span>
         {(["all", "completed", "failed"] as const).map((s) => {
           const active = s === "all" ? !statusFilter : statusFilter === s;
           return (
             <button
               key={s}
               onClick={() => onStatusFilter(s === "all" ? null : s)}
-              className={`text-[10px] px-2 py-0.5 rounded-md transition-colors ${
+              className={`text-kicker px-2 py-0.5 rounded-md transition-colors ${
                 active
                   ? "bg-accent/10 text-accent font-medium"
                   : "text-text-muted hover:bg-surface-2"
@@ -88,7 +88,7 @@ export function LogsRequestList({
             </button>
           );
         })}
-        <span className="ml-auto text-[10px] text-text-muted tabular-nums">
+        <span className="ml-auto text-kicker text-text-muted tabular-nums">
           {total} result{total !== 1 ? "s" : ""}
         </span>
       </div>
@@ -121,38 +121,38 @@ export function LogsRequestList({
                     </p>
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
                       {showUser && (
-                        <span className="text-[10px] text-accent font-medium truncate max-w-[120px]">
+                        <span className="text-kicker text-accent font-medium truncate max-w-[120px]">
                           {usersMap[t.user_id]?.display_name || usersMap[t.user_id]?.email || "Unknown"}
                         </span>
                       )}
                     </div>
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
-                      <span className="text-[10px] text-text-muted">{fmtTime(t.created_at)}</span>
-                      <span className={`text-[10px] font-medium px-1 py-0.5 rounded ${sb.bg} ${sb.text}`}>
+                      <span className="text-kicker text-text-muted">{fmtTime(t.created_at)}</span>
+                      <span className={`text-kicker font-medium px-1 py-0.5 rounded ${sb.bg} ${sb.text}`}>
                         {t.status}
                       </span>
-                      <span className={`text-[10px] ${TYPE_BADGE[t.response_type] || "text-text-muted"}`}>
+                      <span className={`text-kicker ${TYPE_BADGE[t.response_type] || "text-text-muted"}`}>
                         {t.response_type}
                       </span>
-                      <span className="text-[10px] text-text-muted tabular-nums">
+                      <span className="text-kicker text-text-muted tabular-nums">
                         {fmtMs(t.total_duration_ms)}
                       </span>
-                      <span className="text-[10px] text-text-muted tabular-nums">
+                      <span className="text-kicker text-text-muted tabular-nums">
                         {t.total_tokens.toLocaleString()} tok
                       </span>
                       {t.total_llm_calls > 0 && (
-                        <span className="text-[10px] text-text-muted">
+                        <span className="text-kicker text-text-muted">
                           {t.total_llm_calls} LLM
                         </span>
                       )}
                       {t.total_db_queries > 0 && (
-                        <span className="text-[10px] text-text-muted">
+                        <span className="text-kicker text-text-muted">
                           {t.total_db_queries} DB
                         </span>
                       )}
                     </div>
                     {t.error_message && (
-                      <p className="text-[10px] text-error mt-1 truncate">{t.error_message}</p>
+                      <p className="text-kicker text-error mt-1 truncate">{t.error_message}</p>
                     )}
                   </div>
                   <Icon
@@ -172,17 +172,17 @@ export function LogsRequestList({
           <button
             onClick={() => onPageChange(page - 1)}
             disabled={page <= 1}
-            className="text-[10px] px-2 py-1 rounded-md text-text-muted hover:bg-surface-2 disabled:opacity-30 transition-colors"
+            className="text-kicker px-2 py-1 rounded-md text-text-muted hover:bg-surface-2 disabled:opacity-30 transition-colors"
           >
             Prev
           </button>
-          <span className="text-[10px] text-text-muted tabular-nums">
+          <span className="text-kicker text-text-muted tabular-nums">
             {page} / {totalPages}
           </span>
           <button
             onClick={() => onPageChange(page + 1)}
             disabled={page >= totalPages}
-            className="text-[10px] px-2 py-1 rounded-md text-text-muted hover:bg-surface-2 disabled:opacity-30 transition-colors"
+            className="text-kicker px-2 py-1 rounded-md text-text-muted hover:bg-surface-2 disabled:opacity-30 transition-colors"
           >
             Next
           </button>

@@ -169,7 +169,7 @@ export function ConnectionHealth({
           type="button"
           onClick={handleReconnect}
           disabled={reconnecting}
-          className="text-[10px] px-1 py-px rounded-full bg-error-muted text-error hover:bg-error/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none disabled:opacity-50"
+          className="text-kicker px-1 py-px rounded-full bg-error-muted text-error hover:bg-error/20 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none disabled:opacity-50"
         >
           {reconnecting ? "..." : "RECONNECT"}
         </button>
@@ -350,7 +350,7 @@ export function CollectionStatusRow({
   if (loading && !status && !error) {
     return (
       <div
-        className={`mx-3 mb-1 px-2 py-1 text-[10px] text-text-muted ${className}`}
+        className={`mx-3 mb-1 px-2 py-1 text-kicker text-text-muted ${className}`}
         aria-label="Loading collection status"
       >
         Loading collection status…
@@ -363,7 +363,7 @@ export function CollectionStatusRow({
       <ListError
         message={error}
         onRetry={() => void fetchStatus()}
-        className={`mx-3 mb-1 px-2 py-1 text-[10px] text-error flex flex-col items-start gap-1 ${className}`}
+        className={`mx-3 mb-1 px-2 py-1 text-kicker text-error flex flex-col items-start gap-1 ${className}`}
       />
     );
   }
@@ -378,7 +378,7 @@ export function CollectionStatusRow({
       className={`mx-3 mb-1 px-2 py-1.5 rounded bg-surface-1 border border-border-subtle compact-touch ${className}`}
     >
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[10px] text-text-tertiary font-medium">Collection</span>
+        <span className="text-kicker text-text-tertiary font-medium">Collection</span>
         <Tooltip label={OUTCOME_TOOLTIPS[badge]} position="bottom">
           {/* The tooltip is where the badge's meaning is written down, and
               Tooltip opens on focus — so the badge is focusable, and carries
@@ -389,26 +389,26 @@ export function CollectionStatusRow({
             tabIndex={0}
             role="status"
             aria-label={`Collection status: ${OUTCOME_LABELS[badge]} — ${OUTCOME_TOOLTIPS[badge]}`}
-            className={`text-[10px] px-1.5 py-px rounded-full leading-none outline-none focus-visible:ring-2 focus-visible:ring-accent ${OUTCOME_BADGE_CLASSES[badge]}`}
+            className={`text-kicker px-1.5 py-px rounded-full leading-none outline-none focus-visible:ring-2 focus-visible:ring-accent ${OUTCOME_BADGE_CLASSES[badge]}`}
           >
             {OUTCOME_LABELS[badge]}
           </span>
         </Tooltip>
         {queued && (
-          <span className="text-[10px] px-1.5 py-px rounded-full bg-warning-muted text-warning animate-pulse-dot leading-none">
+          <span className="text-kicker px-1.5 py-px rounded-full bg-warning-muted text-warning animate-pulse-dot leading-none">
             queued
           </span>
         )}
-        <span className="text-[10px] text-text-muted">
+        <span className="text-kicker text-text-muted">
           Last run {formatCheckTime(status.last_run_at)}
         </span>
         {nextHour ? (
-          <span className="text-[10px] text-text-muted">
+          <span className="text-kicker text-text-muted">
             Next run {nextHour}
             {status.timezone ? ` ${status.timezone}` : ""}
           </span>
         ) : (
-          <span className="text-[10px] px-1.5 py-px rounded-full bg-surface-3/50 text-text-muted leading-none">
+          <span className="text-kicker px-1.5 py-px rounded-full bg-surface-3/50 text-text-muted leading-none">
             auto-collect off
           </span>
         )}
@@ -422,7 +422,7 @@ export function CollectionStatusRow({
               aria-label="Collect now"
               onClick={(e) => void handleCollectNow(e)}
               disabled={collecting}
-              className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-3/50 text-text-secondary hover:text-text-primary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none disabled:opacity-50 disabled:cursor-not-allowed"
+              className="text-kicker px-1.5 py-0.5 rounded-full bg-surface-3/50 text-text-secondary hover:text-text-primary hover:bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent leading-none disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {collecting ? "…" : "Collect now"}
             </button>
@@ -440,7 +440,7 @@ export function CollectionStatusRow({
           {status.reports.map((report) => {
             const pending = report.pending_sample ?? [];
             return (
-              <li key={report.report} className="text-[10px] leading-relaxed">
+              <li key={report.report} className="text-kicker leading-relaxed">
                 <span className="text-text-tertiary font-mono">{report.report}</span>{" "}
                 <span className="text-text-muted">{coverageLabel(report)}</span>
                 {report.pending_periods > 0 && (

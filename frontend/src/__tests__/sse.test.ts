@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const fetchMock = vi.fn();
@@ -101,5 +103,25 @@ describe("subscribeToAllEvents", () => {
     const onError = vi.fn();
     subscribeToAllEvents(vi.fn(), onError);
     await vi.waitFor(() => expect(onError).toHaveBeenCalled());
+  });
+});
+
+describe("pipeline event allowlist — AUD-0819-03", () => {
+  it("lists every event the handler has a case for", async () => {
+    // The bug this locks out: the backend emitted `retrieval_degraded`, the
+    // handler grew no case for it, and later the case existed while the
+    // allowlist did not list it. Each omission is invisible from the other file,
+    // and the symptom is silence — the exact failure the event was added to
+    // prevent. Read from source because a `switch` cannot be enumerated at
+    // runtime; the project already ratchets this way in pack-bans.test.ts.
+    const { PIPELINE_EVENTS } = await import("@/lib/api/chat");
+    const src = readFileSync(
+      resolve(__dirname, "../components/chat/pipeline-event-handlers.ts"),
+      "utf8",
+    );
+    const handled = [...src.matchAll(/case\s+"([a-z_]+)"\s*:/g)].map((m) => m[1]);
+    expect(handled.length).toBeGreaterThan(5);
+    const missing = handled.filter((e) => !PIPELINE_EVENTS.has(e));
+    expect(missing).toEqual([]);
   });
 });

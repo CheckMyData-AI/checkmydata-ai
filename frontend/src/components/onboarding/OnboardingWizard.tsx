@@ -9,6 +9,7 @@ import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
 import { RequestAccessModal } from "@/components/projects/RequestAccessModal";
 import { inputBaseCls as inputCls } from "@/components/ui/Input";
+import { selectBaseCls } from "@/components/ui/Input";
 
 const TOTAL_STEPS = 5;
 
@@ -27,7 +28,7 @@ const DB_TYPE_LABELS: Record<string, string> = {
 };
 
 const btnPrimary =
-  "px-5 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+  "px-5 py-2 rounded-lg bg-primary hover:bg-primary/92 text-primary-foreground text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
 
 const btnSecondary =
   "px-5 py-2 rounded-lg bg-surface-2 hover:bg-surface-3 text-text-secondary text-sm font-medium transition-colors border border-border-subtle";
@@ -476,7 +477,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                       SSH Key
                     </label>
                     <select
-                      className={inputCls}
+                      className={selectBaseCls}
                       value={sshKeyId}
                       onChange={(e) => setSshKeyId(e.target.value)}
                       aria-label="SSH key"
@@ -616,7 +617,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   SSH Key for repo access
                 </label>
                 <select
-                  className={inputCls}
+                  className={selectBaseCls}
                   value={sshKeyId}
                   onChange={(e) => setSshKeyId(e.target.value)}
                   aria-label="SSH key for repo access"
@@ -702,13 +703,13 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div className="fixed inset-0 z-50 flex items-center justify-center lg-scrim">
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="onboarding-title"
-        className="w-full max-w-lg mx-4 bg-surface-1 rounded-lg border border-border-default shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+        className="w-full max-w-lg mx-4 bg-surface-1 rounded-lg border border-border-default shadow-(--shadow-1) overflow-hidden animate-in fade-in zoom-in-95 duration-150"
       >
         <div className="px-6 pt-6 pb-4">
           <div className="flex items-center justify-center gap-2 mb-6">

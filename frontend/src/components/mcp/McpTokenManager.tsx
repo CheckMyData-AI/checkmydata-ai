@@ -48,7 +48,7 @@ function CopyInline({ text, ariaLabel }: { text: string; ariaLabel: string }) {
           })
           .catch(() => toast("Failed to copy to clipboard", "error"));
       }}
-      className="ml-2 inline-flex items-center gap-1 rounded border border-border-subtle bg-surface-2 px-2 py-0.5 text-[10px] text-text-tertiary hover:text-text-primary"
+      className="ml-2 inline-flex items-center gap-1 rounded border border-border-subtle bg-surface-2 px-2 py-0.5 text-kicker text-text-tertiary hover:text-text-primary"
     >
       <Icon name={copied ? "check" : "clipboard"} size={11} />
       {copied ? "copied" : "copy"}
@@ -176,11 +176,11 @@ export function McpTokenManager() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-text-primary truncate">{t.name}</span>
-                    <span className={`text-[10px] uppercase tracking-wider ${status.tone}`}>
+                    <span className={`text-kicker uppercase tracking-wider ${status.tone}`}>
                       {status.label}
                     </span>
                   </div>
-                  <div className="text-[11px] text-text-muted font-mono">
+                  <div className="text-meta text-text-muted font-mono">
                     {t.token_prefix}… · created {formatRelative(t.created_at)}
                     {t.last_used_at ? ` · last used ${formatRelative(t.last_used_at)}` : ""}
                     {t.expires_at ? ` · expires ${formatRelative(t.expires_at)}` : ""}
@@ -191,7 +191,7 @@ export function McpTokenManager() {
                     type="button"
                     aria-label={`Revoke ${t.name}`}
                     onClick={() => handleRevoke(t)}
-                    className="text-[11px] text-text-tertiary hover:text-rose-400 transition-colors"
+                    className="text-meta text-text-tertiary hover:text-rose-400 transition-colors"
                   >
                     Revoke
                   </button>
@@ -242,7 +242,7 @@ export function McpTokenManager() {
             type="button"
             onClick={handleCreate}
             disabled={creating || !newName.trim()}
-            className="w-full px-3 py-2 bg-accent text-white font-medium rounded-lg hover:bg-accent-hover disabled:opacity-50 transition-colors"
+            className="w-full px-3 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/92 disabled:opacity-50 transition-colors"
           >
             {creating ? "Creating…" : "Create token"}
           </button>
@@ -269,7 +269,7 @@ export function McpTokenManager() {
               <summary className="cursor-pointer text-text-secondary">
                 Claude Desktop config snippet
               </summary>
-              <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[11px] text-text-tertiary">
+              <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-meta text-text-tertiary">
                 {claudeConfig}
               </pre>
               <CopyInline text={claudeConfig} ariaLabel="Copy Claude Desktop config" />
@@ -277,7 +277,7 @@ export function McpTokenManager() {
             <button
               type="button"
               onClick={() => setJustIssued(null)}
-              className="w-full px-3 py-2 bg-accent text-white font-medium rounded-lg hover:bg-accent-hover transition-colors"
+              className="w-full px-3 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/92 transition-colors"
             >
               I&apos;ve saved it
             </button>

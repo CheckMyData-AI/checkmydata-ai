@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ChatMessage as ChatMessageType } from "@/stores/app-store";
 
@@ -301,10 +301,34 @@ describe("ChatMessage", () => {
     expect(screen.getByText("Tap to view chart")).toBeInTheDocument();
   });
 
-  it("uses wider max-width on mobile (95%)", async () => {
+  // CHANGED with the ledger redesign, because the behaviour changed rather than
+  // the check being inconvenient: the reader's own turn is a filled bubble and
+  // stays capped, while the ANSWER is drawn straight on the panel with no bubble
+  // at all. An answer the reader is meant to audit is the page's content, not a
+  // remark, and a card around it adds a wall to look past. See SCN-125.
+  // AUD-2026-08-16-01: the seal used to be inside a block guarded on
+  // `responseType !== "text"`, so a plain text answer — the very case that
+  // derives `unverified` — carried no seal at all. The derivation was tested;
+  // the render was not, which is how a state stayed unreachable while its unit
+  // test stayed green.
+  it("seals a plain text answer as unverified, and names no type for it", async () => {
+    await renderMessage({ role: "assistant", content: "Here is a thought.", responseType: "text" });
+    expect(screen.getByText("Unverified")).toBeInTheDocument();
+    expect(screen.queryByText("Knowledge")).not.toBeInTheDocument();
+    expect(screen.queryByText("SQL Result")).not.toBeInTheDocument();
+  });
+
+  it("caps the reader's own turn and lets the answer run full width", async () => {
+    await renderMessage({ role: "user", content: "Ask" });
+    const userTurn = screen.getByText("Ask").closest("[class*='max-w-']");
+    expect(userTurn?.className).toContain("max-w-[95%]");
+    expect(userTurn?.className).toContain("bg-primary");
+
+    cleanup();
     await renderMessage({ role: "assistant", content: "Hello" });
-    const outer = screen.getByText("Hello").closest("[class*='max-w-']");
-    expect(outer?.className).toContain("max-w-[95%]");
+    const answer = screen.getByText("Hello").closest("[class*='max-w-']");
+    expect(answer?.className).toContain("max-w-full");
+    expect(answer?.className).not.toContain("bg-primary");
   });
 
   it("thumbs down on SQL result auto-sends investigation message", async () => {
@@ -473,5 +497,31 @@ describe("ChatMessage", () => {
     );
 
     expect(screen.getByText("Question")).toBeInTheDocument();
+  });
+
+  // AUD-0819-03: an answer built on half the index must say so. Before this the
+  // signal reached the metrics and the SSE stream and stopped there, so an answer
+  // retrieved from one leg of two rendered exactly like an answer retrieved from
+  // both — and in production that is the normal case, because the BM25 snapshot
+  // lives on the dyno's ephemeral disk.
+  it("shows the retrieval warning, on its own line from the staleness warning", async () => {
+    await renderMessage({
+      role: "assistant",
+      content: "Signups rose 12%.",
+      responseType: "knowledge",
+      stalenessWarning: "The code index is 6 days old.",
+      retrievalWarning: "keyword search returned nothing for this question, so the answer rests on the other half of the index.",
+    });
+    expect(screen.getByText(/The code index is 6 days old\./)).toBeInTheDocument();
+    expect(screen.getByText(/keyword search returned nothing/)).toBeInTheDocument();
+  });
+
+  it("says nothing when retrieval was whole", async () => {
+    await renderMessage({
+      role: "assistant",
+      content: "Signups rose 12%.",
+      responseType: "knowledge",
+    });
+    expect(screen.queryByText(/rests on the other half/)).not.toBeInTheDocument();
   });
 });

@@ -12,7 +12,8 @@ export function Card({ children, className, padding = "md" }: CardProps) {
   return (
     <div
       className={cn(
-        "bg-surface-1 rounded-xl border border-border-subtle",
+        // Elevation is the hairline: 1px at 12% ink, radius 15, no shadow.
+        "bg-panel rounded-card border border-border",
         padding === "sm" ? "p-3" : "p-5",
         className,
       )}

@@ -21,11 +21,11 @@ function PreviewTable({ columns, rows }: { columns: string[]; rows: unknown[][] 
 
   return (
     <div className="data-table-scroll overflow-x-auto rounded-lg border border-border-subtle mt-3">
-      <table className="w-full text-xs text-left">
+      <table className="w-full text-left text-body">
         <thead>
-          <tr className="border-b border-border-subtle bg-surface-2">
+          <tr className="border-b border-border bg-inset">
             {columns.map((col) => (
-              <th key={col} className="px-2 py-1.5 font-medium text-text-secondary whitespace-nowrap">
+              <th key={col} className="h-8 whitespace-nowrap px-2 text-meta font-normal text-text-tertiary">
                 {col}
               </th>
             ))}
@@ -33,9 +33,9 @@ function PreviewTable({ columns, rows }: { columns: string[]; rows: unknown[][] 
         </thead>
         <tbody>
           {displayRows.map((row, ri) => (
-            <tr key={ri} className="border-b border-border-subtle/50 last:border-0">
+            <tr key={ri} className="border-b border-border last:border-0">
               {columns.map((_, ci) => (
-                <td key={ci} className="px-2 py-1.5 text-text-primary font-mono whitespace-nowrap max-w-[12rem] truncate">
+                <td key={ci} className="h-8 max-w-[12rem] truncate whitespace-nowrap px-2 font-mono text-text-primary">
                   {String((row as unknown[])[ci] ?? "")}
                 </td>
               ))}

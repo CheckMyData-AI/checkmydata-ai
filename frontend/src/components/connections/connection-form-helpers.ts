@@ -47,8 +47,13 @@ export const EMPTY_FORM = {
 export type FormState = typeof EMPTY_FORM;
 
 export const inputCls = inputBaseCls;
-export const halfInputCls =
-  "bg-surface-1 border border-border-subtle rounded-lg px-3 py-2 text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent transition-colors";
+/**
+ * The half-width field. It carried its own copy of the field style — and its own
+ * focus treatment, a 1px ring plus a border swap — until the close-out walk
+ * found it. There is one field in this design; a "half" one differs in width,
+ * which is the caller's business, not the constant's.
+ */
+export const halfInputCls = inputBaseCls;
 
 export function formatAge(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();

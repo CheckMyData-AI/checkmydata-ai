@@ -88,7 +88,7 @@ export function AnomalyReportCard({
 
   return (
     <div className="mt-2 space-y-1.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-text-tertiary font-medium uppercase tracking-wider">
+      <div className="flex items-center gap-1.5 text-meta text-text-tertiary font-medium uppercase tracking-wider">
         <svg
           className="w-3 h-3"
           fill="none"
@@ -117,7 +117,7 @@ export function AnomalyReportCard({
           >
             <button
               onClick={() => handleToggle(idx)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] w-full text-left`}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-meta w-full text-left`}
             >
               <span className="shrink-0">{cfg.icon}</span>
               <span
@@ -126,7 +126,7 @@ export function AnomalyReportCard({
               >
                 {report.title}
               </span>
-              <span className="ml-auto shrink-0 text-[10px] text-text-tertiary tabular-nums">
+              <span className="ml-auto shrink-0 text-kicker text-text-tertiary tabular-nums">
                 {confidencePct}%
               </span>
               <svg
@@ -146,12 +146,12 @@ export function AnomalyReportCard({
 
             {isExpanded && (
               <div className="px-2.5 pb-2 space-y-1.5 border-t border-border-subtle">
-                <p className="text-[11px] text-text-secondary leading-relaxed pt-1.5">
+                <p className="text-meta text-text-secondary leading-relaxed pt-1.5">
                   {report.description}
                 </p>
 
                 {report.root_cause_hypothesis && (
-                  <div className="flex gap-1.5 text-[11px]">
+                  <div className="flex gap-1.5 text-meta">
                     <span className="text-text-tertiary shrink-0">
                       💡 Root cause:
                     </span>
@@ -162,7 +162,7 @@ export function AnomalyReportCard({
                 )}
 
                 {report.business_impact && (
-                  <div className="flex gap-1.5 text-[11px]">
+                  <div className="flex gap-1.5 text-meta">
                     <span className="text-text-tertiary shrink-0">
                       📊 Impact:
                     </span>
@@ -173,7 +173,7 @@ export function AnomalyReportCard({
                 )}
 
                 {report.recommended_action && (
-                  <div className="flex gap-1.5 text-[11px]">
+                  <div className="flex gap-1.5 text-meta">
                     <span className="text-text-tertiary shrink-0">
                       → Action:
                     </span>
@@ -184,7 +184,7 @@ export function AnomalyReportCard({
                 )}
 
                 {report.expected_impact && (
-                  <div className="flex gap-1.5 text-[11px]">
+                  <div className="flex gap-1.5 text-meta">
                     <span className="text-text-tertiary shrink-0">
                       ✨ Expected:
                     </span>
@@ -196,12 +196,12 @@ export function AnomalyReportCard({
 
                 <div className="flex items-center gap-2 pt-0.5">
                   {report.affected_rows > 0 && (
-                    <span className="text-[10px] text-text-tertiary">
+                    <span className="text-kicker text-text-tertiary">
                       {report.affected_rows} rows affected
                     </span>
                   )}
                   {report.affected_metrics.length > 0 && (
-                    <span className="text-[10px] text-text-tertiary">
+                    <span className="text-kicker text-text-tertiary">
                       Metric:{" "}
                       {report.affected_metrics.join(", ")}
                     </span>
@@ -215,7 +215,7 @@ export function AnomalyReportCard({
                       onDrillDown(drillDownQuestion(report));
                       setExpandedIdx(null);
                     }}
-                    className={`text-[10px] px-1.5 py-0.5 rounded border ${cfg.border} ${cfg.color} hover:brightness-125 transition-all`}
+                    className={`text-kicker px-1.5 py-0.5 rounded border ${cfg.border} ${cfg.color} hover:brightness-125 transition-all`}
                   >
                     Investigate further
                   </button>

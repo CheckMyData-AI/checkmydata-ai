@@ -210,3 +210,50 @@ describe("api auth headers", () => {
     expect(opts.headers.Authorization).toBeUndefined();
   });
 });
+
+describe("plan paywall (402) — AUD-0819-11", () => {
+  function mock402(detail: unknown) {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 402,
+      json: () => Promise.resolve({ detail }),
+    });
+  }
+
+  it("carries the paywall's own upgrade_url into the message", async () => {
+    // The quota paths phrase their message without a path — "Plan 'free' allows
+    // 1 connection(s); you have 1." — while the payload has always carried
+    // `upgrade_url`. The client dropped it, so ToastContainer (which linkifies a
+    // literal "/pricing") had nothing to find and only the token-budget path,
+    // whose prose happens to mention the path, was actionable. A link that
+    // appears when prose happens to contain a route is accidental, not a design.
+    mock402({
+      error: "plan_limit_reached",
+      resource: "connections",
+      limit: 1,
+      current: 1,
+      message: "Plan 'free' allows 1 connection(s); you have 1.",
+      upgrade_url: "/pricing",
+    });
+    await expect(api.projects.list()).rejects.toThrow(/\/pricing/);
+  });
+
+  it("does not repeat the path when the message already names it", async () => {
+    mock402({
+      message: "Daily token budget exhausted — upgrade your plan at /pricing to continue.",
+      upgrade_url: "/pricing",
+    });
+    let msg = "";
+    try {
+      await api.projects.list();
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg.match(/\/pricing/g)).toHaveLength(1);
+  });
+
+  it("still reports a 402 that carries no upgrade_url", async () => {
+    mock402({ message: "Plan limit reached." });
+    await expect(api.projects.list()).rejects.toThrow("Plan limit reached.");
+  });
+});

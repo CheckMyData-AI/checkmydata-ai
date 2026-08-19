@@ -269,7 +269,7 @@ export function ChatSessionList({ createRequested, onCreateHandled }: ChatSessio
       {hasMore && (
         <button
           onClick={() => setShowAll((v) => !v)}
-          className="w-full text-[10px] text-text-muted hover:text-accent py-1 transition-colors"
+          className="w-full text-kicker text-text-muted hover:text-accent py-1 transition-colors"
         >
           {showAll ? "Show less" : `Show all ${chatSessions.length}`} →
         </button>

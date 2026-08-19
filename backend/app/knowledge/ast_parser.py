@@ -11,9 +11,13 @@ Design notes:
       node types to our normalized symbol kinds.
     * Files that exceed ``ast_max_file_bytes``, look binary/minified, or have
       too many ``ERROR`` AST nodes are skipped and counted in ``ParsedFile.errors``.
-    * Symbol UIDs are deterministic: ``{lang}:{rel_path}:{kind}:{name}``.
-      The definition line is intentionally excluded (CODEIDX-C7) — a line shift
-      above an untouched symbol must not change its UID or orphan inbound edges.
+    * Symbol UIDs are deterministic: ``{lang}:{rel_path}:{kind}:{scope.}{name}``,
+      where the scope is the enclosing class for a nested symbol and absent for a
+      module-level one. The definition line is intentionally excluded (CODEIDX-C7)
+      — a line shift above an untouched symbol must not change its UID or orphan
+      inbound edges — but the scope is a name, not a line, and without it two
+      classes declaring the same method in one file collided (AUD-0819-02). See
+      :data:`SYMBOL_UID_SCHEMA` for the version and what a bump costs.
     * Method symbols carry ``parent_uid`` referencing the enclosing class.
 """
 
@@ -49,8 +53,9 @@ class Symbol:
     """A code symbol extracted from an AST.
 
     Attributes:
-        uid: Stable identifier ``{lang}:{rel_path}:{kind}:{name}``.
-            The definition line is stored in ``start_line`` (CODEIDX-C7).
+        uid: Stable identifier ``{lang}:{rel_path}:{kind}:{scope.}{name}`` — the
+            enclosing scope is part of identity, the definition line is not; the
+            line is stored in ``start_line`` (CODEIDX-C7, AUD-0819-02).
         kind: One of function/method/class/interface/enum/type_alias.
         name: Symbol name (e.g. "validate_user", "UserService").
         file_path: Repository-relative path (forward slashes).
@@ -373,12 +378,49 @@ def _looks_minified(content: bytes) -> bool:
     return longest > _MINIFIED_LINE_LEN_THRESHOLD
 
 
-def _make_uid(language: str, rel_path: str, kind: str, name: str) -> str:
+#: Version of the symbol-UID format. Bump whenever `_make_uid` changes shape:
+#: existing `code_graph_symbols` rows keep the old form until their file changes
+#: (`save_incremental` merges by FILE, not by UID), so a cross-file edge to a
+#: method in an untouched file dangles and gets pruned until a full rebuild. The
+#: version rides `app.ops.embedding_reconcile.embedding_fingerprint`, so a deploy
+#: that changes it enqueues one idempotent `force_full` reindex by itself rather
+#: than owing an operator a manual step.
+#:
+#: 1 — `{lang}:{path}:{kind}:{name}` (through 2026-08-18)
+#: 2 — `{lang}:{path}:{kind}:{scope.}{name}` — the enclosing scope joins identity,
+#:     because without it two classes declaring the same method in one file
+#:     collided and every UID-keyed consumer lost one of them (AUD-0819-02).
+SYMBOL_UID_SCHEMA = 2
+
+
+def _make_uid(
+    language: str,
+    rel_path: str,
+    kind: str,
+    name: str,
+    parent_uid: str | None = None,
+) -> str:
     # Normalize separators so UIDs are stable across OSes. The definition line
     # is intentionally NOT part of identity (CODEIDX-C7): it is stored as the
     # ``start_line`` attribute so a line shift above an untouched symbol does
     # not orphan its inbound edges on an incremental merge.
-    return f"{language}:{rel_path.replace(chr(92), '/')}:{kind}:{name}"
+    #
+    # The enclosing scope IS part of identity. Without it, two classes in one
+    # file that both declare ``run`` produce the same UID, and every consumer
+    # keyed on UID loses one of them — ``CodeGraph`` builds ``{s.uid: s}``
+    # (code_graph.py), so the twin is silently overwritten. Laravel's
+    # ``_ide_helper.php`` is the shape that surfaced it in production on
+    # 2026-08-18: many classes, each carrying ``macro`` / ``make`` / ``mixin``.
+    # The scope is a name, not a line, so it keeps the CODEIDX-C7 property.
+    #
+    # ``parent_uid`` already carries its own qualified tail, so nesting composes:
+    # ``Outer`` -> ``Outer.Inner`` -> ``Outer.Inner.method``.
+    qualname = name
+    if parent_uid:
+        parent_qualname = parent_uid.rsplit(":", 1)[-1]
+        if parent_qualname:
+            qualname = f"{parent_qualname}.{name}"
+    return f"{language}:{rel_path.replace(chr(92), '/')}:{kind}:{qualname}"
 
 
 def _node_text(node, source: bytes) -> str:
@@ -674,7 +716,7 @@ def _node_to_symbol(
             kind = _SYMBOL_KIND_FUNCTION
     start_line = node.start_point[0] + 1
     end_line = node.end_point[0] + 1
-    uid = _make_uid(grammar.slug, rel_path, kind, name)
+    uid = _make_uid(grammar.slug, rel_path, kind, name, parent_uid)
     decorators = _extract_decorators(node, grammar, source)
     signature = _extract_signature(node, source)
     docstring = ""

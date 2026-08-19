@@ -91,16 +91,16 @@ export function DashboardList({ createRequested, onCreateHandled }: DashboardLis
         </div>
       ) : loadError ? (
         <div className="px-2 py-2 text-center">
-          <p className="text-[10px] text-text-muted">Couldn&apos;t load dashboards</p>
+          <p className="text-kicker text-text-muted">Couldn&apos;t load dashboards</p>
           <button
             onClick={() => load()}
-            className="text-[10px] text-accent hover:text-accent-hover transition-colors mt-1"
+            className="text-kicker text-accent hover:text-accent-hover transition-colors mt-1"
           >
             Retry
           </button>
         </div>
       ) : dashboards.length === 0 ? (
-        <p className="text-[10px] text-text-muted px-2 py-2">No dashboards yet</p>
+        <p className="text-kicker text-text-muted px-2 py-2">No dashboards yet</p>
       ) : (
         dashboards.map((d) => (
           <div
@@ -112,7 +112,7 @@ export function DashboardList({ createRequested, onCreateHandled }: DashboardLis
               className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 text-left"
             >
               <Icon name="layout" size={12} className="text-text-tertiary shrink-0" />
-              <span className="text-[11px] text-text-secondary group-hover:text-text-primary truncate flex-1">
+              <span className="text-meta text-text-secondary group-hover:text-text-primary truncate flex-1">
                 {d.title}
               </span>
               {d.is_shared && (

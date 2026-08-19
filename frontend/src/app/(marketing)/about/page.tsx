@@ -148,7 +148,7 @@ export default function AboutPage() {
             href="https://github.com/CheckMyData-AI/checkmydata-ai"
             target="_blank"
             rel="noopener noreferrer"
-            className="px-5 py-2.5 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors text-center"
+            className="px-5 py-2.5 text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/92 rounded-lg transition-colors text-center"
           >
             View on GitHub
           </a>

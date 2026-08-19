@@ -135,14 +135,14 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
           aria-label="Dashboard title"
           aria-required="true"
           maxLength={200}
-          className="flex-1 text-sm bg-surface-1 border border-border-default rounded-lg px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+          className="flex-1 text-sm bg-surface-1 border border-border-default rounded-lg px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-accent"
         />
         <div className="flex items-center gap-1 bg-surface-1 border border-border-subtle rounded-lg p-0.5">
           {([2, 3] as const).map((n) => (
             <button
               key={n}
               onClick={() => setColumns(n)}
-              className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
+              className={`px-2 py-1 text-kicker font-medium rounded transition-colors ${
                 columns === n
                   ? "bg-accent-muted text-accent"
                   : "text-text-muted hover:text-text-secondary"
@@ -182,7 +182,7 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
         <button
           onClick={handleSave}
           disabled={saving}
-          className="flex items-center gap-1.5 px-4 py-1.5 text-xs bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50 transition-colors"
+          className="flex items-center gap-1.5 px-4 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:bg-primary/92 disabled:opacity-50 transition-colors"
         >
           <Icon name="save" size={12} />
           {saving ? "Saving..." : "Save Dashboard"}
@@ -203,7 +203,7 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
             </button>
           </div>
           {availableNotes.length === 0 ? (
-            <p className="text-[11px] text-text-muted py-2">No more queries available to add.</p>
+            <p className="text-meta text-text-muted py-2">No more queries available to add.</p>
           ) : (
             <div className="max-h-48 overflow-y-auto space-y-1">
               {availableNotes.map((n) => (
@@ -277,7 +277,7 @@ export function DashboardBuilder({ dashboard, onSave, onCancel }: DashboardBuild
                     <Icon name="x" size={11} />
                   </button>
                 </div>
-                <div className="flex items-center gap-2 text-[10px] text-text-muted">
+                <div className="flex items-center gap-2 text-kicker text-text-muted">
                   {viz?.type && viz.type !== "text" && (
                     <span className="px-1 py-0.5 rounded bg-surface-2">{viz.type as string}</span>
                   )}

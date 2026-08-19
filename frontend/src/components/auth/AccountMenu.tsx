@@ -60,12 +60,12 @@ export function AccountMenu() {
         <PopoverPortal triggerRef={triggerRef} placement="top-left" gap={8}>
           <div
             ref={panelRef}
-            className="w-56 bg-surface-1 border border-border-subtle rounded-lg shadow-xl animate-fade-in"
+            className="w-56 bg-surface-1 border border-border-subtle rounded-lg shadow-(--shadow-1) animate-fade-in"
           >
             {view === "menu" && (
               <div className="py-1">
                 <div className="px-2.5 py-2 border-b border-border-subtle">
-                  <p className="text-[10px] uppercase tracking-wider text-text-muted mb-1.5">Appearance</p>
+                  <p className="text-kicker uppercase tracking-wider text-text-muted mb-1.5">Appearance</p>
                   <ThemeToggle />
                 </div>
                 {!isGoogleOnly && (
@@ -131,7 +131,7 @@ function PasswordForm({ onClose }: { onClose: () => void }) {
   };
 
   const inputCls =
-    "w-full px-2.5 py-1.5 bg-surface-0 text-text-primary rounded text-xs border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-colors placeholder-text-muted";
+    "w-full px-2.5 py-1.5 bg-surface-0 text-text-primary rounded text-xs border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors placeholder-text-muted";
 
   return (
     <form onSubmit={handleSubmit} className="p-3 space-y-2.5">
@@ -168,7 +168,7 @@ function PasswordForm({ onClose }: { onClose: () => void }) {
         <button
           type="submit"
           disabled={loading}
-          className="flex-1 py-1.5 text-xs text-white bg-accent rounded hover:bg-accent-hover disabled:opacity-50 transition-colors"
+          className="flex-1 py-1.5 text-xs text-primary-foreground bg-primary rounded hover:bg-primary/92 disabled:opacity-50 transition-colors"
         >
           {loading ? "Saving..." : "Save"}
         </button>
@@ -198,7 +198,7 @@ function DeleteConfirm({ onClose }: { onClose: () => void }) {
   return (
     <div className="p-3 space-y-2.5">
       <p className="text-xs font-medium text-error">Delete Account</p>
-      <p className="text-[11px] text-text-secondary leading-relaxed">
+      <p className="text-meta text-text-secondary leading-relaxed">
         This will permanently delete your account and all associated data. This action cannot be undone.
       </p>
       <input
@@ -206,7 +206,7 @@ function DeleteConfirm({ onClose }: { onClose: () => void }) {
         placeholder='Type "DELETE" to confirm'
         value={confirm}
         onChange={(e) => setConfirm(e.target.value)}
-        className="w-full px-2.5 py-1.5 bg-surface-0 text-text-primary rounded text-xs border border-border-subtle focus:border-error focus:ring-1 focus:ring-error focus:outline-none transition-colors placeholder-text-muted"
+        className="w-full px-2.5 py-1.5 bg-surface-0 text-text-primary rounded text-xs border border-border-subtle focus:border-error focus:ring-1 focus:ring-error focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors placeholder-text-muted"
         aria-label="Confirm deletion"
       />
       <div className="flex gap-2">

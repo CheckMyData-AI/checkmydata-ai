@@ -9,8 +9,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Supported analytics sources**: `Connection.source_type` also accepts three analytics vendors (`backend/app/analytics/`, family defined once in `app/analytics/source_types.py`): **`ga4`** (Google Analytics 4 — the only one with a collector today), plus **`appstore`** and **`googleplay`**, reserved for m1/m2 (connection creation refuses them with 422 until their fact tables land). Runbook: `docs/ANALYTICS_SOURCES.md`.
 - **LLM providers**: OpenAI, Anthropic, OpenRouter (`backend/app/llm/router.py`).
 - **Task tracking**: [Linear — CheckMyData.ai](https://linear.app/sshlg/project/checkmydataai-b7670b0dd990).
-- **Tests**: ~6,634 total (6,028 backend collected + 606 frontend Vitest across 86 files); backend coverage ~78% (78.03% on the 2026-07-24 remediation run; the CI gate `fail_under` is **72%**).
-- **Recent work**: current release **`[1.16.0]`** — GA4 as a first-class data source (vendor-credential store, scheduled collection behind an import journal, `AnalyticsAgent` with honesty gates, charting) plus the `vision.md` §8 carve-out recorded in `docs/adr/0001-external-report-cache.md`. `[1.15.1]` (see `CHANGELOG.md`). `[1.15.0]` cut the intelligence-remediation program (W0–W6): data-quality honesty (truncation/partial-data caveats, DataGate on both paths), hybrid retrieval + ContextPack (provenance + reranker), orchestrator live step-budget termination + single-loop/pipeline path unification, DB schema-capture depth across all four connectors, code↔DB trust signals (exact git-freshness states), code-graph correctness, and self-completing embedding reconcile — plus the June orchestrator-audit remediation (DataGate semantic gate, cross-tenant SSE/WS leak fix, `/api/chat/ask` concurrency cap, MCP call timeout). `[1.15.1]` is embedding-loader log hygiene + infra guidance. Benchmark-gated default-on flags: `code_graph_enabled`, `lineage_enabled`, `reranker_enabled`, `context_planner_enabled`. Prior hardening (billing, cookie auth, MCP/SSH, Redis limits, Sentry) shipped in `[1.14.0]`.
+- **Tests**: **6,790 total** — 6,108 backend collected + 682 frontend Vitest across 92 files (measured 2026-08-19: `pytest tests/ --collect-only -q`, `npx vitest run`). Backend coverage **78%** (39,830 statements, 8,625 missed — `pytest tests/ --cov=app`, same date); the CI gate `fail_under` is **72%**.
+- **Recent work**: current release **`[1.16.0]`** — GA4 as a first-class data source (vendor-credential store, scheduled collection behind an import journal, `AnalyticsAgent` with honesty gates, charting) plus the `vision.md` §8 carve-out recorded in `docs/adr/0001-external-report-cache.md`. `[1.15.1]` (see `CHANGELOG.md`). `[1.15.0]` cut the intelligence-remediation program (W0–W6): data-quality honesty (truncation/partial-data caveats, DataGate on both paths), hybrid retrieval + ContextPack (provenance + reranker), orchestrator live step-budget termination + single-loop/pipeline path unification, DB schema-capture depth across all four connectors, code↔DB trust signals (exact git-freshness states), code-graph correctness, and self-completing embedding reconcile — plus the June orchestrator-audit remediation (DataGate semantic gate, cross-tenant SSE/WS leak fix, `/api/chat/ask` concurrency cap, MCP call timeout). `[1.15.1]` is embedding-loader log hygiene + infra guidance. Benchmark-gated default-on flags: `code_graph_enabled`, `lineage_enabled`, `context_planner_enabled` — **not** `reranker_enabled`, which is `False` in `config.py:602` and has been since the 2026-08-10 correction; that correction reached the flags table and the deploy notes below but not this line, which is AUD-0819-17. Prior hardening (billing, cookie auth, MCP/SSH, Redis limits, Sentry) shipped in `[1.14.0]`.
 
 ## Prerequisites
 
@@ -111,6 +111,25 @@ Embedding-config changes (`CHROMA_EMBEDDING_MODEL` / `EMBEDDER_MAX_TOKENS`) are 
 
 **2. `code_graph_enabled` + `lineage_enabled` now default-on — ensure ≥2 worker cores**
 Both flags flip to `True` in this release. Code-graph indexing is CPU-intensive. To defer: set env `CODE_GRAPH_ENABLED=false` and `LINEAGE_ENABLED=false`.
+
+**0. Worker memory — `EMBEDDING_UPSERT_BATCH_SIZE` defaults to 8, and that is the fix**
+Before 2026-08-19 the production worker was SIGKILLed at `code_symbol_embed` (R15,
+1053 MiB against a 512 MiB quota) and **no repo-index run reached `pipeline_end`** —
+`grep -c pipeline_end` over a two-hour log window returned 0. ChromaDB's bundled ONNX
+MiniLM pads every document to 256 tokens, so the batch handed to one `upsert` sizes the
+transformer's activations and nothing else. Measured through `VectorStore.add_documents`
+over 960 chunks: **batch 200 → 967 MiB peak / 9.3 s; batch 8 → 415 MiB peak / 10.9 s.**
+The default trades ~17% wall clock for ~552 MiB. Raise it only on a dyno with headroom.
+
+**0b. The symbol-UID schema bump reindexes itself — no operator step**
+`SYMBOL_UID_SCHEMA` (`app/knowledge/ast_parser.py`) is part of
+`embedding_fingerprint()`, so the 2026-08-19 UID change (methods now carry their
+enclosing scope) makes `reconcile_embeddings` enqueue one `force_full` reindex per
+project at startup — advisory-locked, idempotent, non-blocking. Required because
+`save_incremental` merges by FILE, not by UID: symbols in unchanged files keep the old
+form and cross-file edges to them are pruned until a clean rebuild. Expect one slower
+first boot after deploy, and confirm it by looking for a `pipeline_end` that now
+arrives.
 
 **3. `reranker_enabled` is default-OFF — and so is the 768-d embedder**
 `sentence-transformers` is not in the production image and never was; it now lives in the optional `ml` extra. Consequences while it is absent: the reranker is a no-op, and `CHROMA_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5` (768-d) is silently ignored — Chroma embeds at 384-d with `all-MiniLM-L6-v2`. Turning the extra on requires more dyno memory (the worker already runs over quota) **and a full re-index**, because 384-d and 768-d vectors are not comparable.

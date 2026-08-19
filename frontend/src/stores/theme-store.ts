@@ -19,7 +19,12 @@ function resolve(pref: ThemePreference): ResolvedTheme {
 
 function applyClass(resolved: ResolvedTheme): void {
   if (typeof document === "undefined") return;
-  document.documentElement.classList.toggle("dark", resolved === "dark");
+  const root = document.documentElement;
+  root.classList.toggle("dark", resolved === "dark");
+  // The `ledger` token layer is copied verbatim from the pack and switches on
+  // [data-theme]; Tailwind's dark variant here keys off the class. Both are set
+  // together, and test/theme-store.test.ts fails if one of them stops.
+  root.setAttribute("data-theme", resolved);
 }
 
 function readStored(): ThemePreference {

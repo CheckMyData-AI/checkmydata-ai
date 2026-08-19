@@ -64,9 +64,9 @@ export function VizToolbar({ activeType, onTypeChange, disabled, loading }: VizT
             disabled={disabled || loading}
             title={vt.label}
             aria-label={`Show as ${vt.label}`}
-            className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors ${
+            className={`flex items-center gap-1 px-2 py-1 rounded-md text-meta transition-colors ${
               isActive
-                ? "bg-accent text-white"
+                ? "bg-primary text-primary-foreground"
                 : "text-text-secondary hover:text-text-primary hover:bg-surface-2"
             } ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
           >

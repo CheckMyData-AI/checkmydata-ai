@@ -41,6 +41,69 @@ def _policy() -> str:
     return (settings.ssh_host_key_policy or "tofu").strip().lower()
 
 
+#: Path prefixes the OS is free to empty between process lifetimes. A TOFU store
+#: living under one of these re-runs "first use" after every restart, so it pins
+#: whatever key it is offered instead of verifying against what it pinned before.
+_EPHEMERAL_PREFIXES = ("/tmp/", "/var/tmp/", "/private/tmp/", "/private/var/tmp/", "/dev/shm/")
+
+_durability_warned = False
+
+
+def known_hosts_is_ephemeral(path: str) -> bool:
+    """Whether *path* sits on storage the OS may empty between restarts.
+
+    A blank path is a different failure — there is nothing to write to — and this
+    question does not apply to it, so it is not guessed at either way.
+    """
+    if not path:
+        return False
+    normalized = os.path.normpath(path)
+    if not normalized.endswith("/"):
+        normalized += "/"
+    return normalized.startswith(_EPHEMERAL_PREFIXES)
+
+
+def reset_durability_warning() -> None:
+    """Test seam: forget that the durability warning was already emitted."""
+    global _durability_warned  # noqa: PLW0603
+    _durability_warned = False
+
+
+def warn_if_known_hosts_ephemeral() -> None:
+    """Say once that ``tofu`` cannot keep its promise on this host (AUD-0819-06).
+
+    ``config.py`` describes ``tofu`` as pinning on first connect and verifying
+    thereafter, "a *changed* key is rejected". That holds only while the store
+    survives. On Heroku — the primary deploy target — ``ssh_known_hosts_path``
+    defaults under ``/tmp``, and restarts are routine, so first use runs again on
+    every boot and the rejection never happens. Until the pins live somewhere
+    durable (docs/adr/0002-ssh-host-key-store.md) the least we owe an operator is
+    to name it rather than let the config's promise stand unqualified.
+
+    ``disabled`` is excluded on purpose: it already warns per connection, and a
+    second warning beside it only dilutes the one that matters.
+    """
+    global _durability_warned  # noqa: PLW0603
+    if _durability_warned:
+        return
+    policy = _policy()
+    if policy not in ("tofu", "strict"):
+        return
+    path = settings.ssh_known_hosts_path
+    if not known_hosts_is_ephemeral(path):
+        return
+    _durability_warned = True
+    logger.warning(
+        "SSH host-key store %r is on ephemeral storage: the pins do not survive a "
+        "restart, so ssh_host_key_policy=%s re-runs first use on every boot and "
+        "accepts whatever key is offered instead of rejecting a changed one. Point "
+        "SSH_KNOWN_HOSTS_PATH at durable storage, or treat host-key verification as "
+        "unavailable on this host.",
+        path,
+        policy,
+    )
+
+
 def _ensure_known_hosts_file(path: str) -> bool:
     """Create the known_hosts file (and parents) if missing. Returns writable."""
     try:
@@ -96,6 +159,8 @@ async def connect_with_policy(
     """
     policy = _policy()
     host = str(connect_kwargs.get("host", "")).strip()
+    # Once per process, and only where the promise cannot be kept (AUD-0819-06).
+    warn_if_known_hosts_ephemeral()
 
     async def _connect(kwargs: dict) -> asyncssh.SSHClientConnection:
         coro = asyncssh.connect(**kwargs)

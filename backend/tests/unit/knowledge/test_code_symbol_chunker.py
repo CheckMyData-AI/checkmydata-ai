@@ -314,3 +314,46 @@ class TestCodeSymbolChunker:
             vector_store=mock_store,
         )
         mock_store.add_documents.assert_not_called()
+
+    def test_embed_symbols_unique_doc_ids_when_uids_collide(self, tmp_path: Path) -> None:
+        """Colliding symbol UIDs must still yield unique document ids.
+
+        The UID deliberately collapses two same-named symbols in one file
+        (``test_same_name_functions_collapse_to_one_uid`` in
+        ``tests/unit/test_ast_parser.py`` asserts it for Python shadowing), yet
+        ``ParsedFile.symbols`` keeps BOTH objects. Feeding a collapsing
+        identifier straight to Chroma as a primary key is what raised
+        ``DuplicateIDError`` in production on 2026-08-18 and dropped nine
+        batches of 200 chunks with only a WARNING behind them. The document id
+        must therefore be unique by construction, whatever the UID does.
+        """
+        src = tmp_path / "dup.py"
+        src.write_text("def f():\n    return 1\n\ndef f():\n    return 2\n")
+
+        colliding = [
+            _make_symbol("f", start_line=1, end_line=2, file_path="dup.py"),
+            _make_symbol("f", start_line=4, end_line=5, file_path="dup.py"),
+        ]
+        # The production shape: one UID, two symbols.
+        colliding[1] = Symbol(**{**colliding[1].__dict__, "uid": colliding[0].uid})
+        assert colliding[0].uid == colliding[1].uid
+
+        mock_store = MagicMock()
+        chunker = self._chunker()
+        chunker.embed_symbols(
+            project_id="proj-dup",
+            parsed_files={"dup.py": _make_parsed_file(colliding, file_path="dup.py")},
+            repo_dir=tmp_path,
+            vector_store=mock_store,
+        )
+
+        ids: list[str] = []
+        for c in mock_store.add_documents.call_args_list:
+            kw = (
+                c.kwargs
+                if c.kwargs
+                else dict(zip(("project_id", "doc_ids", "documents", "metadatas"), c.args))
+            )
+            ids.extend(kw["doc_ids"])
+        assert len(ids) >= 2
+        assert len(ids) == len(set(ids)), f"duplicate doc_ids handed to the store: {ids}"

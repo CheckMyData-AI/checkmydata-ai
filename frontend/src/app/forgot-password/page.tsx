@@ -43,7 +43,7 @@ export default function ForgotPasswordPage() {
   };
 
   const inputCls =
-    "w-full px-3.5 py-2.5 bg-surface-1 text-text-primary rounded-lg text-sm border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-colors placeholder-text-muted";
+    "w-full px-3.5 py-2.5 bg-surface-1 text-text-primary rounded-lg text-sm border border-border-subtle focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors placeholder-text-muted";
 
   return (
     <div className="min-h-screen bg-surface-0 flex items-center justify-center p-4">
@@ -108,7 +108,7 @@ export default function ForgotPasswordPage() {
                   aria-invalid={emailInvalid || undefined}
                 />
                 {emailInvalid && (
-                  <p className="text-[10px] text-error mt-1 px-1">
+                  <p className="text-kicker text-error mt-1 px-1">
                     Please enter a valid email address
                   </p>
                 )}
@@ -124,7 +124,7 @@ export default function ForgotPasswordPage() {
               <button
                 type="submit"
                 disabled={status === "loading"}
-                className="w-full py-2.5 bg-accent text-white rounded-lg text-sm font-semibold hover:bg-accent-hover disabled:opacity-50 transition-colors"
+                className="w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/92 disabled:opacity-50 transition-colors"
               >
                 {status === "loading" ? "Sending…" : "Send reset link"}
               </button>

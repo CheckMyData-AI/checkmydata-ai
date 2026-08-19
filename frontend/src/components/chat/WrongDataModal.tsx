@@ -6,6 +6,7 @@ import { useAppStore } from "@/stores/app-store";
 import { toast } from "@/stores/toast-store";
 import { InvestigationProgress } from "./InvestigationProgress";
 import { ResultDiffView } from "./ResultDiffView";
+import { selectBaseCls } from "@/components/ui/Input";
 
 const COMPLAINT_TYPES = [
   { id: "numbers_too_high", label: "Numbers too high", icon: "↑" },
@@ -155,8 +156,8 @@ export function WrongDataModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="wrong-data-title" tabIndex={-1} className="w-full max-w-lg mx-4 bg-surface-1 rounded-lg border border-border-default/50 shadow-xl max-h-[80vh] overflow-y-auto focus:outline-none animate-in fade-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center lg-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="wrong-data-title" tabIndex={-1} className="w-full max-w-lg mx-4 bg-surface-1 rounded-lg border border-border-default/50 shadow-(--shadow-1) max-h-[80vh] overflow-y-auto focus:outline-none animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border-subtle">
           <h3 id="wrong-data-title" className="text-sm font-semibold text-text-primary">Report Incorrect Data</h3>
@@ -198,7 +199,7 @@ export function WrongDataModal({
                   value={expectedValue}
                   onChange={(e) => setExpectedValue(e.target.value)}
                   placeholder="e.g., ~150,000"
-                  className="w-full px-3 py-1.5 rounded-md text-xs bg-surface-2 border border-border-default text-text-primary placeholder:text-text-muted focus:outline-none focus:border-warning"
+                  className="w-full px-3 py-1.5 rounded-md text-xs bg-surface-2 border border-border-default text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:border-warning"
                 />
               </div>
 
@@ -208,7 +209,7 @@ export function WrongDataModal({
                   <select
                     value={problematicColumn}
                     onChange={(e) => setProblematicColumn(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-md text-xs bg-surface-2 border border-border-default text-text-primary focus:outline-none focus:border-warning"
+                    className={selectBaseCls}
                   >
                     <option value="">All / not sure</option>
                     {resultColumns.map((col) => (

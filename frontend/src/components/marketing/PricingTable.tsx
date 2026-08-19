@@ -123,7 +123,7 @@ export function PricingTable() {
             }`}
           >
             {highlighted && (
-              <span className="self-start px-2 py-0.5 mb-3 rounded-full bg-accent/10 text-accent text-[11px] font-semibold uppercase tracking-wide">
+              <span className="self-start px-2 py-0.5 mb-3 rounded-full bg-accent/10 text-accent text-meta font-semibold uppercase tracking-wide">
                 Most popular
               </span>
             )}
@@ -152,7 +152,7 @@ export function PricingTable() {
               aria-label={`Choose the ${plan.name} plan`}
               className={`mt-8 w-full px-4 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
                 highlighted
-                  ? "text-white bg-accent hover:bg-accent-hover"
+                  ? "text-primary-foreground bg-primary hover:bg-primary/92"
                   : "text-text-primary border border-border-default hover:border-accent hover:text-accent"
               }`}
             >

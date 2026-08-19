@@ -43,13 +43,13 @@ export function HomeAsk() {
           placeholder={canAsk ? "Ask anything about your data…" : "Add a connection to start asking"}
           disabled={!canAsk}
           maxLength={2000}
-          className="flex-1 bg-surface-0 border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent transition-colors disabled:opacity-50"
+          className="flex-1 bg-surface-0 border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus:ring-1 focus:ring-accent focus:border-accent transition-colors disabled:opacity-50"
         />
         <button
           type="button"
           onClick={submit}
           disabled={!canAsk || !value.trim()}
-          className="shrink-0 px-3.5 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          className="shrink-0 px-3.5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/92 disabled:opacity-40 disabled:cursor-not-allowed transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           Ask
         </button>

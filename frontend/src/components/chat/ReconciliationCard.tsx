@@ -82,7 +82,7 @@ export function ReconciliationCard({ report, onDrillDown }: ReconciliationCardPr
   return (
     <div className={`mt-2 rounded-xl border ${statusCfg.border} ${statusCfg.bg} overflow-hidden`}>
       {/* Header */}
-      <div className="px-2.5 py-1.5 flex items-center gap-1.5 text-[11px]">
+      <div className="px-2.5 py-1.5 flex items-center gap-1.5 text-meta">
         <span>{statusCfg.icon}</span>
         <span className={`font-medium ${statusCfg.color}`}>
           Reconciliation: {report.source_a_name} vs {report.source_b_name}
@@ -93,7 +93,7 @@ export function ReconciliationCard({ report, onDrillDown }: ReconciliationCardPr
       </div>
 
       {/* Summary */}
-      <div className="px-2.5 pb-1.5 text-[11px] text-text-secondary leading-relaxed">
+      <div className="px-2.5 pb-1.5 text-meta text-text-secondary leading-relaxed">
         {report.summary}
       </div>
 
@@ -101,12 +101,12 @@ export function ReconciliationCard({ report, onDrillDown }: ReconciliationCardPr
       {(report.critical_count > 0 || report.warning_count > 0) && (
         <div className="px-2.5 pb-1.5 flex gap-1.5">
           {report.critical_count > 0 && (
-            <span className="text-[10px] px-1 py-0.5 rounded bg-error-muted text-error">
+            <span className="text-kicker px-1 py-0.5 rounded bg-error-muted text-error">
               {report.critical_count} critical
             </span>
           )}
           {report.warning_count > 0 && (
-            <span className="text-[10px] px-1 py-0.5 rounded bg-warning-muted text-warning">
+            <span className="text-kicker px-1 py-0.5 rounded bg-warning-muted text-warning">
               {report.warning_count} warnings
             </span>
           )}
@@ -125,15 +125,15 @@ export function ReconciliationCard({ report, onDrillDown }: ReconciliationCardPr
               <div key={idx} className="border-b border-border-subtle last:border-b-0">
                 <button
                   onClick={() => handleToggle(idx)}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] w-full text-left"
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-meta w-full text-left"
                 >
-                  <span className={`text-[10px] px-1 py-0.5 rounded shrink-0 ${sevClass}`}>
+                  <span className={`text-kicker px-1 py-0.5 rounded shrink-0 ${sevClass}`}>
                     {disc.severity}
                   </span>
                   <span className="text-text-primary truncate" title={disc.title}>
                     {disc.title}
                   </span>
-                  <span className="ml-auto text-[10px] text-text-muted shrink-0">
+                  <span className="ml-auto text-kicker text-text-muted shrink-0">
                     {typeLabel}
                   </span>
                   <svg
@@ -148,7 +148,7 @@ export function ReconciliationCard({ report, onDrillDown }: ReconciliationCardPr
                 </button>
 
                 {isExpanded && (
-                  <div className="px-2.5 pb-1.5 space-y-1 text-[11px]">
+                  <div className="px-2.5 pb-1.5 space-y-1 text-meta">
                     <div className="text-text-secondary leading-relaxed">{disc.description}</div>
 
                     {disc.difference_pct > 0 && (
@@ -181,7 +181,7 @@ export function ReconciliationCard({ report, onDrillDown }: ReconciliationCardPr
                           );
                           setExpandedIdx(null);
                         }}
-                        className="text-[10px] px-1.5 py-0.5 rounded border border-border-default text-text-secondary hover:text-text-primary transition-all"
+                        className="text-kicker px-1.5 py-0.5 rounded border border-border-default text-text-secondary hover:text-text-primary transition-all"
                       >
                         Investigate this
                       </button>

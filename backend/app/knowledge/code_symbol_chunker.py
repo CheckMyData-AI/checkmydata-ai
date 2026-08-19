@@ -168,6 +168,17 @@ class CodeSymbolChunker:
         batch_docs: list[str] = []
         batch_metas: list[dict] = []
 
+        # A symbol UID may legitimately repeat inside one file: the parser
+        # collapses two same-named module-level functions on purpose (Python's
+        # second ``def f`` shadows the first), yet ``ParsedFile.symbols`` keeps
+        # both objects. Chroma treats the document id as a primary key and
+        # rejects the WHOLE batch on a duplicate, so on 2026-08-18 production
+        # lost nine batches of 200 chunks to a single ``DuplicateIDError`` with
+        # only a WARNING behind it. The id is therefore made unique by
+        # construction. The first occurrence keeps its historical id verbatim so
+        # a deploy does not churn every existing vector.
+        uid_occurrences: dict[str, int] = {}
+
         for rel_path, parsed_file in parsed_files.items():
             if not parsed_file.symbols:
                 continue
@@ -179,6 +190,9 @@ class CodeSymbolChunker:
                 continue
 
             for symbol in parsed_file.symbols:
+                seen = uid_occurrences.get(symbol.uid, 0)
+                uid_occurrences[symbol.uid] = seen + 1
+                uid_suffix = "" if seen == 0 else f"#{seen}"
                 try:
                     chunks = build_code_chunks(
                         symbol=symbol,
@@ -202,7 +216,7 @@ class CodeSymbolChunker:
                     # doc DB id as a prefix) and can be filtered/audited
                     # independently of BM25 docs (which are built separately by
                     # the bm25_build stage from the same underlying documents).
-                    doc_id = f"sym:{rel_path}:{symbol.uid}:{chunk_idx}"
+                    doc_id = f"sym:{rel_path}:{symbol.uid}{uid_suffix}:{chunk_idx}"
                     batch_ids.append(doc_id)
                     batch_docs.append(chunk.content)
                     batch_metas.append(chunk.metadata)

@@ -5,6 +5,16 @@ import { api } from "@/lib/api";
 import type { RunHistoryItem } from "@/lib/api/types";
 import { Icon } from "@/components/ui/Icon";
 import { ListError } from "@/components/ui/ListError";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/shadcn/table";
+import { StatusDot } from "@/components/ui/StatusDot";
+import { selectBaseCls } from "@/components/ui/Input";
 
 const KINDS = ["", "index_repo", "db_index", "code_db_sync", "daily_sync"];
 
@@ -39,7 +49,7 @@ export function RunsTab({ projectId }: { projectId: string }) {
           aria-label="Filter by kind"
           value={kind}
           onChange={(e) => setKind(e.target.value)}
-          className="text-xs bg-surface-1 border border-border-subtle rounded px-2 py-1 text-text-secondary"
+          className={selectBaseCls}
         >
           {KINDS.map((k) => (
             <option key={k} value={k}>
@@ -64,40 +74,45 @@ export function RunsTab({ projectId }: { projectId: string }) {
         ) : rows.length === 0 ? (
           <div className="p-6 text-center text-xs text-text-tertiary">No runs recorded</div>
         ) : (
-          <table className="w-full text-xs">
-            <thead className="text-[10px] text-text-tertiary uppercase tracking-wider">
-              <tr className="border-b border-border-subtle">
-                <th className="text-left px-4 py-2">Kind</th>
-                <th className="text-left px-2 py-2">Status</th>
-                <th className="text-left px-2 py-2">Trigger</th>
-                <th className="text-left px-2 py-2">Finished</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="pl-4">Kind</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Trigger</TableHead>
+                <TableHead className="text-right">Finished</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {rows.map((r) => (
-                <tr key={r.id} className="border-b border-border-subtle hover:bg-surface-1/50">
-                  <td className="px-4 py-2 text-text-primary">{r.kind}</td>
-                  <td className="px-2 py-2">
-                    <span
-                      className={
-                        r.status === "failed"
-                          ? "text-error"
-                          : r.status === "completed"
-                            ? "text-success"
-                            : "text-text-secondary"
-                      }
-                    >
-                      {r.status}
+                <TableRow key={r.id}>
+                  <TableCell className="pl-4 text-text-primary">{r.kind}</TableCell>
+                  <TableCell>
+                    {/* Status is never by colour alone: the dot carries the hue
+                        and the word stays in --ink, because --ok and --danger
+                        both sit under AA on the light field. */}
+                    <span className="inline-flex items-center gap-2">
+                      <StatusDot
+                        status={
+                          r.status === "failed"
+                            ? "error"
+                            : r.status === "completed"
+                              ? "success"
+                              : "idle"
+                        }
+                        title={r.status}
+                      />
+                      <span className="text-text-primary">{r.status}</span>
                     </span>
-                  </td>
-                  <td className="px-2 py-2 text-text-tertiary">{r.trigger}</td>
-                  <td className="px-2 py-2 text-text-muted tabular-nums">
+                  </TableCell>
+                  <TableCell className="text-text-tertiary">{r.trigger}</TableCell>
+                  <TableCell className="text-right font-mono text-meta text-text-tertiary tabular-nums">
                     {r.finished_at ? new Date(r.finished_at).toLocaleString() : "—"}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
       </div>
     </div>

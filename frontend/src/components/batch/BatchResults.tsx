@@ -100,7 +100,7 @@ export function BatchResults({ batchId, onClose, onBack }: BatchResultsProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center lg-scrim"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose?.();
       }}
@@ -110,7 +110,7 @@ export function BatchResults({ batchId, onClose, onBack }: BatchResultsProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Batch Results"
-        className="bg-surface-0 border border-border-subtle rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 shadow-xl animate-in fade-in zoom-in-95 duration-150"
+        className="bg-surface-0 border border-border-subtle rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 shadow-(--shadow-1) animate-in fade-in zoom-in-95 duration-150"
       >
         {/* Header */}
         <div className="shrink-0 px-5 py-4 border-b border-border-subtle flex items-center justify-between gap-3">
@@ -135,7 +135,7 @@ export function BatchResults({ batchId, onClose, onBack }: BatchResultsProps) {
             <button
               onClick={handleExport}
               disabled={exporting || !hasEntries}
-              className="flex items-center gap-1 text-[11px] px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1 text-meta px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors disabled:opacity-40"
             >
               <Icon name={exporting ? "refresh-cw" : "download"} size={11} className={exporting ? "animate-spin" : ""} />
               Export
@@ -167,7 +167,7 @@ export function BatchResults({ batchId, onClose, onBack }: BatchResultsProps) {
               <p className="text-xs text-text-secondary">Couldn&apos;t load batch results</p>
               <button
                 onClick={load}
-                className="flex items-center gap-1 text-[11px] px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors"
+                className="flex items-center gap-1 text-meta px-3 py-1.5 rounded border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors"
               >
                 <Icon name="refresh-cw" size={11} />
                 Retry
@@ -209,20 +209,20 @@ export function BatchResults({ batchId, onClose, onBack }: BatchResultsProps) {
               return (
                 <div
                   key={idx}
-                  className="bg-surface-1 border border-error/30 rounded-lg p-3 space-y-1.5"
+                  className="bg-panel border border-danger/40 rounded-card p-4 space-y-1.5"
                 >
                   <div className="flex items-center gap-2">
                     <Icon name="alert-triangle" size={12} className="text-error shrink-0" />
                     <span className="text-xs font-medium text-text-primary truncate flex-1">{title}</span>
-                    <span className="text-[10px] font-mono text-error uppercase shrink-0">
+                    <span className="text-kicker font-mono text-error uppercase shrink-0">
                       {entry.status || "failed"}
                     </span>
                   </div>
-                  <p className="text-[11px] text-error/90 leading-relaxed break-words">
+                  <p className="text-meta text-error/90 leading-relaxed break-words">
                     {entry.error || "Query failed with no error detail."}
                   </p>
                   {entry.sql && (
-                    <pre className="text-[10px] font-mono text-text-muted bg-surface-0 border border-border-subtle rounded px-2.5 py-2 overflow-x-auto whitespace-pre-wrap">
+                    <pre className="text-kicker font-mono text-text-muted bg-surface-0 border border-border-subtle rounded px-2.5 py-2 overflow-x-auto whitespace-pre-wrap">
                       {entry.sql}
                     </pre>
                   )}

@@ -86,7 +86,7 @@ export function RunCard({
                   .cancel(task.runId)
                   .catch(() => toast("Failed to cancel run", "error"))
               }
-              className="text-[10px] px-2 py-1 rounded text-text-secondary hover:text-error border border-border-subtle"
+              className="text-kicker px-2 py-1 rounded text-text-secondary hover:text-error border border-border-subtle"
             >
               Cancel
             </button>
@@ -100,7 +100,7 @@ export function RunCard({
                 .retry(task.runId)
                 .catch(() => toast("Failed to retry run", "error"))
             }
-            className="text-[10px] px-2 py-1 rounded bg-accent text-white hover:bg-accent-hover"
+            className="text-kicker px-2 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/92"
           >
             Retry
           </button>
@@ -109,7 +109,7 @@ export function RunCard({
             aria-label={triggerLabel}
             onClick={onTrigger}
             disabled={triggerDisabled}
-            className="text-[10px] px-2 py-1 rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
+            className="text-kicker px-2 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/92 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {triggerLabel}
           </button>
@@ -118,7 +118,7 @@ export function RunCard({
 
       {running && task && (
         <div className="space-y-1">
-          <div className="flex items-center justify-between text-[10px] text-text-tertiary">
+          <div className="flex items-center justify-between text-kicker text-text-tertiary">
             <span className="truncate">
               {task.totalSteps > 0 ? `${task.stepIndex} of ${task.totalSteps}` : "Starting"}
               {task.currentStep ? ` · ${stepLabel(task.currentStep)}` : ""}
@@ -135,14 +135,14 @@ export function RunCard({
       )}
 
       {failed && task && (
-        <p className="text-[10px] text-error/80 truncate" title={task.error}>
+        <p className="text-kicker text-error/80 truncate" title={task.error}>
           {task.error || "Run failed"}
         </p>
       )}
 
       <button
         onClick={loadHistory}
-        className="flex items-center gap-1 text-[10px] text-text-tertiary hover:text-text-secondary"
+        className="flex items-center gap-1 text-kicker text-text-tertiary hover:text-text-secondary"
         aria-expanded={showHistory}
       >
         <Icon name="chevron-down" size={9} className={showHistory ? "rotate-180" : ""} />
@@ -152,12 +152,12 @@ export function RunCard({
       {showHistory && (
         <ul className="space-y-1 border-t border-border-subtle pt-1.5">
           {history === null ? (
-            <li className="text-[10px] text-text-muted">Loading…</li>
+            <li className="text-kicker text-text-muted">Loading…</li>
           ) : history.length === 0 ? (
-            <li className="text-[10px] text-text-muted">No previous runs</li>
+            <li className="text-kicker text-text-muted">No previous runs</li>
           ) : (
             history.map((r) => (
-              <li key={r.id} className="flex items-center justify-between text-[10px]">
+              <li key={r.id} className="flex items-center justify-between text-kicker">
                 <span
                   className={
                     r.status === "failed"

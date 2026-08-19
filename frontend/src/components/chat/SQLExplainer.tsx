@@ -57,7 +57,7 @@ export function SQLExplainer({ sql, projectId, dbType }: SQLExplainerProps) {
     <div className="mt-2">
       <button
         onClick={handleToggle}
-        className="text-[11px] text-text-tertiary hover:text-text-primary transition-colors flex items-center gap-1"
+        className="text-meta text-text-tertiary hover:text-text-primary transition-colors flex items-center gap-1"
       >
         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -79,12 +79,12 @@ export function SQLExplainer({ sql, projectId, dbType }: SQLExplainerProps) {
             <>
               {complexity && (
                 <div className="mb-2 flex items-center gap-2">
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${complexityColors[complexity] || "bg-surface-3 text-text-secondary"}`}>
+                  <span className={`text-kicker px-1.5 py-0.5 rounded font-medium ${complexityColors[complexity] || "bg-surface-3 text-text-secondary"}`}>
                     {complexity.charAt(0).toUpperCase() + complexity.slice(1)}
                   </span>
                   <button
                     onClick={handleCopy}
-                    className="text-[10px] text-text-tertiary hover:text-text-primary transition-colors ml-auto"
+                    className="text-kicker text-text-tertiary hover:text-text-primary transition-colors ml-auto"
                     title="Copy explanation"
                   >
                     Copy
