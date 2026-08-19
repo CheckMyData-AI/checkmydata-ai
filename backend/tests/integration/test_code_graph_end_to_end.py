@@ -8,8 +8,11 @@ Verifies that fixes T1-T9 work together:
   - T1 (cross-file CALLS resolution): run() calls helper() across the file boundary.
   - T4 (reverse-dep incremental relink): reverse_dependents returns worker.py when base.py changes.
 
-This module also exports ``_write_fixture_repo`` and ``EXPECTED_SYMBOLS`` /
-``EXPECTED_EXTENDS`` constants for the Task 11 graph benchmark.
+``_write_fixture_repo``, ``EXPECTED_SYMBOLS`` and ``EXPECTED_EXTENDS`` are module-level
+so a future benchmark can reuse them. Nothing imports them today — this docstring used
+to claim "the Task 11 graph benchmark" does, and `grep -rn 'EXPECTED_SYMBOLS' app/ tests/`
+outside this file returns nothing (AUD-0819-18). A named consumer that does not exist is
+worse than no claim: it makes the next reader look for it.
 """
 
 from __future__ import annotations

@@ -19,6 +19,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
 
 from app.connectors.base import ConnectionConfig, DataSourceAdapter, QueryResult
+from app.core.redaction import safe_error
 
 logger = logging.getLogger(__name__)
 
@@ -204,4 +205,4 @@ class MCPClientAdapter(DataSourceAdapter):
             return MCPToolCallResult(text=text, is_error=bool(getattr(result, "isError", False)))
         except Exception as e:
             logger.exception("MCP tool call '%s' failed", tool_name)
-            return MCPToolCallResult(text=json.dumps({"error": str(e)}), is_error=True)
+            return MCPToolCallResult(text=json.dumps({"error": safe_error(e)}), is_error=True)

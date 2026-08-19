@@ -18,6 +18,7 @@ from app.connectors.base import (
 )
 from app.connectors.ssh_tunnel import shared_tunnel_manager
 from app.core.error_types import QueryErrorType
+from app.core.redaction import safe_error
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +187,7 @@ class MySQLConnector(BaseConnector):
             )
         except Exception as e:
             elapsed = (time.monotonic() - start) * 1000
-            return QueryResult(error=str(e), execution_time_ms=elapsed)
+            return QueryResult(error=safe_error(e), execution_time_ms=elapsed)
 
     async def reconnect(self) -> bool:
         """Public form of :meth:`_reconnect` for the health monitor (see base)."""

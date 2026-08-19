@@ -30,6 +30,7 @@ from app.connectors.exec_templates import (
 )
 from app.connectors.ssh_known_hosts import connect_with_policy
 from app.connectors.ssh_pre_commands import validate_pre_commands
+from app.core.redaction import safe_error
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +233,7 @@ class SSHExecConnector(BaseConnector):
         except Exception as e:
             elapsed = (time.monotonic() - start) * 1000
             logger.warning("SSH exec execute_query error: %s", e)
-            return QueryResult(error=str(e), execution_time_ms=elapsed)
+            return QueryResult(error=safe_error(e), execution_time_ms=elapsed)
 
     async def introspect_schema(self) -> SchemaInfo:
         if not self._config:
@@ -504,7 +505,7 @@ class SSHExecConnector(BaseConnector):
                         hostname = stripped
             return {"success": ok, "hostname": hostname}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": safe_error(e)}
 
     def _quote_identifier(self, name: str) -> str:
         """Quote a SQL identifier based on the DB type."""

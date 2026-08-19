@@ -1527,8 +1527,29 @@ class IndexingPipelineRunner:
             for rp in target_files
             if rp and not rp.endswith("/")
         ]
+        crashed = 0
+        first_crash: BaseException | None = None
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # F-KNOW-09 residual: the results were gathered and thrown away.
+            # `_parse_one` counts the failures it can see, but anything raised
+            # OUTSIDE its own try/except — the assignment into `state.parsed_files`,
+            # the semaphore, a MemoryError on a large tree — landed in this list and
+            # was never read. The stage then logged `parsed=N` and reported success
+            # with N quietly short, which is the degradation `vision.md` §7 forbids:
+            # one the reader is not told about.
+            for outcome in await asyncio.gather(*tasks, return_exceptions=True):
+                if isinstance(outcome, BaseException):
+                    crashed += 1
+                    if first_crash is None:
+                        first_crash = outcome
+        if crashed:
+            logger.warning(
+                "ast_parse: %d file(s) failed outside the per-file handler and were "
+                "not parsed; first cause: %r",
+                crashed,
+                first_crash,
+                exc_info=first_crash,
+            )
 
         state.ast_unsupported_count = unsupported
         state.ast_skipped_count = skipped
@@ -1547,7 +1568,12 @@ class IndexingPipelineRunner:
             "ast_parse",
             "completed",
             f"Parsed {parsed_count} file(s): {total_symbols} symbols, "
-            f"{total_imports} imports ({unsupported} unsupported, {skipped} skipped)",
+            f"{total_imports} imports ({unsupported} unsupported, {skipped} skipped"
+            # Named in the event, not only the log, so it reaches the run journal an
+            # operator actually reads rather than a log line they would have to know
+            # to grep for.
+            + (f", {crashed} crashed" if crashed else "")
+            + ")",
         )
 
     @staticmethod

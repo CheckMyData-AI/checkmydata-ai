@@ -591,3 +591,64 @@ move on.
 
 Recorded because the raw count read the other way. `grep -c` over a log window answers a
 question about the window, not about now.
+
+---
+
+## 11. Continued on the backlog — and two more of my own claims were wrong
+
+### F-KNOW-09 residual — half of my restatement was also wrong (fixed, in part)
+
+§7 restated F-KNOW-09 as "the fan-out is unbounded (8541 concurrent tasks) plus
+discarded `return_exceptions` results". The first half is **false**, and measuring it
+took one command: `ast_parse_concurrency` defaults to **4** (`config.py:581`) and
+`_parse_one` holds `async with sem` around the parse, so four files parse at a time. The
+8,541 task *objects* cost **~7 MiB** retained (`tracemalloc`, 8541 tasks behind a
+semaphore of 4) — noise beside a 747 MiB problem.
+
+I wrote that finding from a grep hit and the five lines around it, without reading the
+enclosing function. That is the third time in this audit the same method produced a wrong
+claim: AUD-0819-11 (the toast already linkified `/pricing`), AUD-0819-13
+(`CancelledError` is a `BaseException`), and now this. The pattern is worth naming: **a
+grep tells you a line exists, not what governs it.**
+
+The second half was real and is fixed. `_parse_one` counts the failures it can see, but
+anything raised *outside* its try/except — the assignment into `state.parsed_files`, the
+semaphore, a `MemoryError` on a large tree — became an exception object in a list nobody
+read, and the stage logged `parsed=N` and reported success with N quietly short. Now
+counted, logged with its cause, and named in the stage event so the number reaches the
+run journal rather than only a log line someone would have to know to grep for. The test
+was watched failing against an empty log.
+
+### F-CONN-08 — the premise was half wrong, the fix is still worth having
+
+The finding says `QueryResult.error = str(e)` returns the DSN and password. Measured:
+
+```
+postgresql://admin:SuperSecret123@nonexistent.invalid:5432/mydb
+→ asyncpg raises: "[Errno 8] nodename nor servname provided, or not known"
+→ password present: False
+```
+
+A driver's own message is usually harmless. The leak needs something to **wrap** the
+error with the DSN or a command line, and the call site cannot tell which kind it got.
+
+What *is* verified: `ssh_exec.py:_config_vars` substitutes `db_password` into a command
+template, so a secret exists in that layer by construction; every connector returned
+`str(e)` verbatim; and the same text is logged. And the redaction **already existed** —
+wired to Sentry alone (F-LLM-03), which is the egress a secret does the least harm on.
+The two that matter are the API response a project member reads and the log the platform
+retains.
+
+So: the patterns moved to `app/core/redaction.py` — one set, because a second copy drifts
+and drifts silently — `sentry.py` re-exports them, and `safe_error()` is applied at all
+six connector sites and both service sites. A ratchet test fails if `error=str(e)`
+returns.
+
+**Stated as defence in depth, not as a closed exfiltration.** What was demonstrated is a
+secret present in the layer, not a secret leaving it.
+
+### AUD-0819-18 — fixed
+
+The docstring claiming "the Task 11 graph benchmark" consumes `EXPECTED_SYMBOLS` now says
+plainly that nothing imports them today. A named consumer that does not exist is worse
+than no claim: it sends the next reader looking for it.

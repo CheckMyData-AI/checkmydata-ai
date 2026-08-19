@@ -11,6 +11,7 @@ from app.config import settings
 from app.connectors.base import ConnectionConfig
 from app.connectors.registry import get_connector
 from app.connectors.ssh_known_hosts import connect_with_policy
+from app.core.redaction import safe_error
 from app.core.retry import retry
 from app.models.connection import Connection
 from app.services.encryption import decrypt, encrypt
@@ -424,10 +425,10 @@ class ConnectionService:
                 conn.db_type,
                 e,
             )
-            error_msg = str(e)
-            if len(error_msg) > 500:
-                error_msg = error_msg[:500] + "..."
-            return {"success": False, "error": error_msg}
+            # F-CONN-08: this string reaches the UI and the platform's log
+            # retention. `safe_error` scrubs and caps in one place rather than
+            # each call site re-deciding what a secret looks like.
+            return {"success": False, "error": safe_error(e)}
 
     async def _test_analytics_connection(self, session: AsyncSession, conn: Connection) -> dict:
         """Probe an analytics source with the vendor adapter (spec §7).
@@ -546,7 +547,7 @@ class ConnectionService:
                 }
         except Exception as e:
             logger.warning("SSH test error for '%s' (host=%s): %s", conn.name, conn.ssh_host, e)
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": safe_error(e)}
         # Defensive: only reachable if the context manager's __aexit__ swallows
         # an exception (so the in-block return never ran). Keep the contract that
         # this coroutine always returns a result dict.
