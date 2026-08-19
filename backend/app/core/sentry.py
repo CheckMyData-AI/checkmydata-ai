@@ -22,34 +22,18 @@ Privacy posture:
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Patterns for secrets that commonly leak into exception messages / breadcrumbs.
-_SECRET_PATTERNS = [
-    # Authorization: Bearer xxx / token=xxx / api_key=xxx
-    re.compile(r"(?i)(bearer\s+)[a-z0-9._\-]{8,}"),
-    re.compile(r"(?i)((?:api[_-]?key|token|secret|password|passwd|pwd)\s*[=:]\s*)\S+"),
-    # Credentials embedded in URLs: scheme://user:pass@host
-    re.compile(r"(://[^/:@\s]+:)[^@\s]+(@)"),
-]
+# The patterns and ``scrub_text`` moved to ``app.core.redaction`` so the API-response
+# and log paths can use the same set (F-CONN-08). Re-exported here because this module's
+# name is what call sites already import.
+from app.core.redaction import scrub_text  # noqa: E402
 
-_REDACTED = "[redacted]"
-
-
-def scrub_text(value: str) -> str:
-    """Redact secret-looking substrings from free-form text."""
-    out = value
-    for pat in _SECRET_PATTERNS:
-        if pat.groups >= 2:
-            out = pat.sub(rf"\1{_REDACTED}\2", out)
-        else:
-            out = pat.sub(rf"\1{_REDACTED}", out)
-    return out
+__all__ = ["scrub_event", "scrub_text", "init_sentry"]
 
 
 def scrub_event(event: dict[str, Any], hint: dict[str, Any] | None = None) -> dict[str, Any]:

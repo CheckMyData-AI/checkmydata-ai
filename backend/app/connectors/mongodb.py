@@ -22,6 +22,7 @@ from app.connectors.base import (
 )
 from app.connectors.ssh_tunnel import shared_tunnel_manager
 from app.core.error_types import QueryErrorType
+from app.core.redaction import safe_error
 
 logger = logging.getLogger(__name__)
 # R1-4: all connectors share one process-wide tunnel manager.
@@ -315,7 +316,7 @@ class MongoDBConnector(BaseConnector):
             )
         except Exception as e:
             elapsed = (time.monotonic() - start) * 1000
-            return QueryResult(error=str(e), execution_time_ms=elapsed)
+            return QueryResult(error=safe_error(e), execution_time_ms=elapsed)
 
     async def introspect_schema(self) -> SchemaInfo:
         if self._db is None:
