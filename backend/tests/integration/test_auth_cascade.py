@@ -19,7 +19,21 @@ async def test_core_delete_project_cascades_to_connections(db_session):
     project = Project(name=f"proj-{uuid.uuid4().hex[:6]}")
     db_session.add(project)
     await db_session.commit()
-    await db_session.refresh(project)
+    # No `refresh` here, deliberately. `Project.id` carries a Python-side default
+    # and the session is `expire_on_commit=False`, so the id is already on the
+    # instance — the refresh was a round-trip that returned nothing and added a
+    # failure point. It found one: this test failed on `main` with
+    # `InvalidRequestError: Could not refresh instance <Project>` while the very
+    # same tree passed on the branch (identical `git diff ea03303 e20141b`), i.e.
+    # a flake, not a regression.
+    #
+    # The underlying cause is test infrastructure, not this test: `engine` is
+    # session-scoped over a `StaticPool`, so ALL integration tests share one
+    # in-memory SQLite connection and committed rows outlive their test. A
+    # background task leaked by an earlier test can roll back or delete on that
+    # shared connection between this commit and the next statement. Removing the
+    # round-trip removes this test's exposure; the shared-connection design is
+    # recorded as AUD-0819-22 rather than pretended away here.
 
     conn = Connection(
         project_id=project.id,
