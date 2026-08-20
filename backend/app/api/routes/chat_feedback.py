@@ -98,21 +98,20 @@ async def submit_feedback(
             from app.models.base import async_session_factory
 
             meta = _json.loads(msg.metadata_json)
-            # Re-audit fix: if this message was already auto-credited at
-            # validation time, do NOT credit again. apply_learning is not
-            # idempotent, so a second pass would double-bump times_applied.
-            if not (isinstance(meta, dict) and meta.get("learning_credited_at_validation")):
-                exposed_ids_raw = meta.get("exposed_learning_ids") or []
-                exposed_ids = [str(x) for x in exposed_ids_raw if isinstance(x, (str, int))]
-                session_row = msg.session
-                connection_id = getattr(session_row, "connection_id", None) if session_row else None
-                if exposed_ids and connection_id:
-                    async with async_session_factory() as learn_session:
-                        await apply_exposed_learnings_on_positive_feedback(
-                            learn_session,
-                            connection_id=connection_id,
-                            exposed_learning_ids=exposed_ids,
-                        )
+            exposed_ids_raw = meta.get("exposed_learning_ids") or []
+            exposed_ids = [str(x) for x in exposed_ids_raw if isinstance(x, (str, int))]
+            session_row = msg.session
+            connection_id = getattr(session_row, "connection_id", None) if session_row else None
+            # The guard moved into `process_positive_feedback_learning_effects` so
+            # both directions read the same way and neither can be replayed
+            # (F-LEARN-08). Guarding inline covered only the validation case.
+            async with async_session_factory() as learn_session:
+                await process_positive_feedback_learning_effects(
+                    learn_session,
+                    message_id=body.message_id,
+                    connection_id=connection_id,
+                    exposed_learning_ids=exposed_ids,
+                )
         except Exception:
             logger.debug("Positive-feedback learning application failed", exc_info=True)
 
@@ -221,6 +220,47 @@ async def _message_learning_credited(session: AsyncSession, message_id: str) -> 
 async def _mark_message_learning_credited(session: AsyncSession, message_id: str) -> None:
     """Persist the idempotency flag so the thumbs-up path won't re-credit."""
     await _set_message_meta_flag(session, message_id, "learning_credited_at_validation")
+
+
+async def process_positive_feedback_learning_effects(
+    session: AsyncSession,
+    *,
+    message_id: str,
+    connection_id: str | None,
+    exposed_learning_ids: list[str],
+) -> bool:
+    """Credit the exposed learnings exactly ONCE per message (F-LEARN-08, upvote half).
+
+    The negative path has had a per-message guard for a while
+    (``learning_contradicted_at_feedback``); its twin did not. The route guarded the
+    positive path on ``learning_credited_at_validation``, which is set at *validation*
+    time by a different path — so for a message never credited there, a second 👍
+    called :func:`apply_exposed_learnings_on_positive_feedback` again and bumped
+    ``times_applied`` twice per learning. That counter feeds the decay score and the
+    ranking (``times_exposed`` is deliberately a different signal), so a replayed
+    upvote inflates a lesson's standing: the mirror of the downvote-bomb. The code
+    already said as much — "apply_learning is not idempotent, so a second pass would
+    double-bump times_applied" — and guarded only the validation case.
+
+    Returns True when the credit was applied, False when skipped (already applied for
+    this message, no connection, or nothing exposed).
+    """
+    if not connection_id or not exposed_learning_ids:
+        return False
+    # Either flag means this message's learnings are already credited: the
+    # validation-time one, or a previous 👍 on this same message.
+    if await _message_meta_flag(session, message_id, "learning_credited_at_validation"):
+        return False
+    if await _message_meta_flag(session, message_id, "learning_credited_at_feedback"):
+        return False
+
+    await apply_exposed_learnings_on_positive_feedback(
+        session,
+        connection_id=connection_id,
+        exposed_learning_ids=exposed_learning_ids,
+    )
+    await _set_message_meta_flag(session, message_id, "learning_credited_at_feedback")
+    return True
 
 
 async def process_negative_feedback_learning_effects(

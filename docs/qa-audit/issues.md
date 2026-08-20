@@ -148,8 +148,8 @@ gate, durable AuditLog, idempotency).
 | ID | Sev | Issue |
 |---|---|---|
 | F-AUTH-14 | 🟢 | No per-account login lockout (only IP rate limit) |
-| F-AUTH-15 | 🟡 | `audit_log` logger-only — no durable/queryable audit table (`core/audit.py:19`) |
-| F-AUTH-16 | 🟢 | `/refresh` + `/logout` emit no audit event |
+| ~~F-AUTH-15~~ | 🟢 | **CLOSED, verified 2026-08-20.** The durable table exists — `app/models/audit_log.py:17` (`class AuditLog`) with migration `a7c8d9e0f1a2_r4_auth_lifecycle_audit.py`. `CLAUDE.md` already said so; this row was the stale one. |
+| ~~F-AUTH-16~~ | 🟢 | **CLOSED, verified 2026-08-20.** Both emit — `auth.py:338` (`auth.refresh`) and `auth.py:365` (`auth.logout`), each carrying an explicit `# F-AUTH-16` marker. |
 
 ### 02 — Projects, RBAC & Invites
 | ID | Sev | Issue |
@@ -176,7 +176,7 @@ gate, durable AuditLog, idempotency).
 | F-CONN-05 | 🟡 | Fernet encryption has no key rotation/versioning |
 | F-CONN-06 | 🟢 | `_dict_to_positional` regex mis-handles `::type` casts / `:param` in literals |
 | F-CONN-07 | 🟢 | Pool `min_size=1` per cached connector → remote connection exhaustion |
-| F-CONN-08 | 🟡 | `QueryResult.error=str(e)` unredacted → DSN/password leak to members + logs |
+| ~~F-CONN-08~~ | 🟢 | **CLOSED 2026-08-20** (PR #184). `safe_error()` from `app/core/redaction.py` at all six connector sites and both service sites; a ratchet test fails if `error=str(e)` returns. Note the premise was half wrong — a real asyncpg failure carries no password (`[Errno 8] nodename nor servname provided`); the leak needs something to wrap the error with a DSN or command line. Recorded as defence in depth, since the secret is present in the layer by construction (`ssh_exec.py:_config_vars`). |
 | F-CONN-09 | 🟢 | Agent connector cache FIFO/instance-scoped |
 
 ### 04 — SSH Tunnel & Keys
@@ -244,7 +244,7 @@ gate, durable AuditLog, idempotency).
 | ID | Sev | Issue |
 |---|---|---|
 | F-LEARN-06 | 🟡 | Learning-override PATCH bypasses quality gate (direct-API poisoning) |
-| F-LEARN-08 | 🟡 | Feedback not idempotent → repeated 👎 deactivates shared learnings (downvote-bomb) |
+| ~~F-LEARN-08~~ | 🟢 | **CLOSED 2026-08-20 — and the open half was the other direction.** The 👎 path was already guarded by a per-message `learning_contradicted_at_feedback` flag (covered by `test_feedback_downvote_idempotency.py`), so the reported defect was fixed before this pass. Its twin was not: the route guarded 👍 on `learning_credited_at_validation`, set at *validation* time, so a message never credited there could be up-voted twice and bump `times_applied` twice per learning — which feeds the decay score and the ranking. Now `process_positive_feedback_learning_effects` carries the symmetric guard; `test_feedback_upvote_idempotency.py`. |
 | F-LEARN-01 | 🟡 | LLM-authored lessons injected with no content-safety/provenance gate |
 | F-LEARN-02 | 🟡 | Non-ASCII ratio gate silently rejects CJK/non-Latin lessons |
 | F-LEARN-03 | 🟢 | Confidence pumpable to 1.0 via repeated confirm/dedup |
@@ -269,7 +269,7 @@ gate, durable AuditLog, idempotency).
 ### 13 — Schedules, Batch & Worker
 | ID | Sev | Issue |
 |---|---|---|
-| F-SCHED-07 | 🟡 | `execute_batch` no idempotency guard + ARQ default `max_tries=5` → retry duplicates writes |
+| ~~F-SCHED-07~~ | 🟢 | **CLOSED 2026-08-20.** `BatchService._claim_batch` takes the run claim in one atomic UPDATE, so a retried job that loses the race returns without touching results. The claim is deliberately **stale-aware** — it also takes a `running` row whose attempt began longer ago than ARQ could have kept it alive (`batch_stale_claim_seconds`, matched to the job ceiling) — because a claim on `pending` alone would have stranded every crashed batch forever: the stale-run reaper covers `indexing_runs` and has **no knowledge of `batch_queries`**. New column `batch_queries.started_at` (migration `b1c2d3e4f5a6`, verified up and down on a fresh database); `created_at` could not serve, since a batch may sit `pending` for a long time. Tests: `test_batch_claim_idempotency.py` (8). |
 | F-SCHED-01 | 🟡 | Schedules keep running after creator loses access |
 | F-SCHED-03 | 🟡 | `_stale_run` NULL-heartbeat immediate-reap race (mitigated by heartbeat beacon) |
 | F-SCHED-04 | 🟡 | ARQ enqueue failure silently runs heavy jobs in-process on web dyno |
@@ -332,9 +332,15 @@ gate, durable AuditLog, idempotency).
 4. ~~**F-PROJ-01 / F-RULE-01** — email verification before invite auto-accept; global-rule authz.~~
    **DONE — F-RULE-01 by R3 (`fbf8112`); F-PROJ-01 by email verification (`1701b46`).**
 5. **Per-request usage sink** in `LLMRouter` → F-MCP-01, F-CHAT-07, F-SQL-06, F-BILL-05.
-6. **Credential-redaction at source** (F-CONN-08) + **durable `AuditLog` table** (F-AUTH-15/16).
-7. **Idempotency** — F-SCHED-07 (batch claim) + F-LEARN-08 (feedback transition-guard).
-8. Remaining Medium/Low per module table.
+6. ~~**Credential-redaction at source** (F-CONN-08) + **durable `AuditLog` table** (F-AUTH-15/16).~~
+   **DONE — redaction 2026-08-20 (`app/core/redaction.py`, `safe_error` at every connector and
+   service site); the `AuditLog` table and the refresh/logout events were already shipped and
+   this list was stale.**
+7. ~~**Idempotency** — F-LEARN-08 (feedback transition-guard) + F-SCHED-07 (batch claim).~~
+   **DONE 2026-08-20, both.** F-LEARN-08's open half turned out to be the upvote, not the
+   downvote the row described; F-SCHED-07's claim had to be stale-aware because nothing
+   reaps batches.
+8. Remaining Medium/Low per module table **← the whole ordered list is now here.**
 
 ---
 

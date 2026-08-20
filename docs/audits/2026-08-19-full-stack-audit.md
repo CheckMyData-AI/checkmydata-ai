@@ -652,3 +652,29 @@ secret present in the layer, not a secret leaving it.
 The docstring claiming "the Task 11 graph benchmark" consumes `EXPECTED_SYMBOLS` now says
 plainly that nothing imports them today. A named consumer that does not exist is worse
 than no claim: it sends the next reader looking for it.
+
+### AUD-0819-24 — two order-dependent unit-test failures (recorded, not fixed)
+
+A full-suite run on 2026-08-20 failed two tests that both **pass in isolation** and both
+pass when their own directory is run alone:
+
+```
+FAILED tests/integration/test_learnings_api.py::TestLearningsApi::test_recompile
+FAILED tests/unit/test_trace_persistence_service.py::…::test_tracker_begin_includes_project_id
+```
+
+So they are order-dependent, not regressions — the same class as AUD-0819-22, but **not
+the same cause**: `test_trace_persistence_service` is a unit test, so the integration
+conftest's session-scoped shared SQLite connection cannot explain it. Something else
+leaks across unit tests — a module-level singleton or a patched global not restored.
+
+Recorded rather than chased: a flake needs a reproduction before a fix, and the
+reproduction here is "run 6,100 tests in this order". Worth noting that this suite has
+been through one flake hunt already (the ChartRenderer prototype pollution, 2026-08-16),
+which found exactly this shape — a test mutating shared state for everyone after it.
+
+**What the same run did find deterministically was mine:**
+`test_config_settings.py::TestEnvExampleSync::test_every_settings_field_documented`
+failed because `batch_stale_claim_seconds` was added to `Settings` and not to
+`.env.example`. That is the project's own gate catching the omission the convention
+exists to prevent, and it caught it in the same pass that shipped the setting.

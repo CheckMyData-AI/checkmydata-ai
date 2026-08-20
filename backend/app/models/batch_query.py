@@ -41,6 +41,13 @@ class BatchQuery(Base):
         DateTime(timezone=True),
         server_default=func.now(),
     )
+    #: When the current attempt took the claim (F-SCHED-07). Distinct from
+    #: ``created_at``: a batch can sit ``pending`` for a long time, so the creation
+    #: time says nothing about whether an attempt is still alive.
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
