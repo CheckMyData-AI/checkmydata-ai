@@ -1221,3 +1221,85 @@ function. Reading outward is not optional diligence; it is where the severity co
 The consolation is that the fix is now easier to get right: a correct relay already exists
 twenty lines away in the same file, so the WS one has a reference implementation rather
 than a design question.
+
+## 19. The correct implementation was twenty lines away
+
+Both WebSocket findings had a working reference in the same file, which changed the work
+from a design question into a copy.
+
+**F-CHAT-03.** The WS relay treated sixty seconds of quiet as the end of the run and
+logged it at `debug` — invisible at production level. The SSE relay, 440 lines up, polls
+on 0.5 s, emits a heartbeat every 20 s, holds `stream_timeout_seconds` as an overall
+deadline, and *continues*. Two transports over one event queue, disagreeing about what
+silence means, and only one of them was right.
+
+The fix is the SSE shape with WS's message vocabulary. What is worth recording is the
+**extraction**: the relay was an inner closure over `websocket`, so neither behaviour that
+matters — survives a gap, still ends at a ceiling — was reachable without a full WebSocket
+handshake. A closure that cannot be called is a closure that cannot be tested, and the
+sixty-second exit had survived every review the file ever had.
+
+**F-CHAT-02.** Every connect wrote a session row before the receive loop. The obvious fix
+— create it lazily, on the first message — breaks the protocol: `session_created` is sent
+immediately after connect, so the client is *promised an id before any message exists*.
+The constraint is what makes reuse the right answer rather than a compromise: an empty
+session for the same `(project, connection, user)` is handed back, bounding orphans to one
+per triple with the contract untouched.
+
+One line of that query is load-bearing beyond the finding — `ChatMessage.id.is_(None)`.
+Without it, reuse would hand a client somebody's existing conversation because it happens
+to share a triple, which is a considerably worse bug than the row it saves. Its own test
+says so, and the plant that removes it goes red.
+
+### Both severities were wrong, and this is where they were re-argued
+
+§18 recorded that the impacts these rows claimed — ten orphans per ten tab reloads, a
+reasoning panel going quiet — are impacts the code cannot produce, because the first-party
+UI speaks SSE. Fixing them anyway was still right: a documented endpoint that writes a row
+per connect and gives up on a slow step is wrong for whoever uses it. What changed is the
+claim, not the verdict, and the rows now carry the correction above the original text.
+
+## 20. The fourth finding today whose wording did not survive measurement
+
+F-PROJ-03: *"`accept_invite` commits inside `begin_nested()` → 500 on idempotent
+re-accept."* Two commands before writing any fix:
+
+```
+$ pytest tests/unit/test_invite_service.py -k already_member
+1 passed
+
+$ # a direct reproduction, SQLAlchemy 2.0.51 + aiosqlite
+commit inside savepoint: no exception
+   rows persisted: 1
+```
+
+No 500, and not because of anything this codebase does: a `commit()` inside an open
+SAVEPOINT deactivates the savepoint transaction, which then exits quietly. The bookkeeping
+is in `SessionTransaction`, shared across dialects, so the Postgres deployment behaves the
+same.
+
+**The smell was right and the symptom was invented.** What is actually wrong there:
+
+- the savepoint buys nothing — the early return commits inside it, the normal path commits
+  after it, and nothing ever rolls it back, so it reads as a guarantee it does not provide;
+- and it works by accident of a library version, so a stricter SQLAlchemy would produce
+  precisely the 500 the row already asserted.
+
+That is a finding worth fixing and a claim worth withdrawing, and the row now says both.
+
+### Four in one day, and they divide into two kinds
+
+| Finding | What was wrong with the claim |
+|---|---|
+| AUD-0819-11, -13, F-KNOW-09 (yesterday) | written from a grep hit without the enclosing function |
+| F-CHAT-02, F-CHAT-03 (§18) | correct code, wrong blast radius — nobody calls the endpoint |
+| F-PROJ-03 (here) | correct instinct, invented symptom — the failure was reasoned about, not run |
+
+The first kind is fixed by reading outward. The second by asking who calls it. **The third
+is different and worth naming separately: a mechanism was reasoned about correctly in the
+abstract — commit-inside-savepoint *is* a real hazard — and the specific claim about what
+this code does was never executed.** Plausible mechanism plus unexecuted claim is the most
+convincing wrong finding available, because everything except the conclusion is true.
+
+The cheap defence is the one used here: before fixing, run the failure. If it cannot be
+made to happen, the finding is about the future, and saying so is part of the fix.

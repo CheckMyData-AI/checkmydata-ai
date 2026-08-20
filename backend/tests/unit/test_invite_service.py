@@ -1,6 +1,7 @@
 """Unit tests for InviteService."""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -22,6 +23,7 @@ import app.models.user  # noqa: F401
 from app.models.base import Base
 from app.models.project import Project
 from app.models.project_invite import ProjectInvite
+from app.models.project_member import ProjectMember
 from app.models.user import User
 from app.services.invite_service import InviteService
 from app.services.membership_service import MembershipService
@@ -314,3 +316,120 @@ class TestAutoAcceptForUser:
         roles = {m.role for m in members}
         assert "editor" in roles
         assert "viewer" in roles
+
+
+class TestAcceptIsOneTransaction:
+    """F-PROJ-03, with the board's symptom corrected.
+
+    The row read "commits inside `begin_nested()` → 500 on idempotent re-accept."
+    Measured on SQLAlchemy 2.0.51 + aiosqlite, it does not 500: a `commit()` inside an
+    open SAVEPOINT deactivates the savepoint transaction, which exits quietly. A direct
+    reproduction outside this codebase behaved the same, and the bookkeeping lives in
+    `SessionTransaction`, shared across dialects, so Postgres does not differ.
+
+    What was real is that the savepoint bought nothing — the early return committed
+    inside it and the normal path committed after it, so no rollback path existed for it
+    to provide — and that committing inside an open one works by accident of this library
+    version. These tests pin the behaviour the block is supposed to have, so the
+    restructuring cannot quietly change it.
+    """
+
+    async def test_no_savepoint_is_opened(self):
+        """A savepoint that never rolls back reads as a guarantee and is decoration.
+
+        Checked on the AST rather than the text: the first version searched the source
+        for `"begin_nested"` and failed against the comment explaining why the savepoint
+        was removed. A string search over source cannot tell code from prose, and the
+        prose here is specifically about the thing being searched for.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(inv_svc.accept_invite)))
+        calls = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "begin_nested"
+        ]
+
+        assert not calls, "accept_invite opens a savepoint again"
+
+    async def test_accepting_twice_settles_the_same_way(self, db):
+        """The idempotence the finding was named after, now asserted rather than assumed:
+        two clicks on one link leave one membership and an accepted invite."""
+        owner = await _make_user(db)
+        email = f"twice-{uuid.uuid4().hex[:6]}@t.com"
+        user = await _make_user(db, email=email)
+        proj = await _make_project(db)
+        invite = await inv_svc.create_invite(db, proj.id, email, "editor", owner.id)
+
+        first, _ = await inv_svc.accept_invite(db, invite.id, user.id)
+
+        with pytest.raises(HTTPException) as exc:
+            await inv_svc.accept_invite(db, invite.id, user.id)
+        assert exc.value.status_code == 400, "a spent invite is no longer pending"
+
+        members = (
+            (
+                await db.execute(
+                    select(ProjectMember).where(
+                        ProjectMember.project_id == proj.id,
+                        ProjectMember.user_id == user.id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(members) == 1
+        assert members[0].id == first.id
+
+    async def test_an_existing_member_still_marks_the_invite_accepted(self, db):
+        """The early-return branch. It committed inside the savepoint before; it commits
+        once now, and the invite must not be left pending either way — a pending invite
+        for someone already in the project is a row that never resolves.
+
+        The membership is added **after** the invite, and that ordering is the branch's
+        whole reason to exist: `create_invite` answers 409 for someone who is already a
+        member, so this state is only reachable when they join between the invite being
+        sent and it being clicked. Setting it up the other way round makes the test fail
+        at setup and proves nothing about accept.
+        """
+        owner = await _make_user(db)
+        email = f"member-{uuid.uuid4().hex[:6]}@t.com"
+        user = await _make_user(db, email=email)
+        proj = await _make_project(db)
+        invite = await inv_svc.create_invite(db, proj.id, email, "editor", owner.id)
+        await mem_svc.add_member(db, proj.id, user.id, "viewer")
+
+        member, returned = await inv_svc.accept_invite(db, invite.id, user.id)
+
+        assert member.role == "viewer", "an existing membership is not silently upgraded"
+        assert returned.status == "accepted"
+        assert returned.accepted_at is not None
+
+    async def test_an_expired_invite_leaves_no_membership_behind(self, db):
+        """The 410 used to be raised inside the savepoint, so the rollback was doing
+        visible work there. Without it, the raise must still happen before anything is
+        written — this is the test that says the removal was safe."""
+        owner = await _make_user(db)
+        email = f"expired-{uuid.uuid4().hex[:6]}@t.com"
+        user = await _make_user(db, email=email)
+        proj = await _make_project(db)
+        invite = await inv_svc.create_invite(db, proj.id, email, "editor", owner.id)
+        invite.expires_at = datetime.now(UTC) - timedelta(days=1)
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await inv_svc.accept_invite(db, invite.id, user.id)
+        assert exc.value.status_code == 410
+
+        members = (
+            (await db.execute(select(ProjectMember).where(ProjectMember.project_id == proj.id)))
+            .scalars()
+            .all()
+        )
+        assert members == []
+        await db.refresh(invite)
+        assert invite.status == "pending", "a refused invite must not be marked accepted"

@@ -217,36 +217,51 @@ class InviteService:
                     detail="This invite is for a different email address",
                 )
 
-        async with db.begin_nested():
-            if invite_is_expired(invite):
-                # F-PROJ-04: refuse rather than silently drop, so somebody clicking a
-                # dead link is told why instead of watching nothing happen.
-                raise HTTPException(
-                    status_code=410,
-                    detail=(
-                        "This invitation has expired. Ask the project owner to send a new one."
-                    ),
-                )
-            invite.status = "accepted"
-            invite.accepted_at = datetime.now(UTC)
-
-            existing = await db.execute(
-                select(ProjectMember).where(
-                    ProjectMember.project_id == invite.project_id,
-                    ProjectMember.user_id == user_id,
-                )
+        # F-PROJ-03. This block used to sit inside `async with db.begin_nested()`, and
+        # the board recorded it as "500 on idempotent re-accept". Measured on SQLAlchemy
+        # 2.0.51: it does not 500 — a `commit()` inside an open SAVEPOINT deactivates the
+        # savepoint transaction, which then exits quietly, and
+        # `test_does_not_duplicate_if_already_member` has always passed. The symptom was
+        # wrong; the smell was not.
+        #
+        # The savepoint bought nothing. The early return committed inside it and the
+        # normal path committed after it, so no rollback path existed for it to provide —
+        # a savepoint that never rolls back reads as a guarantee and is decoration. Worse,
+        # committing inside an open one works by accident of this library version, so a
+        # SQLAlchemy that tightens the rule would turn a working path into the 500 the
+        # board already believed was there.
+        #
+        # One transaction, committed once, with the IntegrityError retry that was always
+        # the real concurrency guard.
+        if invite_is_expired(invite):
+            # F-PROJ-04: refuse rather than silently drop, so somebody clicking a
+            # dead link is told why instead of watching nothing happen.
+            raise HTTPException(
+                status_code=410,
+                detail=("This invitation has expired. Ask the project owner to send a new one."),
             )
-            member = existing.scalar_one_or_none()
-            if member:
-                await db.commit()
-                return member, invite
+        invite.status = "accepted"
+        invite.accepted_at = datetime.now(UTC)
 
-            member = ProjectMember(
-                project_id=invite.project_id,
-                user_id=user_id,
-                role=invite.role,
+        existing = await db.execute(
+            select(ProjectMember).where(
+                ProjectMember.project_id == invite.project_id,
+                ProjectMember.user_id == user_id,
             )
-            db.add(member)
+        )
+        member = existing.scalar_one_or_none()
+        if member:
+            # Already a member: the invite is still marked accepted, so the same click
+            # twice settles the same way both times.
+            await db.commit()
+            return member, invite
+
+        member = ProjectMember(
+            project_id=invite.project_id,
+            user_id=user_id,
+            role=invite.role,
+        )
+        db.add(member)
 
         try:
             await db.commit()
