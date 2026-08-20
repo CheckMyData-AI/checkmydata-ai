@@ -14,6 +14,8 @@ asking would make an honesty guarantee depend on the model complying with it.
 
 from __future__ import annotations
 
+from app.agents.prompts.untrusted_data import untrusted_data_section
+
 
 def build_analytics_system_prompt(
     *,
@@ -38,6 +40,9 @@ def build_analytics_system_prompt(
     """
     datetime_line = f"\nCurrent date/time: {current_datetime}\n" if current_datetime else ""
     catalogue = report_catalogue.strip() or "Call list_reports() to see what is available."
+    untrusted = untrusted_data_section(
+        "dimension values and report rows returned by the analytics vendor",
+    )
     return f"""\
 You are a {vendor_label} analyst answering questions about "{source_name}".
 {datetime_line}
@@ -70,4 +75,6 @@ that have actually been collected.
 4. Include the actual numbers; keep the answer compact and readable.
 5. If the tools cannot answer the question, say so plainly and say what is missing.
 6. Answer in the user's language.
+
+{untrusted}
 """

@@ -130,10 +130,19 @@ gate, durable AuditLog, idempotency).
 4. **Credential leakage in errors** — F-CONN-08 returns `str(e)` (DSN/password) in the API response
    and logs; the Sentry scrubber only covers Sentry egress. **Fix:** scrub at the
    `connection_service` error site.
-5. **Stored prompt-injection / memory poisoning** — F-RULE-02, F-LEARN-01/06, F-SQL-01,
-   F-PROJ-15 (F-RULE-01 closed by R3): LLM-authored / DB-sourced content injected as
-   authoritative with no content-safety gate. **Fix:** shared content-safety screen on every
-   rule/learning ingest + provenance tags.
+5. ~~**Stored prompt-injection / memory poisoning**~~ — **ALL 5 CLOSED 2026-08-20.**
+   F-LEARN-01 was already screened by `_contains_instruction_shaped_text`; F-LEARN-06 (the
+   override PATCH) and F-LEARN-02 (the non-ASCII proxy) closed this pass. F-SQL-01 turned
+   out to be closed already, by the right mechanism: content you cannot refuse is
+   neutralised in the PROMPT, not screened at ingest. Finding that reframed the fix —
+   the defence existed, was written once in `sql_prompt.py`, and had never reached the
+   other nine agent prompts. **Six surfaces the board never listed were hardened in the
+   same pass**: third-party MCP tool output, retrieved repository file contents, commit
+   messages and diffs (forgeable, F-GIT-06), vendor analytics rows, sub-agent output, and
+   the columns/values being charted. `prompts/untrusted_data.py` builds the section and
+   requires its sources to be NAMED — "some content may be untrusted" is advice, "the
+   commit messages below are attacker-controllable" is actionable — and
+   `test_untrusted_data_sections.py` is a ratchet so the tenth prompt cannot skip it.
 6. **Non-durable observability** — F-AUTH-15 (`audit_log` logger-only, ephemeral on Heroku, not
    queryable). **Fix:** persist an `AuditLog` table alongside the logger line.
 7. **Idempotency / retry hazards** — F-SCHED-07 (batch ARQ-retry duplicates writes), F-LEARN-08
@@ -148,15 +157,15 @@ gate, durable AuditLog, idempotency).
 | ID | Sev | Issue |
 |---|---|---|
 | F-AUTH-14 | 🟢 | No per-account login lockout (only IP rate limit) |
-| F-AUTH-15 | 🟡 | `audit_log` logger-only — no durable/queryable audit table (`core/audit.py:19`) |
-| F-AUTH-16 | 🟢 | `/refresh` + `/logout` emit no audit event |
+| ~~F-AUTH-15~~ | 🟢 | **CLOSED, verified 2026-08-20.** The durable table exists — `app/models/audit_log.py:17` (`class AuditLog`) with migration `a7c8d9e0f1a2_r4_auth_lifecycle_audit.py`. `CLAUDE.md` already said so; this row was the stale one. |
+| ~~F-AUTH-16~~ | 🟢 | **CLOSED, verified 2026-08-20.** Both emit — `auth.py:338` (`auth.refresh`) and `auth.py:365` (`auth.logout`), each carrying an explicit `# F-AUTH-16` marker. |
 
 ### 02 — Projects, RBAC & Invites
 | ID | Sev | Issue |
 |---|---|---|
-| F-PROJ-02 | 🟡 | Owner tracked in two places that drift; `require_role` ignores `owner_id` |
+| ~~F-PROJ-02~~ | 🟢 | **CLOSED 2026-08-20.** `get_role` and `get_roles_bulk` now honour `Project.owner_id`, which `_accessible_filter` already calls "the single source of truth for the access rule" and which `can_access` already used — so this aligned the readers with a rule the code declares rather than adding a fourth guard. Access is **not widened**: `can_access` already admitted the owner; only the *role* now agrees with the access already granted. Every mutation path was verified closed first (`remove_member` and `update_member_role` both refuse an owner, and `accept_invite` returns an existing member untouched instead of overwriting its role), so the reachable exposure was the partial-creation state — the project and the owner's member row commit separately (`projects.py:186-189`, and `add_member` commits on its own), and a failure between them locked the owner out permanently, with no transfer path (F-PROJ-10) to recover. Tests: `test_owner_role_consistency.py` (9). |
 | F-PROJ-03 | 🟡 | `accept_invite` commits inside `begin_nested()` → 500 on idempotent re-accept |
-| F-PROJ-04 | 🟡 | Invites never expire; auto-accepted indefinitely |
+| ~~F-PROJ-04~~ | 🟢 | **CLOSED 2026-08-20.** `project_invites.expires_at` (migration `c2d3e4f5a6b7`, verified up and down on a fresh database) plus `invite_expiry_days` (14). The two acceptance paths behave differently on purpose: the interactive one returns **410** with a sentence a person can act on, while `auto_accept_for_user` **skips** — it runs inside registration, and raising there would fail somebody's sign-up over a stranger's forgotten invitation, which is worse than the bug. NULL `expires_at` is read as `created_at + invite_expiry_days` rather than "never", so the policy reaches every row that predates the column — precisely the stale invites this is about — without a backfill inventing values. Note F-PROJ-01's email verification does **not** cover this: a re-registered address verifies fine, because verification proves control of the mailbox today, not that the invite was meant for whoever holds it now. Tests: `test_invite_expiry.py` (8). |
 | F-PROJ-05 | 🟡 | Fire-and-forget `asyncio.create_task` sync-now → silent task death |
 | F-PROJ-06 | 🟡 | Commit-then-await-email → partial-success 500s / confusing 409 |
 | F-PROJ-07 | 🟢 | Service role methods don't validate role strings |
@@ -166,8 +175,8 @@ gate, durable AuditLog, idempotency).
 | F-PROJ-11 | 🟢 | `add_member` upsert not `IntegrityError`-guarded → concurrent add 500 |
 | F-PROJ-12 | 🟢 | No self-service "leave project" |
 | F-PROJ-13 | 🟢 | `list_members`/`list_invites` no pagination cap |
-| F-PROJ-14 | 🟢 | `GET /api/projects` member-only query diverges from `can_access` |
-| F-PROJ-15 | 🟢 | Project name/desc/overview injected into orchestrator prompt |
+| ~~F-PROJ-14~~ | 🟢 | **CLOSED 2026-08-20** by the same change — `get_roles_bulk` feeds the project list, so the divergence landed on the first screen a locked-out owner would look at. |
+| ~~F-PROJ-15~~ | 🟢 | **CLOSED 2026-08-20** by the same orchestrator section, which names the project name, description and overview explicitly. |
 
 ### 03 — Connections & Connectors
 | ID | Sev | Issue |
@@ -176,7 +185,7 @@ gate, durable AuditLog, idempotency).
 | F-CONN-05 | 🟡 | Fernet encryption has no key rotation/versioning |
 | F-CONN-06 | 🟢 | `_dict_to_positional` regex mis-handles `::type` casts / `:param` in literals |
 | F-CONN-07 | 🟢 | Pool `min_size=1` per cached connector → remote connection exhaustion |
-| F-CONN-08 | 🟡 | `QueryResult.error=str(e)` unredacted → DSN/password leak to members + logs |
+| ~~F-CONN-08~~ | 🟢 | **CLOSED 2026-08-20** (PR #184). `safe_error()` from `app/core/redaction.py` at all six connector sites and both service sites; a ratchet test fails if `error=str(e)` returns. Note the premise was half wrong — a real asyncpg failure carries no password (`[Errno 8] nodename nor servname provided`); the leak needs something to wrap the error with a DSN or command line. Recorded as defence in depth, since the secret is present in the layer by construction (`ssh_exec.py:_config_vars`). |
 | F-CONN-09 | 🟢 | Agent connector cache FIFO/instance-scoped |
 
 ### 04 — SSH Tunnel & Keys
@@ -204,7 +213,7 @@ gate, durable AuditLog, idempotency).
 ### 06 — SQL Agent & Query Execution
 | ID | Sev | Issue |
 |---|---|---|
-| F-SQL-01 | 🟡 | Indirect prompt injection via DB content (comments/sampled/distinct values) |
+| ~~F-SQL-01~~ | 🟢 | **CLOSED — verified 2026-08-20, and it was already in place.** `sql_prompt.py` has carried an UNTRUSTED-DATA section naming query results, row values and table/column comments since the earlier remediation. This is the right treatment for content that cannot be refused — a table's comment is part of the schema whatever it says — so no ingest screen was ever the answer here. The section is now built from the shared module instead of a local literal. |
 | F-SQL-02 | 🟡 | `row_count` returned-vs-total ambiguity → inaccurate counts |
 | F-SQL-03 | 🟡 | Multiplicative retry blow-up (replans × iterations × repairs) |
 | F-SQL-05 | 🟢 | `_try_repair` no-op `error_classify` tracker span |
@@ -243,10 +252,10 @@ gate, durable AuditLog, idempotency).
 ### 10 — Insights & Learning Memory
 | ID | Sev | Issue |
 |---|---|---|
-| F-LEARN-06 | 🟡 | Learning-override PATCH bypasses quality gate (direct-API poisoning) |
-| F-LEARN-08 | 🟡 | Feedback not idempotent → repeated 👎 deactivates shared learnings (downvote-bomb) |
-| F-LEARN-01 | 🟡 | LLM-authored lessons injected with no content-safety/provenance gate |
-| F-LEARN-02 | 🟡 | Non-ASCII ratio gate silently rejects CJK/non-Latin lessons |
+| ~~F-LEARN-06~~ | 🟢 | **CLOSED 2026-08-20.** The override PATCH now runs `validate_learning_quality` + `normalize_lesson_text` before writing, and returns 422 on rejection (`connection_learnings.py`). The gate already screened instruction-shaped text on the ingest path — the check is labelled "possible prompt injection" — so the exposure was purely the asymmetry, the same shape as F-LEARN-08. Tests: `test_learnings_api.py` (4 route tests, watched failing with the gate removed). |
+| ~~F-LEARN-08~~ | 🟢 | **CLOSED 2026-08-20 — and the open half was the other direction.** The 👎 path was already guarded by a per-message `learning_contradicted_at_feedback` flag (covered by `test_feedback_downvote_idempotency.py`), so the reported defect was fixed before this pass. Its twin was not: the route guarded 👍 on `learning_credited_at_validation`, set at *validation* time, so a message never credited there could be up-voted twice and bump `times_applied` twice per learning — which feeds the decay score and the ranking. Now `process_positive_feedback_learning_effects` carries the symmetric guard; `test_feedback_upvote_idempotency.py`. |
+| ~~F-LEARN-01~~ | 🟢 | **CLOSED — verified 2026-08-20, already in place.** Every lesson reaching `create_learning` passes `validate_learning_quality`, whose `_contains_instruction_shaped_text` screen carries nine patterns and is labelled "possible prompt injection" (`agent_learning_service.py`). The row predates that check. |
+| ~~F-LEARN-02~~ | 🟢 | **CLOSED 2026-08-20, and the rule was worse than reported.** It rejected any lesson >50% non-ASCII, so every Russian and Chinese lesson failed — while the *same request in English* passed untouched. It never caught raw user requests; it caught non-English text and was read as catching requests. Replaced by what it was reaching for: a bare-question check (language-independent) and a Unicode-aware "is this writing at all" ratio. The genuine check — compare the lesson to the question that produced it — needs the question threaded through six `create_learning` call sites and is recorded as AUD-0820-01 rather than faked with a per-language wordlist. Tests: `test_learning_gate_symmetry.py` (12). |
 | F-LEARN-03 | 🟢 | Confidence pumpable to 1.0 via repeated confirm/dedup |
 | F-LEARN-04 | 🟢 | Heuristic contradiction detection misses semantic conflicts |
 | F-LEARN-05 | 🟢 | Token-based dedup → paraphrased duplicates bloat prompt |
@@ -254,7 +263,7 @@ gate, durable AuditLog, idempotency).
 ### 11 — Rules Engine
 | ID | Sev | Issue |
 |---|---|---|
-| F-RULE-02 | 🟡 | Rule content injected as authoritative, no content/posture guard |
+| ~~F-RULE-02~~ | 🟢 | **CLOSED 2026-08-20.** The orchestrator prompt now carries a named UNTRUSTED-DATA section listing custom rules and stored learnings among the things that are data rather than instructions (`prompts/untrusted_data.py`, applied in `orchestrator_prompt.py`). Rules are editor-authored, so the exposure was one project member directing another's agent. |
 | F-RULE-03 | 🟡 | `rules_to_context` no budget/size truncation (overflow/cost) |
 | F-RULE-04 | 🟢 | Filesystem rule loading reads any matching-suffix file incl. symlinks |
 
@@ -269,7 +278,7 @@ gate, durable AuditLog, idempotency).
 ### 13 — Schedules, Batch & Worker
 | ID | Sev | Issue |
 |---|---|---|
-| F-SCHED-07 | 🟡 | `execute_batch` no idempotency guard + ARQ default `max_tries=5` → retry duplicates writes |
+| ~~F-SCHED-07~~ | 🟢 | **CLOSED 2026-08-20.** `BatchService._claim_batch` takes the run claim in one atomic UPDATE, so a retried job that loses the race returns without touching results. The claim is deliberately **stale-aware** — it also takes a `running` row whose attempt began longer ago than ARQ could have kept it alive (`batch_stale_claim_seconds`, matched to the job ceiling) — because a claim on `pending` alone would have stranded every crashed batch forever: the stale-run reaper covers `indexing_runs` and has **no knowledge of `batch_queries`**. New column `batch_queries.started_at` (migration `b1c2d3e4f5a6`, verified up and down on a fresh database); `created_at` could not serve, since a batch may sit `pending` for a long time. Tests: `test_batch_claim_idempotency.py` (8). |
 | F-SCHED-01 | 🟡 | Schedules keep running after creator loses access |
 | F-SCHED-03 | 🟡 | `_stale_run` NULL-heartbeat immediate-reap race (mitigated by heartbeat beacon) |
 | F-SCHED-04 | 🟡 | ARQ enqueue failure silently runs heavy jobs in-process on web dyno |
@@ -332,9 +341,15 @@ gate, durable AuditLog, idempotency).
 4. ~~**F-PROJ-01 / F-RULE-01** — email verification before invite auto-accept; global-rule authz.~~
    **DONE — F-RULE-01 by R3 (`fbf8112`); F-PROJ-01 by email verification (`1701b46`).**
 5. **Per-request usage sink** in `LLMRouter` → F-MCP-01, F-CHAT-07, F-SQL-06, F-BILL-05.
-6. **Credential-redaction at source** (F-CONN-08) + **durable `AuditLog` table** (F-AUTH-15/16).
-7. **Idempotency** — F-SCHED-07 (batch claim) + F-LEARN-08 (feedback transition-guard).
-8. Remaining Medium/Low per module table.
+6. ~~**Credential-redaction at source** (F-CONN-08) + **durable `AuditLog` table** (F-AUTH-15/16).~~
+   **DONE — redaction 2026-08-20 (`app/core/redaction.py`, `safe_error` at every connector and
+   service site); the `AuditLog` table and the refresh/logout events were already shipped and
+   this list was stale.**
+7. ~~**Idempotency** — F-LEARN-08 (feedback transition-guard) + F-SCHED-07 (batch claim).~~
+   **DONE 2026-08-20, both.** F-LEARN-08's open half turned out to be the upvote, not the
+   downvote the row described; F-SCHED-07's claim had to be stale-aware because nothing
+   reaps batches.
+8. Remaining Medium/Low per module table **← the whole ordered list is now here.**
 
 ---
 

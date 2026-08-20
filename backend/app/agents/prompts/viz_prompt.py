@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.agents.prompts.untrusted_data import untrusted_data_section
+
 
 def build_viz_system_prompt(
     *,
@@ -75,6 +77,13 @@ EXAMPLES:
   → config: {"x_column": "age", "y_column": "income"}
 
 Call the `recommend_visualization` tool exactly once with your recommendation."""
+    )
+
+    sections.append("")
+    sections.append(
+        untrusted_data_section(
+            "column names and row values from the result being charted",
+        )
     )
 
     return "\n".join(sections)

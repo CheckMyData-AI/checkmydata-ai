@@ -454,6 +454,23 @@ class Settings(BaseSettings):
     # now say so without a code edit. Note that raising this is only a fix when the
     # worker is not swapping — on an over-quota dyno it buys a longer crawl.
     repo_index_job_timeout_seconds: int = 1800
+
+    # F-SCHED-07: how long a `running` batch may sit before another attempt may take
+    # its claim. `run_batch` inherits ARQ's class-level `job_timeout` (1800 s), so past
+    # that the previous attempt is provably dead — arq cancelled it. Matching the two
+    # is the point: a shorter value could double-run a live batch, and a longer one
+    # strands a crashed one, because the stale-run reaper covers IndexingRun and does
+    # not know about `batch_queries`.
+    batch_stale_claim_seconds: int = 1800
+
+    # F-PROJ-04: how long a project invitation stays acceptable. An invite used to be
+    # `pending` forever, so `auto_accept_for_user` would take it whenever that address
+    # eventually registered — years later, after the person left. Email verification
+    # (F-PROJ-01) does not cover this: a re-registered address verifies perfectly well,
+    # because verification proves control of the mailbox today, not that the invitation
+    # was meant for whoever controls it now. Two weeks is long enough for a colleague
+    # on holiday and short enough that a forgotten invite dies.
+    invite_expiry_days: int = 14
     analytics_collect_job_timeout_seconds: int = 1800
     # Attempts per vendor HTTP call before it is reported as transient. Only
     # transient/quota failures are retried — auth and permission never are.
@@ -1021,6 +1038,10 @@ class Settings(BaseSettings):
             raise ValueError("EMBEDDING_UPSERT_BATCH_SIZE must be >= 1.")
         if self.repo_index_job_timeout_seconds <= 0:
             raise ValueError("REPO_INDEX_JOB_TIMEOUT_SECONDS must be positive.")
+        if self.batch_stale_claim_seconds <= 0:
+            raise ValueError("BATCH_STALE_CLAIM_SECONDS must be positive.")
+        if self.invite_expiry_days <= 0:
+            raise ValueError("INVITE_EXPIRY_DAYS must be positive.")
         return self
 
 

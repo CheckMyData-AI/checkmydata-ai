@@ -652,3 +652,90 @@ secret present in the layer, not a secret leaving it.
 The docstring claiming "the Task 11 graph benchmark" consumes `EXPECTED_SYMBOLS` now says
 plainly that nothing imports them today. A named consumer that does not exist is worse
 than no claim: it sends the next reader looking for it.
+
+### AUD-0819-24 — two order-dependent unit-test failures (recorded, not fixed)
+
+A full-suite run on 2026-08-20 failed two tests that both **pass in isolation** and both
+pass when their own directory is run alone:
+
+```
+FAILED tests/integration/test_learnings_api.py::TestLearningsApi::test_recompile
+FAILED tests/unit/test_trace_persistence_service.py::…::test_tracker_begin_includes_project_id
+```
+
+So they are order-dependent, not regressions — the same class as AUD-0819-22, but **not
+the same cause**: `test_trace_persistence_service` is a unit test, so the integration
+conftest's session-scoped shared SQLite connection cannot explain it. Something else
+leaks across unit tests — a module-level singleton or a patched global not restored.
+
+Recorded rather than chased: a flake needs a reproduction before a fix, and the
+reproduction here is "run 6,100 tests in this order". Worth noting that this suite has
+been through one flake hunt already (the ChartRenderer prototype pollution, 2026-08-16),
+which found exactly this shape — a test mutating shared state for everyone after it.
+
+**What the same run did find deterministically was mine:**
+`test_config_settings.py::TestEnvExampleSync::test_every_settings_field_documented`
+failed because `batch_stale_claim_seconds` was added to `Settings` and not to
+`.env.example`. That is the project's own gate catching the omission the convention
+exists to prevent, and it caught it in the same pass that shipped the setting.
+
+### AUD-0820-01 — the check the non-ASCII proxy was standing in for (recorded)
+
+F-LEARN-02's rule rejected any lesson more than half non-ASCII, and its message named
+its own intent: "likely raw user question in non-English". The intent is right — the
+analyzer sometimes echoes the user's question back as the lesson — but the proxy tested
+the alphabet, so it rejected every Russian and Chinese lesson while passing the *same
+request in English* verbatim. It was never a defence against raw requests; it was a
+defence against non-English text, read as the former.
+
+The genuine check is available and cheap in principle: compare the lesson against the
+question that produced it and reject a near-duplicate. `create_learning` receives
+`source_query` but not the natural-language question, and it has six call sites
+(`sql_agent.py`, `pipeline_learning.py`, `learning_analyzer.py` ×3,
+`data_investigations.py`), so threading it is its own change.
+
+Recorded rather than approximated. The alternative on offer was an imperative-verb
+wordlist per supported language, which would be a second proxy with the same failure
+mode as the first — incomplete in a way that correlates with language.
+
+**What shipped instead** is two checks that match their own stated intent: a lesson that
+*ends* as a question is refused in any alphabet (the old rule missed the English case
+entirely), and a lesson that is mostly not letters or digits is refused as not-writing,
+Unicode-aware so Cyrillic and CJK count as writing.
+
+### AUD-0820-02 — the injection defence existed, was written once, and reached one prompt of ten
+
+Cluster #5 of the board names five findings and reads as "no content-safety gate on
+LLM-authored or DB-sourced content". Working it produced a different and larger picture,
+and the reframing came from one measurement: `grep -c 'UNTRUSTED DATA'` across
+`app/agents/prompts/` returned **1 of 10**.
+
+`sql_prompt.py` already carried it, and by the **right mechanism** — content you cannot
+refuse is neutralised in the prompt rather than screened at ingest. A table's comment is
+part of the schema whatever it says; an ingest gate could only choose between indexing
+hostile text and refusing to index the table. So F-SQL-01 was closed before this pass,
+and the fix the board proposed ("shared content-safety screen on every ingest") would
+have been the wrong shape for it.
+
+The real gap was that nine sibling prompts consume text the product does not author and
+said nothing about it:
+
+| Prompt | What arrives that nobody here wrote |
+|---|---|
+| `mcp_prompt` | tool results from **third-party MCP servers** |
+| `knowledge_prompt` | file contents and comments from a **cloned repository** |
+| `git_prompt` | commit messages, tags, diffs — and trailers are forgeable (F-GIT-06) |
+| `analytics_prompt` | dimension values and rows from the **analytics vendor** |
+| `orchestrator_prompt` | project name/description (F-PROJ-15), rules (F-RULE-02), sub-agent output |
+| `viz_prompt` | column names and row values being charted |
+
+`prompts/untrusted_data.py` now builds the section and **raises if no source is named**.
+That constraint is the point: "some content may be untrusted" is advice, while "the
+commit messages below are attacker-controllable" is something a model can act on, and
+the difference only shows under adversarial text. `test_untrusted_data_sections.py`
+ratchets it in the manner of the frontend's `pack-bans.test.ts` — mechanical, because the
+rule is — so the tenth prompt cannot quietly skip it.
+
+`planner_prompt` and `investigation_prompt` are deliberately excluded: they compose no
+externally-authored text of their own. That exclusion is written in the test, not left to
+be rediscovered.

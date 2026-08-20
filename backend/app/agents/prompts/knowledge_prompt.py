@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.agents.prompts.untrusted_data import untrusted_data_section
+
 
 def build_knowledge_system_prompt(
     *,
@@ -54,5 +56,12 @@ do NOT make up information.
             "graph (M5). Use them to answer 'who reads/writes this table' "
             "questions; quote the caller file + endpoint kind verbatim."
         )
+
+    sections.append("")
+    sections.append(
+        untrusted_data_section(
+            "file contents, comments and documentation retrieved from the indexed repository",
+        )
+    )
 
     return "\n".join(sections)

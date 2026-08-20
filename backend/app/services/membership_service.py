@@ -18,14 +18,34 @@ class MembershipService:
         project_id: str,
         user_id: str,
     ) -> str | None:
-        """Return the user's role in the project, or None if not a member."""
+        """Return the user's role in the project, or None if they have no access.
+
+        F-PROJ-02 / F-PROJ-14: `_accessible_filter` below calls itself the single source
+        of truth for the access rule and states it as *owns OR is a member of*.
+        `can_access` honoured that; this reader did not, so the same person could be
+        admitted by one and refused by the other. Project creation writes the project
+        and the owner's member row in separate commits, so a failure between them left
+        `owner_id` pointing at somebody `require_role` then locked out of their own
+        project — permanently, since there is no ownership-transfer path (F-PROJ-10).
+
+        Where a member row disagrees with `owner_id`, the owner wins. Both mutation
+        guards refuse to demote or remove an owner, so a non-owner row for the owner is
+        unreachable by design; if one exists it is corruption, and the safe resolution
+        of corruption is that the person named on the project can still reach it.
+        """
         result = await db.execute(
             select(ProjectMember.role).where(
                 ProjectMember.project_id == project_id,
                 ProjectMember.user_id == user_id,
             )
         )
-        return result.scalar_one_or_none()
+        role = result.scalar_one_or_none()
+        if role == "owner":
+            return role
+        owner_id = await db.scalar(select(Project.owner_id).where(Project.id == project_id))
+        if owner_id is not None and owner_id == user_id:
+            return "owner"
+        return role
 
     async def require_role(
         self,
@@ -208,4 +228,16 @@ class MembershipService:
                 ProjectMember.project_id.in_(project_ids),
             )
         )
-        return {row[0]: row[1] for row in result.all()}
+        roles = {row[0]: row[1] for row in result.all()}
+        # Same rule as `get_role`, in one extra query rather than N (F-PROJ-02): a
+        # bulk reader that disagreed with the single reader would put the divergence
+        # on the project LIST, which is the first screen a locked-out owner sees.
+        owned = await db.execute(
+            select(Project.id).where(
+                Project.id.in_(project_ids),
+                Project.owner_id == user_id,
+            )
+        )
+        for (pid,) in owned.all():
+            roles[pid] = "owner"
+        return roles

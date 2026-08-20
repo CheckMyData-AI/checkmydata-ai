@@ -2,13 +2,17 @@ import asyncio
 import json
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import CursorResult
 from app.connectors.registry import get_connector
 from app.core.safety import SafetyGuard, SafetyLevel
 from app.core.workflow_tracker import tracker
@@ -243,6 +247,60 @@ class BatchService:
         )
         return entry
 
+    async def _claim_batch(self, db: AsyncSession, batch_id: str) -> bool:
+        """Take the run claim for *batch_id*, atomically. True when we own it.
+
+        F-SCHED-07. `execute_batch` used to set ``status = "running"`` with no
+        reference to the current status, and `run_batch` is registered bare in
+        ``WorkerSettings.functions``, so it inherits ARQ's default retry count. A
+        failed job — or one whose worker was SIGKILLed, which this deployment does
+        under memory pressure — was retried and re-executed every query from the top,
+        overwriting ``results_json``. Against a read-write connection that is
+        duplicated work, not merely wasted work.
+
+        Claiming ``pending`` alone would trade that for something worse: **nothing
+        resets a stuck ``running`` batch.** The stale-run reaper covers
+        :class:`IndexingRun` and has no knowledge of ``batch_queries``, so the first
+        crashed attempt would strand the batch forever. So the claim is stale-aware —
+        it also takes a ``running`` row whose attempt began longer ago than arq could
+        have kept it alive (``batch_stale_claim_seconds``, matched to the job ceiling).
+
+        One UPDATE, so two workers racing cannot both win: whoever the database
+        serialises second sees ``rowcount == 0``.
+        """
+        cutoff = datetime.now(UTC) - timedelta(seconds=settings.batch_stale_claim_seconds)
+        # `AsyncSession.execute` is typed as returning `Result`, which has no
+        # `rowcount`; for DML it is a `CursorResult` at runtime, and `rowcount` is the
+        # whole point of a claim — it says whether we won.
+        result = cast(
+            "CursorResult[Any]",
+            await db.execute(
+                update(BatchQuery)
+                .where(
+                    BatchQuery.id == batch_id,
+                    or_(
+                        BatchQuery.status == "pending",
+                        and_(
+                            BatchQuery.status == "running",
+                            or_(
+                                BatchQuery.started_at.is_(None),
+                                BatchQuery.started_at < cutoff,
+                            ),
+                        ),
+                    ),
+                )
+                .values(status="running", started_at=datetime.now(UTC))
+                # `synchronize_session=False`: this is a claim, decided entirely by the
+                # database. The default strategy re-evaluates the WHERE against objects
+                # already in the identity map, and SQLite hands `started_at` back
+                # offset-naive, so comparing it to an aware cutoff raises. The row we
+                # care about is re-read with `refresh` right after.
+                .execution_options(synchronize_session=False)
+            ),
+        )
+        await db.commit()
+        return bool(result.rowcount)
+
     async def execute_batch(
         self,
         batch_id: str,
@@ -294,7 +352,15 @@ class BatchService:
             )
             guard = SafetyGuard(level=safety_level)
 
-            batch.status = "running"
+            # F-SCHED-07: the claim replaces an unconditional write. A retry that
+            # loses it returns without touching results — see `_claim_batch`.
+            if not await self._claim_batch(db, batch_id):
+                logger.info(
+                    "Batch %s already claimed or terminal — skipping this attempt",
+                    batch_id[:8],
+                )
+                return
+            await db.refresh(batch)
             await db.commit()
 
             wf_id = await tracker.begin(

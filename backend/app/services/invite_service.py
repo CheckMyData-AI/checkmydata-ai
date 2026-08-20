@@ -1,6 +1,7 @@
 """Service for email-based project invitations."""
 
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import and_, select
@@ -8,9 +9,34 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.models.project_invite import ProjectInvite
 from app.models.project_member import ProjectMember
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
+
+
+def _aware_dt(value: datetime) -> datetime:
+    """SQLite reads timestamps back naive; compare in UTC either way."""
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def invite_expires_at(invite: ProjectInvite) -> datetime:
+    """When *invite* stops being acceptable (F-PROJ-04).
+
+    A NULL ``expires_at`` is read as ``created_at + invite_expiry_days`` rather than as
+    "never": rows predating the column are exactly the stale invites the finding is
+    about, so the policy applies to their real creation time and no backfill is needed.
+    """
+    if invite.expires_at is not None:
+        return _aware_dt(invite.expires_at)
+    return _aware_dt(invite.created_at) + timedelta(days=settings.invite_expiry_days)
+
+
+def invite_is_expired(invite: ProjectInvite, *, now: datetime | None = None) -> bool:
+    """True when *invite* is past its window."""
+    return (now or datetime.now(UTC)) >= invite_expires_at(invite)
 
 
 class InviteService:
@@ -55,6 +81,7 @@ class InviteService:
             invited_by=invited_by,
             role=role,
             status="pending",
+            expires_at=datetime.now(UTC) + timedelta(days=settings.invite_expiry_days),
         )
         db.add(invite)
         try:
@@ -191,6 +218,15 @@ class InviteService:
                 )
 
         async with db.begin_nested():
+            if invite_is_expired(invite):
+                # F-PROJ-04: refuse rather than silently drop, so somebody clicking a
+                # dead link is told why instead of watching nothing happen.
+                raise HTTPException(
+                    status_code=410,
+                    detail=(
+                        "This invitation has expired. Ask the project owner to send a new one."
+                    ),
+                )
             invite.status = "accepted"
             invite.accepted_at = datetime.now(UTC)
 
@@ -256,6 +292,18 @@ class InviteService:
         pending = await self.list_pending_for_email(db, email)
         members = []
         for invite in pending:
+            # F-PROJ-04: SKIP here rather than let `accept_invite` raise. This runs
+            # inside registration, and a 410 would fail somebody's sign-up over a
+            # stranger's forgotten invitation — a worse outcome than the bug. The
+            # interactive path still explains itself; this one just declines.
+            if invite_is_expired(invite):
+                logger.info(
+                    "Auto-accept skipped an expired invite %s for %s (created %s)",
+                    invite.id[:8],
+                    email,
+                    invite.created_at,
+                )
+                continue
             member, _inv = await self.accept_invite(db, invite.id, user_id, _skip_email_check=True)
             members.append(member)
         return members

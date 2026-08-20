@@ -50,6 +50,14 @@ class ProjectInvite(Base):
         DateTime(timezone=True),
         server_default=func.now(),
     )
+    #: When this invitation stops being acceptable (F-PROJ-04). Nullable, and NULL is
+    #: read as ``created_at + invite_expiry_days`` rather than "never" — the rows that
+    #: predate this column are precisely the stale invites the finding is about, so the
+    #: policy applies to their real creation time and no backfill is needed.
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

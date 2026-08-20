@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.api.schemas import AckWithCountResponse, OkResponse, OkWithIdResponse
 from app.core.rate_limit import limiter
-from app.services.agent_learning_service import AgentLearningService
+from app.services.agent_learning_service import (
+    AgentLearningService,
+    normalize_lesson_text,
+    validate_learning_quality,
+)
 from app.services.batch_service import require_database_connection
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
@@ -115,9 +119,29 @@ async def update_learning(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
 
+    from app.models.agent_learning import AgentLearning
+
+    # Existence and scoping are resolved BEFORE validating, because the quality gate
+    # needs the row's own subject and because a 404 should not depend on whether the
+    # submitted text would have passed.
+    check = await db.get(AgentLearning, learning_id)
+    if not check or check.connection_id != connection_id:
+        raise HTTPException(status_code=404, detail="Learning not found")
+
     kwargs: dict = {}
     if body.lesson is not None:
-        kwargs["lesson"] = body.lesson
+        # F-LEARN-06: the ingest path screens every lesson through
+        # `validate_learning_quality` — including its instruction-shaped-text check,
+        # labelled "possible prompt injection" — and this override route did not, so
+        # the API could write what the analyzer is refused. The text lands in
+        # orchestrator and SQL-agent prompts as authoritative, which is what makes the
+        # asymmetry the exposure. Same shape as F-LEARN-08: a guard on one side of a
+        # pair and not the other.
+        lesson = normalize_lesson_text(body.lesson)
+        quality_err = validate_learning_quality(check.subject, lesson)
+        if quality_err:
+            raise HTTPException(status_code=422, detail=f"Lesson rejected: {quality_err}")
+        kwargs["lesson"] = lesson
     if body.is_active is not None:
         kwargs["is_active"] = body.is_active
     if body.confidence is not None:
@@ -125,12 +149,6 @@ async def update_learning(
 
     if not kwargs:
         raise HTTPException(status_code=400, detail="No fields to update")
-
-    from app.models.agent_learning import AgentLearning
-
-    check = await db.get(AgentLearning, learning_id)
-    if not check or check.connection_id != connection_id:
-        raise HTTPException(status_code=404, detail="Learning not found")
 
     entry = await _learning_svc.update_learning(db, learning_id, **kwargs)
     if not entry:
