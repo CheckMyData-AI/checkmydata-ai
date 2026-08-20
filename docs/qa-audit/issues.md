@@ -270,7 +270,7 @@ gate, durable AuditLog, idempotency).
 ### 12 — Visualizations & Dashboards
 | ID | Sev | Issue |
 |---|---|---|
-| F-VIZ-04 | 🟡 | CSV/XLSX export doesn't neutralize formula-leading cells → CSV injection |
+| ~~F-VIZ-04~~ | 🟢 | **CLOSED 2026-08-20, per format rather than with one hammer.** Measured first: `openpyxl` writes a `=`-leading string as `data_type='f'` — a real formula — while `+`, `-`, `@` come out as strings. So **XLSX** forces the cell to text and the value survives byte for byte, while **CSV**, which has no types, must prefix. **JSON is deliberately untouched** — no formula semantics in the format, so altering it would corrupt data for every consumer to protect none. Headers are covered too: column names come from the query. The rule exempts numbers and single characters, and that exemption is the substance — a blanket OWASP character list prefixes every negative number, turning `-1500.00` into `'-1500.00` and breaking a financial export for every downstream consumer, which is a worse bug than the one being fixed. Tests: `test_export_formula_injection.py` (49), including a class devoted to numeric fidelity. |
 | F-VIZ-01 | 🟡 | Dashboard cards are stale data snapshots, no freshness signal |
 | F-VIZ-02 | 🟡 | `cards_json` stored verbatim → stored-XSS vector (downgraded: frontend renders escaped React children; residual is unvalidated storage) |
 | F-VIZ-03 | 🟢 | No server-side JSON/structure/size validation of `cards_json` |
