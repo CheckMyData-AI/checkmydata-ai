@@ -163,7 +163,7 @@ gate, durable AuditLog, idempotency).
 ### 02 — Projects, RBAC & Invites
 | ID | Sev | Issue |
 |---|---|---|
-| F-PROJ-02 | 🟡 | Owner tracked in two places that drift; `require_role` ignores `owner_id` |
+| ~~F-PROJ-02~~ | 🟢 | **CLOSED 2026-08-20.** `get_role` and `get_roles_bulk` now honour `Project.owner_id`, which `_accessible_filter` already calls "the single source of truth for the access rule" and which `can_access` already used — so this aligned the readers with a rule the code declares rather than adding a fourth guard. Access is **not widened**: `can_access` already admitted the owner; only the *role* now agrees with the access already granted. Every mutation path was verified closed first (`remove_member` and `update_member_role` both refuse an owner, and `accept_invite` returns an existing member untouched instead of overwriting its role), so the reachable exposure was the partial-creation state — the project and the owner's member row commit separately (`projects.py:186-189`, and `add_member` commits on its own), and a failure between them locked the owner out permanently, with no transfer path (F-PROJ-10) to recover. Tests: `test_owner_role_consistency.py` (9). |
 | F-PROJ-03 | 🟡 | `accept_invite` commits inside `begin_nested()` → 500 on idempotent re-accept |
 | F-PROJ-04 | 🟡 | Invites never expire; auto-accepted indefinitely |
 | F-PROJ-05 | 🟡 | Fire-and-forget `asyncio.create_task` sync-now → silent task death |
@@ -175,7 +175,7 @@ gate, durable AuditLog, idempotency).
 | F-PROJ-11 | 🟢 | `add_member` upsert not `IntegrityError`-guarded → concurrent add 500 |
 | F-PROJ-12 | 🟢 | No self-service "leave project" |
 | F-PROJ-13 | 🟢 | `list_members`/`list_invites` no pagination cap |
-| F-PROJ-14 | 🟢 | `GET /api/projects` member-only query diverges from `can_access` |
+| ~~F-PROJ-14~~ | 🟢 | **CLOSED 2026-08-20** by the same change — `get_roles_bulk` feeds the project list, so the divergence landed on the first screen a locked-out owner would look at. |
 | ~~F-PROJ-15~~ | 🟢 | **CLOSED 2026-08-20** by the same orchestrator section, which names the project name, description and overview explicitly. |
 
 ### 03 — Connections & Connectors
