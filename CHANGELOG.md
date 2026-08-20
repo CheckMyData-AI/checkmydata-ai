@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — a git revision starting with a dash is an option, and git obeyed it (2026-08-20)
+
+`GitInspector.diff()` and `.show()` passed caller-supplied revisions as **leading argv**
+to the git binary with no validation and no `--`, so `--output=<path>` was never a
+revision: it is git's diff-output option. Measured against a scratch repository, not
+inferred:
+
+```
+before: 'IMPORTANT ORIGINAL CONTENT\n'
+after : 'diff --git a/f.txt b/f.txt\nindex f719efd..6e5aa7c 100644\n…'
+show also writes: 216 bytes
+```
+
+Any file the process can write, truncated and replaced — on a dyno that includes the
+application's own source, which makes it remote code execution at the next boot. It was
+reachable from chat: `git_agent.py:373/375/382/408` take `args["sha"]`, `args["a_sha"]`,
+`args["b_sha"]` and `args["commit_sha"]` straight out of the model's tool call, and the
+model is driven by a user's message and by repository content.
+
+- `GitInspector._safe_rev` — no leading dash (the vector), plus a character allow-list
+  covering git's real revision syntax (`HEAD~1`, `HEAD^`, `feat/some-thing`, `v1.0.0`,
+  `a..b`, `@{upstream}`, a hex sha). Not a hex-sha regex: a guard that refuses the refs
+  people use gets removed, and then neither rule is left.
+- Applied at **all five** rev entry points — `show`, both revisions of `diff`, `blame`,
+  `log(rev=…)`, `review_signals` — because a guard on the two the proof-of-concept
+  happened to use would move the hole rather than close it.
+- New `UnsafeRevError`, distinct from `InvalidRefError`: *refused before git ran* and
+  *git ran and disagreed* deserve different answers, and only the first is worth
+  refusing outright.
+- **`UpdateRepoRequest.branch` had no validator** while `AddRepoRequest.branch` called
+  `validate_git_ref`, and the branch reaches `repo.git.checkout()` and
+  `Repo.clone_from(branch=…)` as argv. Same class, same create-guarded/PATCH-free shape
+  as the connection routes. Both models validate now.
+
+The original proof-of-concept now raises and the file is intact.
+
+
 ### Fixed — the demo path delivers the sample data it promised (2026-08-20)
 
 `POST /api/demo/setup` was 65 lines carrying four board findings, and the largest was a

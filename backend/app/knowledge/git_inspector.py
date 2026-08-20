@@ -54,6 +54,16 @@ class PathOutsideRepoError(GitInspectorError):
     """A caller-supplied path resolves outside the repository root."""
 
 
+class UnsafeRevError(GitInspectorError):
+    """A caller-supplied revision is not a revision — it is a git option (F-GIT-01).
+
+    Distinct from :class:`InvalidRefError`, which means "this looks like a revision and
+    git could not resolve it". This one means "git would not have treated this as a
+    revision at all", and the two want different answers: the first is worth retrying
+    with a different ref, the second is worth refusing.
+    """
+
+
 class GitCommandFailedError(GitInspectorError):
     """An underlying git command failed for an unexpected reason."""
 
@@ -68,6 +78,15 @@ _MERGE_BRANCH_RE = re.compile(
     re.IGNORECASE,
 )
 _MERGE_PR_RE = re.compile(r"Merge pull request #(\d+) from (\S+)", re.IGNORECASE)
+
+#: Longest revision worth accepting. A full sha is 40 characters and the longest sane
+#: symbolic ref is far shorter; anything past this is someone probing, not asking.
+_REV_MAX_LEN = 256
+
+#: Git's revision syntax, as characters. Deliberately permissive about what a *ref* may
+#: contain and strict about what an *argument* may: no whitespace, no shell
+#: metacharacters, and a leading dash is rejected separately in :meth:`_safe_rev`.
+_REV_ALLOWED_RE = re.compile(r"^[A-Za-z0-9._/@{}^~:+-]+$")
 
 
 def _clamp(value: Any, low: int, high: int, default: int) -> int:
@@ -121,6 +140,41 @@ class GitInspector:
             )
         return str(candidate.relative_to(self._repo_dir))
 
+    @staticmethod
+    def _safe_rev(rev: str, *, field: str = "revision") -> str:
+        """Validate that *rev* is a revision and not a git option (F-GIT-01).
+
+        GitPython hands these straight to the git binary as argv, ahead of any ``--``,
+        so a value beginning with ``-`` is parsed as an option. Measured before this
+        existed: ``diff("--output=<path>", "HEAD")`` **overwrote** the named file with
+        the diff text, and ``show("--output=<path>")`` did the same — any file the
+        process can write, including the application's own source.
+
+        Two rules, and the second is not redundant:
+
+        * **No leading dash.** This is the vector, exactly.
+        * **A character allow-list covering git's real revision syntax** — ``HEAD~1``,
+          ``HEAD^``, ``feat/some-thing``, ``v1.0.0``, ``a..b``, ``@{upstream}``, a hex
+          sha. Not a hex-sha regex: a guard that refuses the refs people actually use
+          gets removed, and then neither rule is left. What it excludes is whitespace
+          and shell metacharacters, so ``HEAD -o /tmp/x`` cannot arrive as one string
+          and split into two arguments downstream.
+        """
+        if not isinstance(rev, str):
+            raise UnsafeRevError(f"{field} must be a string, got {type(rev).__name__}.")
+        candidate = rev.strip()
+        if not candidate:
+            raise UnsafeRevError(f"{field} must not be empty.")
+        if len(candidate) > _REV_MAX_LEN:
+            raise UnsafeRevError(f"{field} is too long ({len(candidate)} > {_REV_MAX_LEN}).")
+        if candidate.startswith("-"):
+            raise UnsafeRevError(
+                f"{field} '{rev}' starts with '-', which git reads as an option, not a revision."
+            )
+        if not _REV_ALLOWED_RE.match(candidate):
+            raise UnsafeRevError(f"{field} '{rev}' contains characters a revision cannot have.")
+        return candidate
+
     def _truncate(self, text: str) -> str:
         if text is None:
             return ""
@@ -173,6 +227,7 @@ class GitInspector:
         max_count: int = 100,
     ) -> list[dict[str, Any]]:
         """Return recent commits (newest first) as plain dicts."""
+        rev = self._safe_rev(rev, field="rev") if rev is not None else None
         count = _clamp(max_count, 1, self._max_log_count, min(100, self._max_log_count))
         safe_paths = [self._safe_relpath(p) for p in paths] if paths else None
 
@@ -209,6 +264,7 @@ class GitInspector:
 
     async def show(self, sha: str, path: str | None = None) -> str:
         """Show a commit (diff) or the content of *path* at *sha*."""
+        sha = self._safe_rev(sha, field="sha")
         safe = self._safe_relpath(path) if path else None
         if safe and Path(safe).suffix.lower() in BINARY_EXTENSIONS:
             return f"(binary file '{safe}' — content not shown)"
@@ -248,6 +304,10 @@ class GitInspector:
         unified: int = 3,
     ) -> str:
         """Return a unified diff between *a_sha* and *b_sha*."""
+        # Both positions reach argv, so both are checked — guarding only the first
+        # would move the hole rather than close it.
+        a_sha = self._safe_rev(a_sha, field="a_sha")
+        b_sha = self._safe_rev(b_sha, field="b_sha")
         safe_paths = [self._safe_relpath(p) for p in paths] if paths else None
         ctx = _clamp(unified, 0, 50, 3)
 
@@ -272,6 +332,7 @@ class GitInspector:
 
     async def blame(self, path: str, commit_sha: str = "HEAD") -> list[dict[str, Any]]:
         """Return per-line authorship for *path* at *commit_sha*."""
+        commit_sha = self._safe_rev(commit_sha, field="commit_sha")
         safe = self._safe_relpath(path)
 
         def _run() -> list[dict[str, Any]]:
@@ -461,6 +522,7 @@ class GitInspector:
 
     async def review_signals(self, commit_sha: str) -> dict[str, Any]:
         """Parse review-related trailers and merge info from a commit message."""
+        commit_sha = self._safe_rev(commit_sha, field="commit_sha")
 
         def _run() -> dict[str, Any]:
             repo = self._open_repo()
