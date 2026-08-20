@@ -1429,13 +1429,9 @@ async def chat_websocket(
 ):
     import asyncio
 
-    from sqlalchemy import or_, select
-
     from app.core.workflow_tracker import tracker
     from app.core.ws_tickets import TICKET_SUBPROTOCOL_PREFIX, ws_ticket_store
     from app.models.base import async_session_factory
-    from app.models.project import Project
-    from app.models.project_member import ProjectMember
 
     # T-SEC-2: authenticate via a single-use ticket carried in
     # Sec-WebSocket-Protocol, never via a token in the URL query string.
@@ -1455,19 +1451,12 @@ async def chat_websocket(
         await websocket.close(code=4001, reason="Authentication required")
         return
 
+    # F-CHAT-01: ask the membership service rather than re-implementing the rule.
+    # `_accessible_filter` calls itself the single source of truth "used by the HTTP API
+    # (chat WebSocket gate) and the MCP tools so they cannot drift" — and this gate,
+    # named in that very sentence, carried its own raw-SQL copy.
     async with async_session_factory() as db:
-        access_check = await db.execute(
-            select(Project.id).where(
-                Project.id == project_id,
-                or_(
-                    Project.owner_id == user_id,
-                    Project.id.in_(
-                        select(ProjectMember.project_id).where(ProjectMember.user_id == user_id)
-                    ),
-                ),
-            )
-        )
-        if not access_check.scalar_one_or_none():
+        if not await _membership_svc.can_access(db, project_id, user_id):
             await websocket.close(code=4003, reason="Access denied")
             return
 
@@ -1600,6 +1589,33 @@ async def chat_websocket(
                 )
                 continue
             message = ws_msg.message
+
+            # F-CHAT-01: re-check access per MESSAGE, not per connection. A socket
+            # lives as long as the tab, so a connect-time check left a removed member
+            # querying the project's database until they reloaded. Authorization
+            # belongs to the action, and a message is the action — one indexed query,
+            # against messages that arrive seconds to minutes apart.
+            async with async_session_factory() as db:
+                if not await _membership_svc.can_access(db, project_id, user_id):
+                    logger.info(
+                        "WS chat: access revoked mid-session for user=%s project=%s",
+                        user_id[:8],
+                        project_id[:8],
+                    )
+                    try:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "message": (
+                                    "You no longer have access to this project. "
+                                    "The connection is closing."
+                                ),
+                            }
+                        )
+                    except Exception:
+                        logger.debug("WS: could not send the revocation notice", exc_info=True)
+                    await websocket.close(code=4003, reason="Access denied")
+                    return
 
             limit_err = await agent_limiter.acquire(user_id)
             if limit_err:
