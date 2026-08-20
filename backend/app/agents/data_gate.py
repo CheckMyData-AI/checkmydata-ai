@@ -105,6 +105,37 @@ def _parse_numeric_string(text: str) -> float | None:
     return value if math.isfinite(value) else None
 
 
+def _hashable(value: object) -> object:
+    """A hashable stand-in for *value* that still distinguishes different contents.
+
+    F-DG-04. `tuple(row)` is unhashable the moment a cell holds a `list` or `dict` — a
+    Postgres ``json``/``jsonb`` or array column, a Mongo document, an aggregated array —
+    so ``key in seen`` raised ``TypeError`` and took the whole answer down with it.
+    DataGate sits on the answer path, and a check that breaks what it is checking is
+    worse than no check.
+
+    Recursing rather than falling back to ``repr`` matters for the check's purpose: two
+    rows whose JSON differs only deep inside must still count as different, and two rows
+    with identical JSON must still count as the same. A dict is keyed on its sorted
+    items so ``{"a": 1, "b": 2}`` and ``{"b": 2, "a": 1}`` are one value, which is what
+    they are.
+    """
+    if isinstance(value, dict):
+        return ("\x00dict", tuple(sorted((k, _hashable(v)) for k, v in value.items())))
+    if isinstance(value, (list, tuple)):
+        return ("\x00seq", tuple(_hashable(v) for v in value))
+    if isinstance(value, set | frozenset):
+        return ("\x00set", tuple(sorted(repr(_hashable(v)) for v in value)))
+    try:
+        hash(value)
+    except TypeError:
+        # Anything else unhashable (a bytearray, a driver-specific object): fall back to
+        # its text form. Coarser than the structural cases above, and still honest —
+        # equal text means equal cell for a duplicate count.
+        return ("\x00repr", repr(value))
+    return value
+
+
 @dataclass
 class DataGateOutcome:
     passed: bool = True
@@ -293,7 +324,7 @@ class DataGate:
         seen: set[tuple] = set()
         dupes = 0
         for row in sample:
-            key = tuple(row)
+            key = tuple(_hashable(v) for v in row)
             if key in seen:
                 dupes += 1
             else:

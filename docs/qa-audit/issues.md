@@ -241,10 +241,10 @@ gate, durable AuditLog, idempotency).
 ### 09 — Data Validation / Investigations / DataGate
 | ID | Sev | Issue |
 |---|---|---|
-| F-DG-01 | 🟡 | `Decimal` percent/date values bypass the range hard-check |
-| F-DG-02 | 🟡 | Hard checks run on a sample → impossible values past window pass |
-| F-DG-03 | 🟡 | Hard-FAIL keys on fuzzy name-based classification |
-| F-DG-04 | 🟡 | JSON/array cell → `tuple(row)` unhashable → DataGate crashes |
+| ~~F-DG-01~~ | 🟢 | **CLOSED — verified 2026-08-20, already fixed.** `data_gate.py:384` reads `isinstance(val, (int, float, Decimal))`, matching the W0 note in `CLAUDE.md`. The row predates that work. |
+| ~~F-DG-02~~ | 🟢 | **CLOSED — verified 2026-08-20, already fixed.** `_check_value_ranges` scans the **whole** in-memory result by default (`qr.rows if scan_cap <= 0`), with the reason written at the call site: "missing even one defeats the gate". The checks that genuinely do sample now say so in their own message ("based on sample only"), which is the other half of the finding. |
+| ~~F-DG-03~~ | 🟢 | **CLOSED — verified 2026-08-20, engineered against deliberately.** `_PERCENT_BOUNDED_KEYWORDS` is documented as "only tokens that are *unambiguously* a 0..100 share" and **enumerates the false positives it excludes** — retention, churn and utilization, because NRR exceeds 100%, net churn goes negative and CPU utilization exceeds 100%. A delta/change token demotes a percent column to `rate`, so `pct_growth` is not hard-bounded. The fuzzy-classification-drives-hard-fail concern is exactly what that discipline addresses. |
+| ~~F-DG-04~~ | 🟢 | **CLOSED 2026-08-20 — the one of the four that was genuinely open.** Measured: `tuple([1, {"a": 1}]) in set()` raises `TypeError: unhashable type: 'dict'`, so a Postgres `json`/`jsonb` or array column, a Mongo document or an aggregated array took down the gate — and DataGate sits on the answer path, so a good query failed the whole answer. A check that breaks what it is checking is worse than no check. `_hashable()` recurses rather than falling back to `repr`, so rows whose JSON differs only deep inside still count as different and identical JSON still counts as duplicate; a dict is keyed on sorted items so key order does not invent a difference. Tests: `test_data_gate_unhashable_rows.py` (12), including that the check keeps *detecting* and not merely surviving. |
 | F-DG-05 | 🟢 | Percent bounds `-1..200` too lenient |
 | F-DG-06 | 🟢 | Type-consistency check off-by-design at boundaries |
 | F-DG-08 | 🟢 | Cross-stage/truncation checks use unreliable `row_count` |
