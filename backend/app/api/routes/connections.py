@@ -303,7 +303,52 @@ async def cancel_background_tasks() -> None:
 _learning_svc = AgentLearningService()
 
 
-class ConnectionCreate(BaseModel):
+class _ConnectionFieldRules(BaseModel):
+    """Field rules shared by `ConnectionCreate` and `ConnectionUpdate`.
+
+    They were duplicated, and duplication is how they drifted: `mcp_env`'s bounds and the
+    whitespace strip existed only on create, so a PATCH could store an unbounded env dict
+    and a DSN with a trailing newline. `db_type` and `db_name` drifted the same way and
+    let a demo connection be repointed at the application's own database — three
+    instances of one shape in two days.
+
+    Inheriting is the structural answer: a rule added here cannot be added to one model
+    and forgotten on the other, which is the failure a second copy invites and a review
+    cannot reliably catch. `tests/unit/test_create_update_validator_parity.py` is the
+    ratchet for the pairs that are not yet shaped this way.
+
+    `check_fields=False` is required because this base declares no fields of its own —
+    and it costs something: a mistyped field name here validates nothing, silently. The
+    runtime tests in that same file are what buys it back, asserting each rule *fires*
+    on both models rather than merely being declared.
+    """
+
+    @field_validator("mcp_env", mode="before", check_fields=False)
+    @classmethod
+    def validate_mcp_env(cls, v: dict | None) -> dict | None:
+        if v is not None:
+            if len(v) > 50:
+                raise ValueError("mcp_env cannot have more than 50 entries")
+            for key, val in v.items():
+                if len(str(key)) > 255 or len(str(val)) > 4096:
+                    raise ValueError("mcp_env keys max 255 chars, values max 4096 chars")
+        return v
+
+    @field_validator("ssh_pre_commands", check_fields=False)
+    @classmethod
+    def validate_ssh_pre_commands(cls, v: list[str] | None) -> list[str] | None:
+        # F-SEC-5: restrict pre-commands to the env-setup allowlist.
+        if v is not None:
+            validate_pre_commands(v)
+        return v
+
+    @field_validator("name", "connection_string", mode="before", check_fields=False)
+    @classmethod
+    def strip_strings(cls, v: str | None) -> str | None:
+        return v.strip() if isinstance(v, str) else v
+
+
+class ConnectionCreate(_ConnectionFieldRules):
     project_id: str = Field(max_length=255)
     name: str = Field(max_length=255)
     # Optional since the analytics spine: a GA4 source has no engine. The
@@ -341,30 +386,6 @@ class ConnectionCreate(BaseModel):
     collection_hour: int = Field(default=3, ge=0, le=23)
     # H6: opt-out of sending DB sample data to the LLM (default True = send)
     send_sample_data_to_llm: bool = True
-
-    @field_validator("mcp_env", mode="before")
-    @classmethod
-    def validate_mcp_env(cls, v: dict | None) -> dict | None:
-        if v is not None:
-            if len(v) > 50:
-                raise ValueError("mcp_env cannot have more than 50 entries")
-            for key, val in v.items():
-                if len(str(key)) > 255 or len(str(val)) > 4096:
-                    raise ValueError("mcp_env keys max 255 chars, values max 4096 chars")
-        return v
-
-    @field_validator("ssh_pre_commands")
-    @classmethod
-    def validate_ssh_pre_commands(cls, v: list[str] | None) -> list[str] | None:
-        # F-SEC-5: restrict pre-commands to the env-setup allowlist.
-        if v is not None:
-            validate_pre_commands(v)
-        return v
-
-    @field_validator("name", "connection_string", mode="before")
-    @classmethod
-    def strip_strings(cls, v: str | None) -> str | None:
-        return v.strip() if isinstance(v, str) else v
 
     @model_validator(mode="after")
     def require_conn_string_or_host(self):
@@ -408,7 +429,7 @@ class ConnectionCreate(BaseModel):
         return self
 
 
-class ConnectionUpdate(BaseModel):
+class ConnectionUpdate(_ConnectionFieldRules):
     name: str | None = Field(None, max_length=200)
     db_type: str | None = Field(None, max_length=50)
     source_type: str | None = Field(None, max_length=50)
@@ -438,14 +459,6 @@ class ConnectionUpdate(BaseModel):
     collection_hour: int | None = Field(None, ge=0, le=23)
     # H6: opt-out of sending DB sample data to the LLM
     send_sample_data_to_llm: bool | None = None
-
-    @field_validator("ssh_pre_commands")
-    @classmethod
-    def validate_ssh_pre_commands(cls, v: list[str] | None) -> list[str] | None:
-        # F-SEC-5: restrict pre-commands to the env-setup allowlist.
-        if v is not None:
-            validate_pre_commands(v)
-        return v
 
 
 class ConnectionResponse(BaseModel):

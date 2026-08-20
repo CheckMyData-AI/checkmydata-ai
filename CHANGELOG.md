@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a field guarded on create and free on PATCH, as a class rather than a fourth instance (2026-08-20)
+
+Three of these landed in two days, each found while fixing something else:
+`ConnectionUpdate.db_type` and `.db_name` (a demo connection repointed at the
+application's own database), and `UpdateRepoRequest.branch` (F-GIT-08 — `validate_git_ref`
+on create, nothing on PATCH, and the branch reaches `repo.git.checkout()` as argv). An
+AST sweep of every `Create`/`Update` model pair under `app/api/routes/` found three more,
+all on `ConnectionUpdate`:
+
+- **`mcp_env` was unbounded on PATCH.** Create caps it at 50 entries with 255-char keys
+  and 4096-char values; `ConnectionService.update` encrypts and stores whatever dict
+  arrives, into a Text column, and hands it to a spawned MCP subprocess.
+- **`connection_string` was not stripped on PATCH.** `_sanitize_strings` covers `name`
+  downstream but not the DSN, so a trailing newline survived into `encrypt()` and failed
+  to connect later in a way that pointed nowhere.
+- `name` was covered downstream, and is now covered in both places for the same reason
+  the other two are.
+
+The fix is structural, not another copy: `_ConnectionFieldRules` is a base both models
+inherit, so a rule added to it cannot be added to one and forgotten on the other.
+`tests/unit/test_create_update_validator_parity.py` is the ratchet for every pair not yet
+shaped that way — it compares by AST, and an accepted asymmetry needs a written reason
+rather than an entry.
+
+
 ### Security — a git revision starting with a dash is an option, and git obeyed it (2026-08-20)
 
 `GitInspector.diff()` and `.show()` passed caller-supplied revisions as **leading argv**
