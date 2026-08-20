@@ -36,7 +36,20 @@ STRICT_COVERAGE_MIN_ID = 113
 #: Unresolvable Coverage paths inherited from the 2026-07-19 inventory sweep. All are
 #: `src/__tests__/...` entries written relative to `frontend/` rather than
 #: `frontend/src/`. Follow-up: normalise them, then drop this baseline to 0.
-LEGACY_UNRESOLVED_COVERAGE_BASELINE = 9
+#: Pre-SCN-113 Coverage debt. **0 at 2026-08-21**, and that is the point of the number:
+#: all nine entries were the same defect — a `src/__tests__/...` prefix that resolves
+#: against neither `frontend/src/` nor the repo root, because the real path is
+#: `frontend/src/__tests__/...`. The ratchet held them frozen for months as "legacy",
+#: which is what a baseline does when nobody reads the list it is protecting.
+#:
+#: They were found by adding a tenth: the ratchet fired, the message printed all ten, and
+#: the shared prefix was obvious in one line of output. Fixing the one that failed and
+#: leaving nine identical ones beside it would have been the minimum this test asks for
+#: and the wrong thing to do.
+#:
+#: At zero it stops being frozen debt and becomes the same rule the strict check applies
+#: to SCN-113 and above: a Coverage path either resolves or it is wrong.
+LEGACY_UNRESOLVED_COVERAGE_BASELINE = 0
 
 _BODY_RE = re.compile(r"^### (SCN-(\d+)):\s*(\S.*)$")
 _INDEX_ROW_RE = re.compile(r"^\|\s*(SCN-(\d+))\s*\|")

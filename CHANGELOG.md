@@ -6,6 +6,103 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a session could expire and leave the app holding the profile (2026-08-21)
+
+`handleSessionExpired` fired `void import("@/stores/auth-store").then(({ useAuthStore }) =>
+useAuthStore.getState().logout())` and set `window.location.href = "/login"` on the **next
+synchronous line**. The browser begins unloading the document immediately, so the `.then`
+may never run — and the only part of `logout()` that outlives a navigation is
+`storage.removeItem("auth_user")`, the profile kept for instant UI paint.
+
+So a session expires, the user lands on `/login`, and the app still holds their profile
+against a cookie the server has already rejected. Whether they see it depended on a race
+nobody chose (F-AUTH-16).
+
+The teardown is synchronous now and the dynamic import is gone. The in-memory store dies
+with the document either way, so importing it to mutate memory before leaving was work that
+could only fail to happen; what has to happen before the redirect is clearing the persisted
+copy. Each `removeItem` is individually guarded, because Safari private browsing can throw
+on storage access and a session that cannot be cleared must still redirect rather than trap
+somebody on a page that no longer works.
+
+**Found through a CI failure that reported every test passing.** The floating import landed
+after vitest tore the environment down:
+`EnvironmentTeardownError: Cannot load '/src/lib/api/index.ts' … after the environment was
+torn down` — 683 tests green, runner exiting 1. The test file had already grown an
+`afterEach` waiting one macrotask to paper over it, which is enough on a laptop and not on
+a CI runner. That workaround is removed rather than left in place: it was the visible half
+of a real bug, and keeping it would hide the regression if the floating import came back.
+Frontend suite is 688 passed, exit 0.
+
+
+### Changed — the silent-degradation ratchet now measures silence, not breadth (2026-08-20)
+
+`test_broad_handlers_returning_a_degraded_value_do_not_grow` counted every broad `except`
+returning a literal. It was raised four times in one day, and every justification was the
+same: *this one logs at `error` with a traceback*. Measured at the fourth: of 81 such
+handlers, **37 log at warning or above and 44 do not**.
+
+The ratchet was flagging code that complies with its own failure message. It now counts
+only handlers that degrade **without** announcing it — baseline 44, and lower is better.
+
+That is stricter per instance, not looser: the old rule forbade a shape 37 compliant
+handlers shared, and the new one forbids exactly the shape behind the 2026-08-09 incident,
+where a `TypeError` became `""` under a `debug` log. Planting a silent handler goes red;
+planting the same handler with an `error` line stays green — the old version could not tell
+those apart, which is why it had stopped measuring anything.
+
+### Fixed — an ARQ enqueue failure ran the repo index inside the web dyno (2026-08-20)
+
+`enqueue()` had two situations and one warning for both. With no `REDIS_URL`, the
+in-process `asyncio.create_task` path **is** the intended mode — that is how dev runs.
+With Redis configured, an `enqueue_job` that throws means something is wrong with Redis,
+and the code logged a warning and ran the job here anyway (F-SCHED-04).
+
+For `run_repo_index` that is the pipeline measured at ~1 GB peak, executing inside the
+dyno that serves user requests. It either OOMs the API or badly degrades latency, and the
+only trace is one line at a level nothing alerts on.
+
+- **No Redis** → in-process, `INFO`, unchanged.
+- **Redis configured and failing** → `ERROR`, naming the task, because a warning is where
+  a broken Redis goes to die.
+- **`allow_in_process=False`** lets a call site say that running here is not a substitute.
+  It returns `None`, so the caller surfaces a retryable failure instead of a gigabyte
+  quietly relocating into the web process. Declared at `run_repo_index`, `run_db_index`
+  and `run_code_db_sync` — all three already gate on `is_arq_active()`, so they reach the
+  fallback only on this exact fault.
+
+The fallback itself is kept. For light work a Redis blip should not lose the job, and
+removing it would trade a rare incident for a common one.
+
+### Fixed — demo connections created before the fix pointed at `:memory:` (2026-08-20)
+
+Found by the post-deploy check for the demo work, not by a test. Production held one
+connection with `db_type='sqlite'` and `db_name=':memory:'`, created 2026-06-05:
+
+```
+ db_type | db_name  | n |   first    |    last
+---------+----------+---+------------+------------
+ sqlite  | :memory: | 1 | 2026-06-05 | 2026-06-05
+```
+
+Before the demo work it failed with `Unsupported adapter: sqlite`; after it, the new
+connector **refuses** `:memory:` at connect — a better error for the same empty screen. So
+F-EXP-01's promise held for connections created after the fix and not for the ones created
+before it, which is the half of a fix a test suite cannot see (F-EXP-06).
+
+Migration `d3e4f5a6b7c8` rewrites `db_name` to `./data/demo/demo_<owner>.db` and flips
+`is_read_only`. Nothing else is needed: once the path is inside `DEMO_DB_DIR`, the
+already-shipped `repair_demo_db_if_missing` in `ConnectionService.to_config` seeds the file
+on the next config build — self-completing, no operator step and no user action, the same
+shape as the embedding reconcile.
+
+`downgrade` restores the path and deliberately does **not** hand back write access:
+reverting a path rewrite is not a reason to change a privilege, and the asymmetry is the
+safe direction. Verified up and down on a fresh database with two control rows — a
+postgres connection and a mysql one named `:memory:`, the second because the first did not
+earn the migration's `db_type == "sqlite"` clause.
+
+
 ### Security — a failed provider silently sent the request to a different vendor (2026-08-20)
 
 `LLMRouter` walks a fallback chain, and the messages it retries with are the user's

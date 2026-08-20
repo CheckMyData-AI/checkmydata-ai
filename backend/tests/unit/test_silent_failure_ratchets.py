@@ -11,7 +11,11 @@ the verdict they measure (`result_validation`, `required_filter_guard`, the latt
 carrying a comment saying exactly that). This ratchet exists to stop new ones
 appearing unexamined, not to condemn the existing ones.
 
-**Ratchet 2 — the shape that actually caused an incident.** On 2026-08-09 a `TypeError`
+**Ratchet 2 — the shape that actually caused an incident**, and it counts only the
+*silent* ones. A first version counted every broad handler returning a literal, reached 81,
+and was bumped four times in a day for handlers that logged at `error` with a traceback;
+measured, 37 of the 81 announced themselves and 44 did not. A ratchet that flags code
+complying with its own message can only grow. On 2026-08-09 a `TypeError`
 in a prompt helper was caught by a broad `except`, logged at **debug** (invisible at
 production log level) and turned into `""`. The agent received a prompt whose critical
 warnings block was empty, and nothing anywhere said so: a crash and "there are no
@@ -29,19 +33,25 @@ APP = Path(__file__).resolve().parents[2] / "app"
 #: Handlers whose entire body is `pass`. 57 at 2026-08-10.
 MAX_SILENT_PASS = 57
 
-#: Broad handlers that return a literal degraded value. 78 at 2026-08-10; 79 at
-#: 2026-08-20 — `SQLiteConnector.test_connection` (`app/connectors/sqlite.py:159`),
-#: examined rather than waved through. It is the same shape as the other four
-#: connectors' `test_connection` (see `mysql.py:369`), all already inside this count:
-#: the caller asked "is this alive", `False` is the honest answer to any failure, and
-#: it logs at **warning** with the traceback, which is what this ratchet's message asks
-#: for. Raising the number is only correct with the instance named — an unexplained
-#: bump is how a ratchet becomes a formality.
-#: 80 at 2026-08-20 — `_host_key_blob` (`app/connectors/ssh_known_hosts.py`). Examined:
-#: a host key that cannot be read must not crash a connection attempt, and `None` is not
-#: silent here — the caller logs at warning that the connection is unverified and cannot
-#: be pinned, which is the opposite of the failure this ratchet is named after.
-MAX_BROAD_DEGRADED_RETURN = 80
+#: Broad handlers that return a literal degraded value **without saying so**. 44 at
+#: 2026-08-20.
+#:
+#: This replaces a count of *all* broad-degrading handlers, which stood at 78 and was
+#: bumped four times in one day — 79, 80, 81 — each time for a handler that logged at
+#: `error` with a traceback. Measured at the fourth bump: of 81 such handlers, **37 log
+#: at warning or above and 44 do not**. The ratchet was flagging code that already did
+#: what its own failure message asks for ("log at warning, not debug"), so the number
+#: could only ever grow and had stopped measuring anything.
+#:
+#: The rule is now the incident: on 2026-08-09 a `TypeError` in a prompt helper was caught
+#: broadly, logged at **debug**, and turned into `""`. A crash and "there are no warnings"
+#: produced identical output. What made that dangerous was the silence, not the breadth —
+#: so a handler that degrades *and announces it* is not a violation, and 44 is a debt that
+#: can actually be paid down.
+#:
+#: Lower is better and this must never grow. Adding a broad handler that returns a literal
+#: is fine; adding one that does it quietly is not.
+MAX_SILENT_BROAD_DEGRADED_RETURN = 44
 
 
 def _walk() -> list[ast.Module]:
@@ -72,9 +82,17 @@ def test_silent_pass_handlers_do_not_grow():
     )
 
 
-def test_broad_handlers_returning_a_degraded_value_do_not_grow():
+def test_broad_handlers_that_degrade_quietly_do_not_grow():
+    """Count only the handlers that degrade without announcing it.
+
+    A `logger.warning/error/exception/critical` anywhere in the handler counts as
+    announcing. That is deliberately generous — it does not check the log line says
+    anything useful — because the alternative is judging prose in a test, and the
+    measurable half is the one that caused the incident.
+    """
     n = 0
-    for tree in _walk():
+    offenders: list[str] = []
+    for path, tree in _walk_with_paths():
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
@@ -88,14 +106,40 @@ def test_broad_handlers_returning_a_degraded_value_do_not_grow():
                 if isinstance(v, ast.Constant) or (
                     isinstance(v, ast.Tuple) and all(isinstance(e, ast.Constant) for e in v.elts)
                 ):
-                    n += 1
+                    if not _announces(node):
+                        n += 1
+                        offenders.append(f"{path.name}:{node.lineno}")
                     break
-    assert n <= MAX_BROAD_DEGRADED_RETURN, (
-        f"{n} broad handlers return a literal degraded value, ratchet is "
-        f"{MAX_BROAD_DEGRADED_RETURN}. This is the shape that emptied a prompt section "
-        "without anyone noticing — if the caller cannot tell your fallback apart from "
-        "real emptiness, log at warning, not debug."
+    assert n <= MAX_SILENT_BROAD_DEGRADED_RETURN, (
+        f"{n} broad handlers return a literal degraded value without logging at warning "
+        f"or above, ratchet is {MAX_SILENT_BROAD_DEGRADED_RETURN}. This is the shape that "
+        "emptied a prompt section without anyone noticing: if the caller cannot tell your "
+        "fallback apart from real emptiness, say so at warning or above. "
+        f"Offenders: {sorted(offenders)[:8]}"
     )
+
+
+def _announces(handler: ast.ExceptHandler) -> bool:
+    """True when the handler logs at warning or above somewhere in its body."""
+    for n in ast.walk(handler):
+        if isinstance(n, ast.Call) and getattr(n.func, "attr", None) in (
+            "warning",
+            "error",
+            "exception",
+            "critical",
+        ):
+            return True
+    return False
+
+
+def _walk_with_paths() -> list[tuple[Path, ast.Module]]:
+    out = []
+    for f in sorted(APP.rglob("*.py")):
+        try:
+            out.append((f, ast.parse(f.read_text(encoding="utf-8"))))
+        except SyntaxError:  # pragma: no cover
+            continue
+    return out
 
 
 def test_prompt_loaders_report_their_failures_at_warning():

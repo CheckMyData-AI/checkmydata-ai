@@ -1,4 +1,5 @@
 import { toast } from "@/stores/toast-store";
+import * as storage from "@/lib/safe-storage";
 import { SESSION_EXPIRED_MESSAGE, setSessionFlash } from "@/lib/session-flash";
 
 export const API_BASE =
@@ -18,11 +19,31 @@ export function resetSessionExpiredFlag(): void {
 export function handleSessionExpired(): void {
   if (sessionExpiredHandled || typeof window === "undefined") return;
   sessionExpiredHandled = true;
-  // Lazy import: auth-store imports the api barrel, so a static import here
-  // would create a module cycle that breaks Next.js prerendering.
-  void import("@/stores/auth-store").then(({ useAuthStore }) => {
-    useAuthStore.getState().logout();
-  });
+
+  // Everything here is synchronous, and that is the fix rather than the style.
+  //
+  // This used to be `void import("@/stores/auth-store").then(({ useAuthStore }) =>
+  // useAuthStore.getState().logout())` — a lazy import to dodge a module cycle — with
+  // `window.location.href` on the next synchronous line. The browser begins unloading the
+  // document immediately, so the `.then` may never run; and the only part of `logout()`
+  // that outlives a navigation is removing the persisted profile. The in-memory store
+  // dies with the document either way, so importing it to mutate memory before leaving
+  // was work that could only fail to happen.
+  //
+  // Left undone, the person's session expires, they land on /login, and the app still
+  // holds their profile — the copy kept for instant UI paint — against a cookie the
+  // server has already rejected.
+  //
+  // Each `removeItem` is individually guarded: `safe-storage` swallows its own errors,
+  // but Safari private browsing can throw on access and a session that cannot be cleared
+  // must still redirect rather than trap somebody on a page that no longer works.
+  try {
+    storage.removeItem("auth_token");
+    storage.removeItem("auth_user");
+  } catch {
+    /* storage unavailable — the redirect below still has to happen */
+  }
+
   // The redirect below unloads the document and kills the in-memory toast —
   // stash a flash the login page surfaces exactly once (FA-010).
   setSessionFlash(SESSION_EXPIRED_MESSAGE);

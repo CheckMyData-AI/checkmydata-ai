@@ -27,19 +27,17 @@ beforeEach(() => {
 });
 
 /**
- * `handleSessionExpired` fires a deliberately floating `void import(…)` — the
- * lazy import that keeps `auth-store` out of a module cycle. In a browser the
- * document is unloading a line later and nobody waits for it; under vitest the
- * test finishes first, the environment tears down, and the import lands in a
- * dead realm as an `EnvironmentTeardownError`. Every test still PASSED and the
- * runner still exited 1, which is exactly the kind of red nobody reads.
+ * The `afterEach` that used to sit here waited one macrotask for a floating
+ * `void import(…)` in `handleSessionExpired` to land. That import is gone — the session
+ * teardown is synchronous now, because anything deferred past `window.location.href` may
+ * never run at all (see `session-expiry-clears-auth.test.ts`).
  *
- * One turn of the event loop is all it needs, and it is a test-side wait rather
- * than a change to production semantics.
+ * The wait is removed deliberately rather than left as harmless: it was the visible half
+ * of a real bug, and keeping it would hide the regression if the floating import ever
+ * came back. One tick was enough on a laptop and not on a CI runner, which is how this
+ * surfaced — `EnvironmentTeardownError` with all 683 tests passing and the runner
+ * exiting 1.
  */
-afterEach(async () => {
-  await new Promise((resolve) => setTimeout(resolve, 0));
-});
 
 describe("session flash (FA-010)", () => {
   it("consumeSessionFlash returns the stashed message once, then null", () => {
