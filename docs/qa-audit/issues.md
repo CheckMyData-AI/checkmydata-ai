@@ -85,11 +85,11 @@ frontend **A** (563 smells, 7 SOLID).
 |---|---|
 | 🔴 Critical | 0 |
 | 🟠 High | **0** |
-| 🟡 Medium | 16 |
+| 🟡 Medium | 15 |
 | 🟢 Low | 42 |
 | ⚪ Info | 9 |
 
-*Counted 2026-08-20, not estimated: 67 open rows and 36 struck
+*Counted 2026-08-20, not estimated: 66 open rows and 37 struck
 through, by `grep -c '^| F-'` / `grep -c '^| ~~F-'` over this file. The `~` figures this
 replaced had drifted — the tally is now derived from the rows it summarises.*
 
@@ -314,7 +314,7 @@ gate, durable AuditLog, idempotency).
 ### 17 — LLM Routing & Observability
 | ID | Sev | Issue |
 |---|---|---|
-| F-LLM-01 | 🟡 | Silent cross-provider fallback can send customer data to an unintended provider |
+| ~~F-LLM-01~~ | ✅ | ~~Silent cross-provider fallback can send customer data to an unintended provider~~ — **fixed 2026-08-20.** The messages the router retries with are the user's question, their schema and their query results, so a transient 503 at one vendor sent that content to another with nothing naming where it went — the existing line reports that a provider *failed*, not where the request was sent next. Now: crossing a provider boundary logs at WARNING naming both vendors and what was sent, on **both** fallback loops (the streaming path walks its own copy and would otherwise have kept the old behaviour); and `LLM_ALLOW_PROVIDER_FALLBACK=false` makes the choice binding, ending the chain so the caller still raises `LLMAllProvidersFailedError` carrying the real outage rather than the setting. Default stays **on** — same argument as the connection-host guard: turning it off for everyone trades resilience for a guarantee most deployments never asked for, and a control that breaks the normal case gets switched off and then protects nobody. Evidence: `tests/unit/test_llm_provider_fallback_disclosure.py` (6), four plants. |
 | F-LLM-05 | 🟢 | `health_monitor /reconnect` mutation defaults to viewer role (should be editor) |
 | F-LLM-02 | 🟢 | Any unexpected exception evicts a whole provider (flap risk) |
 | F-LLM-03 | ⚪ | Sentry scrubber redacts DSN/secret but only on Sentry egress; F-CONN-08 leak (API resp + logs) bypasses it |

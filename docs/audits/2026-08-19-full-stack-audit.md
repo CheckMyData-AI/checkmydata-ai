@@ -1303,3 +1303,40 @@ convincing wrong finding available, because everything except the conclusion is 
 
 The cheap defence is the one used here: before fixing, run the failure. If it cannot be
 made to happen, the finding is about the future, and saying so is part of the fix.
+## 21. Two loops, one rule, and only one of them had it
+
+F-LLM-01: when the chosen LLM provider fails, `LLMRouter` retries the same messages
+against the next vendor. Those messages are the user's question, their database schema and
+their query results, so the fallback is not only a reliability event — it moves customer
+content to a processor the deployment did not choose.
+
+Two things were missing, and the second is the one that makes the first matter. Nothing
+said **which** vendor received the request: the existing line reports that a provider
+failed, which is a different fact. And no deployment could say *never* — a team that chose
+one vendor because that is who its customers were told about had no way to hold the line.
+
+The fix is the pattern this audit has now used three times: **the guarantee is opt-in, the
+disclosure is not.** `LLM_ALLOW_PROVIDER_FALLBACK` defaults to `true`, because defaulting
+it off trades every deployment's resilience for a promise most never made — the same
+reasoning as the connection-host guard two sections ago, and the same conclusion, that a
+control which breaks the normal case gets switched off and then protects nobody. The
+WARNING naming both vendors fires either way.
+
+A refusal ends the chain rather than raising its own error, so the caller still gets
+`LLMAllProvidersFailedError` carrying the real outage. The reason a request could not be
+served is that the provider was down; the setting is why it was not papered over, and it
+says so on its own line.
+
+### The detail worth carrying forward
+
+**There are two fallback loops in that file**, and they are not shared code: `complete()`
+uses the retry wrapper, `stream()` walks its own copy calling `provider.stream` directly.
+A fix applied to the first would have looked complete — the tests would pass, the log line
+would appear — while the streaming path kept sending data to a second vendor in silence.
+
+That shape has now appeared four times in two days: two route guards exercised from one
+starting state (§14), a `db_type` guard and a `db_name` guard where one hid the other
+(§13), create-versus-PATCH five separate times, and now two transport loops over one
+policy. **A rule that lives in more than one place is a rule that holds in one of them
+until something counts.** The plants are what count here: one per loop, and removing the
+disclosure from either goes red on its own.
