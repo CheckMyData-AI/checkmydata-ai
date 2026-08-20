@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — two concurrent creates both passed the same quota check (2026-08-21)
+
+`enforce_connection_quota` ran `SELECT COUNT(…)`, compared, and returned; the insert
+happened afterwards in the route. Two concurrent requests both counted `N-1`, both passed,
+and both inserted — a plan allowing one connection ended up with two (F-BILL-02). Creation
+is rate-limited to 10/minute, which bounds how far it goes and does not stop it.
+
+A row lock on the owner (`SELECT … FOR UPDATE` on `users`), taken **before** the count,
+serialises quota decisions for that user and leaves different users uncontended. No counter
+is introduced that could drift out of step with the rows it counts.
+
+**Honest about scope.** `FOR UPDATE` is a Postgres guarantee; SQLite's driver accepts the
+clause and ignores it. Production is Postgres, and SQLite dev is a single-writer database
+where the interleaving this race needs cannot happen — so the guard is real where the race
+is real and inert where it cannot occur. The tests assert the lock is *requested*, because
+asserting that it *serialises* is something SQLite cannot be made to demonstrate.
+
+- A lock failure logs at warning and lets the check proceed. Refusing the write would trade
+  a rare over-count for a hard outage.
+- An unlimited plan returns before the lock: serialising a decision already made is
+  contention bought for nothing.
+- `_db_returning` in the billing tests keyed on call order and broke the moment a query was
+  added ahead of the count, failing with `StopAsyncIteration` — which says nothing about
+  quotas. It now answers the lock and leaves the ordered sequence for the lookups that
+  genuinely rely on it.
+
+
 ### Fixed — a done-callback is not a lifetime, and my own previous fix missed half its sites (2026-08-21)
 
 **F-PROJ-05.** The named route already used `spawn_tracked`, so the *silent* half was
