@@ -1340,3 +1340,86 @@ starting state (§14), a `db_type` guard and a `db_name` guard where one hid the
 policy. **A rule that lives in more than one place is a rule that holds in one of them
 until something counts.** The plants are what count here: one per loop, and removing the
 disclosure from either goes red on its own.
+
+## 22. The half of a fix a test suite cannot see
+
+The demo work shipped in v235 and its post-deploy check went looking for something the
+tests could not have known to ask:
+
+```sql
+SELECT db_type, db_name, COUNT(*), MIN(created_at)::date FROM connections
+WHERE db_type = 'sqlite' GROUP BY 1,2;
+ sqlite | :memory: | 1 | 2026-06-05
+```
+
+One connection, created eleven weeks before the fix. Before it, that row failed with
+`Unsupported adapter: sqlite`. After it, the new connector **refuses** `:memory:` at
+connect — which is a better error for the identical empty screen.
+
+**F-EXP-01 said the demo path delivers sample data. After the fix that was true for
+connections created after the fix.** Every test asserted behaviour on rows the new code
+creates, because that is the only kind of row a test creates. The rows already in the
+database were outside the frame entirely, and no amount of test coverage would have moved
+the frame — only looking at production did.
+
+The repair is a data migration that then gets out of the way: rewrite `db_name` to the
+owner's demo path, and the `repair_demo_db_if_missing` already deployed in `to_config`
+seeds the file on the next config build. No operator step, no user action, the same
+self-completing shape the embedding reconcile uses. The user never learns it was broken,
+which is the correct outcome — they were never told it worked.
+
+### Two details worth keeping
+
+**`downgrade` restores the path and does not restore write access.** Reverting a path
+rewrite is not a reason to hand a connection back its write privilege, and a downgrade
+that does something nobody asked for is worse than one that is slightly asymmetric. The
+test asserts the asymmetry so it reads as a decision.
+
+**The second control row exists because the first did not earn its clause.** Removing the
+migration's `db_type == "sqlite"` condition left the test green — the postgres control row
+was named `app`, so nothing non-sqlite was ever named `:memory:` for the condition to
+protect. A mysql connection with `:memory:` typed into it as a placeholder is odd and not
+impossible, and it is precisely what the clause is for. Third time in two days that a
+guard turned out to be untested until a plant said so; the pattern is now familiar enough
+to check for deliberately rather than stumble into.
+
+## 23. The ratchet was measuring the wrong thing, and four bumps in a day said so
+
+`test_broad_handlers_returning_a_degraded_value_do_not_grow` counted every broad `except`
+that returns a literal. It stood at 78 this morning and I raised it four times — 79, 80,
+81 — each time with the instance named and a justification, and each time the justification
+was the same: *this one logs at `error` with a traceback.*
+
+Four identical justifications in one day is the measure telling you about itself. So it got
+measured:
+
+```
+broad handlers returning a literal : 81
+  ... log at warning or above      : 37
+  ... degrade SILENTLY             : 44
+```
+
+**The ratchet was flagging code that complies with its own failure message.** That message
+reads *"if the caller cannot tell your fallback apart from real emptiness, log at warning,
+not debug"* — and 37 of the 81 do exactly that. A number that grows every time somebody
+follows the advice cannot be a limit on anything.
+
+The rule is now the incident it was named after. On 2026-08-09 a `TypeError` in a prompt
+helper was caught broadly, logged at **debug**, and turned into `""`; a crash and "there are
+no warnings" produced identical output. What made that dangerous was the **silence**, not
+the breadth. So a handler that degrades *and announces it* is not a violation, and the
+count is 44 — a debt that can be paid down instead of a ceiling that only rises.
+
+Two properties worth stating, because re-baselining a ratchet looks like weakening one:
+
+- **It is stricter per instance.** The old rule forbade a shape 37 compliant handlers
+  shared; the new one forbids exactly the shape that caused the incident, and forbids it at
+  zero tolerance for growth.
+- **It is falsifiable in both directions.** Planted a silent broad handler → red. Planted
+  an identical one that logs at `error` → green. The old ratchet could not tell those apart,
+  which is why it had nothing to say.
+
+The generosity is deliberate: any `warning`/`error`/`exception`/`critical` call anywhere in
+the handler counts as announcing, without checking the words. Judging prose in a test is
+how a test becomes a matter of opinion, and the measurable half is the half that caused the
+outage.

@@ -67,6 +67,7 @@ async def enqueue(
     coro_factory: Callable[..., Coroutine] | None = None,
     *,
     task_id: str | None = None,
+    allow_in_process: bool = True,
     _queue_name: str | None = None,
     _job_timeout: int | None = None,
     **kwargs: Any,
@@ -82,6 +83,14 @@ async def enqueue(
         is active (the worker discovers the function by *task_name*).
     task_id:
         Optional dedup key.  In fallback mode, prevents duplicate tasks.
+    allow_in_process:
+        Whether running here is an acceptable substitute for the worker when Redis is
+        configured but the enqueue fails (F-SCHED-04). ``True`` for light work, where a
+        Redis blip should not lose the job. ``False`` for the heavy pipelines: the repo
+        index peaks near 1 GB, and running that inside the dyno serving user requests is
+        not a degraded version of running it in the worker — it is an outage with extra
+        steps. Ignored when no Redis is configured at all, because then in-process is the
+        intended mode and refusing would leave the feature simply broken.
     **kwargs:
         Keyword arguments forwarded to the task function.
 
@@ -116,8 +125,24 @@ async def enqueue(
             logger.info("Task enqueued via ARQ: %s (job=%s)", task_name, jid)
             return jid
         except Exception:
-            logger.warning(
-                "ARQ enqueue failed for %s, falling to asyncio",
+            # F-SCHED-04. Two situations were collapsed into one warning. With no Redis
+            # configured, in-process IS the mode. With Redis configured, an enqueue that
+            # throws means something is wrong with Redis — and a warning is where that
+            # goes to die: nothing hides it, and nothing alerts on it either.
+            if not allow_in_process:
+                logger.error(
+                    "ARQ enqueue failed for %s and in-process execution is not an "
+                    "acceptable substitute for it (it would run inside the web dyno). "
+                    "The task was NOT started; the caller should surface a retryable "
+                    "failure.",
+                    task_name,
+                    exc_info=True,
+                )
+                return None
+            logger.error(
+                "ARQ enqueue failed for %s; falling back to in-process execution in "
+                "this dyno. Redis is configured, so this is a fault worth chasing, not "
+                "the dev-mode path.",
                 task_name,
                 exc_info=True,
             )

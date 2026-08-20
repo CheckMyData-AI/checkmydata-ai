@@ -116,6 +116,8 @@ async def _dispatch_db_index(
     if task_queue.is_arq_active():
         await task_queue.enqueue(
             "run_db_index",
+            # F-SCHED-04: if the enqueue fails, this must not relocate into the web dyno.
+            allow_in_process=False,
             task_id=f"db_index:{connection_id}:{uuid.uuid4().hex[:8]}",
             connection_id=connection_id,
             project_id=project_id,
@@ -175,6 +177,8 @@ async def _dispatch_code_db_sync(
     if task_queue.is_arq_active():
         await task_queue.enqueue(
             "run_code_db_sync",
+            # F-SCHED-04: if the enqueue fails, this must not relocate into the web dyno.
+            allow_in_process=False,
             task_id=f"code_db_sync:{connection_id}:{uuid.uuid4().hex[:8]}",
             connection_id=connection_id,
             project_id=project_id,

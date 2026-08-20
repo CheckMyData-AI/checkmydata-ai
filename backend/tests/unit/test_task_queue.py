@@ -234,6 +234,10 @@ async def test_dispatch_db_index_uses_enqueue_when_arq_active(monkeypatch):
         "connection_id": "conn123",
         "project_id": "proj456",
         "wf_id": "wf-x",
+        # F-SCHED-04: if the enqueue fails, the DB index must not relocate into the web
+        # dyno. Asserted here rather than only at the queue, because a flag the call site
+        # forgets to pass is a flag that does nothing.
+        "allow_in_process": False,
     }
     # No local handle in ARQ mode — persisted status is authoritative.
     assert "conn123" not in conn_routes._db_index_tasks

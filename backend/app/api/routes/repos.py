@@ -284,6 +284,8 @@ async def _spawn_repo_index(
         if task_queue.is_arq_active():
             await task_queue.enqueue(
                 "run_repo_index",
+                # F-SCHED-04: if the enqueue fails, this must not relocate into the web dyno.
+                allow_in_process=False,
                 task_id=f"repo_index:{project_id}:{uuid.uuid4().hex[:8]}",
                 project_id=project_id,
                 force_full=force_full,
