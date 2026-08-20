@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a malformed `cards_json` rendered a shared dashboard as empty (2026-08-21)
+
+F-VIZ-02 was filed as a stored-XSS vector and correctly downgraded — React escapes its
+children, so nothing executes. The residual was quieter than "unvalidated storage" sounds.
+
+`parseCards` is `try { JSON.parse(json) } catch { return [] }`, so a malformed string — or
+valid JSON of the wrong shape — renders as an **empty dashboard**. Dashboards are shared by
+default, so one bad write shows everyone else a page with nothing on it and no sign that
+anything is wrong.
+
+`cards_json` is now validated at the write boundary against the contract the consumer
+declares (`frontend/src/lib/api/types.ts:502`): a JSON array of objects, `note_id` a
+non-empty string, `viz_config` an optional object, `refresh_interval` an optional number,
+and at most 200 cards.
+
+- **The card cap bounds work, not bytes.** The viewer issues one note fetch per card, and
+  the existing 500 KB payload cap allows roughly thirty thousand `{"note_id":"x"}` entries.
+- **`viz_config`'s interior is deliberately not inspected.** The viewer treats it as opaque
+  and hands it to the chart layer; validating it here would invent a contract nobody wrote.
+- **Create and PATCH share one `_DashboardCardRules` base**, so the rule cannot be added to
+  one and forgotten on the other.
+- **Writes only.** A row stored before this change reads exactly as it did: making a legacy
+  row fail to *load* would turn a cosmetic problem into an outage.
+
+
 ### Fixed — a session could expire and leave the app holding the profile (2026-08-21)
 
 `handleSessionExpired` fired `void import("@/stores/auth-store").then(({ useAuthStore }) =>

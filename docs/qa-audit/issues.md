@@ -85,11 +85,11 @@ frontend **A** (563 smells, 7 SOLID).
 |---|---|
 | 🔴 Critical | 0 |
 | 🟠 High | **0** |
-| 🟡 Medium | 14 |
+| 🟡 Medium | 13 |
 | 🟢 Low | 42 |
 | ⚪ Info | 9 |
 
-*Counted 2026-08-21, not estimated: 65 open rows and 40 struck
+*Counted 2026-08-21, not estimated: 64 open rows and 41 struck
 through, by `grep -c '^| F-'` / `grep -c '^| ~~F-'` over this file. The `~` figures this
 replaced had drifted — the tally is now derived from the rows it summarises.*
 
@@ -278,7 +278,7 @@ gate, durable AuditLog, idempotency).
 |---|---|---|
 | ~~F-VIZ-04~~ | 🟢 | **CLOSED 2026-08-20, per format rather than with one hammer.** Measured first: `openpyxl` writes a `=`-leading string as `data_type='f'` — a real formula — while `+`, `-`, `@` come out as strings. So **XLSX** forces the cell to text and the value survives byte for byte, while **CSV**, which has no types, must prefix. **JSON is deliberately untouched** — no formula semantics in the format, so altering it would corrupt data for every consumer to protect none. Headers are covered too: column names come from the query. The rule exempts numbers and single characters, and that exemption is the substance — a blanket OWASP character list prefixes every negative number, turning `-1500.00` into `'-1500.00` and breaking a financial export for every downstream consumer, which is a worse bug than the one being fixed. Tests: `test_export_formula_injection.py` (49), including a class devoted to numeric fidelity. |
 | F-VIZ-01 | 🟡 | Dashboard cards are stale data snapshots, no freshness signal |
-| F-VIZ-02 | 🟡 | `cards_json` stored verbatim → stored-XSS vector (downgraded: frontend renders escaped React children; residual is unvalidated storage) |
+| ~~F-VIZ-02~~ | ✅ | ~~`cards_json` stored verbatim → stored-XSS vector (downgraded: frontend renders escaped React children; residual is unvalidated storage)~~ — **fixed 2026-08-21, and the residual was quieter than "unvalidated storage" suggests.** `parseCards` is `try { JSON.parse(json) } catch { return [] }`, so a malformed string — or valid JSON of the wrong shape — renders as an **empty dashboard**. Dashboards are shared by default, so one bad write shows everyone else a page with nothing on it and no sign anything is wrong. Now validated at the write boundary against the contract the consumer declares (`frontend/src/lib/api/types.ts:502`): array of objects, `note_id` a non-empty string, `viz_config` an optional object, `refresh_interval` an optional number, at most 200 cards — a bound on *work*, since the viewer issues one note fetch per card and the 500 KB byte cap allows ~30 000 of them. `viz_config`'s interior is deliberately not inspected: the viewer treats it as opaque, so validating it would invent a contract nobody wrote. Rules live on a shared `_DashboardCardRules` base so create and PATCH cannot drift. **Writes only** — a legacy row still reads as it always did, because making it fail to load would turn a cosmetic problem into an outage (the F-EXP-06 lesson pointed the other way). Evidence: `tests/unit/test_dashboard_cards_validation.py` (20), six plants. |
 | F-VIZ-03 | 🟢 | No server-side JSON/structure/size validation of `cards_json` |
 
 ### 13 — Schedules, Batch & Worker
