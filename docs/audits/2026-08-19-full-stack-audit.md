@@ -974,3 +974,45 @@ This is the third instance of one shape in two days: **guarded on create, free o
 — `db_type`, `db_name`, and now `branch`. A create-side validator reads as "this field is
 handled", and nothing points at the sibling model that copies the field and not the rule.
 Worth a sweep of its own rather than a third individual fix.
+
+## 14. The fourth instance, refused
+
+Three fields in two days had the same shape: guarded on create, free on PATCH.
+`ConnectionUpdate.db_type`, `ConnectionUpdate.db_name`, `UpdateRepoRequest.branch`. Each
+was found while fixing something else, and each was fixed where it was found.
+
+Fixing the fourth the same way is how the fifth ships. So instead: an AST sweep of every
+`Create`/`Update` model pair under `app/api/routes/` — 109 `BaseModel` classes, 8 paired
+stems — comparing, field by field, whether both sides declare a validator.
+
+**Three more, all on `ConnectionUpdate`:**
+
+| Field | Create | Update | What that allowed |
+|---|---|---|---|
+| `mcp_env` | ≤50 entries, keys ≤255, values ≤4096 | nothing | `update()` encrypts and stores whatever dict arrives (`connection_service.py:216-218`) into a Text column, then hands it to a spawned MCP subprocess |
+| `connection_string` | stripped | nothing | `_sanitize_strings` covers `name` downstream but not the DSN, so a trailing newline reached `encrypt()` and failed to connect later in a way that pointed nowhere |
+| `name` | stripped | nothing | covered downstream — the only one of the three that was harmless, and indistinguishable from the other two by reading either model |
+
+That last row is the argument for the sweep. Reading `ConnectionUpdate` tells you nothing
+about which omissions matter; only the comparison does, and nobody performs a comparison
+they have not been asked for.
+
+### The fix is a base class, and the ratchet is for everyone else
+
+`_ConnectionFieldRules` carries the three rules and both models inherit it, so a rule
+added later cannot be added to one and forgotten on the other. `check_fields=False` is
+required because the base declares no fields — and it costs something: a mistyped field
+name there validates nothing, silently. The runtime tests buy that back by asserting each
+rule *fires* on both models rather than merely being declared.
+
+`test_create_update_validator_parity.py` compares by AST and covers the pairs not yet
+shaped this way. Its allow-list takes a **reason**, not just an entry — an exception
+nobody has to justify is how a ratchet becomes a formality, which is the same note the
+78→79 bump earned two sections ago.
+
+**The refactor broke the module, and a test said so within the minute.** Moving the
+validators onto a field-less base made pydantic raise `PydanticUserError` at class
+definition — `app/api/routes/connections.py` would not import at all, which is the whole
+API down. `ruff` and the AST-based parity test both passed it, because neither imports the
+module. Worth keeping in view: a static check that never executes the code cannot tell a
+refactor from a crash.
