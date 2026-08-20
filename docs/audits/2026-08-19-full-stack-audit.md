@@ -912,3 +912,65 @@ The distinction matters more than either fix. A ratchet is not a rule that the c
 correct; it is a rule that the count is *examined*. One of these two was a real defect and
 the other was a legitimate new instance, and the ratchet cannot tell them apart — that is
 the reader's job, and the ratchet's job is to make sure a reader looks.
+
+## 13. F-GIT-01 — the finding was real, and the tests lied twice about it
+
+The board carried this as Medium: *"Option injection via unvalidated rev/sha →
+`show`/`diff --output=` arbitrary write."* Before writing a line of fix, the claim was
+run:
+
+```
+before: 'IMPORTANT ORIGINAL CONTENT\n'
+after : 'diff --git a/f.txt b/f.txt\nindex f719efd..6e5aa7c 100644\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-two\n+dirty\n'
+show also writes: 216 bytes
+```
+
+`GitInspector.diff()` and `.show()` pass caller-supplied revisions as **leading argv**
+with no `--`, so `--output=<path>` is not a revision — it is git's diff-output option, and
+git writes there. Any file the process can write, truncated and replaced. On a dyno that
+includes the application's own source, which is remote code execution at the next boot.
+
+Reachable from chat: `git_agent.py:373/375/382/408` take `args["sha"]`, `args["a_sha"]`,
+`args["b_sha"]` and `args["commit_sha"]` straight out of the model's tool call. The paths
+beside them were already guarded by `_safe_relpath`; the revisions were not. **A path
+looks dangerous and a revision looks like an opaque identifier** — that asymmetry is the
+whole finding.
+
+The fix is one validator at all five rev entry points, and a new `UnsafeRevError` so
+*refused before git ran* never reads as *git ran and disagreed*. The original
+proof-of-concept now raises and the file is intact.
+
+### The tests lied twice, and the second lie was subtler
+
+**First: a rule with no test that fails without it.** Deleting the character allow-list
+left all 24 tests green — every hostile value they carried began with a dash, so the
+leading-dash rule satisfied them alone. Adding eight metacharacter cases (`HEAD -o …`,
+`HEAD;…`, a newline) did **not** fix it: they still passed, because they asserted
+`GitInspectorError`, and git rejects `HEAD -o /path` as an unresolvable revision by
+itself, raising `GitCommandFailedError` — the same base class.
+
+The assertion had to become the specific type. That is not a test detail; it is the rule's
+actual claim. For today's call sites the allow-list is defence in depth — argv is a list,
+and a space inside one element cannot split into two arguments — and a rule nothing can
+distinguish from git's own error is a rule that quietly stops existing.
+
+**Second, and worse: the test suite performed the attack.** The hostile values were
+written as a literal `/tmp/x`. A plant run removes the guard on purpose — so the run that
+proved the guard worked **created `/tmp/x`, 216 bytes, outside any sandbox**. Found by an
+assertion failing for the wrong reason: `assert not Path("/tmp/x").exists()` was false
+because an earlier plant had just written it.
+
+> A test carrying a proof-of-concept executes that proof-of-concept the moment the guard
+> it checks is gone — which is exactly when someone is deliberately removing it. Aim it at
+> `tmp_path`.
+
+### And the same gap, one file over
+
+`UpdateRepoRequest.branch` had **no validator** while `AddRepoRequest.branch` called
+`validate_git_ref`, and the branch reaches `repo.git.checkout(branch)` and
+`Repo.clone_from(branch=…)` as argv. Filed as F-GIT-08 and fixed in the same change.
+
+This is the third instance of one shape in two days: **guarded on create, free on PATCH**
+— `db_type`, `db_name`, and now `branch`. A create-side validator reads as "this field is
+handled", and nothing points at the sibling model that copies the field and not the rule.
+Worth a sweep of its own rather than a third individual fix.

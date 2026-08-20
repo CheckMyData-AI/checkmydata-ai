@@ -873,6 +873,20 @@ class UpdateRepoRequest(BaseModel):
     branch: str | None = Field(None, max_length=200)
     ssh_key_id: str | None = Field(None, max_length=64)
 
+    @field_validator("branch")
+    @classmethod
+    def _validate_branch(cls, v: str | None) -> str | None:
+        """The create model has always validated this; the update model had not.
+
+        The branch reaches `repo.git.checkout(branch)` and `Repo.clone_from(branch=…)`
+        as argv, so an unvalidated one is the same option-injection class as F-GIT-01 —
+        and the same shape of gap as the connection routes: guarded on create, free on
+        PATCH. One validator, both models.
+        """
+        if v is None:
+            return None
+        return validate_git_ref(v)
+
 
 @router.patch("/repositories/{repo_id}", response_model=RepoResponse)
 @limiter.limit("10/minute")

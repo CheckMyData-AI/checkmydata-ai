@@ -85,11 +85,11 @@ frontend **A** (563 smells, 7 SOLID).
 |---|---|
 | 🔴 Critical | 0 |
 | 🟠 High | **0** |
-| 🟡 Medium | 23 |
+| 🟡 Medium | 22 |
 | 🟢 Low | 42 |
 | ⚪ Info | 9 |
 
-*Counted 2026-08-20, not estimated: 74 open rows and 27 struck
+*Counted 2026-08-20, not estimated: 73 open rows and 29 struck
 through, by `grep -c '^| F-'` / `grep -c '^| ~~F-'` over this file. The `~` figures this
 replaced had drifted — the tally is now derived from the rows it summarises.*
 
@@ -235,7 +235,8 @@ gate, durable AuditLog, idempotency).
 ### 08 — GitAgent (live Git)
 | ID | Sev | Issue |
 |---|---|---|
-| F-GIT-01 | 🟡 | Option injection via unvalidated rev/sha → `show`/`diff --output=` arbitrary write |
+| ~~F-GIT-01~~ | ✅ | ~~Option injection via unvalidated rev/sha → `show`/`diff --output=` arbitrary write~~ — **proven, then fixed 2026-08-20.** Not suspected: measured against a scratch repo, `diff("--output=<path>", "HEAD")` turned `victim.txt` from `IMPORTANT ORIGINAL CONTENT` into the diff text, and `show("--output=<path>")` wrote 216 bytes to the same file. Any file the process can write — on a dyno that includes the app's own source, which is RCE at next boot. Reachable from chat: `git_agent.py:373/375/382/408` pass `args["sha"]`/`["a_sha"]`/`["b_sha"]`/`["commit_sha"]` straight from the model's tool call. Fixed with `GitInspector._safe_rev` (no leading dash + a revision charset) applied at all five rev entry points, and `UnsafeRevError` distinguished from `InvalidRefError` so *refused* never reads as *git disagreed*. The original PoC now raises and the file is intact. Evidence: `tests/unit/test_git_inspector_rev_injection.py` (32). |
+| ~~F-GIT-08~~ | ✅ | **Found next door while fixing F-GIT-01**: `UpdateRepoRequest.branch` had **no validator** while `AddRepoRequest.branch` called `validate_git_ref` — and the branch reaches `repo.git.checkout(branch)` and `Repo.clone_from(branch=…)` as argv. Same option-injection class, same create-guarded/PATCH-free shape as the connection routes. **Fixed 2026-08-20** (`app/api/routes/repos.py:876-889`). Evidence: `TestTheSameGapNextDoor` (3). |
 | F-GIT-02 | 🟢 | `git_agent_auto_pull` does network fetch + tree update (inherits F-KNOW-02 risk) |
 | F-GIT-03 | 🟢 | `except (TimeoutError, Exception)` over-broad on auto-pull |
 | F-GIT-04 | 🟢 | Freshness warning detects only "ahead", not "behind/diverged" |
