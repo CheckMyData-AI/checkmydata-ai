@@ -178,6 +178,16 @@ class Settings(BaseSettings):
     # git server lives inside a trusted private network (e.g. GitLab on RFC1918).
     repo_allow_private_hosts: bool = False
 
+    # F-CONN-04 SSRF guard for user-supplied connection hosts (db_host, ssh_host, and a
+    # DSN's host). Unlike ``repo_allow_private_hosts`` this defaults to **True**, and the
+    # asymmetry is deliberate: a public git remote is the normal case, while a database
+    # on 10.x / 192.168.x / 127.0.0.1 is the normal case, so refusing private addresses
+    # by default would break the product for most deployments. Cloud metadata endpoints
+    # (169.254.169.254 and friends) are refused either way — no database lives there and
+    # what does hands out credentials for the whole account. Set this False when running
+    # multi-tenant, where a tenant reaching 127.0.0.1 reaches *your* infrastructure.
+    connection_allow_private_hosts: bool = True
+
     # Live Git access (GitInspector / GitAgent). All operations are read-only.
     # ``git_agent_auto_pull`` lets the GitAgent refresh the local clone before
     # answering when it has fallen behind the indexed HEAD; off by default

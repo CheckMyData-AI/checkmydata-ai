@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.config import settings as app_config
+from app.connectors.host_guard import HostNotAllowedError, check_connection_targets
 from app.connectors.ssh_pre_commands import validate_pre_commands
 from app.core import task_queue
 from app.core.audit import audit_log
@@ -629,6 +630,18 @@ async def create_connection(
     if body.ssh_key_id:
         await _require_owned_ssh_key(db, body.ssh_key_id, user["user_id"])
 
+    # F-CONN-04: a connection host is user-supplied and reaches a socket. Metadata
+    # endpoints are refused on every deployment; private addresses only where the
+    # operator says so, because a database on 10.x is the normal case.
+    try:
+        await check_connection_targets(
+            db_host=body.db_host,
+            ssh_host=body.ssh_host,
+            connection_string=body.connection_string,
+        )
+    except HostNotAllowedError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     conn = await _svc.create(db, **body.model_dump())
     logger.info(
         "Connection created: name=%s type=%s project=%s",
@@ -767,6 +780,17 @@ async def update_connection(
                 status_code=400,
                 detail="Provide either a connection string or db_host + db_name",
             )
+
+    # F-CONN-04, on the merged row: a PATCH that moves only the host must be checked,
+    # and one that leaves it alone must not re-check a host already stored.
+    try:
+        await check_connection_targets(
+            db_host=updates.get("db_host") if "db_host" in updates else None,
+            ssh_host=updates.get("ssh_host") if "ssh_host" in updates else None,
+            connection_string=updates.get("connection_string"),
+        )
+    except HostNotAllowedError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     conn = await _svc.update(db, connection_id, **updates)
     if not conn:
