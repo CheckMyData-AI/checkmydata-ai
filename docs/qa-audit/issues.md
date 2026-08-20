@@ -202,9 +202,9 @@ gate, durable AuditLog, idempotency).
 ### 05 — Chat & Orchestration
 | ID | Sev | Issue |
 |---|---|---|
-| F-CHAT-01 | 🟡 | WS authz checked only at connect; revocation ineffective until disconnect |
-| F-CHAT-02 | 🟡 | Empty chat_session created on every WS connect → orphan bloat |
-| F-CHAT-03 | 🟡 | `_relay_events` 60s idle timeout silently kills progress on slow steps |
+| ~~F-CHAT-01~~ | 🟢 | **CLOSED 2026-08-20.** Access is re-checked per **message**, not per connection — a socket lives as long as the tab, so a connect-time check left a removed member querying the project's database until they reloaded. Authorization belongs to the action, and a message is the action: one indexed query against messages that arrive seconds to minutes apart. A revoked member is told and closed with 4003 rather than silently ignored. **Found alongside:** the gate carried its own raw-SQL copy of `owner_id OR member` — a fourth copy of a rule whose helper docstring names *this very call site* as a user of the single source of truth. Now `can_access`. Tests: `test_ws_authz_revalidation.py` (4), the re-check watched failing with the guard disabled. |
+| F-CHAT-02 | 🟡 | **Confirmed open, evidence recorded 2026-08-20.** `_chat_svc.create_session` is called **before** the `while True:` receive loop (`chat.py:1545`), unconditionally, so every connect writes a row even when no message is ever sent — ten tab reloads leave ten orphans, and they pollute the session list the user reads (SCN-048), not only the table. The protocol constrains the fix: `session_created` is sent immediately after, so the client expects an id at connect time. Reusing an existing empty session for the same `(project, connection, user)` bounds orphans to one per triple **and** preserves the contract exactly; creating lazily on first message would not. |
+| F-CHAT-03 | 🟡 | **Confirmed open, evidence recorded 2026-08-20.** `chat.py:1478` — `await asyncio.wait_for(queue.get(), timeout=60)`, a hardcoded 60 s with no setting beside it, while `ws_idle_timeout_seconds` exists for the receive side. A step that legitimately exceeds a minute (a large `ast_parse`, a slow warehouse query) stops the relay while the run continues, so the reasoning panel goes quiet and the answer arrives with no trace of how — which reads as a hang. |
 | F-CHAT-04 | 🟢 | WS uses connection config captured once; stale after mid-session edits |
 | F-CHAT-05 | ⚪ | ~51 silent exception handlers mask errors (cross-cutting) |
 | F-CHAT-06 | 🟢 | WS `receive_json` no explicit payload cap (mitigated: 20K model cap; uvicorn 16MB frame) |
@@ -241,10 +241,10 @@ gate, durable AuditLog, idempotency).
 ### 09 — Data Validation / Investigations / DataGate
 | ID | Sev | Issue |
 |---|---|---|
-| F-DG-01 | 🟡 | `Decimal` percent/date values bypass the range hard-check |
-| F-DG-02 | 🟡 | Hard checks run on a sample → impossible values past window pass |
-| F-DG-03 | 🟡 | Hard-FAIL keys on fuzzy name-based classification |
-| F-DG-04 | 🟡 | JSON/array cell → `tuple(row)` unhashable → DataGate crashes |
+| ~~F-DG-01~~ | 🟢 | **CLOSED — verified 2026-08-20, already fixed.** `data_gate.py:384` reads `isinstance(val, (int, float, Decimal))`, matching the W0 note in `CLAUDE.md`. The row predates that work. |
+| ~~F-DG-02~~ | 🟢 | **CLOSED — verified 2026-08-20, already fixed.** `_check_value_ranges` scans the **whole** in-memory result by default (`qr.rows if scan_cap <= 0`), with the reason written at the call site: "missing even one defeats the gate". The checks that genuinely do sample now say so in their own message ("based on sample only"), which is the other half of the finding. |
+| ~~F-DG-03~~ | 🟢 | **CLOSED — verified 2026-08-20, engineered against deliberately.** `_PERCENT_BOUNDED_KEYWORDS` is documented as "only tokens that are *unambiguously* a 0..100 share" and **enumerates the false positives it excludes** — retention, churn and utilization, because NRR exceeds 100%, net churn goes negative and CPU utilization exceeds 100%. A delta/change token demotes a percent column to `rate`, so `pct_growth` is not hard-bounded. The fuzzy-classification-drives-hard-fail concern is exactly what that discipline addresses. |
+| ~~F-DG-04~~ | 🟢 | **CLOSED 2026-08-20 — the one of the four that was genuinely open.** Measured: `tuple([1, {"a": 1}]) in set()` raises `TypeError: unhashable type: 'dict'`, so a Postgres `json`/`jsonb` or array column, a Mongo document or an aggregated array took down the gate — and DataGate sits on the answer path, so a good query failed the whole answer. A check that breaks what it is checking is worse than no check. `_hashable()` recurses rather than falling back to `repr`, so rows whose JSON differs only deep inside still count as different and identical JSON still counts as duplicate; a dict is keyed on sorted items so key order does not invent a difference. Tests: `test_data_gate_unhashable_rows.py` (12), including that the check keeps *detecting* and not merely surviving. |
 | F-DG-05 | 🟢 | Percent bounds `-1..200` too lenient |
 | F-DG-06 | 🟢 | Type-consistency check off-by-design at boundaries |
 | F-DG-08 | 🟢 | Cross-stage/truncation checks use unreliable `row_count` |
@@ -270,7 +270,7 @@ gate, durable AuditLog, idempotency).
 ### 12 — Visualizations & Dashboards
 | ID | Sev | Issue |
 |---|---|---|
-| F-VIZ-04 | 🟡 | CSV/XLSX export doesn't neutralize formula-leading cells → CSV injection |
+| ~~F-VIZ-04~~ | 🟢 | **CLOSED 2026-08-20, per format rather than with one hammer.** Measured first: `openpyxl` writes a `=`-leading string as `data_type='f'` — a real formula — while `+`, `-`, `@` come out as strings. So **XLSX** forces the cell to text and the value survives byte for byte, while **CSV**, which has no types, must prefix. **JSON is deliberately untouched** — no formula semantics in the format, so altering it would corrupt data for every consumer to protect none. Headers are covered too: column names come from the query. The rule exempts numbers and single characters, and that exemption is the substance — a blanket OWASP character list prefixes every negative number, turning `-1500.00` into `'-1500.00` and breaking a financial export for every downstream consumer, which is a worse bug than the one being fixed. Tests: `test_export_formula_injection.py` (49), including a class devoted to numeric fidelity. |
 | F-VIZ-01 | 🟡 | Dashboard cards are stale data snapshots, no freshness signal |
 | F-VIZ-02 | 🟡 | `cards_json` stored verbatim → stored-XSS vector (downgraded: frontend renders escaped React children; residual is unvalidated storage) |
 | F-VIZ-03 | 🟢 | No server-side JSON/structure/size validation of `cards_json` |
