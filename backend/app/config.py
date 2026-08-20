@@ -162,6 +162,14 @@ class Settings(BaseSettings):
 
     repo_clone_base_dir: str = "./data/repos"
 
+    # Where the demo project's sample SQLite lives (F-EXP-01). A file, not `:memory:`:
+    # an in-memory database is empty on every fresh connection, so seeding it in one
+    # says nothing to the next — which is why "Try demo instead" showed a new user an
+    # empty database while SCN-003 promised sample data. On an ephemeral filesystem the
+    # file disappears with the dyno, and `demo_setup` re-seeds when it is missing rather
+    # than assuming it survived.
+    demo_db_dir: str = "./data/demo"
+
     # FA-004 SSRF guard for user-supplied git repository URLs. By default
     # ``validate_repo_url`` DNS-resolves the repo host and rejects
     # loopback/private/link-local/reserved targets so `git ls-remote`/`clone`

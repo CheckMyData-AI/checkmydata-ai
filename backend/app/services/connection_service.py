@@ -14,6 +14,7 @@ from app.connectors.ssh_known_hosts import connect_with_policy
 from app.core.redaction import safe_error
 from app.core.retry import retry
 from app.models.connection import Connection
+from app.services.demo_data import repair_demo_db_if_missing
 from app.services.encryption import decrypt, encrypt
 from app.services.ssh_key_service import SshKeyService
 
@@ -668,6 +669,14 @@ class ConnectionService:
         # invent a Postgres endpoint that was never configured.
         db_port = 0 if conn.db_port is None else conn.db_port
         db_name = "" if conn.db_name is None else conn.db_name
+
+        # The demo's sample database is disposable by design and its filesystem is
+        # ephemeral: a Heroku restart takes the file while the Connection row survives,
+        # and a second web dyno never had it. Every query, index and health check builds
+        # its config here, so this is the one seam where a missing demo file can be
+        # rebuilt before anything tries to open it. Scoped by directory containment
+        # (`is_demo_db`) — a user's own SQLite file is never written to.
+        repair_demo_db_if_missing(db_name)
 
         return ConnectionConfig(
             # R1-7: carry the connection id so ``connector_key`` (R1-1) can use

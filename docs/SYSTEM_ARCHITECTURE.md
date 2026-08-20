@@ -31,7 +31,7 @@ CheckMyData.ai is an AI-powered database query agent. Users connect databases (P
 | LLM Providers | OpenAI, Anthropic, OpenRouter (any model) |
 | Vector Store | ChromaDB |
 | App Database | SQLite (dev) / PostgreSQL (prod) |
-| User Databases | PostgreSQL, MySQL, ClickHouse, MongoDB |
+| User Databases | PostgreSQL, MySQL, ClickHouse, MongoDB, SQLite (demo only) |
 | Deployment | Docker, Heroku, DigitalOcean App Platform |
 
 ### Module Decomposition

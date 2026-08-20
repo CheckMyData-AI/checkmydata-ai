@@ -15,7 +15,7 @@ human review moves them to `validated`.
 |----|-------|---------|---------|--------|------------|
 | SCN-001 | First-run onboarding wizard — happy path | onboarding | new-user | implemented | 2026-07-19 PASS |
 | SCN-002 | Onboarding — connection test fails, retry/edit | onboarding | new-user | implemented | 2026-07-19 PASS |
-| SCN-003 | Onboarding — skip setup / try demo | onboarding | new-user | implemented | 2026-07-19 PASS |
+| SCN-003 | Onboarding — skip setup / try demo | onboarding | new-user | implemented | 2026-08-20 PASS (seeded, read-only, deduped) |
 | SCN-004 | Request project access (non-approved user) | onboarding | new-user | implemented | 2026-07-19 PASS |
 | SCN-005 | Register with email + password | auth | new-user | implemented | 2026-07-19 PASS |
 | SCN-006 | Log in with email + password | auth | analyst | implemented | 2026-07-19 PASS |
@@ -214,12 +214,13 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User clicks "Try demo instead" (step 0) to load demo data, OR
   2. User clicks "Skip setup entirely" / presses Escape
-- **Expected result:** onboarding is dismissed (demo path sets up sample data); wizard does not reappear (`is_onboarded` set)
+- **Expected result:** onboarding is dismissed; wizard does not reappear (`is_onboarded` set). The demo path creates a **read-only** SQLite connection over a **seeded** sample database — `customers` (5 rows) and `orders` (8 rows), enough to join, group and check the agent's answer by eye. Clicking it a **second time reuses the same demo project and connection** rather than creating another.
 - **UI elements:** "Try demo instead" button, "Skip setup entirely" button, Escape-to-skip, step-3 "Skip"
-- **States covered:** success, error
-- **Errors & recovery:** demo setup fails → toast "Failed to set up demo"; skip fails → toast "Failed to skip onboarding" (`OnboardingWizard.tsx:280,251`)
+- **States covered:** success, error, plan-limit
+- **Errors & recovery:** demo setup fails → toast "Failed to set up demo"; **plan limit reached → 402 with a linkified upgrade message** (`_client.ts:140-158`), because the demo consumes a project and a connection like any other; skip fails → toast "Failed to skip onboarding" (`OnboardingWizard.tsx:284,251`)
 - **Status:** implemented
-- **Coverage:** components/onboarding/OnboardingWizard.tsx:761-766,798-804,88-90
+- **Coverage:** components/onboarding/OnboardingWizard.tsx:761-766,798-804,88-90; backend/app/api/routes/demo.py; backend/app/services/demo_data.py; backend/app/connectors/sqlite.py; backend/tests/integration/test_demo_routes.py; backend/tests/unit/test_demo_data.py; backend/tests/unit/test_sqlite_connector.py
+- **Note (2026-08-20):** the demo runs on the SQLite connector added the same day — `db_type="sqlite"` had no entry in the adapter registry, so before that the demo's connection could not be opened at all and the first question asked of it failed on dispatch. This scenario was marked PASS on 2026-07-19 against its *affordances* — the button rendered and the toasts fired — while its **expected result went undelivered**: the route seeded nothing and pointed at `:memory:`, so a first-run user saw an empty database. A scenario can pass on what the screen offers and fail on what it promised; the audit that closes it must read the expected result, not the buttons.
 
 ### SCN-004: Request project access (non-approved user)
 - **Persona:** new-user

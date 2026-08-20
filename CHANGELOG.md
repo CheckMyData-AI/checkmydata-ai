@@ -6,6 +6,89 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the demo path delivers the sample data it promised (2026-08-20)
+
+`POST /api/demo/setup` was 65 lines carrying four board findings, and the largest was a
+promise. SCN-003's expected result says the demo path "sets up sample data" and the
+button offers to load it; the route seeded nothing and pointed at `:memory:`, which is
+empty on every fresh connection regardless. **A first-run user clicking "Try demo
+instead" saw an empty database.**
+
+- **It seeds now.** A per-user SQLite file under `DEMO_DB_DIR` (new setting, default
+  `./data/demo`) with `customers` (5 rows) and `orders` (8), joined by a real foreign
+  key — small enough to check the agent's answer by eye, which is what a demo of a query
+  product is for. Re-seeded whenever the file is missing: the dyno filesystem does not
+  survive a restart and the project row does, so "seeded once" would have meant an empty
+  database on the second visit.
+- **Read-only** (`is_read_only=True`), like every other connection by default —
+  `vision.md` §7 #1. The demo is the last place to make an exception to the product's own
+  invariant.
+- **Quota-metered.** `enforce_project_quota` and `enforce_connection_quota` run before
+  either row exists, and a breach answers 402 with the same payload every other route
+  sends. Rate-limited to 3/minute with no gate, the route minted three projects and three
+  connections a minute against a plan the user was never charged for.
+- **Reused, not multiplied.** A second call returns the first demo project and
+  connection.
+- SCN-003 was `implemented` with a PASS from the 2026-07-19 audit, which verified the
+  button and the toasts. A scenario can pass on its affordances while its promise goes
+  undelivered; the scenario now states the row counts, the read-only flag and the reuse,
+  so the next audit has an expected result it can measure.
+- The success toast is "Demo project ready" rather than "created" — "created" stopped
+  being true on the second click.
+
+### Added — a SQLite connector, because the demo's connection could never be opened (2026-08-20)
+
+Found while fixing the demo, and larger than the four findings that led there:
+
+```
+>>> get_adapter("database", "sqlite")
+ValueError: Unsupported adapter: sqlite. Available: ['postgres', 'postgresql',
+'mysql', 'mongodb', 'mongo', 'clickhouse', 'mcp']
+```
+
+The demo route has created `db_type="sqlite"` connections since the demo path existed and
+`ADAPTER_REGISTRY` never had an entry for it, so the first question a new user asked the
+demo failed on dispatch. Seeding sample data behind that connection closes nothing on its
+own — a database nobody can connect to is the same empty screen with more work behind it.
+
+- `app/connectors/sqlite.py`: file-backed, no pool (SQLite has no server to pool against
+  and a long-lived handle in an async web process is a lock waiting to happen).
+- **Read-only enforced by the driver**, not by a regex: `mode=ro` in the URI makes SQLite
+  itself refuse writes, matching how the other four connectors push the guarantee into
+  the engine (`vision.md` §7 #1). `SafetyGuard`'s allow-list still runs above it.
+- Introspection via `PRAGMA` — columns with types, nullability and primary keys, foreign
+  keys, indexes with uniqueness, views marked as views and not row-counted, and SQLite's
+  internal `sqlite_*` tables kept out of the LLM's schema context.
+- **`:memory:` is refused at connect**, with the reason: each connection opens its own
+  empty database, so it reads as configured and behaves as empty. That was the demo's
+  configured target. A **missing file is refused rather than created** — `sqlite3` creates
+  it silently, so a typo'd path would otherwise look exactly like a working connection
+  over a database with no tables.
+- `app/services/demo_data.py` owns the sample data, and
+  `ConnectionService.to_config` repairs a demo file that has gone missing. Heroku's
+  filesystem is ephemeral and per-dyno: a restart takes the file while the `Connection`
+  row survives. Scoped by directory containment — a user's own SQLite database is never
+  written to — and best-effort, so a failed repair never blocks an unrelated connection.
+
+### Security — a SQLite connection is a filename, so it is confined to the demo directory (2026-08-20)
+
+Registering the connector above turns "which database" into "which file may this process
+read", and two free-string fields made that reachable: `ConnectionUpdate.db_type` and
+`ConnectionUpdate.db_name` are plain `str` while `ConnectionCreate.db_type` is a `Literal`
+that excludes `sqlite`. A user who clicked the demo could therefore `PATCH` their own
+connection to `./data/agent.db` — the application's own database, holding every tenant's
+rows and encrypted credentials — and ask a question about it. Closed in the same change,
+at both layers:
+
+- **The connector** resolves the path and requires it inside `DEMO_DB_DIR`, so `..` and
+  symlinks are covered rather than pattern-matched.
+- **The route** refuses `db_type: "sqlite"` on any PATCH, and refuses changing `db_name`
+  on a connection that already is one.
+- Fixed alongside: a PATCH to a SQLite connection was answered
+  `"Provide either a connection string or db_host + db_name"` — a file has no host and
+  never will, so that refused even a rename with advice the user could not act on.
+
+
 ### Fixed — Query timeouts stop being treated as broken SQL (2026-08-08)
 
 Found by reading production trace `2026-08-06 11:39:24` (84 spans, `status=failed`).

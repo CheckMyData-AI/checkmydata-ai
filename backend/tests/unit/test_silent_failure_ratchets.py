@@ -29,8 +29,15 @@ APP = Path(__file__).resolve().parents[2] / "app"
 #: Handlers whose entire body is `pass`. 57 at 2026-08-10.
 MAX_SILENT_PASS = 57
 
-#: Broad handlers that return a literal degraded value. 78 at 2026-08-10.
-MAX_BROAD_DEGRADED_RETURN = 78
+#: Broad handlers that return a literal degraded value. 78 at 2026-08-10; 79 at
+#: 2026-08-20 — `SQLiteConnector.test_connection` (`app/connectors/sqlite.py:159`),
+#: examined rather than waved through. It is the same shape as the other four
+#: connectors' `test_connection` (see `mysql.py:369`), all already inside this count:
+#: the caller asked "is this alive", `False` is the honest answer to any failure, and
+#: it logs at **warning** with the traceback, which is what this ratchet's message asks
+#: for. Raising the number is only correct with the instance named — an unexplained
+#: bump is how a ratchet becomes a formality.
+MAX_BROAD_DEGRADED_RETURN = 79
 
 
 def _walk() -> list[ast.Module]:
