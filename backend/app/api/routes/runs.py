@@ -172,6 +172,8 @@ async def _dispatch_for_kind(db: AsyncSession, run: IndexingRun) -> None:
         if task_queue.is_arq_active():
             await task_queue.enqueue(
                 "run_repo_index",
+                # F-SCHED-04: if the enqueue fails, this must not run here.
+                allow_in_process=False,
                 task_id=f"repo_index:{run.project_id}:{uuid.uuid4().hex[:8]}",
                 project_id=run.project_id,
                 force_full=True,

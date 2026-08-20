@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.background import spawn_tracked
 from app.core.rate_limit import limiter
 from app.services.membership_service import MembershipService
 
@@ -484,7 +485,9 @@ async def maybe_auto_investigate(
                     "Auto-investigation %s failed: %s", investigation_id, exc, exc_info=True
                 )
 
-        task = asyncio.create_task(
+        # F-PROJ-05: a bare task held only by a local that dies with the handler can
+        # be garbage-collected mid-investigation (see chat.py's retention set).
+        task = spawn_tracked(
             _run_investigation_background(
                 investigation_id=investigation_id,
                 project_id=project_id,

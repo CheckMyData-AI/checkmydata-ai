@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a done-callback is not a lifetime, and my own previous fix missed half its sites (2026-08-21)
+
+**F-PROJ-05.** The named route already used `spawn_tracked`, so the *silent* half was
+closed before the row was read. The retention half was open in three places the row does
+not mention — `batch.py`, `data_investigations.py`, `chat_feedback.py` — each assigning a
+task to a local, attaching a done-callback and returning. asyncio keeps only a **weak**
+reference, so the handler returning is what makes the task collectable mid-flight; `chat.py`
+documents the same hazard in its own words. All three use `spawn_tracked` now.
+
+**F-SCHED-04, again.** That fix declared `allow_in_process=False` at three heavy `enqueue`
+sites and its test asserted exactly those three by name. An AST sweep found three more:
+manual sync-now, a repo-index retry, and the daily-sync cron loop — which runs **inside the
+web dyno**, so a broken Redis put the entire daily sync in the process serving requests.
+
+> A test written from the list of things you changed cannot tell you what you missed.
+
+Both checks are now sweeps derived from the code rather than enumerations:
+
+- Every `enqueue` of a heavy task must pass the guard — plus an assertion that the sweep
+  finds call sites at all, because a sweep matching nothing passes everything downstream by
+  vacuity and looks green doing it.
+- No route may assign a task, attach a callback and return. Asked as an AST question —
+  *is the name used for anything besides `add_done_callback` inside its function?* — after a
+  25-line text window produced two false positives on tasks that are awaited and cancelled
+  further down.
+
+`main.py`'s `coro_factory` still runs where no Redis exists; the guard only applies when
+Redis is configured and the enqueue throws, and the comment says so at the call site.
+
+
 ### Fixed — a malformed `cards_json` rendered a shared dashboard as empty (2026-08-21)
 
 F-VIZ-02 was filed as a stored-XSS vector and correctly downgraded — React escapes its

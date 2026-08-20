@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.core.audit import audit_log
+from app.core.background import spawn_tracked
 from app.core.rate_limit import limiter
 from app.services.batch_service import BatchService
 from app.services.connection_service import ConnectionService
@@ -104,8 +105,13 @@ async def execute_batch(
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
 
-    task = asyncio.create_task(
-        _svc.execute_batch(batch.id, body.connection_id, user_id=user["user_id"])
+    # F-PROJ-05: a done-callback is bookkeeping, not a lifetime — asyncio keeps only a
+    # weak reference, and this handler returns on the next line. `spawn_tracked` holds it
+    # until it finishes and logs a failure; the callback below still does the domain work
+    # of marking the batch.
+    task = spawn_tracked(
+        _svc.execute_batch(batch.id, body.connection_id, user_id=user["user_id"]),
+        name=f"batch:{batch.id}",
     )
     task.add_done_callback(_on_batch_done)
 
