@@ -599,6 +599,8 @@ async def sync_now(
     if task_queue.is_arq_active():
         await task_queue.enqueue(
             "run_daily_project_knowledge_sync",
+            # F-SCHED-04: if the enqueue fails, this must not run here.
+            allow_in_process=False,
             task_id=f"daily_sync_manual:{project_id}:{uuid.uuid4().hex[:8]}",
             project_id=project_id,
         )

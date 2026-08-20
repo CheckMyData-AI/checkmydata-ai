@@ -1503,3 +1503,61 @@ naming: **a baseline is a promise to come back, and nothing in a green test remi
 Both were found by adding one more instance — the number moved, the message listed what it
 was protecting, and the list turned out to be a single fixable class rather than accumulated
 history.
+
+## 25. My own fix was incomplete, and the test I wrote for it could not tell
+
+F-SCHED-04 declared `allow_in_process=False` at three heavy `enqueue` sites, and the test
+asserted exactly those three by name:
+
+```python
+src = inspect.getsource(repos)
+idx = src.index('"run_repo_index"')
+assert "allow_in_process=False" in src[idx : idx + 400]
+```
+
+An AST sweep over every `enqueue` call with a heavy task name found **three more**:
+`projects.py:600` (manual sync-now), `runs.py:173` (a repo-index retry), and `main.py:790`
+— the daily-sync cron loop, which runs **inside the web dyno**. A broken Redis there put
+the entire daily sync (repo index + DB index + code↔DB cross-reference) in the process
+serving user requests, which is the exact outage the finding was about, at the worst of the
+six sites.
+
+> A test written from the list of things you changed cannot tell you what you missed.
+
+The enumerated test passed the whole time and would have passed forever. It is replaced by
+a sweep derived from the code, with one extra assertion that matters more than it looks:
+
+```python
+def test_the_sweep_finds_call_sites_at_all(self):
+    assert len(_heavy_enqueue_sites()) >= 6
+```
+
+A sweep that silently matches nothing passes every downstream assertion by vacuity, and
+that failure mode is invisible in a green run. Two ratchets earlier today needed
+re-baselining because they measured the wrong thing; this one needed proof it was measuring
+at all.
+
+One site deserved a comment rather than a flag: `main.py` passes `coro_factory` on purpose,
+because the cron loop is *supposed* to run in-process where no Redis exists. The guard does
+not break that — it only applies when Redis is configured and the enqueue throws — and the
+comment says so at the call site, because that is where the next reader will doubt it.
+
+### F-PROJ-05, and a done-callback is not a lifetime
+
+The row read *"fire-and-forget `create_task` sync-now → silent task death"*. The named
+route already used `spawn_tracked`, which holds a strong reference and logs failures at
+`error`, so the *silent* half was closed before anyone read the row.
+
+The retention half was open in three places the row does not mention — `batch.py:107`,
+`data_investigations.py:157`, `chat_feedback.py:487` — each assigning a task to a local,
+attaching a done-callback, and returning. `chat.py` documents the hazard in its own words:
+asyncio keeps only a weak reference, so the finalizer can be collected mid-flight, "losing
+the very results it was scheduled to save".
+
+**The sweep for it had to be rewritten before it was worth anything.** A first version
+scanned 25 lines after each call for a retention marker and flagged three sites, two of
+them false: `chat.py` awaits, polls and cancels its tasks 30 and 130 lines later, which is
+structured concurrency. A window is an arbitrary number that stays wrong in both
+directions. The precise question is an AST one — *inside the enclosing function, is the
+assigned name used for anything other than `add_done_callback`?* — and it flagged exactly
+one site, which was real.

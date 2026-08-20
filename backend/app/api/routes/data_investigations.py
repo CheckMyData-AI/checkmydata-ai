@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.core.agent_limiter import agent_limiter
+from app.core.background import spawn_tracked
 from app.core.rate_limit import limiter
 from app.models.chat_session import ChatMessage as ChatMessageModel
 from app.models.chat_session import ChatSession as ChatSessionModel
@@ -154,7 +155,10 @@ async def start_investigation(
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
 
-    task = asyncio.create_task(
+    # F-PROJ-05: asyncio keeps only a weak reference to a bare task, so a local that
+    # dies with the handler can be collected mid-investigation. `spawn_tracked` holds
+    # it and logs a failure; the done-callback below still does the domain work.
+    task = spawn_tracked(
         _run_investigation_background(
             investigation_id=investigation.id,
             project_id=body.project_id,

@@ -789,6 +789,13 @@ async def _dispatch_daily_knowledge_sync_wave() -> None:
 
                 await task_queue.enqueue(
                     "run_daily_project_knowledge_sync",
+                    # F-SCHED-04. This does NOT disable the `coro_factory` below: the
+                    # guard only applies when Redis is configured and the enqueue throws.
+                    # With no Redis, in-process is the intended mode and the factory still
+                    # runs — which is what this cron loop relies on in dev. What it stops
+                    # is a broken Redis putting the whole daily sync (repo index + DB
+                    # index + code↔DB sync) inside the web dyno that serves requests.
+                    allow_in_process=False,
                     coro_factory=_run_in_process,
                     task_id=task_id,
                     _job_timeout=settings.daily_knowledge_sync_job_timeout_seconds,

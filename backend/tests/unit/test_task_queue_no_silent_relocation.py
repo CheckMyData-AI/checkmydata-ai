@@ -23,6 +23,7 @@ separates the two situations:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -114,7 +115,75 @@ class TestWithRedisAFailureIsAnIncident:
         assert "web" in said.lower() or "in-process" in said.lower()
 
 
-class TestTheHeavyCallSitesDeclareIt:
+#: Tasks whose in-process fallback is an outage rather than a degradation. `run_repo_index`
+#: was measured at ~1 GB peak; the daily sync runs it plus the DB index plus the code↔DB
+#: cross-reference.
+HEAVY_TASKS = {
+    "run_repo_index",
+    "run_db_index",
+    "run_code_db_sync",
+    "run_daily_project_knowledge_sync",
+}
+
+
+def _heavy_enqueue_sites() -> list[tuple[str, int, str, bool]]:
+    """Every `enqueue("<heavy task>", …)` in the app, and whether it passes the guard."""
+    import ast
+
+    app = Path(__file__).resolve().parents[2] / "app"
+    out = []
+    for f in sorted(app.rglob("*.py")):
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except SyntaxError:  # pragma: no cover
+            continue
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "enqueue"):
+                continue
+            if not (node.args and isinstance(node.args[0], ast.Constant)):
+                continue
+            name = node.args[0].value
+            if name in HEAVY_TASKS:
+                guarded = any(k.arg == "allow_in_process" for k in node.keywords)
+                out.append((str(f), node.lineno, name, guarded))
+    return out
+
+
+class TestEveryHeavyCallSiteDeclaresIt:
+    """Enumerated first, and the enumeration was wrong.
+
+    The first version of this named three call sites by hand — the three the fix had
+    touched — and passed. An AST sweep found **three more**: `projects.py` (manual
+    sync-now), `runs.py` (a repo-index retry) and `main.py` (the daily-sync cron loop,
+    which runs inside the web dyno, so an enqueue failure there put the entire daily sync
+    in the process serving requests).
+
+    A test written from the list of things you changed cannot tell you what you missed.
+    This one is derived from the code.
+    """
+
+    def test_the_sweep_finds_call_sites_at_all(self):
+        """A guard against the sweep silently matching nothing — then every assertion
+        below would pass by vacuity."""
+        assert len(_heavy_enqueue_sites()) >= 6
+
+    def test_every_heavy_enqueue_refuses_in_process_execution(self):
+        gaps = [
+            f"{path}:{line} enqueues {name} without allow_in_process=False"
+            for path, line, name, guarded in _heavy_enqueue_sites()
+            if not guarded
+        ]
+
+        assert not gaps, (
+            "an enqueue failure at these sites runs the job in the calling process — for "
+            "the web dyno that is the pipeline measured at ~1 GB peak inside the process "
+            "serving user requests:\n  " + "\n  ".join(gaps)
+        )
+
+
+class TestTheThreeSitesTheFixTouched:
+    """Kept as named examples; the sweep above is the rule."""
+
     """A parameter nobody passes is a parameter that does nothing."""
 
     def test_repo_index_refuses_in_process(self):
@@ -138,3 +207,73 @@ class TestTheHeavyCallSitesDeclareIt:
         for marker in ('"run_db_index"', '"run_code_db_sync"'):
             idx = src.index(marker)
             assert "allow_in_process=False" in src[idx : idx + 400], marker
+
+
+class TestFireAndForgetTasksAreHeld:
+    """F-PROJ-05. asyncio keeps only a **weak** reference to a task, so one held by a
+    local that dies with the request handler can be garbage-collected mid-flight — the
+    hazard `chat.py`'s `_background_finalize_tasks` set was created for, in its own words:
+    "losing the very results it was scheduled to save".
+
+    The board recorded the symptom as silent death, and by the time it was read
+    `spawn_tracked` already existed and already logged failures at `error`. What was left
+    was the retention half, at the two places that launch a data investigation from a
+    request and then return.
+    """
+
+    def test_no_route_launches_a_background_task_without_holding_it(self):
+        """Asked as an AST question, because the text-window version was guesswork.
+
+        A first attempt scanned 25 lines after the call for a retention marker and flagged
+        three sites; two were false — `chat.py` awaits, polls and cancels its tasks 30 and
+        130 lines later, which is structured concurrency rather than fire-and-forget. A
+        window is an arbitrary number that will keep being wrong in both directions.
+
+        The precise question: inside the enclosing function, is the assigned name used for
+        anything other than attaching a done-callback? A task that is awaited, cancelled,
+        polled or shielded has a lifetime. One that is assigned, given a callback and
+        abandoned has only asyncio's weak reference, and the handler returning is what
+        makes it collectable.
+        """
+        import ast
+
+        routes = Path(__file__).resolve().parents[2] / "app" / "api" / "routes"
+        offenders: list[str] = []
+
+        for f in sorted(routes.rglob("*.py")):
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+            for fn in ast.walk(tree):
+                if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                for node in ast.walk(fn):
+                    if not (
+                        isinstance(node, ast.Assign)
+                        and isinstance(node.value, ast.Call)
+                        and getattr(node.value.func, "attr", None) == "create_task"
+                        and len(node.targets) == 1
+                        and isinstance(node.targets[0], ast.Name)
+                    ):
+                        continue
+                    name = node.targets[0].id
+                    callback_lines = {
+                        a.lineno
+                        for a in ast.walk(fn)
+                        if isinstance(a, ast.Attribute)
+                        and a.attr == "add_done_callback"
+                        and getattr(a.value, "id", None) == name
+                    }
+                    meaningful = [
+                        u
+                        for u in ast.walk(fn)
+                        if isinstance(u, ast.Name)
+                        and u.id == name
+                        and u.lineno != node.lineno
+                        and u.lineno not in callback_lines
+                    ]
+                    if not meaningful:
+                        offenders.append(f"{f.name}:{node.lineno}")
+
+        assert not offenders, (
+            "these assign a task, attach a callback and return — leaving only asyncio's "
+            f"weak reference. Use spawn_tracked: {offenders}"
+        )
