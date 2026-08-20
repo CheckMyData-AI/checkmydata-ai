@@ -739,3 +739,176 @@ rule is — so the tenth prompt cannot quietly skip it.
 `planner_prompt` and `investigation_prompt` are deliberately excluded: they compose no
 externally-authored text of their own. That exclusion is written in the test, not left to
 be rediscovered.
+
+## 12. Four findings in one 65-line route, and two lessons about tests
+
+`app/api/routes/demo.py` was 65 lines and carried four board rows — F-BILL-07, F-EXP-01,
+F-EXP-02, F-EXP-03. Three of them are ordinary: no quota check, `is_read_only=False`, no
+dedup. The fourth is a **broken promise**, and it is the one worth writing down.
+
+SCN-003's expected result says the demo path "sets up sample data". The button says *Try
+demo instead*. The route seeded nothing — 65 lines, no `INSERT` — and pointed at
+`db_name=":memory:"`, which is empty on every fresh connection regardless of what any
+single connection ever wrote. **The first thing a new user saw after clicking the demo
+was an empty database**, from which the reasonable conclusion is that the product does
+not work.
+
+SCN-003 was marked `implemented` with a **PASS from the 2026-07-19 audit**. That audit
+checked the button rendered and the toasts fired. Both were true. Neither is the
+scenario:
+
+> A scenario can pass on its affordances while its promise goes undelivered. The check
+> that closes one must read the **expected result**, not the buttons.
+
+### The two lessons, and both were measured
+
+**A source-inspection test proves nothing about behaviour.** The first suite written for
+this fix asserted `"INSERT INTO" in inspect.getsource(demo_route)` and
+`"is_read_only=True" in src`. Eight tests, all green. Then the plant: replace the route's
+call to `_seed_demo_db(db_path)` with `pass`.
+
+```
+$ git diff app/api/routes/demo.py | grep -c "PLANT: seeding removed"
+1
+$ pytest tests/unit/test_demo_route_contract.py -q
+8 passed in 1.44s
+```
+
+The exact bug — the route not seeding — left the suite fully green, because the seeder
+still existed in the module and the test only asked whether the *text* was there. That
+suite was deleted. Its replacements open the SQLite file the connection names and count
+the rows, and the same plant is now red:
+
+```
+$ pytest tests/integration/test_demo_routes.py tests/unit/test_demo_seed.py -q
+FAILED ...::test_the_demo_connection_points_at_a_database_with_rows_in_it
+1 failed, 12 passed
+```
+
+The parallel to the 2026-07-19 SCN-003 pass is exact, one layer down: a grep over source
+is to behaviour what a rendered button is to a delivered promise.
+
+**A test can hold a bug in place more firmly than the code does.**
+`tests/integration/test_edge_cases.py` carried
+`test_demo_setup_twice_creates_two_projects`, asserting `p1 != p2`. The duplication was
+not an oversight the tests had missed — it was **written down as the contract**, so the
+dedup fix arrived as a test failure and looked, for a moment, like a regression. Code
+that is wrong gets fixed; a test that is wrong gets *obeyed*, because the next reader
+takes it for a decision someone made. It is now
+`test_demo_setup_twice_reuses_one_project`, with the history in its docstring.
+
+### What the demo is now
+
+A per-user file under `DEMO_DB_DIR` (default `./data/demo`), seeded with `customers` (5
+rows) and `orders` (8) — small enough that a person can check the agent's answer by eye,
+which is the entire job of a demo for a query product — joined by a real foreign key, and
+re-seeded whenever the file is missing, because Heroku's filesystem does not survive a
+restart while the project row does. Read-only, quota-metered, and reused rather than
+multiplied.
+
+### The fifth finding, which the other four were sitting on
+
+While wiring the seed, one command ended the question of whether the demo had ever
+worked:
+
+```
+>>> get_adapter("database", "sqlite")
+ValueError: Unsupported adapter: sqlite. Available: ['postgres', 'postgresql',
+'mysql', 'mongodb', 'mongo', 'clickhouse', 'mcp']
+```
+
+`ADAPTER_REGISTRY` has never had a `sqlite` entry, and the demo route has created
+`db_type="sqlite"` connections since the demo path existed. **The demo's connection could
+not be opened at all** — the first question a new user asked it failed on dispatch, before
+any of the four findings above could matter. Seeding sample data behind it would have been
+a database nobody can connect to: the same empty screen, with more work behind it.
+
+Worth naming as a pattern rather than a one-off. Four findings had been filed against this
+route by two separate audits, each describing a *property* of the connection — its quota,
+its read-only flag, its uniqueness, its emptiness — and none had asked whether the
+connection **resolves**. A property is checked by reading the code that sets it; existence
+is checked by running it. The fix took one line in a registry and 200 in a connector; the
+finding took one line in a REPL.
+
+`app/connectors/sqlite.py` is written as a connector, not as a demo helper: driver-enforced
+read-only via `mode=ro`, `PRAGMA` introspection down to foreign keys and index uniqueness,
+views marked and not row-counted, `sqlite_*` internals withheld from the schema context.
+Two refusals are deliberate and both are the finding in miniature — `:memory:` is rejected
+at connect (each connection opens its own empty database, so it reads as configured and
+behaves as empty), and a **missing file is rejected rather than created**, because
+`sqlite3` creates it silently and a typo'd path would otherwise look exactly like a
+working connection over a database with no tables.
+
+The demo's file is repaired in `ConnectionService.to_config` — the one seam all 36
+connector call sites pass through — because Heroku's filesystem is ephemeral and per-dyno:
+a restart takes the file while the `Connection` row survives, and a second web dyno never
+had it. Scoped by directory containment, so a user's own SQLite database is never written
+to, and best-effort, so a failed repair cannot block an unrelated connection.
+
+**And that wiring was itself unverified until a plant said so.** Deleting
+`repair_demo_db_if_missing(db_name)` from `to_config` left every test green: the helper had
+its own suite, and nothing asserted the product called it. The same shape as the
+source-grep tests deleted earlier in this iteration, one layer up — a tested helper nobody
+calls is a tested helper nobody calls.
+
+### And the fix opened a hole, which is why the fix is two layers
+
+Registering a SQLite connector changes what a `Connection` row *means*. Every other
+engine here is a network endpoint reached with credentials; a SQLite connection is a
+**filename on the server's own disk**, so "which database" and "which file may this
+process read" stop being different questions.
+
+Two free-string fields made that reachable. `ConnectionCreate.db_type` is a `Literal`
+that excludes `sqlite` — only the demo route ever sets it — but `ConnectionUpdate.db_type`
+and `ConnectionUpdate.db_name` are plain `str`:
+
+1. Click *Try demo instead* → own a SQLite connection.
+2. `PATCH /api/connections/{id}` with `db_name: "./data/agent.db"`.
+3. Ask a question. That file is the application's own database: every tenant's rows and
+   every encrypted credential.
+
+Before the connector existed the attempt died at `Unsupported adapter: sqlite`, which is
+the only reason this was not already live. **A fix that removes one error can be the thing
+that makes another reachable** — the audit question is not "is this change correct" but
+"what was this error load-bearing for".
+
+Closed at both layers, because neither is trustworthy alone: the connector resolves the
+path and requires it inside `DEMO_DB_DIR` (so `..` and symlinks are covered, not
+pattern-matched), and the route refuses `db_type: "sqlite"` on any PATCH and refuses
+changing `db_name` on a connection that already is one.
+
+**The two route guards needed two starting states.** Pointed at the demo connection, a
+test of the `db_type` guard is satisfied by the `db_name` guard firing first — measured:
+deleting the `db_type` check left the suite green. Two guards on one route, exercised from
+one state, means one of them is decoration.
+
+One pre-existing bug surfaced on the way: a PATCH to a SQLite connection was refused with
+`"Provide either a connection string or db_host + db_name"`. A file has no host and never
+will, so *every* update to the demo connection — including a rename — failed with advice
+the user could not act on.
+
+### Two ratchets caught the change, and both were right
+
+The full suite came back `2 failed, 6320 passed` — neither failure a test of the demo, and
+neither a false positive.
+
+**`test_legacy_coverage_paths_do_not_regress` (9 → 12).** SCN-003's new Coverage line named
+`tests/unit/test_demo_seed.py`, a file this same iteration had **renamed** to
+`test_demo_data.py`, plus two backend paths written relative to `backend/` when the
+resolver resolves against `frontend/src/` or the repo root. A documentation ratchet caught
+a stale reference in documentation written eleven minutes earlier — which is the argument
+for having one: prose is where a rename goes unnoticed, because nothing else reads it.
+
+**`test_broad_handlers_returning_a_degraded_value_do_not_grow` (78 → 79).**
+`SQLiteConnector.test_connection` catches broadly and returns `False`. Examined rather
+than waved through: it is the same shape as the other four connectors' `test_connection`
+(`mysql.py:369`), all already inside the count; the caller asked *is this alive*, and
+`False` is the honest answer to any failure; and it logs at **warning** with the
+traceback, which is exactly what the ratchet's own message asks for. The number moves to
+79 **with the instance named in the constant's comment** — an unexplained bump is how a
+ratchet becomes a formality.
+
+The distinction matters more than either fix. A ratchet is not a rule that the count is
+correct; it is a rule that the count is *examined*. One of these two was a real defect and
+the other was a legitimate new instance, and the ratchet cannot tell them apart — that is
+the reader's job, and the ratchet's job is to make sure a reader looks.

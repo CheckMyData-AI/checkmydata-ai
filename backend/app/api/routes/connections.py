@@ -680,6 +680,25 @@ async def update_connection(
         # refuses.
         raise HTTPException(status_code=422, detail=unavailable)
 
+    # Same rule, applied to the engine. `ConnectionCreate.db_type` is a Literal that
+    # excludes `sqlite` — the demo route is the only thing that ever sets it, because a
+    # SQLite connection is a filename on the server's own disk rather than a network
+    # endpoint with credentials. `ConnectionUpdate.db_type` and `db_name` are free
+    # strings, so without this a user could PATCH any connection of theirs into a SQLite
+    # one pointed at `./data/agent.db` — the application's own database, holding every
+    # tenant's rows and encrypted credentials. The connector refuses a path outside the
+    # demo directory as well; neither layer is trusted alone.
+    if str(updates.get("db_type", "")).lower() == "sqlite":
+        raise HTTPException(
+            status_code=422,
+            detail="SQLite connections are created by the demo path only.",
+        )
+    if conn.db_type == "sqlite" and "db_name" in updates:
+        raise HTTPException(
+            status_code=422,
+            detail="The demo connection's database file cannot be changed.",
+        )
+
     # B1: ONE assertion of the credential invariant, on the *merged* row rather
     # than per branch — after this PATCH, if the connection carries a
     # ``vendor_credential_id`` then that credential belongs to the requester.
@@ -721,7 +740,16 @@ async def update_connection(
             merged_conn_string = True
         merged_db_host = updates.get("db_host", conn.db_host)
         merged_db_name = updates.get("db_name", conn.db_name)
-        if not merged_conn_string and not (merged_db_host and merged_db_name):
+        merged_db_type = str(updates.get("db_type", conn.db_type) or "").lower()
+        if merged_db_type == "sqlite":
+            # A SQLite connection is a file, so it has no host and never will. Demanding
+            # one here refused every PATCH to the demo connection — including a rename —
+            # with "Provide either a connection string or db_host + db_name", which is
+            # advice the user cannot act on.
+            reachable = bool(merged_db_name)
+        else:
+            reachable = bool(merged_conn_string) or bool(merged_db_host and merged_db_name)
+        if not reachable:
             raise HTTPException(
                 status_code=400,
                 detail="Provide either a connection string or db_host + db_name",

@@ -1008,6 +1008,15 @@ async def _scheduler_loop() -> None:
                     # double-run the same query and double-send its alerts.
                     if not await svc.claim_due(session, schedule.id, schedule.cron_expression):
                         continue
+                    # F-SCHED-01: access is verified per RUN, not only at creation. A
+                    # schedule outlives its creator's membership, and this loop both
+                    # queries the project's database and mails the result — the alert
+                    # body carries values from the query — so a removed member would
+                    # keep receiving the project's data on a cron, with nobody present
+                    # to notice.
+                    if not await svc.creator_still_has_access(session, schedule):
+                        await svc.pause_for_revoked_access(session, schedule)
+                        continue
                     try:
                         conn_model = await conn_svc.get(session, schedule.connection_id)
                         if not conn_model:

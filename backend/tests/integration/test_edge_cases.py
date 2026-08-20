@@ -11,7 +11,13 @@ from tests.integration.conftest import auth_headers, register_user
 
 @pytest.mark.asyncio
 class TestDemoIdempotency:
-    async def test_demo_setup_twice_creates_two_projects(self, client: AsyncClient):
+    async def test_demo_setup_twice_reuses_one_project(self, client: AsyncClient):
+        """F-EXP-03. This test used to assert ``p1 != p2`` under the name
+        ``test_demo_setup_twice_creates_two_projects`` — it froze the defect as the
+        contract. The route is rate-limited to 3/minute and checked no quota, so the
+        behaviour it locked in was three projects and three connections a minute against
+        a plan the user was never charged for. A test can hold a bug in place more firmly
+        than the code does, because the next person reads it as a decision."""
         reg = await register_user(client)
         headers = auth_headers(reg["token"])
 
@@ -23,7 +29,7 @@ class TestDemoIdempotency:
         assert r2.status_code == 200
         p2 = r2.json()["project_id"]
 
-        assert p1 != p2
+        assert p1 == p2
 
     async def test_demo_requires_auth(self, client: AsyncClient):
         resp = await client.post("/api/demo/setup")

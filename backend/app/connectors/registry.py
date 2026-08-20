@@ -4,6 +4,7 @@ from app.connectors.mcp_client import MCPClientAdapter
 from app.connectors.mongodb import MongoDBConnector
 from app.connectors.mysql import MySQLConnector
 from app.connectors.postgres import PostgresConnector
+from app.connectors.sqlite import SQLiteConnector
 from app.connectors.ssh_exec import SSHExecConnector
 
 ADAPTER_REGISTRY: dict[str, type[DataSourceAdapter]] = {
@@ -13,6 +14,10 @@ ADAPTER_REGISTRY: dict[str, type[DataSourceAdapter]] = {
     "mongodb": MongoDBConnector,
     "mongo": MongoDBConnector,
     "clickhouse": ClickHouseConnector,
+    # The demo path has created `db_type="sqlite"` connections since it existed, and
+    # this map had no entry for it — so every demo connection raised "Unsupported
+    # adapter" on the first question asked of it.
+    "sqlite": SQLiteConnector,
     "mcp": MCPClientAdapter,
 }
 

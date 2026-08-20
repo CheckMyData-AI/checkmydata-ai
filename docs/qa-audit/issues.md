@@ -85,9 +85,13 @@ frontend **A** (563 smells, 7 SOLID).
 |---|---|
 | 🔴 Critical | 0 |
 | 🟠 High | **0** |
-| 🟡 Medium | ~27 |
-| 🟢 Low | ~48 |
-| ⚪ Info | ~15 |
+| 🟡 Medium | 23 |
+| 🟢 Low | 42 |
+| ⚪ Info | 9 |
+
+*Counted 2026-08-20, not estimated: 74 open rows and 27 struck
+through, by `grep -c '^| F-'` / `grep -c '^| ~~F-'` over this file. The `~` figures this
+replaced had drifted — the tally is now derived from the rows it summarises.*
 
 *(R1+R2 closed 4 High + 8 Medium + 3 Low. R3 (`fbf8112`) closed 2 High (F-SSH-08, F-RULE-01) +
 5 Medium (F-RULE-05, F-DG-07/09, F-GRAPH-01, F-LEARN-07) + 1 Low (F-SSH-06). The 2026-07-19 UX
@@ -279,7 +283,7 @@ gate, durable AuditLog, idempotency).
 | ID | Sev | Issue |
 |---|---|---|
 | ~~F-SCHED-07~~ | 🟢 | **CLOSED 2026-08-20.** `BatchService._claim_batch` takes the run claim in one atomic UPDATE, so a retried job that loses the race returns without touching results. The claim is deliberately **stale-aware** — it also takes a `running` row whose attempt began longer ago than ARQ could have kept it alive (`batch_stale_claim_seconds`, matched to the job ceiling) — because a claim on `pending` alone would have stranded every crashed batch forever: the stale-run reaper covers `indexing_runs` and has **no knowledge of `batch_queries`**. New column `batch_queries.started_at` (migration `b1c2d3e4f5a6`, verified up and down on a fresh database); `created_at` could not serve, since a batch may sit `pending` for a long time. Tests: `test_batch_claim_idempotency.py` (8). |
-| F-SCHED-01 | 🟡 | Schedules keep running after creator loses access |
+| ~~F-SCHED-01~~ | 🟢 | **CLOSED 2026-08-20 — and Medium understates it.** The loop ran every due schedule with no membership check, so one created by somebody since removed kept querying that project's database on a cron with nobody at the keyboard. Not merely wasted compute: the loop evaluates alert conditions and writes `Notification(user_id=schedule.user_id, body=alert["message"])`, and the alert body carries values from the query — so a removed member **kept receiving the project's data**, indefinitely. Access is now verified per run, before the connector is touched, via `MembershipService.can_access` rather than a fifth copy of the predicate. The schedule is **paused, not deleted** (`is_active=False` already excludes it from `get_due_schedules`), and the reason is written to its run history, because a schedule that simply stops reads as a bug. Tests: `test_schedule_access_revocation.py` (7), including one asserting the loop calls it **before** `get_connector` — a method nobody calls is not a fix. |
 | F-SCHED-03 | 🟡 | `_stale_run` NULL-heartbeat immediate-reap race (mitigated by heartbeat beacon) |
 | F-SCHED-04 | 🟡 | ARQ enqueue failure silently runs heavy jobs in-process on web dyno |
 | F-SCHED-05 | 🟢 | Fallback dedup per-process; no cross-process single-flight without Redis |
@@ -289,7 +293,7 @@ gate, durable AuditLog, idempotency).
 | ID | Sev | Issue |
 |---|---|---|
 | F-BILL-02 | 🟡 | Connection/project quota check count-then-compare → TOCTOU bypass |
-| F-BILL-07 | 🟡 | `demo_setup` bypasses quota gate (route-level, not service-level) |
+| ~~F-BILL-07~~ | ✅ | ~~`demo_setup` bypasses quota gate (route-level, not service-level)~~ — **fixed 2026-08-20**. `enforce_project_quota` + `enforce_connection_quota` now run before either row is created and a breach answers 402 with the same payload every other route sends (`app/api/routes/demo.py:148-155`). Rate-limited to 3/minute, the gap minted three projects and three connections a minute against a plan nobody was charged for. Evidence: `tests/integration/test_demo_routes.py::test_a_project_quota_breach_answers_402`, `::test_a_connection_quota_breach_answers_402`. |
 | F-BILL-01 | 🟡 | `_resolve_plan_id` trusts stale `metadata.plan_id` over live price |
 | F-BILL-03 | 🟢 | `/webhook` no rate limit / body cap |
 | F-BILL-06 | 🟢 | Budget windows UTC-based, not per-user timezone |
@@ -317,9 +321,10 @@ gate, durable AuditLog, idempotency).
 ### 18 — Semantic / Graph / Temporal / Exploration / Models / Demo
 | ID | Sev | Issue |
 |---|---|---|
-| F-EXP-01 | 🟡 | Demo project uses `:memory:` SQLite, no seeding → empty/misleading |
-| F-EXP-02 | 🟢 | Demo connection created writable, against read-only default |
-| F-EXP-03 | 🟢 | `demo_setup` creates real quota-counting Project+Connection, no dedup |
+| ~~F-EXP-01~~ | ✅ | ~~Demo project uses `:memory:` SQLite, no seeding → empty/misleading~~ — **fixed 2026-08-20**. The demo now points at a per-user file under `DEMO_DB_DIR` seeded with `customers` (5) and `orders` (8), re-seeded when the file is gone because the dyno filesystem is ephemeral (`app/api/routes/demo.py:47-114`). This was a broken promise, not a rough edge: SCN-003's expected result said "demo path sets up sample data" and the button offers to load it, and a first-run user got an empty database. **The 2026-07-19 audit passed SCN-003 on its affordances** — button, toasts — without reading its expected result. Evidence: `tests/unit/test_demo_seed.py` (5), `tests/integration/test_demo_routes.py::test_the_demo_connection_points_at_a_database_with_rows_in_it`, which opens the file and counts rows. |
+| ~~F-EXP-02~~ | ✅ | ~~Demo connection created writable, against read-only default~~ — **fixed 2026-08-20**. `is_read_only=True` (`app/api/routes/demo.py:176`); vision.md §7 #1. Evidence: `tests/integration/test_demo_routes.py::test_the_demo_connection_is_read_only`. |
+| ~~F-EXP-03~~ | ✅ | ~~`demo_setup` creates real quota-counting Project+Connection, no dedup~~ — **fixed 2026-08-20**. A second call returns the existing demo (`app/api/routes/demo.py:128-146`). Worth naming: `test_demo_setup_twice_creates_two_projects` asserted `p1 != p2` — **the suite held the defect in place as the contract**, which is harder to dislodge than the code, because the next reader takes it for a decision. It is now `test_demo_setup_twice_reuses_one_project` (`tests/integration/test_edge_cases.py:13-38`). |
+| ~~F-EXP-05~~ | ✅ | **Found while fixing the four above, and larger than all of them**: `db_type="sqlite"` had **no entry in `ADAPTER_REGISTRY`**, so `get_adapter("database", "sqlite")` raised `ValueError: Unsupported adapter: sqlite` — the demo produced a connection the product could not open, and the first question a new user asked it failed. Seeding sample data behind it (F-EXP-01) closes nothing on its own. **Fixed 2026-08-20**: `app/connectors/sqlite.py` (file-backed, `mode=ro` driver-enforced read-only, PRAGMA introspection with FKs/indexes/views, `:memory:` refused, missing file refused rather than created) registered as `sqlite`. Evidence: `tests/unit/test_sqlite_connector.py` (21), `tests/unit/test_demo_data.py::TestTheDemoDatabaseIsQueryableThroughTheProduct`. |
 | F-EXP-04 | ⚪ | `models` endpoint discloses configured providers |
 
 ### 19 — Frontend SPA

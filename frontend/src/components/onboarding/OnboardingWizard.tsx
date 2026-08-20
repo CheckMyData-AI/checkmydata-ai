@@ -276,7 +276,11 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
       }
 
       onComplete();
-      toast("Demo project created", "success");
+      // "created" stopped being true once the route learned to reuse an existing demo
+      // (F-EXP-03) — a second click returns the first project rather than minting
+      // another. "Ready" is true on both paths, which is the only reason to change a
+      // string a user has already learned.
+      toast("Demo project ready", "success");
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to set up demo", "error");
     } finally {

@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import UTC, datetime
 
@@ -111,6 +112,56 @@ class SchedulerService:
         await db.delete(schedule)
         await db.commit()
         return True
+
+    async def creator_still_has_access(self, db: AsyncSession, schedule: ScheduledQuery) -> bool:
+        """Whether the person who created *schedule* may still reach its project.
+
+        F-SCHED-01. The loop ran every due schedule with no membership check, so one
+        created by somebody since removed kept querying that project's database on a
+        cron — and unlike the WebSocket case, nobody is at the keyboard to notice. It
+        is not only wasted compute: the loop evaluates alert conditions and writes
+        ``Notification(user_id=schedule.user_id, body=alert["message"])``, and the alert
+        body carries values from the query, so a removed member keeps receiving the
+        project's data.
+
+        Asks the membership service rather than re-deriving the rule — the fourth copy
+        of that predicate was found in the chat WebSocket gate (F-CHAT-01).
+        """
+        from app.services.membership_service import MembershipService
+
+        return await MembershipService().can_access(db, schedule.project_id, schedule.user_id)
+
+    async def pause_for_revoked_access(self, db: AsyncSession, schedule: ScheduledQuery) -> None:
+        """Deactivate *schedule* and say why in its run history.
+
+        Paused, not deleted: ``is_active=False`` already excludes it from
+        :meth:`get_due_schedules`, the state is recoverable if the person is re-added,
+        and destroying somebody's work over an access change would be a second wrong.
+        The reason is recorded because a schedule that simply stops looks like a bug —
+        the owner reading the history is owed the cause.
+        """
+        schedule.is_active = False
+        await db.commit()
+        await self.record_run(
+            db,
+            schedule.id,
+            status="failed",
+            result_summary=json.dumps(
+                {
+                    "error": (
+                        "Paused: the user who created this schedule no longer has access "
+                        "to the project. Re-add them, or recreate the schedule under an "
+                        "account that does, then re-enable it."
+                    )
+                }
+            ),
+        )
+        logger.info(
+            "Scheduler: paused schedule %s — creator %s lost access to project %s",
+            schedule.id[:8],
+            schedule.user_id[:8],
+            schedule.project_id[:8],
+        )
 
     async def get_due_schedules(self, db: AsyncSession) -> list[ScheduledQuery]:
         now = datetime.now(UTC)
