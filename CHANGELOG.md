@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — a failed provider silently sent the request to a different vendor (2026-08-20)
+
+`LLMRouter` walks a fallback chain, and the messages it retries with are the user's
+question, their database schema and their query results. When the chosen provider failed,
+that content went to the next vendor with nothing saying where — the existing log line
+reports that a provider *failed*, not where the request was sent next — and no deployment
+could make its choice binding (F-LLM-01).
+
+That is a data-processing question, not only a reliability one: a deployment that chose
+one vendor because that is who its customers were told about had no mechanism to hold the
+line and no record afterwards that it was crossed.
+
+- **Crossing a provider boundary now logs at WARNING**, naming the vendor that failed, the
+  vendor that received the request, and what was in it. On **both** fallback loops — the
+  streaming path walks its own copy and would otherwise have kept the old behaviour, which
+  is how one of two loops keeps an old rule.
+- **`LLM_ALLOW_PROVIDER_FALLBACK=false` makes the choice binding.** A refusal ends the
+  chain, so the caller still raises `LLMAllProvidersFailedError` carrying the real outage —
+  the reason the request could not be served is the provider being down, not the setting,
+  and the setting's own line sits beside it in the log.
+- **The default stays on.** Turning fallback off for everyone would trade every
+  deployment's resilience for a guarantee most never asked for — the same argument as the
+  connection-host guard, and the same conclusion: a control that breaks the normal case
+  gets switched off, and then it protects nobody. The disclosure is not opt-in.
 ### Fixed — `accept_invite` runs in one transaction, and the finding it closes was wrong (2026-08-20)
 
 F-PROJ-03 read *"commits inside `begin_nested()` → 500 on idempotent re-accept."* Measured

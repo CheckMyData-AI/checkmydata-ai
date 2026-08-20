@@ -125,6 +125,16 @@ class Settings(BaseSettings):
     embedding_upsert_batch_size: int = 8
 
     default_llm_provider: str = "openai"
+
+    # F-LLM-01. The router falls back to another vendor when the chosen one fails, and
+    # the messages it retries with are the user's question, their schema and their query
+    # results — so a transient 503 at Anthropic sends that content to OpenAI. Fallback
+    # stays ON by default: turning it off for everyone would trade every deployment's
+    # resilience for a guarantee most never asked for, and a control that breaks the
+    # normal case gets switched off and then protects nobody. Set False where the choice
+    # of processor is a promise made to customers; crossing the boundary is logged at
+    # WARNING naming both vendors either way.
+    llm_allow_provider_fallback: bool = True
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     openrouter_api_key: str = ""

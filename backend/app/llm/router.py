@@ -74,6 +74,42 @@ class LLMRouter:
             self._instances[name] = cls()
         return self._instances[name]
 
+    def _disclose_fallback(self, chosen: str | None, target: str) -> bool:
+        """Announce — or refuse — sending this request's content to a second vendor.
+
+        F-LLM-01. The messages being retried are the user's question, their database
+        schema and their query results, so a fallback is not only a reliability event:
+        it moves customer data to a processor the deployment did not choose. Two things
+        were missing. Nothing said *which* vendor received it — the existing line reports
+        that a provider failed, not where the request went next — and no deployment could
+        make its choice binding.
+
+        Refusal is opt-in (`llm_allow_provider_fallback`), because defaulting it off
+        would trade every deployment's resilience for a guarantee most never asked for.
+        The disclosure is not opt-in.
+
+        Returns whether the caller may proceed to *target*. A refusal ends the chain, so
+        the caller still raises `LLMAllProvidersFailedError` carrying the real failure —
+        the reason the request could not be served is the provider outage, not the
+        setting, and the setting's own line sits beside it in the log.
+        """
+        if not settings.llm_allow_provider_fallback:
+            logger.warning(
+                "LLM provider fallback is disabled: %s failed and the request was NOT "
+                "sent to %s. Set LLM_ALLOW_PROVIDER_FALLBACK=true to allow it.",
+                chosen,
+                target,
+            )
+            return False
+        logger.warning(
+            "LLM fell back from %s to %s: this request's messages — the user's question, "
+            "schema and query results — were sent to %s.",
+            chosen,
+            target,
+            target,
+        )
+        return True
+
     def _get_fallback_chain(self, preferred: str | None) -> list[str]:
         import time as _time
 
@@ -247,8 +283,12 @@ class LLMRouter:
         chain = self._get_fallback_chain(preferred_provider)
         last_error: Exception | None = None
         sink = usage_sink or self._sink
+        chosen = chain[0] if chain else None
 
         for provider_name in chain:
+            if provider_name != chosen:
+                if not self._disclose_fallback(chosen, provider_name):
+                    break
             try:
                 provider = self._get_provider(provider_name)
                 response = await self._call_with_retry(
@@ -310,8 +350,12 @@ class LLMRouter:
     ) -> AsyncIterator[str]:
         chain = self._get_fallback_chain(preferred_provider)
         last_error: Exception | None = None
+        chosen = chain[0] if chain else None
 
         for provider_name in chain:
+            if provider_name != chosen:
+                if not self._disclose_fallback(chosen, provider_name):
+                    break
             tokens_yielded = False
             try:
                 provider = self._get_provider(provider_name)
