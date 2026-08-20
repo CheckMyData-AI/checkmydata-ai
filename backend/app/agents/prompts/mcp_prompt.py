@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.agents.prompts.untrusted_data import untrusted_data_section
+
 
 def build_mcp_source_system_prompt(
     *,
@@ -15,6 +17,9 @@ def build_mcp_source_system_prompt(
     ones to call to answer the user's question.
     """
     datetime_line = f"\nCurrent date/time: {current_datetime}\n" if current_datetime else ""
+    untrusted = untrusted_data_section(
+        "tool results returned by third-party MCP servers, which this product does not control",
+    )
     return f"""\
 You are an AI assistant connected to an external data source \
 called "{source_name}" via the Model Context Protocol (MCP).
@@ -35,4 +40,6 @@ tool(s), and synthesize the results into a clear answer.
 4. Summarize the results clearly for the user.
 5. If no tool can answer the question, say so honestly.
 6. Always include the raw data in your response when it's small enough to be useful.
+
+{untrusted}
 """

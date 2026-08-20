@@ -130,14 +130,19 @@ gate, durable AuditLog, idempotency).
 4. **Credential leakage in errors** — F-CONN-08 returns `str(e)` (DSN/password) in the API response
    and logs; the Sentry scrubber only covers Sentry egress. **Fix:** scrub at the
    `connection_service` error site.
-5. **Stored prompt-injection / memory poisoning** — **3 of 5 closed 2026-08-20.**
+5. ~~**Stored prompt-injection / memory poisoning**~~ — **ALL 5 CLOSED 2026-08-20.**
    F-LEARN-01 was already screened by `_contains_instruction_shaped_text`; F-LEARN-06 (the
-   override PATCH) and F-LEARN-02 (the non-ASCII proxy) closed this pass. **Remaining:
-   F-RULE-02, F-SQL-01, F-PROJ-15 — three surfaces with no screen at all** (rule content,
-   DB-sourced comments/sampled values, project name/description). One shared fix: lift the
-   instruction-pattern set out of `agent_learning_service` into a module of its own and
-   apply it at those three points — one pattern set, not four copies, for the same reason
-   the credential scrubber was consolidated (a second copy drifts, and drifts silently).
+   override PATCH) and F-LEARN-02 (the non-ASCII proxy) closed this pass. F-SQL-01 turned
+   out to be closed already, by the right mechanism: content you cannot refuse is
+   neutralised in the PROMPT, not screened at ingest. Finding that reframed the fix —
+   the defence existed, was written once in `sql_prompt.py`, and had never reached the
+   other nine agent prompts. **Six surfaces the board never listed were hardened in the
+   same pass**: third-party MCP tool output, retrieved repository file contents, commit
+   messages and diffs (forgeable, F-GIT-06), vendor analytics rows, sub-agent output, and
+   the columns/values being charted. `prompts/untrusted_data.py` builds the section and
+   requires its sources to be NAMED — "some content may be untrusted" is advice, "the
+   commit messages below are attacker-controllable" is actionable — and
+   `test_untrusted_data_sections.py` is a ratchet so the tenth prompt cannot skip it.
 6. **Non-durable observability** — F-AUTH-15 (`audit_log` logger-only, ephemeral on Heroku, not
    queryable). **Fix:** persist an `AuditLog` table alongside the logger line.
 7. **Idempotency / retry hazards** — F-SCHED-07 (batch ARQ-retry duplicates writes), F-LEARN-08
@@ -171,7 +176,7 @@ gate, durable AuditLog, idempotency).
 | F-PROJ-12 | 🟢 | No self-service "leave project" |
 | F-PROJ-13 | 🟢 | `list_members`/`list_invites` no pagination cap |
 | F-PROJ-14 | 🟢 | `GET /api/projects` member-only query diverges from `can_access` |
-| F-PROJ-15 | 🟢 | Project name/desc/overview injected into orchestrator prompt |
+| ~~F-PROJ-15~~ | 🟢 | **CLOSED 2026-08-20** by the same orchestrator section, which names the project name, description and overview explicitly. |
 
 ### 03 — Connections & Connectors
 | ID | Sev | Issue |
@@ -208,7 +213,7 @@ gate, durable AuditLog, idempotency).
 ### 06 — SQL Agent & Query Execution
 | ID | Sev | Issue |
 |---|---|---|
-| F-SQL-01 | 🟡 | Indirect prompt injection via DB content (comments/sampled/distinct values) |
+| ~~F-SQL-01~~ | 🟢 | **CLOSED — verified 2026-08-20, and it was already in place.** `sql_prompt.py` has carried an UNTRUSTED-DATA section naming query results, row values and table/column comments since the earlier remediation. This is the right treatment for content that cannot be refused — a table's comment is part of the schema whatever it says — so no ingest screen was ever the answer here. The section is now built from the shared module instead of a local literal. |
 | F-SQL-02 | 🟡 | `row_count` returned-vs-total ambiguity → inaccurate counts |
 | F-SQL-03 | 🟡 | Multiplicative retry blow-up (replans × iterations × repairs) |
 | F-SQL-05 | 🟢 | `_try_repair` no-op `error_classify` tracker span |
@@ -258,7 +263,7 @@ gate, durable AuditLog, idempotency).
 ### 11 — Rules Engine
 | ID | Sev | Issue |
 |---|---|---|
-| F-RULE-02 | 🟡 | Rule content injected as authoritative, no content/posture guard |
+| ~~F-RULE-02~~ | 🟢 | **CLOSED 2026-08-20.** The orchestrator prompt now carries a named UNTRUSTED-DATA section listing custom rules and stored learnings among the things that are data rather than instructions (`prompts/untrusted_data.py`, applied in `orchestrator_prompt.py`). Rules are editor-authored, so the exposure was one project member directing another's agent. |
 | F-RULE-03 | 🟡 | `rules_to_context` no budget/size truncation (overflow/cost) |
 | F-RULE-04 | 🟢 | Filesystem rule loading reads any matching-suffix file incl. symlinks |
 

@@ -702,3 +702,40 @@ mode as the first — incomplete in a way that correlates with language.
 *ends* as a question is refused in any alphabet (the old rule missed the English case
 entirely), and a lesson that is mostly not letters or digits is refused as not-writing,
 Unicode-aware so Cyrillic and CJK count as writing.
+
+### AUD-0820-02 — the injection defence existed, was written once, and reached one prompt of ten
+
+Cluster #5 of the board names five findings and reads as "no content-safety gate on
+LLM-authored or DB-sourced content". Working it produced a different and larger picture,
+and the reframing came from one measurement: `grep -c 'UNTRUSTED DATA'` across
+`app/agents/prompts/` returned **1 of 10**.
+
+`sql_prompt.py` already carried it, and by the **right mechanism** — content you cannot
+refuse is neutralised in the prompt rather than screened at ingest. A table's comment is
+part of the schema whatever it says; an ingest gate could only choose between indexing
+hostile text and refusing to index the table. So F-SQL-01 was closed before this pass,
+and the fix the board proposed ("shared content-safety screen on every ingest") would
+have been the wrong shape for it.
+
+The real gap was that nine sibling prompts consume text the product does not author and
+said nothing about it:
+
+| Prompt | What arrives that nobody here wrote |
+|---|---|
+| `mcp_prompt` | tool results from **third-party MCP servers** |
+| `knowledge_prompt` | file contents and comments from a **cloned repository** |
+| `git_prompt` | commit messages, tags, diffs — and trailers are forgeable (F-GIT-06) |
+| `analytics_prompt` | dimension values and rows from the **analytics vendor** |
+| `orchestrator_prompt` | project name/description (F-PROJ-15), rules (F-RULE-02), sub-agent output |
+| `viz_prompt` | column names and row values being charted |
+
+`prompts/untrusted_data.py` now builds the section and **raises if no source is named**.
+That constraint is the point: "some content may be untrusted" is advice, while "the
+commit messages below are attacker-controllable" is something a model can act on, and
+the difference only shows under adversarial text. `test_untrusted_data_sections.py`
+ratchets it in the manner of the frontend's `pack-bans.test.ts` — mechanical, because the
+rule is — so the tenth prompt cannot quietly skip it.
+
+`planner_prompt` and `investigation_prompt` are deliberately excluded: they compose no
+externally-authored text of their own. That exclusion is written in the test, not left to
+be rediscovered.

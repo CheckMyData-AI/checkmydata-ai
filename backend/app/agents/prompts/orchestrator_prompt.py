@@ -6,6 +6,8 @@ sub-agent tools and synthesizes the final answer (it is not a pure router).
 
 from __future__ import annotations
 
+from app.agents.prompts.untrusted_data import untrusted_data_section
+
 
 def build_orchestrator_system_prompt(
     *,
@@ -182,6 +184,15 @@ def build_orchestrator_system_prompt(
         "- LANGUAGE: Reason and think internally in English, but write your FINAL "
         "answer to the user in the SAME language as the user's most recent message "
         "(e.g. a Russian question gets a Russian answer)."
+    )
+
+    sections.append("")
+    sections.append(
+        untrusted_data_section(
+            "the project name, description and overview",
+            "custom rules and stored agent learnings",
+            "results and text returned by any sub-agent or tool",
+        )
     )
 
     return "\n".join(sections)
