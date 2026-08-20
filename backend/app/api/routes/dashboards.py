@@ -1,8 +1,9 @@
+import json
 import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -18,7 +19,70 @@ _svc = DashboardService()
 _membership_svc = MembershipService()
 
 
-class DashboardCreate(BaseModel):
+#: The viewer issues one note fetch per card, so this bounds work rather than bytes. The
+#: 500 KB payload cap allows roughly thirty thousand `{"note_id":"x"}` entries and says
+#: nothing about how many requests that becomes.
+MAX_DASHBOARD_CARDS = 200
+
+
+def _validate_cards_json(value: str | None) -> str | None:
+    """Check `cards_json` against the shape the viewer actually reads (F-VIZ-02).
+
+    It was stored verbatim, and the consequence is quieter than a rejected write:
+
+        function parseCards(json) { try { return JSON.parse(json) } catch { return [] } }
+
+    A malformed string — or valid JSON of the wrong shape — renders as an **empty
+    dashboard**. Dashboards are shared by default, so one bad write shows everyone else a
+    page with nothing on it and no sign that anything is wrong.
+
+    The contract comes from the consumer rather than from imagination
+    (`frontend/src/lib/api/types.ts:502`): `note_id` required and a string, `viz_config`
+    an optional object, `refresh_interval` an optional number. `viz_config`'s interior is
+    deliberately not inspected — the viewer treats it as opaque and hands it to the chart
+    layer, so validating it here would invent a contract nobody wrote.
+
+    Only writes are checked. Rows already stored are read as they always were: making a
+    legacy row fail to *load* would turn a cosmetic problem into an outage.
+    """
+    if value is None:
+        return None
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"cards_json is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise ValueError("cards_json must be a JSON array of cards")
+    if len(parsed) > MAX_DASHBOARD_CARDS:
+        raise ValueError(
+            f"a dashboard may hold at most {MAX_DASHBOARD_CARDS} cards, got {len(parsed)}"
+        )
+    for i, card in enumerate(parsed):
+        if not isinstance(card, dict):
+            raise ValueError(f"cards_json[{i}] must be an object")
+        note_id = card.get("note_id")
+        if not isinstance(note_id, str) or not note_id.strip():
+            raise ValueError(f"cards_json[{i}] needs a non-empty string note_id")
+        if "viz_config" in card and not isinstance(card["viz_config"], dict):
+            raise ValueError(f"cards_json[{i}].viz_config must be an object")
+        if "refresh_interval" in card and not isinstance(card["refresh_interval"], (int, float)):
+            raise ValueError(f"cards_json[{i}].refresh_interval must be a number")
+        if isinstance(card.get("refresh_interval"), bool):
+            raise ValueError(f"cards_json[{i}].refresh_interval must be a number")
+    return value
+
+
+class _DashboardCardRules(BaseModel):
+    """Shared so the rule cannot be added to create and forgotten on update — the shape
+    this codebase produced five times in two days."""
+
+    @field_validator("cards_json", check_fields=False)
+    @classmethod
+    def _check_cards(cls, v: str | None) -> str | None:
+        return _validate_cards_json(v)
+
+
+class DashboardCreate(_DashboardCardRules):
     project_id: str = Field(..., max_length=64)
     title: str = Field(max_length=200)
     layout_json: str | None = Field(None, max_length=100_000)
@@ -26,7 +90,7 @@ class DashboardCreate(BaseModel):
     is_shared: bool = True
 
 
-class DashboardUpdate(BaseModel):
+class DashboardUpdate(_DashboardCardRules):
     title: str | None = Field(None, max_length=200)
     layout_json: str | None = Field(None, max_length=100_000)
     cards_json: str | None = Field(None, max_length=500_000)
