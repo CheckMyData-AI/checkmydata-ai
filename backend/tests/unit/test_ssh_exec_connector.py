@@ -36,7 +36,7 @@ class TestSSHExecConnectorBuildCommand:
     def test_build_query_command_pipes_via_stdin(self):
         connector = SSHExecConnector()
         connector._config = make_config()
-        cmd = connector._build_command("query", "SELECT 1")
+        cmd, _ = connector._build_command("query", "SELECT 1")
         assert "echo" in cmd
         assert "SELECT 1" in cmd
         assert "|" in cmd
@@ -46,7 +46,7 @@ class TestSSHExecConnectorBuildCommand:
         connector._config = make_config(
             ssh_pre_commands=["source ~/.bashrc", "export PATH=/usr/local/bin:$PATH"]
         )
-        cmd = connector._build_command("query", "SELECT 1")
+        cmd, _ = connector._build_command("query", "SELECT 1")
         assert "source ~/.bashrc" in cmd
         assert "export PATH" in cmd
         assert " && " in cmd
@@ -54,19 +54,19 @@ class TestSSHExecConnectorBuildCommand:
     def test_build_test_command(self):
         connector = SSHExecConnector()
         connector._config = make_config()
-        cmd = connector._build_command("test")
+        cmd, _ = connector._build_command("test")
         assert "SELECT 1" in cmd
 
     def test_custom_template(self):
         connector = SSHExecConnector()
         connector._config = make_config(ssh_command_template="custom-cli -d {db_name} -u {db_user}")
-        cmd = connector._build_command("query", "SELECT 1")
+        cmd, _ = connector._build_command("query", "SELECT 1")
         assert "custom-cli -d testdb -u testuser" in cmd
 
     def test_query_with_single_quotes_escaped(self):
         connector = SSHExecConnector()
         connector._config = make_config()
-        cmd = connector._build_command("query", "SELECT * FROM t WHERE name = 'alice'")
+        cmd, _ = connector._build_command("query", "SELECT * FROM t WHERE name = 'alice'")
         assert "alice" in cmd
 
 

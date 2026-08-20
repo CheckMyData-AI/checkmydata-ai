@@ -37,7 +37,11 @@ MAX_SILENT_PASS = 57
 #: it logs at **warning** with the traceback, which is what this ratchet's message asks
 #: for. Raising the number is only correct with the instance named — an unexplained
 #: bump is how a ratchet becomes a formality.
-MAX_BROAD_DEGRADED_RETURN = 79
+#: 80 at 2026-08-20 — `_host_key_blob` (`app/connectors/ssh_known_hosts.py`). Examined:
+#: a host key that cannot be read must not crash a connection attempt, and `None` is not
+#: silent here — the caller logs at warning that the connection is unverified and cannot
+#: be pinned, which is the opposite of the failure this ratchet is named after.
+MAX_BROAD_DEGRADED_RETURN = 80
 
 
 def _walk() -> list[ast.Module]:

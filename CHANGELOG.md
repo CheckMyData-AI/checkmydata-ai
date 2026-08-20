@@ -6,6 +6,71 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — `tofu` turned itself off when it could not write, and logged about it (2026-08-20)
+
+`connect_with_policy` answered an unwritable `known_hosts` file by setting
+`known_hosts=None` and connecting anyway — for that connection and every one after it. A
+warning went to the log and the connection proceeded unverified, indefinitely. The
+module's own closing branch reads *"an unrecognised policy must never silently disable
+verification"*; two branches above it, that is exactly what happened.
+
+Fail-closed is not the fix either: it would break every SSH connection on a read-only
+filesystem to protect a promise the operator never made. The pin moves into process
+memory instead.
+
+- **First connect to a host is unverified** — which is what trust-on-first-use *is* —
+  and its key is remembered.
+- **Every later connect is checked against it.** A mismatch aborts the connection and
+  raises `HostKeyChangedError` naming the host, where before it was accepted without
+  comment.
+- **A host presenting no readable key is not recorded**: remembering it would assert a
+  check that cannot happen. The connection is logged as unverified and unpinnable.
+- Where the file is writable but the disk does not survive a restart
+  (AUD-0819-06 — Heroku), that was already the guarantee, so nothing is downgraded. The
+  warning now says the pin is process-local and points at `SSH_KNOWN_HOSTS_PATH`.
+- The writable path, `strict`, and the explicit `disabled` opt-out are unchanged.
+
+
+### Security — the database password rode in the remote command line, on all three engines (2026-08-20)
+
+`asyncssh.run(command)` sends an SSH *exec* request and sshd runs it through the login
+shell as `sh -c "<command>"`, so everything in that string sits in a process's argv —
+readable by **any** user on the remote host through `ps` or `/proc/<pid>/cmdline` for as
+long as the query takes. Every exec template interpolated the password there:
+`PGPASSWORD="…"`, `MYSQL_PWD="…"`, `CLICKHOUSE_PASSWORD="…"`. The finding recorded this
+as a ClickHouse problem; it was all three.
+
+**And the ClickHouse template never authenticated.** A command-prefix assignment sets the
+variable for that command's environment only, so `"$VAR"` on the same line is expanded by
+the *calling* shell from whatever value it already had — measured:
+
+```
+$ sh -c 'FOO="secret" printf "argv:[%s]\n" "$FOO"'
+argv:[]
+$ FOO=leaked sh -c 'FOO="secret" printf "argv:[%s]\n" "$FOO"'
+argv:[leaked]
+```
+
+So `--password "$CLICKHOUSE_PASSWORD"` passed an empty string — or, if the login shell
+exported that name, somebody else's value.
+
+- The password now travels on the channel's **stdin**. The command opens with
+  `IFS= read -r DBPASS` and the templates set the client's variable from `"$DBPASS"` as
+  an environment assignment, so it is neither in the command string nor in the client's
+  arguments.
+- `--password` is gone from the ClickHouse templates; the client reads
+  `CLICKHOUSE_PASSWORD` from its environment, which is what setting it was for.
+- **A password containing a newline is refused** rather than silently truncated: `read -r`
+  stops at the first one, and half a password authenticates as a server-side error that
+  points nowhere near here.
+- The **nine introspection call sites** that built commands by hand — template plus
+  pre-commands, bypassing `_build_command` — now route through it. They would otherwise
+  have emitted a `$DBPASS` with nothing to read it.
+- A custom `ssh_command_template` that still interpolates `{db_password}` keeps working,
+  with a warning naming the exposure. Breaking someone's connection to improve its
+  hygiene is not an improvement they asked for.
+
+
 ### Fixed — a field guarded on create and free on PATCH, as a class rather than a fourth instance (2026-08-20)
 
 Three of these landed in two days, each found while fixing something else:

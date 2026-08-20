@@ -85,11 +85,11 @@ frontend **A** (563 smells, 7 SOLID).
 |---|---|
 | 🔴 Critical | 0 |
 | 🟠 High | **0** |
-| 🟡 Medium | 22 |
+| 🟡 Medium | 20 |
 | 🟢 Low | 42 |
 | ⚪ Info | 9 |
 
-*Counted 2026-08-20, not estimated: 73 open rows and 30 struck
+*Counted 2026-08-20, not estimated: 71 open rows and 32 struck
 through, by `grep -c '^| F-'` / `grep -c '^| ~~F-'` over this file. The `~` figures this
 replaced had drifted — the tally is now derived from the rows it summarises.*
 
@@ -195,8 +195,8 @@ gate, durable AuditLog, idempotency).
 ### 04 — SSH Tunnel & Keys
 | ID | Sev | Issue |
 |---|---|---|
-| F-SSH-01 | 🟡 | TOFU host-key verify fails *open* when known_hosts not writable |
-| F-SSH-02 | 🟡 | ClickHouse exec template leaks DB password on remote command line |
+| ~~F-SSH-01~~ | ✅ | ~~TOFU host-key verify fails *open* when known_hosts not writable~~ — **fixed 2026-08-20.** `ssh_known_hosts.py` answered an unwritable file by setting `known_hosts=None` and connecting anyway — for that connection and every later one — so the policy turned itself off and logged about it. The module's own closing branch says an unrecognised policy "must never silently disable verification"; two branches above, that is what happened. Fail-closed would break every connection on a read-only filesystem to protect a promise the operator never made, so the pin moves into process memory instead: the first connect to a host is unverified (which is what trust-on-first-use *is*) and every later connect is checked against the key that first one presented, raising `HostKeyChangedError` and aborting on a mismatch. Where the file is writable but the disk does not survive a restart (AUD-0819-06) that was already the guarantee, so nothing is downgraded. A host presenting no readable key is **not** recorded — remembering it would assert a check that cannot happen. Evidence: `tests/unit/test_ssh_tofu_memory_pin.py` (8), four plants. |
+| ~~F-SSH-02~~ | ✅ | ~~ClickHouse exec template leaks DB password on remote command line~~ — **fixed 2026-08-20, and the finding under-stated it twice.** (1) **All three engines**, not ClickHouse alone: `PGPASSWORD=`, `MYSQL_PWD=` and `CLICKHOUSE_PASSWORD=` were interpolated into the command string, `asyncssh.run()` sends it as an SSH exec request, and sshd runs it as `sh -c "<command>"` — so the secret sat in that process's argv, readable by any user on the remote host via `ps` for the query's duration. (2) **The ClickHouse template never authenticated.** A command-prefix assignment does not affect `"$VAR"` on the same line: measured, `sh -c 'FOO="secret" printf "[%s]" "$FOO"'` prints `[]`, and with `FOO=leaked` in the environment it prints `[leaked]` — so `--password "$CLICKHOUSE_PASSWORD"` passed an empty string, or somebody else's. Fixed: the password travels on the channel's stdin (`IFS= read -r DBPASS`), templates set the client's variable from `"$DBPASS"` as an environment assignment, `--password` is gone, a newline in a password is refused rather than silently truncated by `read -r`, and the nine introspection call sites that built commands by hand now route through `_build_command`. A custom `ssh_command_template` keeps the old behaviour with a warning. Evidence: `tests/unit/test_ssh_exec_password_off_argv.py` (24), six plants. |
 | F-SSH-03 | 🟢 | Pre-command allowlist has a global kill-switch (re-enables RCE) |
 | F-SSH-04 | 🟢 | `db_port` template var not shell-escaped |
 | F-SSH-05 | 🟢 | TOFU check-then-pin not atomic (concurrent first-connect race) |

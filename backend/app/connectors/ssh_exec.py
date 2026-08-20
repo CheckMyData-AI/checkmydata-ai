@@ -91,16 +91,59 @@ class SSHExecConnector(BaseConnector):
             return " && ".join(pre) + " && " + cmd
         return cmd
 
-    def _build_command(self, kind: str, query: str | None = None) -> str:
-        """Build the full SSH command string."""
+    def _build_command(self, kind: str, query: str | None = None) -> tuple[str, str | None]:
+        """Build the SSH command and the payload its stdin must receive.
+
+        F-SSH-02. `asyncssh.run(command)` sends an SSH *exec* request and sshd runs it
+        through the login shell as ``sh -c "<command>"``, so everything in that string
+        sits in a process's argv — readable by any user on the remote host through `ps`
+        or `/proc/<pid>/cmdline` for as long as the query runs. The templates used to
+        interpolate the database password there.
+
+        It now arrives on the channel's stdin instead. The command opens with
+        ``IFS= read -r DBPASS``, which takes the first line, and the templates set their
+        client's password variable from ``"$DBPASS"`` — an *environment* assignment, so
+        the secret never becomes an argument either.
+
+        Ordering matters and is asserted by the tests: the reader runs before the query
+        is piped in, or the client would try to execute the password.
+
+        Returns ``(command, stdin_payload)``. The payload is ``None`` when the command
+        contains no reader — a custom template that still interpolates ``{db_password}``
+        — because a line nothing reads would be handed to the client as input.
+        """
         template = self._get_template(kind)
         variables = self._config_vars()
+        password = variables.get("db_password", "")
+
+        interpolates = "{db_password}" in template
+        if interpolates:
+            # A user's own template is theirs; breaking their connection to improve its
+            # hygiene is not an improvement they asked for. Warned, not rewritten.
+            logger.warning(
+                "ssh_command_template interpolates {db_password}: the database password "
+                "will appear in the remote command line, visible to any user on that "
+                'host via ps. Set the client\'s password variable from "$DBPASS" '
+                "instead and it will be read from stdin."
+            )
+        elif "\n" in password or "\r" in password:
+            # `read -r` stops at the first newline. Truncating silently would
+            # authenticate with half a password and report whatever the server says
+            # about that, which points nowhere near here.
+            raise ValueError(
+                "This connection's password contains a newline, which cannot be passed "
+                "over SSH exec. Remove the newline or use port forwarding."
+            )
+
         cmd = format_template(template, variables)
 
         if query is not None and kind == "query":
             cmd = f"echo {shlex.quote(query)} | {cmd}"
 
-        return self._prepend_pre_commands(cmd)
+        if not interpolates:
+            cmd = f"IFS= read -r DBPASS; {cmd}"
+
+        return self._prepend_pre_commands(cmd), (None if interpolates else password + "\n")
 
     async def connect(self, config: ConnectionConfig) -> None:
         self._config = config
@@ -148,7 +191,10 @@ class SSHExecConnector(BaseConnector):
                 self._conn = None
 
     async def _run_command(
-        self, command: str, timeout: int = SSH_COMMAND_TIMEOUT
+        self,
+        command: str,
+        timeout: int = SSH_COMMAND_TIMEOUT,
+        stdin: str | None = None,
     ) -> tuple[str, str, int]:
         """Run a command over SSH and return (stdout, stderr, exit_code).
 
@@ -158,7 +204,7 @@ class SSHExecConnector(BaseConnector):
             raise RuntimeError("Not connected")
 
         try:
-            result = await self._conn.run(command, timeout=timeout, check=False)
+            result = await self._conn.run(command, timeout=timeout, check=False, input=stdin)
         except (asyncssh.ConnectionLost, asyncssh.DisconnectError, BrokenPipeError, OSError) as exc:
             logger.warning("SSH connection lost (%s), attempting reconnect", exc)
             async with self._reconnect_lock:
@@ -182,7 +228,7 @@ class SSHExecConnector(BaseConnector):
                         await self.connect(self._config)
             if not self._conn:
                 raise RuntimeError("Reconnect failed")
-            result = await self._conn.run(command, timeout=timeout, check=False)
+            result = await self._conn.run(command, timeout=timeout, check=False, input=stdin)
 
         stdout = str(result.stdout or "")
         stderr = str(result.stderr or "")
@@ -208,8 +254,10 @@ class SSHExecConnector(BaseConnector):
         else:
             command_timeout = SSH_COMMAND_TIMEOUT
         try:
-            command = self._build_command("query", query)
-            stdout, stderr, exit_code = await self._run_command(command, timeout=command_timeout)
+            command, stdin = self._build_command("query", query)
+            stdout, stderr, exit_code = await self._run_command(
+                command, timeout=command_timeout, stdin=stdin
+            )
             elapsed = (time.monotonic() - start) * 1000
 
             if exit_code != 0:
@@ -269,26 +317,18 @@ class SSHExecConnector(BaseConnector):
             logger.debug("SSH exec introspection '%s' stderr: %s", step, stderr.strip()[:200])
 
     async def _introspect_mysql(self, db_name: str) -> SchemaInfo:
-        variables = self._config_vars()
-
-        tables_cmd = self._prepend_pre_commands(
-            format_template(self._get_template("introspect_tables"), variables)
-        )
-        stdout, stderr, exit_code = await self._run_command(tables_cmd)
+        tables_cmd, tables_cmd_stdin = self._build_command("introspect_tables")
+        stdout, stderr, exit_code = await self._run_command(tables_cmd, stdin=tables_cmd_stdin)
         self._check_introspection_result("mysql:tables", stdout, stderr, exit_code)
         _, table_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
-        cols_cmd = self._prepend_pre_commands(
-            format_template(self._get_template("introspect_columns"), variables)
-        )
-        stdout, stderr, exit_code = await self._run_command(cols_cmd)
+        cols_cmd, cols_cmd_stdin = self._build_command("introspect_columns")
+        stdout, stderr, exit_code = await self._run_command(cols_cmd, stdin=cols_cmd_stdin)
         self._check_introspection_result("mysql:columns", stdout, stderr, exit_code)
         _, col_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
-        fks_cmd = self._prepend_pre_commands(
-            format_template(self._get_template("introspect_fks"), variables)
-        )
-        stdout, stderr, exit_code = await self._run_command(fks_cmd)
+        fks_cmd, fks_cmd_stdin = self._build_command("introspect_fks")
+        stdout, stderr, exit_code = await self._run_command(fks_cmd, stdin=fks_cmd_stdin)
         self._check_introspection_result("mysql:fks", stdout, stderr, exit_code)
         _, fk_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
@@ -335,13 +375,10 @@ class SSHExecConnector(BaseConnector):
         return SchemaInfo(tables=tables, db_type="mysql", db_name=db_name)
 
     async def _introspect_postgres(self, db_name: str) -> SchemaInfo:
-        variables = self._config_vars()
 
         # Tables (now includes approx row counts)
-        tables_cmd = self._prepend_pre_commands(
-            format_template(self._get_template("introspect_tables"), variables)
-        )
-        stdout, stderr, exit_code = await self._run_command(tables_cmd)
+        tables_cmd, tables_cmd_stdin = self._build_command("introspect_tables")
+        stdout, stderr, exit_code = await self._run_command(tables_cmd, stdin=tables_cmd_stdin)
         self._check_introspection_result("postgres:tables", stdout, stderr, exit_code)
         table_info_raw: list[tuple[str, int | None]] = []
         for line in stdout.strip().splitlines():
@@ -359,10 +396,8 @@ class SSHExecConnector(BaseConnector):
             table_info_raw.append((tname, row_count))
 
         # Columns
-        cols_cmd = self._prepend_pre_commands(
-            format_template(self._get_template("introspect_columns"), variables)
-        )
-        stdout, stderr, exit_code = await self._run_command(cols_cmd)
+        cols_cmd, cols_cmd_stdin = self._build_command("introspect_columns")
+        stdout, stderr, exit_code = await self._run_command(cols_cmd, stdin=cols_cmd_stdin)
         self._check_introspection_result("postgres:columns", stdout, stderr, exit_code)
         col_map: dict[str, list[ColumnInfo]] = {}
         for line in stdout.strip().splitlines():
@@ -381,10 +416,8 @@ class SSHExecConnector(BaseConnector):
         # Foreign keys
         fk_map: dict[str, list[ForeignKeyInfo]] = {}
         try:
-            fks_cmd = self._prepend_pre_commands(
-                format_template(self._get_template("introspect_fks"), variables)
-            )
-            stdout, stderr, exit_code = await self._run_command(fks_cmd)
+            fks_cmd, fks_cmd_stdin = self._build_command("introspect_fks")
+            stdout, stderr, exit_code = await self._run_command(fks_cmd, stdin=fks_cmd_stdin)
             self._check_introspection_result("postgres:fks", stdout, stderr, exit_code)
             for line in stdout.strip().splitlines():
                 parts = line.strip().split("\t")
@@ -402,10 +435,8 @@ class SSHExecConnector(BaseConnector):
         # Indexes
         idx_map: dict[str, list[IndexInfo]] = {}
         try:
-            idx_cmd = self._prepend_pre_commands(
-                format_template(self._get_template("introspect_indexes"), variables)
-            )
-            stdout, stderr, exit_code = await self._run_command(idx_cmd)
+            idx_cmd, idx_cmd_stdin = self._build_command("introspect_indexes")
+            stdout, stderr, exit_code = await self._run_command(idx_cmd, stdin=idx_cmd_stdin)
             self._check_introspection_result("postgres:indexes", stdout, stderr, exit_code)
             for line in stdout.strip().splitlines():
                 parts = line.strip().split("\t")
@@ -433,20 +464,14 @@ class SSHExecConnector(BaseConnector):
         return SchemaInfo(tables=tables, db_type="postgres", db_name=db_name)
 
     async def _introspect_clickhouse(self, db_name: str) -> SchemaInfo:
-        variables = self._config_vars()
-
-        tables_cmd = self._prepend_pre_commands(
-            format_template(self._get_template("introspect_tables"), variables)
-        )
-        stdout, stderr, exit_code = await self._run_command(tables_cmd)
+        tables_cmd, tables_cmd_stdin = self._build_command("introspect_tables")
+        stdout, stderr, exit_code = await self._run_command(tables_cmd, stdin=tables_cmd_stdin)
         self._check_introspection_result("clickhouse:tables", stdout, stderr, exit_code)
         _, table_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
         table_names = [r[0] for r in table_rows if r]
 
-        cols_cmd = self._prepend_pre_commands(
-            format_template(self._get_template("introspect_columns"), variables)
-        )
-        stdout, stderr, exit_code = await self._run_command(cols_cmd)
+        cols_cmd, cols_cmd_stdin = self._build_command("introspect_columns")
+        stdout, stderr, exit_code = await self._run_command(cols_cmd, stdin=cols_cmd_stdin)
         self._check_introspection_result("clickhouse:columns", stdout, stderr, exit_code)
         _, col_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
@@ -473,8 +498,8 @@ class SSHExecConnector(BaseConnector):
 
     async def test_connection(self) -> bool:
         try:
-            command = self._build_command("test")
-            _, stderr, exit_code = await self._run_command(command, timeout=15)
+            command, stdin = self._build_command("test")
+            _, stderr, exit_code = await self._run_command(command, timeout=15, stdin=stdin)
             if exit_code != 0:
                 logger.warning(
                     "SSH exec test_connection failed (exit=%d): %s",
