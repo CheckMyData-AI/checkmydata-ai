@@ -689,6 +689,17 @@ class Settings(BaseSettings):
     # hold server resources. 0 disables the idle timeout.
     ws_idle_timeout_seconds: int = 300
 
+    # F-CHAT-03. The WebSocket event relay used a hardcoded `timeout=60` and **exited**
+    # when it expired, so a step that legitimately takes longer than a minute — a large
+    # `ast_parse`, a slow warehouse query — ended the event stream while the run carried
+    # on. An unnamed number, five times tighter than the `ws_idle_timeout_seconds`
+    # beside it. The relay now polls and continues, exactly as the SSE relay in the same
+    # file already did; `ws_event_relay_poll_seconds` is how often it wakes to check the
+    # deadline, and `ws_event_relay_timeout_seconds` is the overall ceiling on a run that
+    # never reaches `pipeline_end`.
+    ws_event_relay_poll_seconds: float = 0.5
+    ws_event_relay_timeout_seconds: int = 900
+
     # Backup settings
     backup_enabled: bool = True
     backup_hour: int = 0

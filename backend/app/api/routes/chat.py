@@ -1421,6 +1421,73 @@ async def issue_ws_ticket(
     return WsTicketResponse(ticket=ticket, expires_in=ttl)
 
 
+async def relay_workflow_events(websocket, queue: "asyncio.Queue[WorkflowEvent]") -> None:
+    """Forward workflow events to a WebSocket client until the run ends.
+
+    F-CHAT-03. This used to be `await asyncio.wait_for(queue.get(), timeout=60)` with
+    `except TimeoutError: logger.debug(...)`, so sixty seconds of quiet ended the stream
+    while the run continued — the client got nothing more and no reason, and the log line
+    that said so was at debug, invisible at production level.
+
+    A gap in events is not the end of a run. The SSE relay in this same file has always
+    known that (see `_event_stream`: poll on a short timeout, emit a heartbeat, hold an
+    overall deadline, continue). This is that shape, so the two transports no longer
+    disagree about what silence means.
+
+    Extracted from the route so it can be tested without a WebSocket handshake: the
+    behaviour worth asserting is "survives a quiet period, still ends at the deadline",
+    and neither half is reachable through the endpoint in a unit test.
+    """
+    from app.config import settings as relay_settings
+
+    wf_id: str | None = None
+    agent_name = ""
+    deadline = time.monotonic() + relay_settings.ws_event_relay_timeout_seconds
+    poll = max(0.01, relay_settings.ws_event_relay_poll_seconds)
+    try:
+        while True:
+            if time.monotonic() > deadline:
+                logger.warning(
+                    "WebSocket relay hit its ceiling of %ss without pipeline_end",
+                    relay_settings.ws_event_relay_timeout_seconds,
+                )
+                break
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=poll)
+            except TimeoutError:
+                # Quiet, not finished. The deadline above is what ends this.
+                continue
+            if wf_id is None and event.step == "pipeline_start":
+                wf_id = event.workflow_id
+            if wf_id and event.workflow_id != wf_id:
+                continue
+            if event.step.startswith("tool:") or ":tool:" in event.step:
+                msg_type = "tool_call"
+            elif event.step.startswith(("orchestrator:", "sql:", "knowledge:")):
+                agent_name = event.step.split(":")[0]
+                msg_type = (
+                    "agent_start"
+                    if event.status == "started"
+                    else ("agent_end" if event.status in ("completed", "failed") else "step")
+                )
+            else:
+                msg_type = "step"
+            payload: dict = {
+                "type": msg_type,
+                "step": event.step,
+                "status": event.status,
+                "detail": event.detail,
+                "elapsed_ms": event.elapsed_ms,
+            }
+            if msg_type in ("agent_start", "agent_end"):
+                payload["agent"] = agent_name
+            await websocket.send_json(payload)
+            if event.step == "pipeline_end":
+                break
+    except Exception:
+        logger.warning("WebSocket relay error", exc_info=True)
+
+
 @router.websocket("/ws/{project_id}/{connection_id}")
 async def chat_websocket(
     websocket: WebSocket,
@@ -1469,44 +1536,8 @@ async def chat_websocket(
     session_id: str | None = None
     config = None
 
-    async def _relay_events(
-        queue: asyncio.Queue[WorkflowEvent],
-    ) -> None:
-        wf_id: str | None = None
-        try:
-            while True:
-                event = await asyncio.wait_for(queue.get(), timeout=60)
-                if wf_id is None and event.step == "pipeline_start":
-                    wf_id = event.workflow_id
-                if wf_id and event.workflow_id != wf_id:
-                    continue
-                if event.step.startswith("tool:") or ":tool:" in event.step:
-                    msg_type = "tool_call"
-                elif event.step.startswith(("orchestrator:", "sql:", "knowledge:")):
-                    agent_name = event.step.split(":")[0]
-                    msg_type = (
-                        "agent_start"
-                        if event.status == "started"
-                        else ("agent_end" if event.status in ("completed", "failed") else "step")
-                    )
-                else:
-                    msg_type = "step"
-                payload: dict = {
-                    "type": msg_type,
-                    "step": event.step,
-                    "status": event.status,
-                    "detail": event.detail,
-                    "elapsed_ms": event.elapsed_ms,
-                }
-                if msg_type in ("agent_start", "agent_end"):
-                    payload["agent"] = agent_name
-                await websocket.send_json(payload)
-                if event.step == "pipeline_end":
-                    break
-        except TimeoutError:
-            logger.debug("WebSocket relay timed out (no events for 60s)")
-        except Exception:
-            logger.warning("WebSocket relay error", exc_info=True)
+    async def _relay_events(queue: asyncio.Queue[WorkflowEvent]) -> None:
+        await relay_workflow_events(websocket, queue)
 
     try:
         async with async_session_factory() as db:
@@ -1542,7 +1573,12 @@ async def chat_websocket(
             ws_project = await _project_svc.get(db, project_id)
 
             ws_conn_id = connection_id if connection_id and connection_id != "_none" else None
-            chat_session = await _chat_svc.create_session(
+            # F-CHAT-02: reuse this triple's empty session rather than writing a row
+            # per connect. `session_created` is sent immediately below, so the client is
+            # promised an id at connect time and creating lazily would break the
+            # protocol; reuse bounds the orphans to one per (project, connection, user)
+            # and keeps that contract exactly.
+            chat_session = await _chat_svc.get_or_create_empty_session(
                 db,
                 project_id,
                 user_id=user_id,

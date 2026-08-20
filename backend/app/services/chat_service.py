@@ -104,6 +104,51 @@ class ChatService:
         await session.refresh(chat)
         return chat
 
+    async def get_or_create_empty_session(
+        self,
+        session: AsyncSession,
+        project_id: str,
+        *,
+        user_id: str | None = None,
+        connection_id: str | None = None,
+    ) -> ChatSession:
+        """Return this triple's empty session, creating one only if there is none.
+
+        F-CHAT-02. The WebSocket route created a row on every connect, before the receive
+        loop and unconditionally, so a client that connects and sends nothing leaves one
+        behind — and they reach the session list a user reads, not only the table.
+
+        The protocol rules out the obvious fix: `session_created` is sent immediately
+        after the connect, so the client is promised an id before any message exists and
+        creating lazily would break it. Reusing an **empty** session for the same
+        `(project, connection, user)` bounds the orphans to one per triple and keeps the
+        contract exactly as it was.
+
+        Empty means no messages. A session someone has spoken in is never handed back:
+        resuming a stranger's conversation because it shares a triple would be a far
+        worse bug than the row it saves.
+        """
+        existing = (
+            await session.execute(
+                select(ChatSession)
+                .outerjoin(ChatMessage, ChatMessage.session_id == ChatSession.id)
+                .where(
+                    ChatSession.project_id == project_id,
+                    ChatSession.user_id == user_id,
+                    ChatSession.connection_id == connection_id,
+                    ChatMessage.id.is_(None),
+                )
+                .order_by(ChatSession.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+
+        return await self.create_session(
+            session, project_id, user_id=user_id, connection_id=connection_id
+        )
+
     async def get_session(self, session: AsyncSession, session_id: str) -> ChatSession | None:
         result = await session.execute(select(ChatSession).where(ChatSession.id == session_id))
         return result.scalar_one_or_none()

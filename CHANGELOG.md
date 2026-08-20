@@ -6,6 +6,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — `accept_invite` runs in one transaction, and the finding it closes was wrong (2026-08-20)
+
+F-PROJ-03 read *"commits inside `begin_nested()` → 500 on idempotent re-accept."* Measured
+on SQLAlchemy 2.0.51 before anything was changed: **it does not 500.**
+`test_does_not_duplicate_if_already_member` has always passed, and a direct reproduction
+raised nothing and persisted the row — a `commit()` inside an open SAVEPOINT deactivates
+the savepoint transaction, which then exits quietly. That bookkeeping lives in
+`SessionTransaction`, shared across dialects, so Postgres does not differ.
+
+The smell was real even though the symptom was not:
+
+- **The savepoint bought nothing.** The early return committed inside it and the normal
+  path committed after it, so no rollback path existed for it to provide. A savepoint that
+  never rolls back reads as a guarantee and is decoration.
+- **It worked by accident of the library version.** A SQLAlchemy that tightens
+  commit-inside-savepoint would have produced exactly the 500 the board already believed
+  in.
+
+Now one transaction, committed once, with the `IntegrityError` retry that was always the
+real concurrency guard. Four tests pin the behaviour the block is meant to have — accepting
+twice settles the same way, an existing member is not silently upgraded, an expired invite
+leaves no membership and stays `pending` — because removing a transaction boundary is the
+kind of change whose damage shows up somewhere else.
+
+### Fixed — the WebSocket relay stopped giving up on quiet, and stopped a session per connect (2026-08-20)
+
+Both on `/api/chat/ws/{project}/{connection}`, documented public API (`API.md:206`) that
+the product's own UI does not use — it speaks SSE. Both were filed with a user-facing
+impact this code cannot produce (a tab reload opens no WebSocket; the reasoning panel is
+fed by SSE); the findings survive for third-party clients with the severity re-argued.
+
+**F-CHAT-03.** The relay was `asyncio.wait_for(queue.get(), timeout=60)` with
+`except TimeoutError: logger.debug(...)`, so sixty seconds of quiet ended the event stream
+while the run continued — the client got nothing more and no reason, and the line saying
+so was at debug, invisible at production level. An unnamed number, five times tighter than
+the `ws_idle_timeout_seconds` beside it.
+
+A gap in events is not the end of a run, and the SSE relay in the same file has always
+known that. The WS relay now has its shape: poll on `ws_event_relay_poll_seconds` (0.5),
+continue on a gap, and stop at `ws_event_relay_timeout_seconds` (900) if a run never
+reaches `pipeline_end`. Extracted to `relay_workflow_events` so both halves — *survives a
+quiet period* and *still ends at the deadline* — are testable without a WebSocket
+handshake; neither was reachable through the endpoint in a unit test.
+
+**F-CHAT-02.** Every connect wrote a session row, before the receive loop and
+unconditionally, so a client that connects and sends nothing leaves one behind — and they
+reach the session list a user reads, not only the table. Lazy creation is ruled out by the
+protocol: `session_created` is sent immediately after the connect, so the client is
+promised an id before any message exists.
+
+`ChatService.get_or_create_empty_session` reuses this `(project, connection, user)`'s
+**empty** session instead, bounding the orphans to one per triple with the contract
+unchanged. A session someone has spoken in is never handed back — resuming a stranger's
+conversation because it shares a triple would be far worse than the row it saves.
+
+
 ### Security — where a connection is allowed to point, and why the obvious guard was wrong (2026-08-20)
 
 `db_host`, `ssh_host` and a DSN's host are user-supplied and reach a socket, so an
