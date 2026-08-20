@@ -85,11 +85,11 @@ frontend **A** (563 smells, 7 SOLID).
 |---|---|
 | 🔴 Critical | 0 |
 | 🟠 High | **0** |
-| 🟡 Medium | 11 |
+| 🟡 Medium | 10 |
 | 🟢 Low | 42 |
 | ⚪ Info | 9 |
 
-*Counted 2026-08-21, not estimated: 62 open rows and 44 struck
+*Counted 2026-08-21, not estimated: 61 open rows and 45 struck
 through, by `grep -c '^| F-'` / `grep -c '^| ~~F-'` over this file. The `~` figures this
 replaced had drifted — the tally is now derived from the rows it summarises.*
 
@@ -271,7 +271,7 @@ gate, durable AuditLog, idempotency).
 | ID | Sev | Issue |
 |---|---|---|
 | ~~F-RULE-02~~ | 🟢 | **CLOSED 2026-08-20.** The orchestrator prompt now carries a named UNTRUSTED-DATA section listing custom rules and stored learnings among the things that are data rather than instructions (`prompts/untrusted_data.py`, applied in `orchestrator_prompt.py`). Rules are editor-authored, so the exposure was one project member directing another's agent. |
-| F-RULE-03 | 🟡 | `rules_to_context` no budget/size truncation (overflow/cost) |
+| ~~F-RULE-03~~ | ✅ | ~~`rules_to_context` no budget/size truncation (overflow/cost)~~ — **fixed 2026-08-21, and CLAUDE.md's claim was true at two call sites of five.** Rule text goes straight into an LLM prompt and its size is bounded by nothing the code controls: files an operator drops in `rules/` plus rows a user adds through `manage_custom_rules`. Measured: `orchestrator.py:605` capped at 2000, `sql_agent.py:1991` at 3000 — unrelated magic numbers — while `sql_agent.py:710` (the `get_custom_rules` tool), `sql_agent.py:1974` (repair) and `code_db_sync_pipeline.py:509` had **no cap at all**. Both existing caps sliced the joined string, cutting the last rule mid-sentence and reporting `"... (truncated)"`, which tells the model something was removed and not what — so it could not tell the user its answer may ignore rules they wrote (`vision.md` §7). The budget now lives in `rules_to_context` (`RULES_CONTEXT_MAX_CHARS`, default 3000): **whole rules are dropped, never half of one**, and the notice carries a count. A single rule larger than the whole budget — the case a pre-existing test caught and my design had missed — is cut and **named**, pointing at the setting to raise, because that is the only one of the three bad options the agent can report. Evidence: `tests/unit/test_rules_context_budget.py` (12), three plants. |
 | F-RULE-04 | 🟢 | Filesystem rule loading reads any matching-suffix file incl. symlinks |
 
 ### 12 — Visualizations & Dashboards

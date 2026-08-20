@@ -1980,6 +1980,7 @@ class SQLAgent(BaseAgent):
             )
             return ""
 
+    #: Passed to `rules_to_context`, which drops whole rules and counts them.
     _RULES_PROMPT_MAX_CHARS = 3000
 
     async def _load_rules_for_prompt(self, project_id: str) -> str:
@@ -1988,12 +1989,11 @@ class SQLAgent(BaseAgent):
             rules_dir = f"{settings.custom_rules_dir}/{project_id}"
             file_rules = self._rules_engine.load_rules(project_rules_dir=rules_dir)
             db_rules = await self._rules_engine.load_db_rules(project_id=project_id)
-            text = self._rules_engine.rules_to_context(file_rules + db_rules)
-            if not text:
-                return ""
-            if len(text) > self._RULES_PROMPT_MAX_CHARS:
-                text = text[: self._RULES_PROMPT_MAX_CHARS] + "\n... (truncated)"
-            return text
+            # F-RULE-03: see the orchestrator — one budget, applied where the text is
+            # built, dropping whole rules and saying how many.
+            return self._rules_engine.rules_to_context(
+                file_rules + db_rules, max_chars=self._RULES_PROMPT_MAX_CHARS
+            )
         except Exception:
             logger.warning(
                 "_load_rules_for_prompt failed — its prompt section will be EMPTY, "

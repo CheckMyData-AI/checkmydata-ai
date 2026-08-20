@@ -732,14 +732,24 @@ class TestSQLAgentCustomRulesInjection:
         assert "CUSTOM RULES & BUSINESS LOGIC" not in system_msg.content
 
     @pytest.mark.asyncio
-    async def test_rules_truncated_when_too_long(self, agent, mock_custom_rules, context):
-        long_rules = "x" * 5000
-        mock_custom_rules.rules_to_context.return_value = long_rules
+    async def test_rules_budget_is_passed_to_the_builder(self, agent, mock_custom_rules, context):
+        """F-RULE-03 moved the truncation into `rules_to_context`, so this asserts the
+        budget is *handed over* rather than applied here.
 
-        text = await agent._load_rules_for_prompt("proj-1")
+        The previous version mocked `rules_to_context` to return 5000 characters and
+        asserted this method shortened them — a test of a responsibility that has moved.
+        It could only ever pass while the caller did the cutting, and the caller cutting is
+        the thing being removed: slicing the joined text severs the last rule mid-sentence
+        and reports `"(truncated)"` without saying how many rules the model never saw.
+        Whole-rule dropping with a count lives in one place now; three of five callers had
+        no cap at all, and two had different magic numbers.
+        """
+        mock_custom_rules.rules_to_context.return_value = "x" * 5000
 
-        assert len(text) < len(long_rules)
-        assert text.endswith("... (truncated)")
+        await agent._load_rules_for_prompt("proj-1")
+
+        _, kwargs = mock_custom_rules.rules_to_context.call_args
+        assert kwargs.get("max_chars") == agent._RULES_PROMPT_MAX_CHARS
 
     @pytest.mark.asyncio
     async def test_rules_load_failure_returns_empty(self, agent, mock_custom_rules, context):

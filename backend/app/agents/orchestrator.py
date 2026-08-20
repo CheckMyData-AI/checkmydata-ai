@@ -594,6 +594,7 @@ class OrchestratorAgent(BaseAgent):
         self._wf_suspicious.pop(wf_id, None)
         return None
 
+    #: Passed to `rules_to_context`, which drops whole rules and counts them.
     _ORCH_RULES_MAX_CHARS = 2000
 
     async def _load_custom_rules_text(self, project_id: str) -> str:
@@ -602,12 +603,13 @@ class OrchestratorAgent(BaseAgent):
             rules_dir = f"{settings.custom_rules_dir}/{project_id}"
             file_rules = self._custom_rules.load_rules(project_rules_dir=rules_dir)
             db_rules = await self._custom_rules.load_db_rules(project_id=project_id)
-            text = self._custom_rules.rules_to_context(file_rules + db_rules)
-            if not text:
-                return ""
-            if len(text) > self._ORCH_RULES_MAX_CHARS:
-                text = text[: self._ORCH_RULES_MAX_CHARS] + "\n... (truncated)"
-            return text
+            # F-RULE-03: the budget lives in `rules_to_context` now. This used to slice
+            # the joined string at 2000 chars, which cut the last rule in half and told
+            # the model only "(truncated)" — it could not know how many rules it had not
+            # been shown, so it could not say so to the user.
+            return self._custom_rules.rules_to_context(
+                file_rules + db_rules, max_chars=self._ORCH_RULES_MAX_CHARS
+            )
         except Exception:
             logger.debug("_load_custom_rules_text failed", exc_info=True)
             return ""

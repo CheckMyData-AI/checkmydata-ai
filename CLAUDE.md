@@ -255,7 +255,7 @@ Stripe-backed subscriptions when `billing_enabled=True`: Checkout, Customer Port
 
 ### Custom rules
 
-User rules in `rules/` (or `CUSTOM_RULES_DIR`) are injected into orchestrator and SQL agent prompts with budget-aware truncation. Rule freshness check compares query results against loaded rules and proposes updates on discrepancy. Schema-aware rule validation runs on schema refresh.
+User rules in `rules/` (or `CUSTOM_RULES_DIR`) are injected into orchestrator and SQL agent prompts with budget-aware truncation — the budget lives in `rules_to_context` (`RULES_CONTEXT_MAX_CHARS`, default 3000), **not** at the call sites. Corrected 2026-08-21: this sentence was true at two of five callers and false at three, and the two that capped sliced the joined string. Whole rules are dropped now, never half of one, and the notice says how many were omitted so an answer can admit it may not reflect them. Rule freshness check compares query results against loaded rules and proposes updates on discrepancy. Schema-aware rule validation runs on schema refresh.
 
 ### GitAgent (live Git access)
 
