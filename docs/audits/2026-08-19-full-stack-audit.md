@@ -1423,3 +1423,83 @@ The generosity is deliberate: any `warning`/`error`/`exception`/`critical` call 
 the handler counts as announcing, without checking the words. Judging prose in a test is
 how a test becomes a matter of opinion, and the measurable half is the half that caused the
 outage.
+
+## 24. A CI failure that said every test passed
+
+PR #194 went red on the frontend while touching no frontend file. `git diff --name-only
+origin/main..HEAD | grep -c '^frontend/'` returned 0, the suite was 683/683 locally, and
+the same step had passed on main's previous three commits. Every signal pointed at "flaky,
+re-run it".
+
+The log said otherwise:
+
+```
+Test Files  93 passed (93)
+##[error]EnvironmentTeardownError: Cannot load '/src/lib/api/index.ts' … after the
+environment was torn down
+##[error]Process completed with exit code 1
+```
+
+**Every test passed and the runner exited 1.** That is the kind of red nobody reads — and
+behind it was a production bug, not a test-harness quirk.
+
+`handleSessionExpired` fired a floating `void import("@/stores/auth-store").then(logout)`
+and set `window.location.href` on the next synchronous line. In a browser the document
+starts unloading immediately, so the `.then` may never run; under vitest the test finishes
+first and the import lands in a dead realm. Same cause, two symptoms — one visible only in
+CI, and the visible one was the harmless half.
+
+The part that matters: **the only piece of `logout()` that outlives a navigation is
+`storage.removeItem("auth_user")`**, the profile kept for instant UI paint. Left undone, a
+session expires, the person lands on `/login`, and the app still holds their profile
+against a cookie the server has already rejected. The in-memory store dies with the
+document either way, so importing it to mutate memory before leaving was work that could
+only fail to happen.
+
+### The workaround was already there, and that is the lesson
+
+The test file carried an `afterEach` waiting one macrotask, with a comment explaining the
+teardown error precisely. Someone — me, earlier in this same audit — had diagnosed the
+symptom, papered over it in the test, and moved on. One tick is enough on a laptop and not
+on a CI runner, so the paper tore.
+
+> A workaround that describes the bug correctly is a bug report somebody filed against
+> themselves and then closed.
+
+It is removed rather than left as harmless. Keeping it would hide the regression if the
+floating import ever came back, and it was the visible half of the defect — the half that
+made the invisible half survivable.
+
+Three plants confirm the fix, and one of them had to be rewritten: deferring the clear back
+into a microtask first produced a TypeScript error, so vitest reported "no tests" rather
+than a failure. A plant that breaks the build proves the build breaks, not that the guard
+works.
+
+### The tenth entry found the other nine
+
+Updating SCN-011 tripped `test_legacy_coverage_paths_do_not_regress`, and its message
+printed the whole list:
+
+```
+legacy unresolved Coverage paths grew from 9 to 10:
+['SCN-011: src/__tests__/session-flash.test.ts',
+ 'SCN-011: src/__tests__/session-expiry-clears-auth.test.ts',
+ ... 'SCN-106: src/__tests__/components/LogsScreenTabs.test.tsx']
+```
+
+**All ten were the same defect.** A `src/__tests__/...` prefix resolves against neither
+`frontend/src/` nor the repo root; the real path is `frontend/src/__tests__/...`. Nine of
+them had been frozen as "legacy debt" for months, which is what a baseline does when
+nobody reads the list it is protecting.
+
+Fixing the one that failed and leaving nine identical ones beside it is the minimum the
+test asks for, and it is the wrong thing to do. All ten are corrected and the baseline
+drops from 9 to **0** — at which point it stops being frozen debt and becomes the same
+rule the strict check already applies to SCN-113 and above: a Coverage path either resolves
+or it is wrong.
+
+That is the second ratchet re-baselined today for the same reason, and the pattern is worth
+naming: **a baseline is a promise to come back, and nothing in a green test reminds you.**
+Both were found by adding one more instance — the number moved, the message listed what it
+was protecting, and the list turned out to be a single fixable class rather than accumulated
+history.

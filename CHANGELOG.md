@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a session could expire and leave the app holding the profile (2026-08-21)
+
+`handleSessionExpired` fired `void import("@/stores/auth-store").then(({ useAuthStore }) =>
+useAuthStore.getState().logout())` and set `window.location.href = "/login"` on the **next
+synchronous line**. The browser begins unloading the document immediately, so the `.then`
+may never run — and the only part of `logout()` that outlives a navigation is
+`storage.removeItem("auth_user")`, the profile kept for instant UI paint.
+
+So a session expires, the user lands on `/login`, and the app still holds their profile
+against a cookie the server has already rejected. Whether they see it depended on a race
+nobody chose (F-AUTH-16).
+
+The teardown is synchronous now and the dynamic import is gone. The in-memory store dies
+with the document either way, so importing it to mutate memory before leaving was work that
+could only fail to happen; what has to happen before the redirect is clearing the persisted
+copy. Each `removeItem` is individually guarded, because Safari private browsing can throw
+on storage access and a session that cannot be cleared must still redirect rather than trap
+somebody on a page that no longer works.
+
+**Found through a CI failure that reported every test passing.** The floating import landed
+after vitest tore the environment down:
+`EnvironmentTeardownError: Cannot load '/src/lib/api/index.ts' … after the environment was
+torn down` — 683 tests green, runner exiting 1. The test file had already grown an
+`afterEach` waiting one macrotask to paper over it, which is enough on a laptop and not on
+a CI runner. That workaround is removed rather than left in place: it was the visible half
+of a real bug, and keeping it would hide the regression if the floating import came back.
+Frontend suite is 688 passed, exit 0.
+
+
 ### Changed — the silent-degradation ratchet now measures silence, not breadth (2026-08-20)
 
 `test_broad_handlers_returning_a_degraded_value_do_not_grow` counted every broad `except`
