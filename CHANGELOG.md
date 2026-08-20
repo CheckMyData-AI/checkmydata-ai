@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — where a connection is allowed to point, and why the obvious guard was wrong (2026-08-20)
+
+`db_host`, `ssh_host` and a DSN's host are user-supplied and reach a socket, so an
+authenticated user could aim one at the cloud metadata endpoint or at the app's own Redis
+and read the connection-test error as an oracle for what answered (F-CONN-04).
+
+**The existing SSRF guard's default could not be copied.** `validate_repo_url` refuses
+every non-public address, which is right for a git remote — a public git host is the
+normal case. A database is the opposite: most deployments reach theirs at `10.x`,
+`192.168.x` or `127.0.0.1`. The same default would break the product for the majority in
+order to protect the minority running it multi-tenant, and a guard that breaks the normal
+case gets turned off, after which it protects nobody.
+
+So the default is narrow and absolute, and the broad rule is opt-in:
+
+- **Always refused: cloud metadata endpoints** — `169.254.169.254`, `169.254.170.2`,
+  `fd00:ec2::254`, and the names that resolve to them, checked **by name and by resolved
+  address** so a split-horizon resolver cannot answer differently for us than for whoever
+  checked. No database has ever lived there, and what does hands out credentials for the
+  whole cloud account, so refusing it costs no deployment anything.
+- **Optionally refused: every private/loopback/link-local address** —
+  `CONNECTION_ALLOW_PRIVATE_HOSTS`, default `true`. Set it `false` when running
+  multi-tenant, where a tenant reaching `127.0.0.1` reaches *your* infrastructure.
+
+Every address a name resolves to is checked, so one public record cannot launder the
+private one beside it; a host that cannot be resolved is **accepted with a log line by
+default and refused only in the strict mode** — a database name that does not resolve from
+the API process is ordinary (VPN not up, internal-only DNS, resolvable only through the
+tunnel), while an operator who asked for public hosts only is entitled to have
+"unverifiable" count as "no"; a literal address costs no DNS lookup; and the whole check runs off the event loop, unlike the repo guard's synchronous
+call inside a Pydantic validator. Applied on **create and PATCH** — the
+guarded-on-create/free-on-PATCH shape has surfaced four times in two days.
+
+DSN host extraction is deliberately best-effort: the common
+`scheme://user:pass@host:port/db` shape is parsed, anything else is left to the driver.
+The guard's job is to remove the easy path, not to claim a completeness it does not have.
 ### Security — `tofu` turned itself off when it could not write, and logged about it (2026-08-20)
 
 `connect_with_policy` answered an unwritable `known_hosts` file by setting

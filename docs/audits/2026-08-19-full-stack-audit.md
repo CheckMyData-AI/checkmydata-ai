@@ -1111,3 +1111,113 @@ Three bumps in a day is itself a signal worth recording: each was justified, and
 that only ever moves up stops measuring anything. The comment history is what keeps it
 honest — a reader can see all three reasons in one place and judge the trend, which a bare
 number never permits.
+## 17. The obvious guard was the wrong guard
+
+F-CONN-04: `db_host`, `ssh_host` and a DSN's host are user-supplied and reach a socket, so
+an authenticated user can aim one at the cloud metadata endpoint or the app's own Redis
+and read the connection-test error as an oracle.
+
+There was already a guard for this shape — `validate_repo_url` DNS-resolves a repo host
+and refuses every non-public address, with `REPO_ALLOW_PRIVATE_HOSTS` as the escape
+hatch. Reusing it looked like the whole task.
+
+**It would have been an outage.** A public git host is the normal case; a database on
+`10.x`, `192.168.x` or `127.0.0.1` is *also* the normal case. Copying that default refuses
+the majority of real deployments in order to protect the minority running this
+multi-tenant — and a guard that breaks the normal case does not survive contact with the
+first support ticket. It gets set to `true` globally, and then it protects nobody, and the
+finding is closed on the board while the hole is open in production.
+
+So the rule splits by what is *never* legitimate versus what is *usually* legitimate:
+
+| Rule | Default | Why it can be that default |
+|---|---|---|
+| Cloud metadata endpoints refused | always on | no database has ever lived at `169.254.169.254`; what does live there issues credentials for the whole account. Costs no deployment anything. |
+| Private/loopback/link-local refused | **off** | a database on an internal network is the normal case. On for multi-tenant operators, where a tenant reaching `127.0.0.1` reaches *your* infrastructure. |
+
+Four details that are the difference between a guard and the appearance of one:
+
+- **By name *and* by resolved address.** `metadata.google.internal` is refused before DNS
+  runs, because a split-horizon resolver can answer differently for us than for whoever
+  checked.
+- **Every address, not the first.** A name resolving to one public and one private record
+  is refused; otherwise the public one launders the other.
+- **Unresolvable is refused, not waved through.** Failing open on a DNS error lets an
+  attacker choose whether the guard runs, by choosing a name that fails to resolve once.
+- **Off the event loop.** `getaddrinfo` blocks and this is on the request path. The repo
+  guard makes the same call synchronously inside a Pydantic validator — a pre-existing
+  trade-off, and not a precedent worth copying into a new one.
+
+Applied on create **and** PATCH. That is the fifth time in two days the same sentence has
+been necessary, and the parity ratchet from §14 does not catch it — the check lives in the
+route, not on the model. Worth noting as a limit of that ratchet rather than a gap in this
+fix: it compares declared validators, and a guard called from the handler is invisible to
+it. The two route tests are what cover it here.
+
+### I shipped the failure this section warns about, and the suite caught it in an hour
+
+The paragraph above about guards that break the normal case was written *before* the code
+— and the first version of the code refused an unresolvable host in both modes, on the
+"failing open lets an attacker choose whether the guard runs" argument, which is sound in
+strict mode and wrong everywhere else.
+
+```
+$ pytest tests/integration/test_analytics_connections_api.py -q
+E  AssertionError: {"detail":"Host 'db.internal' could not be resolved"}
+E  assert 422 == 200
+```
+
+`test_database_connection_still_creates_with_its_defaults` — a pre-existing test, written
+by somebody else for an unrelated feature — said no. **A database hostname this process
+cannot resolve right now is ordinary**: the user configures the connection before the VPN
+is up, the name resolves only from inside the network, or only through the SSH tunnel's
+far side. The connection test is where reachability is decided, and refusing at
+configuration time turns the guard into the outage the section is about.
+
+So the DNS failure became mode-dependent, which is the honest shape: accepted with a log
+line by default, refused under `CONNECTION_ALLOW_PRIVATE_HOSTS=false`, where the operator
+asked for public addresses only and *"I could not check"* is not *"public"*. The metadata
+name check runs before DNS and is unaffected in both modes.
+
+Writing down a failure mode does not immunise you against it. What caught this was a test
+somebody wrote for a different feature entirely — which is the argument for a suite that
+covers the ordinary path, not only the interesting one.
+
+## 18. Two of this audit's own rows named an impact the code cannot produce
+
+Before starting on F-CHAT-02 and F-CHAT-03 — both written this morning, both marked
+*"Confirmed open, evidence recorded"* — one command settled who reaches the endpoint they
+describe:
+
+```
+$ grep -rln "WebSocket\|session_created" frontend/src/
+$
+```
+
+Empty. The product's own UI speaks **SSE** (`src/lib/api/chat.ts:150` →
+`/chat/ask/stream`) and never opens `/api/chat/ws/...`. That endpoint is documented public
+API (`API.md:206`, ticket-authenticated), so third-party clients can reach it — but the
+user-facing consequences both rows asserted are not consequences this code has:
+
+- **F-CHAT-02** said *"ten tab reloads leave ten orphans."* A tab reload opens no
+  WebSocket. Orphans are real for a WS client; the number ten came from imagining the UI
+  doing something it does not do.
+- **F-CHAT-03** said *"the reasoning panel goes quiet."* The panel is fed by SSE, and the
+  **SSE relay is already correct** — `chat.py:1032-1043` polls on a 0.5 s timeout, emits a
+  heartbeat every 20 s, holds `stream_timeout_seconds` as an overall deadline, and
+  *continues* on a gap instead of exiting. The 60-second exit is the WebSocket relay,
+  which the panel never sees.
+
+Both findings survive; both severities were argued from the wrong blast radius. The rows
+now carry the correction above the original text rather than replacing it, because a row
+that quietly becomes right teaches nothing about how it was wrong.
+
+**The pattern, and it is the third time in this audit.** Every one of these came from
+reading the code that *contains* the defect without reading the code that *calls* it —
+the same shape as the three findings this audit had to withdraw on 2026-08-19
+(AUD-0819-11, AUD-0819-13, F-KNOW-09), each written from a grep hit without the enclosing
+function. Reading outward is not optional diligence; it is where the severity comes from.
+
+The consolation is that the fix is now easier to get right: a correct relay already exists
+twenty lines away in the same file, so the WS one has a reference implementation rather
+than a design question.
