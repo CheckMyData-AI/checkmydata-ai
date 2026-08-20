@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Awaitable, Callable
 
 import asyncssh
 
@@ -102,6 +103,38 @@ def warn_if_known_hosts_ephemeral() -> None:
         path,
         policy,
     )
+
+
+class HostKeyChangedError(Exception):
+    """A host presented a different key than the one this process pinned (F-SSH-01)."""
+
+
+#: host -> the public key blob this process saw first. Used only when the known_hosts
+#: file cannot be written; the file is the durable pin and stays the primary one.
+_MEMORY_PINS: dict[str, str] = {}
+
+
+def memory_pinned_hosts() -> set[str]:
+    """Hosts pinned in this process's memory. For tests and diagnostics."""
+    return set(_MEMORY_PINS)
+
+
+def reset_memory_pins() -> None:
+    """Forget every in-memory pin. For tests."""
+    _MEMORY_PINS.clear()
+
+
+def _host_key_blob(conn: asyncssh.SSHClientConnection) -> str | None:
+    """The connection's server host key as ``"keytype base64"``, or None if absent."""
+    try:
+        host_key = conn.get_server_host_key()
+        if host_key is None:
+            return None
+        parts = host_key.export_public_key().decode("utf-8").strip().split()
+        return f"{parts[0]} {parts[1]}" if len(parts) >= 2 else None
+    except Exception:  # noqa: BLE001 — an unreadable key is "no key", not a crash
+        logger.warning("Could not read the server host key", exc_info=True)
+        return None
 
 
 def _ensure_known_hosts_file(path: str) -> bool:
@@ -188,13 +221,14 @@ async def connect_with_policy(
 
     if policy == "tofu":
         if not writable:
-            logger.warning(
-                "ssh_host_key_policy=tofu but %r is not writable; "
-                "falling back to no verification for this connection",
-                path,
-            )
-            connect_kwargs["known_hosts"] = None
-            return await _connect(connect_kwargs)
+            # F-SSH-01. This used to set `known_hosts = None` and connect anyway — for
+            # this connection and every later one — which turns the policy off and logs
+            # about it. The pin moves into process memory instead: the first connect to a
+            # host is unverified, which is what trust-on-first-use is, and every later
+            # connect is checked against the key that first one presented. Where the file
+            # is writable but the disk does not survive a restart (AUD-0819-06) that is
+            # already the guarantee, so nothing is downgraded by it.
+            return await _connect_with_memory_pin(_connect, connect_kwargs, host, path)
 
         if _host_is_pinned(path, host):
             # Already trusted — verify against the pinned key.
@@ -215,3 +249,54 @@ async def connect_with_policy(
     )
     connect_kwargs["known_hosts"] = path
     return await _connect(connect_kwargs)
+
+
+async def _connect_with_memory_pin(
+    connect: Callable[[dict], Awaitable[asyncssh.SSHClientConnection]],
+    connect_kwargs: dict,
+    host: str,
+    path: str,
+) -> asyncssh.SSHClientConnection:
+    """Trust-on-first-use with the pin held in memory, because the file refused it.
+
+    Verification happens *after* the handshake rather than inside asyncssh, so the first
+    connection is genuinely unverified — that is TOFU's premise, not a shortcut. What
+    changes is the second one: a host whose key no longer matches is disconnected and
+    raised on, where before it was accepted without comment.
+    """
+    connect_kwargs["known_hosts"] = None
+    conn = await connect(connect_kwargs)
+
+    blob = _host_key_blob(conn)
+    if blob is None:
+        # Nothing to compare a later connection against. Recording the host would
+        # assert a check that cannot happen.
+        logger.warning(
+            "ssh_host_key_policy=tofu but %r is not writable and %s presented no "
+            "readable host key: this connection is unverified and cannot be pinned",
+            path,
+            host,
+        )
+        return conn
+
+    pinned = _MEMORY_PINS.get(host)
+    if pinned is None:
+        _MEMORY_PINS[host] = blob
+        logger.warning(
+            "ssh_host_key_policy=tofu but %r is not writable; pinned %s in memory for "
+            "this process only. The pin is lost on restart, so the first connection "
+            "after every restart is unverified. Point SSH_KNOWN_HOSTS_PATH at durable "
+            "storage to fix that properly.",
+            path,
+            host,
+        )
+        return conn
+
+    if pinned != blob:
+        conn.abort()
+        raise HostKeyChangedError(
+            f"Host key for {host} changed since this process first connected to it. "
+            "Either the server was rebuilt or the connection is being intercepted; "
+            "restart the app to accept a legitimate new key."
+        )
+    return conn

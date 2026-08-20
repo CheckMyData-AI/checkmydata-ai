@@ -1016,3 +1016,98 @@ definition — `app/api/routes/connections.py` would not import at all, which is
 API down. `ruff` and the AST-based parity test both passed it, because neither imports the
 module. Worth keeping in view: a static check that never executes the code cannot tell a
 refactor from a crash.
+
+## 15. F-SSH-02 — the board under-stated it twice
+
+The row read *"ClickHouse exec template leaks DB password on remote command line."* Both
+halves of that turned out to be smaller than the truth.
+
+**It was all three engines.** `PGPASSWORD="{db_password}"`, `MYSQL_PWD="{db_password}"`
+and `CLICKHOUSE_PASSWORD="{db_password}"` all interpolate the secret into the command
+string. `asyncssh.run(command)` sends an SSH *exec* request and sshd runs it through the
+login shell as `sh -c "<command>"`, so the password sits in that process's argv, readable
+by any user on the remote host via `ps` or `/proc/<pid>/cmdline` for as long as the query
+runs. A finding named after the connector someone happened to be reading acquires that
+connector's scope, and the two next to it inherit the exemption.
+
+**And the ClickHouse template never authenticated.** A command-prefix assignment sets the
+variable for that command's own environment; `"$VAR"` on the same line is expanded by the
+*calling* shell, from the value it already had:
+
+```
+$ sh -c 'FOO="secret" printf "argv:[%s]\n" "$FOO"'
+argv:[]
+$ FOO=leaked sh -c 'FOO="secret" printf "argv:[%s]\n" "$FOO"'
+argv:[leaked]
+```
+
+`--password "$CLICKHOUSE_PASSWORD"` therefore passed an **empty string** — or, if the
+login shell exported that name, **somebody else's**. A security finding and a
+functionality bug in the same nine characters, and neither was visible from reading the
+template as English: it *looks* like it sets a variable and passes it along.
+
+### The fix, and the two things it turned up
+
+The password travels on the channel's stdin now. The command opens with
+`IFS= read -r DBPASS`, the templates set the client's variable from `"$DBPASS"` as an
+environment assignment, and `--password` is gone — the client reads
+`CLICKHOUSE_PASSWORD` from its environment, which is what setting it was for.
+
+**`read -r` stops at the first newline**, so a password containing one would authenticate
+as its first line and fail with whatever the server says about that — an error pointing
+nowhere near here. Refused at build time instead, with the reason.
+
+**Nine introspection call sites built their commands by hand** —
+`_prepend_pre_commands(format_template(...))` — bypassing `_build_command` entirely. They
+would have emitted a `$DBPASS` with nothing to read it, which is an empty password and a
+failed connection on every schema refresh. They route through `_build_command` now: there
+is one place that knows a command needs its secret delivered, and everything goes through
+it.
+
+A custom `ssh_command_template` that still interpolates `{db_password}` keeps working,
+with a warning that names the exposure. Breaking someone's connection to improve its
+hygiene is not an improvement they asked for.
+
+## 16. A control that turns itself off and logs about it is off
+
+`ssh_known_hosts.py` ends with this, and means it:
+
+```python
+# F-SEC-4: fail closed — an unrecognised policy must never silently
+# disable verification.
+```
+
+Two branches above, `tofu` answered an unwritable `known_hosts` file by setting
+`known_hosts = None` and connecting anyway — for that connection and every later one. The
+log line is the only difference between finding out eventually and never finding out; the
+verification is equally absent either way.
+
+**Fail-closed was the wrong fix**, and worth saying why: it would break every SSH
+connection on a read-only filesystem in order to protect a promise the operator never
+made. A security change that turns working connections into outages gets reverted, and
+the finding comes back with a note saying it was tried.
+
+So the pin moves into process memory. First connect to a host is unverified — which is
+what trust-on-first-use *is*, not a shortcut — and every later connect in that process is
+checked against the key the first one presented, aborting on a mismatch. Where the file is
+writable but the disk does not survive a restart (AUD-0819-06, Heroku's primary target),
+that is already the guarantee, so this downgrades nothing anywhere and upgrades the
+read-only case from *never verified* to *verified after the first*.
+
+One case is deliberately **not** pinned: a host that presents no readable key. Recording
+it would assert a check that cannot happen, and a pin nobody can compare against is
+indistinguishable from a pin that always matches.
+
+### And the ratchet fired again, for the third time in one day
+
+`_host_key_blob` catches broadly and returns `None`, so
+`test_broad_handlers_returning_a_degraded_value_do_not_grow` went 79 → 80. Examined rather
+than bumped: a host key that cannot be read must not crash a connection attempt, and
+`None` is **not silent** here — the caller logs at warning that the connection is
+unverified and cannot be pinned, which is the opposite of the failure the ratchet is named
+after. The constant's comment names the instance, as the two before it do.
+
+Three bumps in a day is itself a signal worth recording: each was justified, and a ratchet
+that only ever moves up stops measuring anything. The comment history is what keeps it
+honest — a reader can see all three reasons in one place and judge the trend, which a bare
+number never permits.

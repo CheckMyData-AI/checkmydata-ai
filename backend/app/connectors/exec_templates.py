@@ -10,12 +10,12 @@ import re
 EXEC_TEMPLATES: dict[str, dict[str, str]] = {
     "mysql": {
         "query": (
-            'MYSQL_PWD="{db_password}" mysql'
+            'MYSQL_PWD="$DBPASS" mysql'
             " -h {db_host} -P {db_port} -u {db_user} {db_name}"
             " --batch --raw"
         ),
         "introspect_tables": (
-            'MYSQL_PWD="{db_password}" mysql'
+            'MYSQL_PWD="$DBPASS" mysql'
             " -h {db_host} -P {db_port} -u {db_user} {db_name}"
             " --batch --raw"
             ' -e "SELECT table_name, table_rows, table_comment'
@@ -23,7 +23,7 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             " WHERE table_schema = '{db_name}' AND table_type = 'BASE TABLE'\""
         ),
         "introspect_columns": (
-            'MYSQL_PWD="{db_password}" mysql'
+            'MYSQL_PWD="$DBPASS" mysql'
             " -h {db_host} -P {db_port} -u {db_user} {db_name}"
             " --batch --raw"
             ' -e "SELECT table_name, column_name, column_type, is_nullable,'
@@ -33,7 +33,7 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             ' ORDER BY table_name, ordinal_position"'
         ),
         "introspect_fks": (
-            'MYSQL_PWD="{db_password}" mysql'
+            'MYSQL_PWD="$DBPASS" mysql'
             " -h {db_host} -P {db_port} -u {db_user} {db_name}"
             " --batch --raw"
             ' -e "SELECT table_name, column_name,'
@@ -43,7 +43,7 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             ' AND referenced_table_name IS NOT NULL"'
         ),
         "test": (
-            'MYSQL_PWD="{db_password}" mysql'
+            'MYSQL_PWD="$DBPASS" mysql'
             " -h {db_host} -P {db_port} -u {db_user} {db_name}"
             " --batch --raw"
             ' -e "SELECT 1 AS ok"'
@@ -51,12 +51,12 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
     },
     "postgres": {
         "query": (
-            'PGPASSWORD="{db_password}" psql'
+            'PGPASSWORD="$DBPASS" psql'
             " -h {db_host} -p {db_port} -U {db_user} -d {db_name}"
             " -A -F $'\\t' --pset footer=off"
         ),
         "introspect_tables": (
-            'PGPASSWORD="{db_password}" psql'
+            'PGPASSWORD="$DBPASS" psql'
             " -h {db_host} -p {db_port} -U {db_user} -d {db_name}"
             " -t -A -F $'\\t' --pset footer=off"
             ' -c "SELECT t.tablename, c.reltuples::bigint AS approx_rows'
@@ -67,7 +67,7 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             ' ORDER BY t.tablename"'
         ),
         "introspect_columns": (
-            'PGPASSWORD="{db_password}" psql'
+            'PGPASSWORD="$DBPASS" psql'
             " -h {db_host} -p {db_port} -U {db_user} -d {db_name}"
             " -t -A -F $'\\t' --pset footer=off"
             ' -c "SELECT table_name, column_name, data_type, is_nullable,'
@@ -77,7 +77,7 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             ' ORDER BY table_name, ordinal_position"'
         ),
         "introspect_fks": (
-            'PGPASSWORD="{db_password}" psql'
+            'PGPASSWORD="$DBPASS" psql'
             " -h {db_host} -p {db_port} -U {db_user} -d {db_name}"
             " -t -A -F $'\\t' --pset footer=off"
             ' -c "SELECT cl_child.relname AS table_name,'
@@ -99,7 +99,7 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             ' ORDER BY cl_child.relname"'
         ),
         "introspect_indexes": (
-            'PGPASSWORD="{db_password}" psql'
+            'PGPASSWORD="$DBPASS" psql'
             " -h {db_host} -p {db_port} -U {db_user} -d {db_name}"
             " -t -A -F $'\\t' --pset footer=off"
             ' -c "SELECT tc.relname AS table_name,'
@@ -116,7 +116,7 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
             ' GROUP BY tc.relname, ic.relname, i.indisunique"'
         ),
         "test": (
-            'PGPASSWORD="{db_password}" psql'
+            'PGPASSWORD="$DBPASS" psql'
             " -h {db_host} -p {db_port} -U {db_user} -d {db_name}"
             " -t -A -F $'\\t' --pset footer=off"
             ' -c "SELECT 1 AS ok"'
@@ -124,31 +124,31 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
     },
     "clickhouse": {
         "query": (
-            'CLICKHOUSE_PASSWORD="{db_password}" clickhouse-client'
+            'CLICKHOUSE_PASSWORD="$DBPASS" clickhouse-client'
             " -h {db_host} --port {db_port} -u {db_user}"
-            ' --password "$CLICKHOUSE_PASSWORD" -d {db_name}'
+            " -d {db_name}"
             " --format TabSeparatedWithNames"
         ),
         "introspect_tables": (
-            'CLICKHOUSE_PASSWORD="{db_password}" clickhouse-client'
+            'CLICKHOUSE_PASSWORD="$DBPASS" clickhouse-client'
             " -h {db_host} --port {db_port} -u {db_user}"
-            ' --password "$CLICKHOUSE_PASSWORD" -d {db_name}'
+            " -d {db_name}"
             " --format TabSeparatedWithNames"
             " -q \"SELECT name FROM system.tables WHERE database = '{db_name}'\""
         ),
         "introspect_columns": (
-            'CLICKHOUSE_PASSWORD="{db_password}" clickhouse-client'
+            'CLICKHOUSE_PASSWORD="$DBPASS" clickhouse-client'
             " -h {db_host} --port {db_port} -u {db_user}"
-            ' --password "$CLICKHOUSE_PASSWORD" -d {db_name}'
+            " -d {db_name}"
             " --format TabSeparatedWithNames"
             ' -q "SELECT table, name, type FROM system.columns'
             " WHERE database = '{db_name}'"
             ' ORDER BY table, position"'
         ),
         "test": (
-            'CLICKHOUSE_PASSWORD="{db_password}" clickhouse-client'
+            'CLICKHOUSE_PASSWORD="$DBPASS" clickhouse-client'
             " -h {db_host} --port {db_port} -u {db_user}"
-            ' --password "$CLICKHOUSE_PASSWORD" -d {db_name}'
+            " -d {db_name}"
             " --format TabSeparatedWithNames"
             ' -q "SELECT 1 AS ok"'
         ),
