@@ -678,3 +678,27 @@ which found exactly this shape — a test mutating shared state for everyone aft
 failed because `batch_stale_claim_seconds` was added to `Settings` and not to
 `.env.example`. That is the project's own gate catching the omission the convention
 exists to prevent, and it caught it in the same pass that shipped the setting.
+
+### AUD-0820-01 — the check the non-ASCII proxy was standing in for (recorded)
+
+F-LEARN-02's rule rejected any lesson more than half non-ASCII, and its message named
+its own intent: "likely raw user question in non-English". The intent is right — the
+analyzer sometimes echoes the user's question back as the lesson — but the proxy tested
+the alphabet, so it rejected every Russian and Chinese lesson while passing the *same
+request in English* verbatim. It was never a defence against raw requests; it was a
+defence against non-English text, read as the former.
+
+The genuine check is available and cheap in principle: compare the lesson against the
+question that produced it and reject a near-duplicate. `create_learning` receives
+`source_query` but not the natural-language question, and it has six call sites
+(`sql_agent.py`, `pipeline_learning.py`, `learning_analyzer.py` ×3,
+`data_investigations.py`), so threading it is its own change.
+
+Recorded rather than approximated. The alternative on offer was an imperative-verb
+wordlist per supported language, which would be a second proxy with the same failure
+mode as the first — incomplete in a way that correlates with language.
+
+**What shipped instead** is two checks that match their own stated intent: a lesson that
+*ends* as a question is refused in any alphabet (the old rule missed the English case
+entirely), and a lesson that is mostly not letters or digits is refused as not-writing,
+Unicode-aware so Cyrillic and CJK count as writing.

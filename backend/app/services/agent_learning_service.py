@@ -96,12 +96,30 @@ def _contains_instruction_shaped_text(text: str) -> bool:
     return any(p.search(text) for p in _INSTRUCTION_PATTERNS)
 
 
-def _non_ascii_ratio(text: str) -> float:
-    """Return the fraction of characters that are non-ASCII (outside printable ASCII range)."""
+def _looks_like_a_bare_question(text: str) -> bool:
+    """True when the lesson is just a question rather than something learned.
+
+    F-LEARN-02. This replaces a non-ASCII ratio check whose own message said what it
+    was aiming at — "likely raw user question in non-English". Every Cyrillic or CJK
+    character is non-ASCII, so that proxy rejected every Russian and Chinese lesson
+    while letting "How many orders were placed yesterday?" through untouched: it
+    caught the language, not the shape. A lesson may *quote* a question and still be
+    a lesson, so only a text that ENDS as a question is one.
+    """
+    return text.strip().endswith("?")
+
+
+#: Minimum share of characters that are letters or digits. Below it the text is not
+#: writing — control characters, box drawing, symbol spam — regardless of alphabet.
+#: `str.isalnum` is Unicode-aware, so Cyrillic, CJK and Arabic all count as writing.
+_MIN_WORD_CHAR_RATIO = 0.30
+
+
+def _word_char_ratio(text: str) -> float:
+    """Fraction of characters that are letters or digits in any alphabet."""
     if not text:
         return 0.0
-    non_ascii = sum(1 for c in text if ord(c) > 127)
-    return non_ascii / len(text)
+    return sum(1 for c in text if c.isalnum()) / len(text)
 
 
 def validate_learning_quality(subject: str, lesson: str) -> str | None:
@@ -110,8 +128,10 @@ def validate_learning_quality(subject: str, lesson: str) -> str | None:
         return f"Subject '{subject}' is in the blocklist"
     if len(lesson.strip()) < MIN_LESSON_LENGTH:
         return f"Lesson too short ({len(lesson.strip())} chars, min {MIN_LESSON_LENGTH})"
-    if _non_ascii_ratio(lesson) > 0.5:
-        return "Lesson text is mostly non-ASCII (likely raw user question in non-English)"
+    if _looks_like_a_bare_question(lesson):
+        return "Lesson is a question, not something learned"
+    if _word_char_ratio(lesson) < _MIN_WORD_CHAR_RATIO:
+        return "Lesson text is mostly not writing (symbols or control characters)"
     if _contains_instruction_shaped_text(subject) or _contains_instruction_shaped_text(lesson):
         return "Learning contains instruction-shaped text (possible prompt injection)"
     return None

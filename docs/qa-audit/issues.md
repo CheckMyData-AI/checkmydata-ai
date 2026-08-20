@@ -130,10 +130,14 @@ gate, durable AuditLog, idempotency).
 4. **Credential leakage in errors** — F-CONN-08 returns `str(e)` (DSN/password) in the API response
    and logs; the Sentry scrubber only covers Sentry egress. **Fix:** scrub at the
    `connection_service` error site.
-5. **Stored prompt-injection / memory poisoning** — F-RULE-02, F-LEARN-01/06, F-SQL-01,
-   F-PROJ-15 (F-RULE-01 closed by R3): LLM-authored / DB-sourced content injected as
-   authoritative with no content-safety gate. **Fix:** shared content-safety screen on every
-   rule/learning ingest + provenance tags.
+5. **Stored prompt-injection / memory poisoning** — **3 of 5 closed 2026-08-20.**
+   F-LEARN-01 was already screened by `_contains_instruction_shaped_text`; F-LEARN-06 (the
+   override PATCH) and F-LEARN-02 (the non-ASCII proxy) closed this pass. **Remaining:
+   F-RULE-02, F-SQL-01, F-PROJ-15 — three surfaces with no screen at all** (rule content,
+   DB-sourced comments/sampled values, project name/description). One shared fix: lift the
+   instruction-pattern set out of `agent_learning_service` into a module of its own and
+   apply it at those three points — one pattern set, not four copies, for the same reason
+   the credential scrubber was consolidated (a second copy drifts, and drifts silently).
 6. **Non-durable observability** — F-AUTH-15 (`audit_log` logger-only, ephemeral on Heroku, not
    queryable). **Fix:** persist an `AuditLog` table alongside the logger line.
 7. **Idempotency / retry hazards** — F-SCHED-07 (batch ARQ-retry duplicates writes), F-LEARN-08
@@ -243,10 +247,10 @@ gate, durable AuditLog, idempotency).
 ### 10 — Insights & Learning Memory
 | ID | Sev | Issue |
 |---|---|---|
-| F-LEARN-06 | 🟡 | Learning-override PATCH bypasses quality gate (direct-API poisoning) |
+| ~~F-LEARN-06~~ | 🟢 | **CLOSED 2026-08-20.** The override PATCH now runs `validate_learning_quality` + `normalize_lesson_text` before writing, and returns 422 on rejection (`connection_learnings.py`). The gate already screened instruction-shaped text on the ingest path — the check is labelled "possible prompt injection" — so the exposure was purely the asymmetry, the same shape as F-LEARN-08. Tests: `test_learnings_api.py` (4 route tests, watched failing with the gate removed). |
 | ~~F-LEARN-08~~ | 🟢 | **CLOSED 2026-08-20 — and the open half was the other direction.** The 👎 path was already guarded by a per-message `learning_contradicted_at_feedback` flag (covered by `test_feedback_downvote_idempotency.py`), so the reported defect was fixed before this pass. Its twin was not: the route guarded 👍 on `learning_credited_at_validation`, set at *validation* time, so a message never credited there could be up-voted twice and bump `times_applied` twice per learning — which feeds the decay score and the ranking. Now `process_positive_feedback_learning_effects` carries the symmetric guard; `test_feedback_upvote_idempotency.py`. |
-| F-LEARN-01 | 🟡 | LLM-authored lessons injected with no content-safety/provenance gate |
-| F-LEARN-02 | 🟡 | Non-ASCII ratio gate silently rejects CJK/non-Latin lessons |
+| ~~F-LEARN-01~~ | 🟢 | **CLOSED — verified 2026-08-20, already in place.** Every lesson reaching `create_learning` passes `validate_learning_quality`, whose `_contains_instruction_shaped_text` screen carries nine patterns and is labelled "possible prompt injection" (`agent_learning_service.py`). The row predates that check. |
+| ~~F-LEARN-02~~ | 🟢 | **CLOSED 2026-08-20, and the rule was worse than reported.** It rejected any lesson >50% non-ASCII, so every Russian and Chinese lesson failed — while the *same request in English* passed untouched. It never caught raw user requests; it caught non-English text and was read as catching requests. Replaced by what it was reaching for: a bare-question check (language-independent) and a Unicode-aware "is this writing at all" ratio. The genuine check — compare the lesson to the question that produced it — needs the question threaded through six `create_learning` call sites and is recorded as AUD-0820-01 rather than faked with a per-language wordlist. Tests: `test_learning_gate_symmetry.py` (12). |
 | F-LEARN-03 | 🟢 | Confidence pumpable to 1.0 via repeated confirm/dedup |
 | F-LEARN-04 | 🟢 | Heuristic contradiction detection misses semantic conflicts |
 | F-LEARN-05 | 🟢 | Token-based dedup → paraphrased duplicates bloat prompt |

@@ -436,16 +436,39 @@ class TestQualityGate:
             )
 
     @pytest.mark.asyncio
-    async def test_mostly_non_ascii_rejected(self, svc):
+    async def test_symbol_spam_rejected(self, svc):
+        """Was `test_mostly_non_ascii_rejected`, and the rule it pinned was wrong.
+
+        It rejected a lesson for being >50% non-ASCII, which meant every Russian and
+        Chinese lesson failed while the same text in English passed. The gate now asks
+        whether the text is WRITING at all — Unicode-aware, so Cyrillic and CJK count
+        (F-LEARN-02). Symbol spam is what it was reaching for.
+        """
         session = AsyncMock()
-        with pytest.raises(ValueError, match="non-ASCII"):
+        with pytest.raises(ValueError, match="not writing"):
             await svc.create_learning(
                 session,
                 connection_id="conn-1",
                 category="table_preference",
                 subject="orders",
-                lesson="Найди в базе рефанды в каких таблицах они будут и покажи все данные",
+                lesson="§§§ ¤¤¤ ▒▒▒▒▒ ░░░░░ ▓▓▓▓▓ ♦♦♦♦ ≈≈≈≈≈ ∆∆∆∆∆ ‡‡‡‡ ¶¶¶¶",
             )
+
+    async def test_a_non_latin_lesson_is_accepted(self, svc):
+        """The behaviour the old rule made impossible, and the product requires:
+        the agent answers in the user's language, so its lessons follow."""
+        session = AsyncMock()
+        # Reaches past the gate and fails later on the mocked session, which is proof
+        # enough that the gate let it through.
+        with pytest.raises(Exception) as exc:
+            await svc.create_learning(
+                session,
+                connection_id="conn-1",
+                category="table_preference",
+                subject="orders",
+                lesson="Сумма заказа хранится в копейках, поэтому её нужно делить на сто.",
+            )
+        assert "quality check failed" not in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_valid_lesson_passes(self, svc):
@@ -516,12 +539,35 @@ class TestValidateLearningQuality:
         assert err is not None
         assert "short" in err
 
-    def test_non_ascii(self):
+    def test_a_non_latin_lesson_is_no_longer_rejected_for_its_alphabet(self):
+        """F-LEARN-02: this used to assert the opposite, and the assertion was wrong.
+
+        The old rule rejected a lesson whose characters were >50% non-ASCII, so every
+        Russian and Chinese lesson failed — while the SAME request in English
+        ("Find refunds in the database and tell me which tables") passed untouched.
+        It never caught raw user requests; it caught non-English text and was read as
+        catching requests. Removing it loses no defence, it stops a false one from
+        being mistaken for a real one.
+
+        The genuine check — compare the lesson against the question that produced it —
+        needs the question threaded to `create_learning` through six call sites and is
+        recorded as AUD-0820-01, not faked with a per-language wordlist here.
+        """
         from app.services.agent_learning_service import validate_learning_quality
 
-        err = validate_learning_quality("orders", "Найди в базе рефанды в каких таблицах они будут")
-        assert err is not None
-        assert "non-ASCII" in err
+        russian_request = "Найди в базе рефанды в каких таблицах они будут"
+        english_request = "Find refunds in the database and tell me which tables"
+        # The point is the SYMMETRY: whatever the gate does, it must do to both.
+        assert (validate_learning_quality("orders", russian_request) is None) == (
+            validate_learning_quality("orders", english_request) is None
+        )
+
+    def test_a_lesson_that_is_only_a_question_is_rejected_in_any_language(self):
+        from app.services.agent_learning_service import validate_learning_quality
+
+        for q in ("How many orders were placed yesterday?", "Сколько заказов было вчера?"):
+            err = validate_learning_quality("orders", q)
+            assert err is not None and "question" in err.lower()
 
     def test_valid(self):
         from app.services.agent_learning_service import validate_learning_quality
@@ -1538,22 +1584,30 @@ class TestCompilePromptCrossConnection:
         assert "[from sibling]" in prompt
 
 
-class TestNonAsciiRatio:
+class TestWordCharRatio:
+    """Replaces TestNonAsciiRatio: the question is whether text is WRITING, not
+    whether it is Latin. `str.isalnum` is Unicode-aware, so Cyrillic, CJK and Arabic
+    all count (F-LEARN-02)."""
+
     def test_empty_string(self):
-        from app.services.agent_learning_service import _non_ascii_ratio
+        from app.services.agent_learning_service import _word_char_ratio
 
-        assert _non_ascii_ratio("") == 0.0
+        assert _word_char_ratio("") == 0.0
 
-    def test_pure_ascii(self):
-        from app.services.agent_learning_service import _non_ascii_ratio
+    def test_latin_prose_is_writing(self):
+        from app.services.agent_learning_service import _word_char_ratio
 
-        assert _non_ascii_ratio("hello world") == 0.0
+        assert _word_char_ratio("hello world") > 0.8
 
-    def test_mixed(self):
-        from app.services.agent_learning_service import _non_ascii_ratio
+    def test_cyrillic_prose_is_writing_too(self):
+        from app.services.agent_learning_service import _word_char_ratio
 
-        ratio = _non_ascii_ratio("ab\u00e9c")
-        assert 0.2 < ratio < 0.3
+        assert _word_char_ratio("сумма хранится в копейках") > 0.8
+
+    def test_symbol_spam_is_not(self):
+        from app.services.agent_learning_service import _word_char_ratio
+
+        assert _word_char_ratio("§§§ ¤¤¤ ▒▒▒ ░░░ ▓▓▓") < 0.3
 
 
 class TestPromoteGlobalPatterns:
