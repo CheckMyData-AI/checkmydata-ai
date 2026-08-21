@@ -32,11 +32,12 @@ class _StubVector:
         return list(self._results)
 
 
-def _make_bm25(results: list[dict[str, Any]]) -> MagicMock:
+def _make_bm25(results: list[dict[str, Any]], reason: str = "ok") -> MagicMock:
+    """F-KNOW-07: the retriever asks for the reason alongside the hits."""
     from app.knowledge.bm25_index import BM25Index
 
     mock = MagicMock(spec=BM25Index)
-    mock.query = MagicMock(return_value=list(results))
+    mock.query_with_reason = MagicMock(return_value=(list(results), reason))
     return mock
 
 
@@ -64,9 +65,9 @@ async def test_ret_r11_per_leg_floor_with_reranker() -> None:
     await retr.query("proj", "find users", k=2)
 
     # _run_bm25 is called with n = per_leg which should be >= rerank_candidates(30)
-    bm25.query.assert_called_once()
+    bm25.query_with_reason.assert_called_once()
     # call_args[0] is (project_id, query_text, n)
-    n_arg = bm25.query.call_args[0][2]
+    n_arg = bm25.query_with_reason.call_args[0][2]
     assert n_arg >= 30, f"expected per_leg ≥ 30 with reranker, got {n_arg}"
 
 
@@ -81,7 +82,7 @@ async def test_ret_r11_per_leg_no_reranker_uses_2k() -> None:
 
     await retr.query("proj", "find users", k=7)
 
-    n_arg = bm25.query.call_args[0][2]
+    n_arg = bm25.query_with_reason.call_args[0][2]
     assert n_arg == max(10, 2 * 7), f"expected {max(10, 2 * 7)}, got {n_arg}"
 
 

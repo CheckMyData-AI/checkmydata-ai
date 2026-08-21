@@ -1485,7 +1485,9 @@ class SQLAgent(BaseAgent):
         ``_build_query_context`` can fall through to the safety net unharmed.
         """
         try:
+            from app.knowledge.bm25_index import MISS_NO_SNAPSHOT
             from app.knowledge.reranker import build_reranker
+            from app.knowledge.retrieval_degradation import emit_retrieval_degraded
             from app.knowledge.schema_retriever import SchemaRetriever
 
             retriever = SchemaRetriever(
@@ -1497,11 +1499,17 @@ class SQLAgent(BaseAgent):
                 rerank_candidates=settings.reranker_candidates,
             )
             if not retriever.has_index(connection_id):
-                logger.debug(
+                # F-KNOW-07: the schema snapshot lives on the dyno's ephemeral
+                # disk, so on a restart this branch becomes the normal path while
+                # `schema_retrieval_enabled` still reads as on. The fallback is
+                # designed; being unable to tell it is happening was not — a debug
+                # line is invisible in production, so the miss is counted too.
+                logger.info(
                     "Schema retriever has no index for connection %s; "
                     "falling back to relevance_score safety net",
                     connection_id[:8],
                 )
+                await emit_retrieval_degraded(None, "", leg="schema", reason=MISS_NO_SNAPSHOT)
                 return []
 
             # aquery offloads BM25 (CPU-bound) off the loop and adds the

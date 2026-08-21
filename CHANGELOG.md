@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the degradation metric fired on the healthy path (F-KNOW-07)
+
+- **`retrieval_degraded_total` existed since W0, and that was the problem.** `BM25Index.query`
+  returned `[]` for five distinct causes and `_run_bm25` added two more; the caller labelled
+  every one of them `reason="empty_result"`. One of those causes is healthy — a working index
+  whose query had no lexical overlap — so the counter fired on the normal path and a non-zero
+  value proved nothing in either direction. Nobody could tell from production whether the BM25
+  snapshot had survived the last restart, which is the fact the row was raised about.
+- `query_with_reason` / `load_with_reason` now carry the cause: `no_snapshot`, `corrupt`,
+  `schema_mismatch`, `no_query_tokens`, `no_match`, `score_error`, plus `timeout` / `error` from
+  the leg runner. **`no_match` and `no_query_tokens` are not counted at all** — the index worked.
+  `query()` keeps its list-only contract, so no other caller changed.
+- **The same class backs `schema_{connection_id}.pkl`**, and that miss was a `logger.debug` —
+  invisible in production, while `schema_retrieval_enabled` still read as on. Now counted as
+  `leg="schema"` and logged at info, with **no** reader-facing line: that path has a working
+  relevance safety net, and a warning on every query after a restart is the noise that teaches
+  people to ignore warnings.
+- **The reader's sentence follows the cause.** "Returned nothing for this question", said of a
+  missing index, sends someone to rewrite a question that was never the problem while half the
+  search was never consulted. A missing/corrupt/stale index now reads "keyword search is
+  unavailable for this project … re-indexing the repository restores it"; a timeout reads "did
+  not respond in time".
+- The dense leg has no cause channel — a missing collection and a genuine no-match both surface
+  as `[]` — so its label is `empty_cause_unknown` rather than borrowing precision it does not
+  have (tracked as F-KNOW-11).
+- **Shared storage is not done and is not claimed.** BM25 snapshots still live on the dyno's
+  ephemeral disk; hybrid retrieval really is dense-only after every restart until a reindex. This
+  change makes that loss *measurable*, which was the row's own prescribed first step (F-KNOW-12).
+
 ### Fixed — dashboard card freshness (F-VIZ-01)
 
 - **A dashboard card said how old its data was; it could not say whether that was a

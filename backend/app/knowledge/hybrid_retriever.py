@@ -25,12 +25,16 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.knowledge.bm25_index import BM25Index
+from app.knowledge.bm25_index import BM25_UNUSABLE, BM25Index
 from app.knowledge.reranker import Reranker
 from app.knowledge.retrieval_degradation import emit_retrieval_degraded
 from app.knowledge.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
+
+#: Reasons a BM25 leg being empty is a fault worth counting. `no_match` and
+#: `no_query_tokens` are deliberately absent: the index worked.
+BM25_DEGRADED_REASONS = BM25_UNUSABLE | {"timeout", "error"}
 
 # Soft per-retriever timeout (seconds). The query as a whole is bounded by
 # ``max(bm25_timeout, chroma_timeout) + a few ms`` because gather runs them
@@ -129,28 +133,36 @@ class HybridRetriever:
 
         bm25_task = asyncio.create_task(self._run_bm25(project_id, query_text, per_leg))
         chroma_task = asyncio.create_task(self._run_chroma(project_id, query_text, per_leg, where))
-        bm25_results, chroma_results = await asyncio.gather(
+        (bm25_results, bm25_reason), chroma_results = await asyncio.gather(
             bm25_task,
             chroma_task,
             return_exceptions=False,
         )
 
-        # RET-R4: emit degradation signal when exactly one leg is empty.
+        # RET-R4 / F-KNOW-07: emit degradation when exactly one leg is empty — but
+        # only when the empty leg is actually *broken*. A working BM25 index that
+        # found no lexical overlap is the normal case, and counting it here is what
+        # made `retrieval_degraded_total` unreadable: a non-zero value proved
+        # nothing, so nobody could tell whether the snapshot had survived the last
+        # restart. `no_match` and `no_query_tokens` are therefore not degradation.
         bm25_empty = len(bm25_results) == 0
         chroma_empty = len(chroma_results) == 0
-        if bm25_empty and not chroma_empty:
+        if bm25_empty and not chroma_empty and bm25_reason in BM25_DEGRADED_REASONS:
             await emit_retrieval_degraded(
                 self._tracker,
                 self._workflow_id,
                 leg="bm25",
-                reason="empty_result",
+                reason=bm25_reason,
             )
         elif chroma_empty and not bm25_empty:
+            # The dense leg has no cause channel yet (a missing collection and a
+            # query that matched nothing both surface as `[]`), so the label says
+            # what is known rather than borrowing the precision BM25 now has.
             await emit_retrieval_degraded(
                 self._tracker,
                 self._workflow_id,
                 leg="dense",
-                reason="empty_result",
+                reason="empty_cause_unknown",
             )
 
         fused = self._fuse(bm25_results, chroma_results)
@@ -175,18 +187,19 @@ class HybridRetriever:
         project_id: str,
         query: str,
         n: int,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Return the BM25 hits and *why* there are none when there are none."""
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(self._bm25.query, project_id, query, n),
+                asyncio.to_thread(self._bm25.query_with_reason, project_id, query, n),
                 timeout=self._timeout,
             )
         except TimeoutError:
             logger.warning("hybrid: BM25 timed out for %s", project_id[:8])
-            return []
+            return [], "timeout"
         except Exception:
             logger.warning("hybrid: BM25 failed for %s", project_id[:8], exc_info=True)
-            return []
+            return [], "error"
 
     async def _run_chroma(
         self,

@@ -1645,3 +1645,83 @@ all of them.
 
 The cheap defence is the one that worked everywhere else: when the question is "are there
 any others", never pipe the answer through anything that can shorten it.
+
+## 28. A signal that cannot say which of two things happened
+
+Three findings closed in a row turned out to be the same defect wearing different
+clothes, and none of them was "no signal". In all three the signal existed, fired, and
+reached its consumer — and could not distinguish a healthy state from a broken one.
+
+| Finding | The signal that existed | The two states it merged |
+|---|---|---|
+| F-PROJ-06 | `EmailService._send` logged the failure | "sent" vs "logged and returned 200 anyway" |
+| F-VIZ-01 | `timeAgo(note.last_executed_at)` on every card | "nobody opened this page" vs "the refresh this card promised is broken" |
+| F-KNOW-07 | `retrieval_degraded_total{reason="empty_result"}` | "the query had no lexical overlap" vs "the index is not on this dyno" |
+
+**The tell is a reason label with one value, or a boolean where the domain has three
+states.** F-KNOW-07's counter is the sharpest case, because it fired on the *healthy*
+path: a working BM25 index whose query matched nothing incremented the same counter as a
+missing snapshot. A metric that fires on the normal path is worse than a missing metric —
+it is unreadable in both directions, and it had been shipping since W0 with a test that
+asserted `assert kwargs["reason"]`, i.e. any truthy string.
+
+**Why the tests did not catch it.** In each case a test existed and passed. It asserted
+that the mechanism *ran* — a field is present, a counter has a label, a timestamp is
+rendered — never that the value *discriminated*. Five plants walked past F-PROJ-06's
+first test suite for exactly this reason. The repair is the same in all three: assert the
+specific value, not its truthiness.
+
+```python
+assert kwargs["reason"]                    # passes for five different causes
+assert kwargs["reason"] == "no_snapshot"   # the assertion the metric was for
+```
+
+### The cause changes the sentence, not just the label
+
+F-KNOW-07 had a second half that a metric fix alone would have missed. The reader-facing
+line was written when every empty leg was `empty_result`:
+
+> "keyword search returned nothing for this question"
+
+Said of a **missing index** that sentence sends someone to rewrite a question that was
+never the problem, while the half of the search that would have answered it was never
+consulted. A cause channel is only finished when the words downstream of it change too —
+so `no_snapshot` now reads "keyword search is unavailable for this project … re-indexing
+restores it", and `timeout` reads "did not respond in time".
+
+And the corollary, which is the reason `no_match` emits nothing at all: **a caveat on the
+normal path is the noise that teaches people to ignore caveats.** The schema-retrieval leg
+is counted in metrics for the same reason and deliberately carries no reader-facing line —
+it has a working relevance safety net behind it, so a warning on every query after a
+restart would buy nothing and cost attention.
+
+## 29. `timeout` does not exist on this machine, and its absence looks like a clean production
+
+Checking task #12 began with:
+
+```bash
+timeout 100 heroku logs -n 1500 --app checkmydata-api > prod.log
+grep -c "Error R15" prod.log   # 0
+```
+
+Zero R15. Zero R14. Zero `pipeline_end`. Zero everything — because `timeout` is GNU
+coreutils and macOS does not ship it (`command not found: timeout`), so the redirect wrote
+an empty file and every subsequent `grep -c` honestly reported zero.
+
+**A zero from a command that never ran is indistinguishable from a zero that was
+measured.** The only reason it was caught is that *every* count was zero, including ones
+that had been non-zero an hour earlier. Had the window genuinely been quiet in one
+dimension, the empty file would have confirmed it.
+
+The re-run over a real 3.5-hour window inverted the conclusion the task had been carrying
+for days: **0× R15** — the batch-size fix holds, nothing is being killed — but **204× R14**
+and still no `pipeline_end`. `code_symbol_embed` started on 25,270 symbols at 00:01:31 UTC
+and the worker restarted 23 minutes later, mid-stage, with no kill and no error. All five
+restarts in the window matched releases v240–v244, each 12–14 s after the release
+timestamp.
+
+The blocker was never the operator resize the task had been waiting on. It is that **the
+run needs longer than the interval between my own deploys**, and every merge restarts the
+worker. The resize is still the right long-term fix — it would shorten the run and remove
+the 204 R14s — but it is not the gate, and a task blocked on the wrong thing does not get
+unblocked by doing that thing.
