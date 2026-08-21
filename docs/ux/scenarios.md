@@ -1009,6 +1009,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User clicks "Continue analysis"
 - **Expected result:** the agent resumes from where it stopped
+- **The wall clock is one budget for the whole request (F-SQL-03, 2026-08-21):** on the multi-stage path a failing stage is replanned up to `max_pipeline_replans` times, and every replan spends from the *same* deadline the first attempt started. When it is spent the request returns the failed stage's result rather than starting another plan — so a hard question ends in a bounded time with an honest partial answer plus "Continue analysis", instead of running three full budgets back to back. Before this each replan started a fresh budget, so a request whose documented limit is `agent_wall_clock_timeout_seconds` could occupy roughly three times that with the user watching a spinner.
 - **UI elements:** "Continue analysis" button
 - **States covered:** success
 - **Errors & recovery:** as the normal stream (SCN-046)

@@ -1725,3 +1725,86 @@ run needs longer than the interval between my own deploys**, and every merge res
 worker. The resize is still the right long-term fix — it would shorten the run and remove
 the 204 R14s — but it is not the gate, and a task blocked on the wrong thing does not get
 unblocked by doing that thing.
+
+## 30. A bound recomputed on entry is not a bound
+
+F-SQL-03 read "multiplicative retry blow-up (replans × iterations × repairs)". Two of the
+three multiplications had already been closed by earlier waves, and both fixes were sound.
+Neither could see the third, because the third is not a count.
+
+```python
+# StageExecutor.execute — entered once per replan
+budget_seconds = settings.pipeline_max_wall_seconds or settings.agent_wall_clock_timeout_seconds
+deadline = time.monotonic() + budget_seconds     # <- recomputed on EVERY entry
+```
+
+The `deadline` is correct. The check against it is correct. ORCH-V02's own comment says it
+bounds retries "compounding to ~7×" and it does. The defect is that the *origin* of the
+budget moves forward each time the method is entered, and `_run_pipeline_replans` enters it
+once per replan. With `max_pipeline_replans=2` and the budget defaulting to
+`agent_wall_clock_timeout_seconds=180`, Path B's worst case was **540 s against a
+documented 180 s limit** — and the planner LLM call before each replan sat outside all
+three.
+
+**The shape to look for:** a deadline, quota or counter initialised from *now* inside the
+function that consumes it, where an outer loop calls that function more than once. Each
+call is individually within budget and the aggregate is unbounded. Grep for
+`monotonic() +`, `time() +`, `now() +` and `= 0` initialisations at the top of a function
+and ask who calls it twice.
+
+The repair is not a smaller number. It is moving the origin out to the scope the budget
+actually describes — here, the request — and passing it down. `execute()` still computes
+one when handed none, so standalone callers keep working; that fallback is what lets the
+fix be additive rather than a signature break across the eval harness and thirteen tests.
+
+### Two of six plants walked past every behavioural test
+
+The behavioural tests enter at `_run_pipeline_replans`, so they proved the replan loop
+shares whatever deadline it is *given*. Changing the **initial** `executor.execute(...)` to
+`deadline=None` — the entry that starts the request — left all of them green.
+
+The invariant is about wiring, and the cheapest exact way to ask a wiring question is the
+syntax tree:
+
+```python
+# within one async method: the initial execute and the replans it drives
+# must be handed the same deadline NAME
+assert exec_dl == replan_dl, f"{fn}: initial used `{exec_dl}`, replans used `{replan_dl}`"
+```
+
+This is not the string search this audit has rejected elsewhere. The rejected form asks
+"does this token appear"; this asks "do these two calls in this function receive the same
+name". A `deadline=_other_deadline` plant — two real budgets, both non-None — is caught,
+and no comment or docstring can satisfy it.
+
+### A test that hangs under a defect is not a failing test
+
+One plant made the deadline check unreachable, and the stage loop spun forever: the stub
+`_process_one_stage` never recorded a result, so the executor's `while True` had no way to
+finish. Under the plant the suite did not fail — it **hung**, and a hang reports as a CI
+timeout, which is indistinguishable from an infra flake and gets re-run rather than read.
+
+Wrapping the call in `asyncio.wait_for` was the wrong instinct: it treats the symptom and
+leaves the stub lying about its collaborator. The fix is that the stub does what the real
+one does — record the result — so the same plant terminates and fails on the assertion it
+was written for.
+
+### The sweep, run rather than recommended
+
+An AST pass over `app/` for the shape — `monotonic()/time()/now()/perf_counter() + <budget>`
+reported with its enclosing function, so each can be judged against "who calls this twice?"
+— returns **11 sites**, and exactly one was the defect:
+
+| Site | Verdict |
+|---|---|
+| `stage_executor.py:208` `execute()` | **the finding.** Entered once per replan; now only computes when handed none |
+| `orchestrator.py:96` `_new_pipeline_deadline()` | the fix — one call per request scope by design |
+| `sql_agent.py:292` `run()` | safe: the origin moves but `wall_clock_remaining` is computed from the request's start by the caller, so each deadline is correct |
+| `chat.py:1030`, `chat.py:1104`, `chat.py:1445` | safe: each sets its origin **before** the `while` it bounds |
+| `insight_memory.py:70`, `ttl_cache.py:70`, `auth_service.py:181`, `invite_service.py:94`, `mcp_key_service.py:77` | safe: a TTL stamped at write/issue time is *supposed* to start from then |
+
+The distinguishing question is not "is `now()` inside a function" — eight of eleven are, and
+correctly. It is **"does an outer loop re-enter the function that sets the origin?"** Six
+sites set the origin immediately outside the loop they bound, which is the correct pattern
+and the one `execute()` broke by putting the loop's origin at the method boundary while a
+*caller* did the looping.

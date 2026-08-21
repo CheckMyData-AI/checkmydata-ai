@@ -82,6 +82,20 @@ from app.services.connection_service import is_queryable_database
 
 logger = logging.getLogger(__name__)
 
+
+def _new_pipeline_deadline() -> float | None:
+    """One wall-clock deadline for one request's pipeline (F-SQL-03).
+
+    ``StageExecutor.execute`` used to compute this on every entry, and
+    ``_run_pipeline_replans`` re-enters it once per replan — so the worst case was
+    ``(1 + max_pipeline_replans)`` times the request's documented limit. Establishing
+    it here, once, and threading it through every executor entry and every replan is
+    what makes the limit mean what it says. ``None`` when the budget is disabled.
+    """
+    budget = settings.pipeline_max_wall_seconds or settings.agent_wall_clock_timeout_seconds
+    return time.monotonic() + budget if budget > 0 else None
+
+
 # L2: upper bound on the number of "token" streaming events emitted for one
 # answer, to keep a very long answer from flooding SSE/Redis. _stream_tokens
 # widens its chunk proportionally once the answer would exceed this.
@@ -2413,11 +2427,17 @@ class OrchestratorAgent(BaseAgent):
         replan_history: list[dict[str, Any]] = []
         try:
             stage_ctx = StageContext(plan=plan, pipeline_run_id=pipeline_run.id)
+            # F-SQL-03: established once, here, and shared with every replan below.
+            # Computed inside `execute()` it restarted per entry, so the replan
+            # count multiplied the request's documented wall-clock limit.
+            pipeline_deadline = _new_pipeline_deadline()
+
             exec_result = await executor.execute(
                 plan,
                 pipeline_ctx,
                 stage_ctx=stage_ctx,
                 staleness_warning=staleness_warning,
+                deadline=pipeline_deadline,
             )
 
             exec_result, replan_history = await self._run_pipeline_replans(
@@ -2431,6 +2451,7 @@ class OrchestratorAgent(BaseAgent):
                 staleness_warning=staleness_warning,
                 run_id=pipeline_run.id,
                 wf_id=wf_id,
+                deadline=pipeline_deadline,
             )
 
             await self._persist_stage_results(pipeline_run.id, exec_result.stage_ctx)
@@ -2601,6 +2622,7 @@ class OrchestratorAgent(BaseAgent):
         staleness_warning: str | None,
         run_id: str,
         wf_id: str,
+        deadline: float | None = None,
     ) -> tuple[Any, list[dict[str, Any]]]:
         """Replan loop shared by the initial and resume pipeline paths.
 
@@ -2624,6 +2646,17 @@ class OrchestratorAgent(BaseAgent):
             and exec_result.replan_eligible
             and replan_count < max_replans
         ):
+            # F-SQL-03: the request has one wall clock and every replan spends
+            # from it. The check sits before the replan because a replan is an LLM
+            # call plus a whole fresh execution — the most expensive thing here.
+            if deadline is not None and time.monotonic() > deadline:
+                logger.warning(
+                    "Replan budget: request wall clock spent after %d replan(s) — "
+                    "returning the failed result instead of starting another plan",
+                    replan_count,
+                )
+                break
+
             failed = exec_result.failed_stage
             if not failed:
                 break
@@ -2759,6 +2792,7 @@ class OrchestratorAgent(BaseAgent):
                 pipeline_ctx,
                 stage_ctx=new_stage_ctx,
                 staleness_warning=staleness_warning,
+                deadline=deadline,
             )
 
         return exec_result, replan_history
@@ -2882,8 +2916,13 @@ class OrchestratorAgent(BaseAgent):
                     else []
                 ),
             )
+            resume_deadline = _new_pipeline_deadline()
             exec_result = await executor.execute(
-                plan, resume_ctx, resume_from=resume_from, stage_ctx=stage_ctx
+                plan,
+                resume_ctx,
+                resume_from=resume_from,
+                stage_ctx=stage_ctx,
+                deadline=resume_deadline,
             )
 
             # R5-6: a resumed pipeline can also hit a failing stage. Give it the
@@ -2906,6 +2945,7 @@ class OrchestratorAgent(BaseAgent):
                     staleness_warning=None,
                     run_id=run_id,
                     wf_id=wf_id,
+                    deadline=resume_deadline,
                 )
 
             await self._persist_stage_results(run_id, exec_result.stage_ctx, user_feedback)
