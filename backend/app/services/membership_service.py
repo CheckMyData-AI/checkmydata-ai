@@ -1,10 +1,11 @@
 """Service for project membership (role-based access control)."""
 
 from fastapi import HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.audit import audit_log
 from app.models.project import Project
 from app.models.project_member import ProjectMember
 
@@ -138,6 +139,114 @@ class MembershipService:
         await db.commit()
         await db.refresh(member, attribute_names=["user"])
         return member
+
+    async def transfer_ownership(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        *,
+        new_owner_user_id: str,
+        actor_user_id: str,
+        actor_is_admin: bool = False,
+    ) -> None:
+        """Hand a project to another member (F-PROJ-10).
+
+        Before this there was no path at all: ``update_member_role`` refuses to touch
+        an owner and the route's schema accepts only ``editor``/``viewer``, so an
+        owner could neither appoint a successor nor stop being one. Worse,
+        ``Project.owner_id`` is ``ondelete="SET NULL"``, so deleting the account left
+        a project with no owner and nobody able to appoint one — which is the
+        stranded workspace the finding names, and why an admin may act here.
+
+        Four things this does that a naive version would not:
+
+        * **Both sources of truth move together.** ``get_role`` resolves owner from a
+          member row *or* ``Project.owner_id``, so updating one leaves two owners —
+          the new one by the column and the old one by the row — which is worse than
+          having none.
+        * **The receiving owner's quota is enforced.** Plan limits count projects by
+          ``owner_id``, so a transfer that skips the check is a limit bypass wearing a
+          feature's name. It runs *before* any write, so a refusal changes nothing.
+        * **The target must already be a member.** Otherwise transfer doubles as a
+          covert access grant; invite first, then transfer.
+        * **The old owner is demoted, not removed.** Taking away someone's access is a
+          different decision from taking away their ownership, and only one of them
+          was asked for.
+        """
+        owner_id = await db.scalar(select(Project.owner_id).where(Project.id == project_id))
+        member_owner = await db.scalar(
+            select(ProjectMember.user_id).where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.role == "owner",
+            )
+        )
+        current_owner = owner_id or member_owner
+
+        if not actor_is_admin and (current_owner is None or actor_user_id != current_owner):
+            # An orphaned project reaches here with current_owner=None: nobody is the
+            # owner, so nobody but an admin can appoint one. Claiming it yourself is
+            # exactly the escalation this guard exists to refuse.
+            raise HTTPException(
+                status_code=403,
+                detail="Only the project owner can transfer ownership",
+            )
+
+        if current_owner is not None and new_owner_user_id == current_owner:
+            raise HTTPException(status_code=400, detail="That user already owns this project")
+
+        target = await db.scalar(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == new_owner_user_id,
+            )
+        )
+        if target is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "The new owner must already be a member of this project — "
+                    "invite them first, then transfer"
+                ),
+            )
+
+        from app.services.entitlement_service import EntitlementService
+
+        await EntitlementService().enforce_project_quota(db, new_owner_user_id)
+
+        target.role = "owner"
+        if current_owner is not None:
+            existing = await db.scalar(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == current_owner,
+                )
+            )
+            if existing is not None:
+                existing.role = "editor"
+            else:
+                db.add(
+                    ProjectMember(
+                        project_id=project_id,
+                        user_id=current_owner,
+                        role="editor",
+                    )
+                )
+        await db.execute(
+            update(Project).where(Project.id == project_id).values(owner_id=new_owner_user_id)
+        )
+        await db.commit()
+
+        audit_log(
+            "project.ownership_transferred",
+            user_id=actor_user_id,
+            project_id=project_id,
+            resource_type="project",
+            resource_id=project_id,
+            detail="ownership transferred",
+            previous_owner=current_owner or "none",
+            new_owner=new_owner_user_id,
+            by_admin=actor_is_admin,
+        )
 
     async def list_members(
         self,

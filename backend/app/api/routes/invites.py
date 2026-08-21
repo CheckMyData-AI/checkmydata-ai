@@ -4,11 +4,12 @@ import logging
 import time
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.config import settings
 from app.core.audit import audit_log
 from app.core.rate_limit import limiter
 from app.services.email_service import EmailService
@@ -46,7 +47,15 @@ class InviteResponse(BaseModel):
 
 
 class RoleUpdate(BaseModel):
+    # "owner" is deliberately absent: ownership moves through
+    # POST /{project_id}/transfer-ownership, which enforces the receiving owner's
+    # plan quota and keeps `Project.owner_id` and the member row in step. Allowing
+    # it here would create a second, unguarded path to the same state.
     role: Literal["editor", "viewer"]
+
+
+class OwnershipTransfer(BaseModel):
+    new_owner_user_id: str
 
 
 class MemberResponse(BaseModel):
@@ -302,6 +311,34 @@ async def list_members(
             )
         )
     return result
+
+
+@router.post("/{project_id}/transfer-ownership", status_code=204)
+@limiter.limit("5/minute")
+async def transfer_ownership(
+    request: Request,
+    project_id: str,
+    body: OwnershipTransfer,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Hand a project to another member (F-PROJ-10).
+
+    Authorization is **not** `require_role(..., "owner")`: an orphaned project —
+    `Project.owner_id` is `ondelete="SET NULL"`, so a deleted account leaves one —
+    has no owner, so that check would 403 everyone and the workspace would stay
+    stranded, which is the finding. The service decides instead, and it lets an admin
+    act precisely in that case. Rate limit is deliberately tighter than the
+    role-change route's: this is the one action that can hand a workspace away.
+    """
+    await _membership_svc.transfer_ownership(
+        db,
+        project_id,
+        new_owner_user_id=body.new_owner_user_id,
+        actor_user_id=user["user_id"],
+        actor_is_admin=settings.is_admin_email(user.get("email")),
+    )
+    return Response(status_code=204)
 
 
 @router.patch("/{project_id}/members/{member_user_id}", response_model=MemberResponse)

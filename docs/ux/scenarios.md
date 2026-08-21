@@ -138,6 +138,7 @@ human review moves them to `validated`.
 | SCN-123 | The interface reads as one design in light and in dark | settings | analyst | implemented | 2026-08-16 PASS |
 | SCN-124 | A result reads as a ledger — aligned, labelled, and the same in both themes | chat | analyst | implemented | 2026-08-16 PASS |
 | SCN-125 | The answer is the page, not a speech bubble | chat | analyst | implemented | 2026-08-16 PARTIAL → fixed |
+| SCN-126 | Transfer project ownership | members | owner | implemented | 2026-08-21 PASS |
 
 ## Personas
 
@@ -515,8 +516,31 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** per-member role select
 - **States covered:** loading, error, success
 - **Errors & recovery:** update fails → optimistic revert + toast (`InviteManager.tsx:158-161`). Note: role change has no confirm dialog
+- **`owner` is not one of the choices, by design (F-PROJ-10):** the select offers `editor`/`viewer` and the route's schema accepts only those. Ownership moves through SCN-126, which enforces the receiving owner's plan quota and keeps `Project.owner_id` and the member row in step; allowing "owner" here would be a second, unguarded path to the same state.
 - **Status:** implemented
 - **Coverage:** components/projects/InviteManager.tsx:237-254,149-165
+
+### SCN-126: Transfer project ownership
+- **Persona:** owner
+- **Feature:** members
+- **Entry point:** AccessModal member row → "Make owner"
+- **Preconditions:** the viewer is the owner; the target is already a member
+- **Steps:**
+  1. Owner clicks "Make owner" on a member's row
+  2. Owner confirms in the dialog
+- **Expected result:** the target becomes owner, the previous owner becomes an **editor**, the members list re-reads from the server, toast "<name> is now the owner"
+- **UI elements:** "Make owner" button per non-owner row (owner only), confirm dialog, per-row disabled state while in flight
+- **States covered:** loading, success, error, declined
+- **Why it exists (F-PROJ-10):** before this the owner was permanent. `update_member_role` refuses to touch an owner and the role route's schema accepts only `editor`/`viewer`, so no request could appoint a successor or resign. An owner leaving took the workspace with them, and there was no in-product fix.
+- **What the confirm must say:** the actor is **demoted to editor and cannot take ownership back** — only the new owner can pass it on — and the new owner's plan must have room for another project. A confirm that omits the demotion asks someone to agree to something they were not told.
+- **The old owner is demoted, not removed.** Taking away someone's access is a different decision from taking away their ownership, and only the second one was asked for.
+- **Both records move together.** Ownership is readable from `Project.owner_id` *and* from a member row; changing one leaves two owners — the new one by the column, the old one by the row — which is worse than none. The list is therefore re-read rather than patched locally, because two rows change at once.
+- **Plan limits apply to the receiving owner.** Project quotas count by `owner_id`, so the transfer is refused with the usual 402/quota message if the new owner is full — checked before anything is written, so a refusal changes nothing.
+- **The target must already be a member.** Transfer is not an access grant: invite first, then transfer. Naming a non-member returns 400 saying so.
+- **Errors & recovery:** declined confirm → nothing happens; 403 (not the owner) / 400 (not a member, or already the owner) / quota → toast with the server's reason, list unchanged
+- **The stranded case is an admin action, not a UI one.** `Project.owner_id` is `ondelete="SET NULL"`, so a deleted account leaves a project with **no** owner and no member who may appoint one — the button does not appear for anyone. An admin (`ADMIN_EMAILS`) can transfer it via `POST /api/invites/{project_id}/transfer-ownership`; a non-admin member claiming it is refused with 403, since self-appointment is exactly the escalation that guard is for.
+- **Status:** implemented
+- **Coverage:** components/projects/InviteManager.tsx (row action + confirm), lib/api/workspace.ts `transferOwnership`, `backend/app/services/membership_service.py::transfer_ownership`, `backend/app/api/routes/invites.py::transfer_ownership`; tests `frontend/src/__tests__/components/InviteManager.test.tsx` (6), `backend/tests/unit/test_membership_service.py` (9), `backend/tests/unit/test_ownership_transfer_route.py` (5)
 
 ### SCN-023: Remove a member
 - **Persona:** owner

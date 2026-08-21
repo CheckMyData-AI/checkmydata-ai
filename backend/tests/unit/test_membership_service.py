@@ -195,3 +195,195 @@ class TestGetRolesBulk:
     async def test_empty_list_returns_empty(self, db):
         user = await _make_user(db)
         assert await svc.get_roles_bulk(db, [], user.id) == {}
+
+
+# ---------------------------------------------------------------------------
+# F-PROJ-10: the owner was permanent, so a departure stranded the workspace
+# ---------------------------------------------------------------------------
+
+
+class TestTransferOwnership:
+    """`update_member_role` refuses to touch an owner and `RoleUpdate.role` is
+    `Literal["editor", "viewer"]`, so before this there was no path — none — to make
+    anyone else the owner or to stop being one. `Project.owner_id` is
+    `ondelete="SET NULL"`, so deleting the account left the project with no owner at
+    all and nobody who could appoint one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_owner_moves_and_the_old_owner_becomes_an_editor(self, db):
+        old = await _make_user(db)
+        new = await _make_user(db)
+        proj = await _make_project(db)
+        proj.owner_id = old.id
+        await db.commit()
+        await svc.add_member(db, proj.id, new.id, "editor")
+
+        await svc.transfer_ownership(db, proj.id, new_owner_user_id=new.id, actor_user_id=old.id)
+
+        assert await svc.get_role(db, proj.id, new.id) == "owner"
+        # Demoted, not removed: taking someone's access away is a different decision
+        # from taking their ownership away, and only one of them was asked for.
+        assert await svc.get_role(db, proj.id, old.id) == "editor"
+
+    @pytest.mark.asyncio
+    async def test_both_sources_of_truth_agree_afterwards(self, db):
+        """`get_role` resolves owner from a member row OR `Project.owner_id`.
+
+        Updating only one of them leaves two owners — the new one by the column and
+        the old one by the row — which is worse than having none.
+        """
+        old = await _make_user(db)
+        new = await _make_user(db)
+        proj = await _make_project(db)
+        proj.owner_id = old.id
+        await db.commit()
+        await svc.add_member(db, proj.id, old.id, "owner")
+        await svc.add_member(db, proj.id, new.id, "viewer")
+
+        await svc.transfer_ownership(db, proj.id, new_owner_user_id=new.id, actor_user_id=old.id)
+
+        fresh = await db.get(Project, proj.id)
+        assert fresh.owner_id == new.id
+        assert await svc.get_role(db, proj.id, old.id) == "editor"
+        assert await svc.get_role(db, proj.id, new.id) == "owner"
+
+    @pytest.mark.asyncio
+    async def test_non_owner_cannot_transfer(self, db):
+        owner = await _make_user(db)
+        editor = await _make_user(db)
+        other = await _make_user(db)
+        proj = await _make_project(db)
+        proj.owner_id = owner.id
+        await db.commit()
+        await svc.add_member(db, proj.id, editor.id, "editor")
+        await svc.add_member(db, proj.id, other.id, "editor")
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.transfer_ownership(
+                db, proj.id, new_owner_user_id=other.id, actor_user_id=editor.id
+            )
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_target_must_already_be_a_member(self, db):
+        """Transfer must not double as a covert access grant."""
+        owner = await _make_user(db)
+        stranger = await _make_user(db)
+        proj = await _make_project(db)
+        proj.owner_id = owner.id
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.transfer_ownership(
+                db, proj.id, new_owner_user_id=stranger.id, actor_user_id=owner.id
+            )
+        assert exc.value.status_code == 400
+        assert "member" in exc.value.detail.lower()
+
+    @pytest.mark.asyncio
+    async def test_transferring_to_the_current_owner_is_refused(self, db):
+        owner = await _make_user(db)
+        proj = await _make_project(db)
+        proj.owner_id = owner.id
+        await db.commit()
+        await svc.add_member(db, proj.id, owner.id, "owner")
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.transfer_ownership(
+                db, proj.id, new_owner_user_id=owner.id, actor_user_id=owner.id
+            )
+        assert exc.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_an_admin_can_rescue_an_orphaned_project(self, db):
+        """`owner_id` is SET NULL on user delete, so nobody is owner and nobody can
+        appoint one. This is the case the finding is actually about."""
+        member = await _make_user(db)
+        proj = await _make_project(db)
+        proj.owner_id = None
+        await db.commit()
+        await svc.add_member(db, proj.id, member.id, "editor")
+
+        await svc.transfer_ownership(
+            db,
+            proj.id,
+            new_owner_user_id=member.id,
+            actor_user_id="some-admin-id",
+            actor_is_admin=True,
+        )
+
+        assert await svc.get_role(db, proj.id, member.id) == "owner"
+        fresh = await db.get(Project, proj.id)
+        assert fresh.owner_id == member.id
+
+    @pytest.mark.asyncio
+    async def test_a_non_admin_cannot_claim_an_orphaned_project(self, db):
+        member = await _make_user(db)
+        proj = await _make_project(db)
+        proj.owner_id = None
+        await db.commit()
+        await svc.add_member(db, proj.id, member.id, "editor")
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.transfer_ownership(
+                db, proj.id, new_owner_user_id=member.id, actor_user_id=member.id
+            )
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_the_new_owner_s_project_quota_is_enforced(self, db, monkeypatch):
+        """Project quotas count by `owner_id` (`entitlement_service.py:216`), so a
+        transfer that skips the check is a plan-limit bypass wearing a feature's name.
+        """
+        from app.services.entitlement_service import QuotaExceededError
+
+        old = await _make_user(db)
+        new = await _make_user(db)
+        proj = await _make_project(db)
+        proj.owner_id = old.id
+        await db.commit()
+        await svc.add_member(db, proj.id, new.id, "editor")
+
+        called: list[str] = []
+
+        async def _full(_self, _db, user_id):  # patched on the class: `self` arrives too
+            called.append(user_id)
+            raise QuotaExceededError("full", resource="projects", limit=1, current=1)
+
+        monkeypatch.setattr(
+            "app.services.entitlement_service.EntitlementService.enforce_project_quota",
+            _full,
+        )
+
+        with pytest.raises(QuotaExceededError):
+            await svc.transfer_ownership(
+                db, proj.id, new_owner_user_id=new.id, actor_user_id=old.id
+            )
+
+        assert called == [new.id], "the quota checked must be the RECEIVING owner's"
+        fresh = await db.get(Project, proj.id)
+        assert fresh.owner_id == old.id, "a refused transfer must change nothing"
+
+    @pytest.mark.asyncio
+    async def test_the_members_list_shows_the_new_owner_as_owner(self, db):
+        """`get_role` cannot see this, and that is the point.
+
+        It falls back to `Project.owner_id`, so moving only the column still resolves
+        the new owner correctly — a plant that skipped the member-row update left
+        every role assertion green. What breaks is what a person actually looks at:
+        the members list would print the project's owner as a viewer.
+        """
+        old = await _make_user(db)
+        new = await _make_user(db)
+        proj = await _make_project(db)
+        proj.owner_id = old.id
+        await db.commit()
+        await svc.add_member(db, proj.id, old.id, "owner")
+        await svc.add_member(db, proj.id, new.id, "viewer")
+
+        await svc.transfer_ownership(db, proj.id, new_owner_user_id=new.id, actor_user_id=old.id)
+
+        by_user = {m.user_id: m.role for m in await svc.list_members(db, proj.id)}
+        assert by_user[new.id] == "owner", "the members list must not call the owner a viewer"
+        assert by_user[old.id] == "editor"

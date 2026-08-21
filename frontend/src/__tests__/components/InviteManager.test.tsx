@@ -10,6 +10,7 @@ const mockRevoke = vi.fn();
 const mockResend = vi.fn();
 const mockRemoveMember = vi.fn();
 const mockUpdateMemberRole = vi.fn();
+const mockTransferOwnership = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -21,12 +22,23 @@ vi.mock("@/lib/api", () => ({
       resend: (...args: unknown[]) => mockResend(...(args as [])),
       removeMember: (...args: unknown[]) => mockRemoveMember(...(args as [])),
       updateMemberRole: (...args: unknown[]) => mockUpdateMemberRole(...(args as [])),
+      transferOwnership: (...args: unknown[]) => mockTransferOwnership(...(args as [])),
     },
   },
 }));
 
 vi.mock("@/stores/toast-store", () => ({
   toast: vi.fn(),
+}));
+
+// The viewer's own role decides whether the transfer action exists at all, and it is
+// read from the members list itself rather than a new prop (two call sites render this
+// component; a required prop would make them disagree).
+let currentUserId = "u1";
+vi.mock("@/stores/auth-store", () => ({
+  // `AuthUser` carries `id`, not `user_id` — a mock that invents the wrong field
+  // passes against code reading the wrong field and fails only in production.
+  useAuthStore: { getState: () => ({ user: { id: currentUserId } }) },
 }));
 
 vi.mock("@/components/ui/ConfirmModal", () => ({
@@ -71,6 +83,8 @@ beforeEach(() => {
   mockResend.mockResolvedValue({ ok: true });
   mockRevoke.mockResolvedValue({ ok: true });
   mockRemoveMember.mockResolvedValue({ ok: true });
+  currentUserId = "u1";
+  mockTransferOwnership.mockResolvedValue(undefined);
   mockUpdateMemberRole.mockResolvedValue({
     id: "m2",
     project_id: "proj1",
@@ -329,5 +343,78 @@ describe("InviteManager", () => {
     await waitFor(() => {
       expect(mockUpdateMemberRole).toHaveBeenCalledWith("proj1", "u2", "viewer");
     });
+  });
+});
+
+describe("Ownership transfer (F-PROJ-10)", () => {
+  const owner = () => makeMember({ id: "m1", user_id: "u1", role: "owner", email: "owner@test.com" });
+  const editor = () =>
+    makeMember({ id: "m2", user_id: "u2", role: "editor", email: "bob@test.com", display_name: "Bob" });
+
+  it("offers the owner a way to hand the project over", async () => {
+    // Before this the owner was permanent: no role the API accepted made anyone else
+    // an owner, so an owner leaving stranded the workspace with no in-product fix.
+    mockListMembers.mockResolvedValue([owner(), editor()]);
+    await renderInviteManager();
+    expect(await screen.findByRole("button", { name: /make owner: Bob/i })).toBeTruthy();
+  });
+
+  it("does not offer it on the owner's own row", async () => {
+    mockListMembers.mockResolvedValue([owner(), editor()]);
+    await renderInviteManager();
+    await screen.findByText("bob@test.com");
+    const buttons = screen.getAllByRole("button", { name: /make owner/i });
+    expect(buttons).toHaveLength(1);
+  });
+
+  it("hides it from a non-owner", async () => {
+    currentUserId = "u2"; // Bob, an editor
+    mockListMembers.mockResolvedValue([owner(), editor()]);
+    await renderInviteManager();
+    await screen.findByText("owner@test.com");
+    expect(screen.queryByRole("button", { name: /make owner/i })).toBeNull();
+  });
+
+  it("names the consequence before doing it, and it is not reversible by the actor", async () => {
+    const { confirmAction } = await import("@/components/ui/ConfirmModal");
+    mockListMembers.mockResolvedValue([owner(), editor()]);
+    await renderInviteManager();
+
+    await userEvent.click(await screen.findByRole("button", { name: /make owner/i }));
+
+    expect(confirmAction).toHaveBeenCalled();
+    const [message, opts] = (confirmAction as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0] as [string, { detail?: string }];
+    const said = `${message} ${opts?.detail ?? ""}`;
+    expect(said).toMatch(/Bob|bob@test\.com/);
+    // The actor is demoted to editor and cannot take it back — a confirm that does not
+    // say so is asking someone to agree to something they have not been told.
+    expect(said).toMatch(/editor/i);
+    expect(said).toMatch(/cannot|can't|only the new owner/i);
+  });
+
+  it("calls the transfer endpoint and reloads the members list", async () => {
+    mockListMembers.mockResolvedValue([owner(), editor()]);
+    await renderInviteManager();
+
+    await userEvent.click(await screen.findByRole("button", { name: /make owner/i }));
+
+    await waitFor(() => expect(mockTransferOwnership).toHaveBeenCalledWith("proj1", "u2"));
+    // Both rows change at once, so a local patch would show two owners or none;
+    // re-reading is the only honest refresh.
+    await waitFor(() => expect(mockListMembers.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  it("does nothing when the confirm is declined", async () => {
+    const { confirmAction } = await import("@/components/ui/ConfirmModal");
+    (confirmAction as unknown as { mockResolvedValue: (v: boolean) => void }).mockResolvedValue(
+      false,
+    );
+    mockListMembers.mockResolvedValue([owner(), editor()]);
+    await renderInviteManager();
+
+    await userEvent.click(await screen.findByRole("button", { name: /make owner/i }));
+
+    expect(mockTransferOwnership).not.toHaveBeenCalled();
   });
 });

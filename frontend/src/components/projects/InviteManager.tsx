@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ProjectInvite, type ProjectMember } from "@/lib/api";
 import { confirmAction } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
+import { useAuthStore } from "@/stores/auth-store";
 import { Spinner } from "@/components/ui/Spinner";
 import { Icon } from "@/components/ui/Icon";
 import { selectBaseCls } from "@/components/ui/Input";
@@ -43,6 +44,7 @@ export function InviteManager({ projectId, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [refreshLoading, setRefreshLoading] = useState(true);
   const [updatingRoleId, setUpdatingRoleId] = useState<string | null>(null);
+  const [transferringId, setTransferringId] = useState<string | null>(null);
   const [resending, setResending] = useState<string | null>(null);
   const [resentIds, setResentIds] = useState<Set<string>>(new Set());
   const resendTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -126,6 +128,36 @@ export function InviteManager({ projectId, onClose }: Props) {
       toast(err instanceof Error ? err.message : "Failed to resend invite", "error");
     } finally {
       setResending(null);
+    }
+  };
+
+  // The viewer's own role comes from the list being rendered rather than a new prop:
+  // two call sites mount this component, and a required prop is how they drift.
+  const myUserId = useAuthStore.getState().user?.id;
+  const iAmOwner = members.some((m) => m.user_id === myUserId && m.role === "owner");
+
+  const handleTransferOwnership = async (userId: string, label: string) => {
+    if (
+      !(await confirmAction(`Make ${label} the owner of this project?`, {
+        detail:
+          "You become an editor and cannot take ownership back — only the new owner " +
+          "can hand it to someone else. Their plan must have room for another project.",
+        severity: "warning",
+        confirmText: "Transfer ownership",
+      }))
+    )
+      return;
+    setTransferringId(userId);
+    try {
+      await api.invites.transferOwnership(projectId, userId);
+      // Two rows change at once, so patching locally would render two owners or none.
+      // Re-reading is the only refresh that can be right.
+      await refresh();
+      toast(`${label} is now the owner`, "info");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to transfer ownership", "error");
+    } finally {
+      setTransferringId(null);
     }
   };
 
@@ -254,6 +286,21 @@ export function InviteManager({ projectId, onClose }: Props) {
                   </select>
                 )}
               </div>
+              {m.role !== "owner" && iAmOwner && (
+                <button
+                  onClick={() =>
+                    handleTransferOwnership(
+                      m.user_id,
+                      m.display_name || m.email || "this member",
+                    )
+                  }
+                  disabled={transferringId === m.user_id}
+                  aria-label={`Make owner: ${m.display_name || m.email || "member"}`}
+                  className="ml-2 px-2 py-0.5 text-kicker text-text-muted hover:text-warning hover:bg-warning-muted/12 rounded transition-colors shrink-0 disabled:opacity-40"
+                >
+                  Make owner
+                </button>
+              )}
               {m.role !== "owner" && (
                 <button
                   onClick={() => handleRemoveMember(m.user_id, m.email)}
