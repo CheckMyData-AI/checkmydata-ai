@@ -16,6 +16,7 @@ from app.config import settings
 from app.models.billing import Plan, Subscription
 from app.models.connection import Connection
 from app.models.project import Project
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,39 @@ class EntitlementService:
         monthly = _strictest(ent.monthly_token_limit, settings.user_monthly_token_limit)
         return daily, monthly
 
+    async def _lock_owner(self, db: AsyncSession, user_id: str) -> None:
+        """Serialise quota decisions for one owner (F-BILL-02).
+
+        The check was `SELECT COUNT(…)`, compare, and then the *caller* inserted. Two
+        concurrent requests both counted `N-1`, both passed, and both inserted — a plan
+        allowing one connection ended up with two. Creation is rate-limited to 10/minute,
+        which bounds how far it goes and does not stop it.
+
+        A row lock on the owner is the smallest thing that fixes it: quota checks for one
+        user serialise, different users never contend, and it needs no new table or
+        counter to drift out of step with the rows it counts.
+
+        **Where this works, and where it does not.** `FOR UPDATE` is a Postgres guarantee;
+        SQLite's driver accepts the clause and ignores it. Production is Postgres. Dev on
+        SQLite is a single-writer database, where two transactions cannot interleave the
+        way this race needs — so the guard is real where the race is real and inert where
+        it cannot happen. Saying that plainly is better than a test that pretends SQLite
+        proved something.
+
+        Best-effort by design: a database that cannot take the lock must not block the
+        request, because the quota check that follows is still correct in the common case
+        and refusing the write outright would trade a rare over-count for a hard outage.
+        """
+        try:
+            await db.execute(select(User.id).where(User.id == user_id).with_for_update())
+        except Exception:
+            logger.warning(
+                "Could not lock the owner row for %s before a quota check; the check "
+                "still runs, but two concurrent creates could both pass it",
+                user_id,
+                exc_info=True,
+            )
+
     async def enforce_connection_quota(self, db: AsyncSession, user_id: str) -> None:
         """Block creating a connection past the plan's ``max_connections``.
 
@@ -149,9 +183,12 @@ class EntitlementService:
         """
         ent = await self.get_entitlements(db, user_id)
         if not ent.max_connections:
+            # Unlimited: return before the lock. Serialising a decision that is already
+            # made is contention bought for nothing.
             return
         from sqlalchemy import func as sa_func
 
+        await self._lock_owner(db, user_id)
         stmt = (
             select(sa_func.count(Connection.id))
             .join(Project, Connection.project_id == Project.id)
@@ -171,9 +208,11 @@ class EntitlementService:
         """Block creating a project past the plan's ``max_projects``."""
         ent = await self.get_entitlements(db, user_id)
         if not ent.max_projects:
+            # Unlimited: return before the lock, for the same reason as connections.
             return
         from sqlalchemy import func as sa_func
 
+        await self._lock_owner(db, user_id)
         stmt = select(sa_func.count(Project.id)).where(Project.owner_id == user_id)
         current = int((await db.execute(stmt)).scalar_one())
         if current >= ent.max_projects:

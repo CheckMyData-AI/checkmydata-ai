@@ -54,15 +54,34 @@ def _sub(**kw) -> Subscription:
 
 
 def _db_returning(*results):
-    """AsyncMock db whose execute() yields scalar_one_or_none results in order."""
+    """AsyncMock db whose execute() yields scalar_one_or_none results in order.
+
+    The ordered sequence is what most of these tests need — subscription lookup, then
+    plan lookup, then a count. What it must NOT consume is the owner lock the quota checks
+    now take first (`SELECT … FOR UPDATE`, F-BILL-02): a fixture keyed on call order broke
+    the moment a query was added ahead of the others, failing with `StopAsyncIteration`,
+    which says nothing about quotas.
+
+    So the lock is answered and skipped, and everything else keeps its place in line. A
+    first attempt keyed the whole fixture on `count(` instead, which fixed the quota tests
+    and broke four others that pass results for plan and subscription lookups — the
+    ordered sequence is the contract those rely on.
+    """
     db = AsyncMock()
-    mocks = []
-    for r in results:
+    remaining = list(results)
+
+    async def _execute(stmt=None, *_a, **_k):
         m = MagicMock()
-        m.scalar_one_or_none.return_value = r
-        m.scalar_one.return_value = r
-        mocks.append(m)
-    db.execute = AsyncMock(side_effect=mocks)
+        if stmt is not None and "for update" in str(stmt).lower():
+            m.scalar_one_or_none.return_value = "u1"
+            m.scalar_one.return_value = "u1"
+            return m
+        value = remaining.pop(0) if remaining else None
+        m.scalar_one_or_none.return_value = value
+        m.scalar_one.return_value = value
+        return m
+
+    db.execute = AsyncMock(side_effect=_execute)
     return db
 
 

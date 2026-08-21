@@ -85,11 +85,11 @@ frontend **A** (563 smells, 7 SOLID).
 |---|---|
 | 🔴 Critical | 0 |
 | 🟠 High | **0** |
-| 🟡 Medium | 12 |
+| 🟡 Medium | 11 |
 | 🟢 Low | 42 |
 | ⚪ Info | 9 |
 
-*Counted 2026-08-21, not estimated: 63 open rows and 43 struck
+*Counted 2026-08-21, not estimated: 62 open rows and 44 struck
 through, by `grep -c '^| F-'` / `grep -c '^| ~~F-'` over this file. The `~` figures this
 replaced had drifted — the tally is now derived from the rows it summarises.*
 
@@ -295,7 +295,7 @@ gate, durable AuditLog, idempotency).
 ### 14 — Billing & Entitlements
 | ID | Sev | Issue |
 |---|---|---|
-| F-BILL-02 | 🟡 | Connection/project quota check count-then-compare → TOCTOU bypass |
+| ~~F-BILL-02~~ | ✅ | ~~Connection/project quota check count-then-compare → TOCTOU bypass~~ — **fixed 2026-08-21.** `SELECT COUNT(…)`, compare, and then the *caller* inserted: two concurrent requests both counted `N-1`, both passed, both inserted, and a plan allowing one connection ended up with two. Creation is rate-limited to 10/minute, which bounds how far it goes and does not stop it. Fixed with a row lock on the owner (`SELECT … FOR UPDATE` on `users`) taken **before** the count — quota checks for one user serialise, different users never contend, and no counter is introduced that could drift out of step with the rows it counts. **Honest about scope:** `FOR UPDATE` is a Postgres guarantee and SQLite's driver accepts the clause and ignores it; production is Postgres, and SQLite dev is single-writer where the interleaving cannot happen — so the guard is real where the race is real and inert where it cannot occur. A lock failure logs at warning and lets the check proceed rather than turning a quota question into a 500. An unlimited plan returns before the lock, because serialising a decision already made is contention bought for nothing. Evidence: `tests/unit/test_quota_toctou.py` (11), five plants — one of which showed the breadth assertion could not see `except Exception` narrowed to `except SystemExit`, now fixed. |
 | ~~F-BILL-07~~ | ✅ | ~~`demo_setup` bypasses quota gate (route-level, not service-level)~~ — **fixed 2026-08-20**. `enforce_project_quota` + `enforce_connection_quota` now run before either row is created and a breach answers 402 with the same payload every other route sends (`app/api/routes/demo.py:148-155`). Rate-limited to 3/minute, the gap minted three projects and three connections a minute against a plan nobody was charged for. Evidence: `tests/integration/test_demo_routes.py::test_a_project_quota_breach_answers_402`, `::test_a_connection_quota_breach_answers_402`. |
 | F-BILL-01 | 🟡 | `_resolve_plan_id` trusts stale `metadata.plan_id` over live price |
 | F-BILL-03 | 🟢 | `/webhook` no rate limit / body cap |
