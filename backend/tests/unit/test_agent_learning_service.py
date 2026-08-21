@@ -294,7 +294,11 @@ class TestCreateLearning:
                 lesson="Use orders_v2 instead of orders_legacy",
             )
         assert entry.times_confirmed == 2
-        assert entry.confidence == 0.7
+        # F-LEARN-03: was 0.7, a flat +0.1 per re-derivation — the increment that let
+        # four identical submissions carry 0.6 to 1.0. The Nth re-derivation now adds
+        # 0.1/N, so a second confirmation adds 0.05.
+        assert entry.confidence == pytest.approx(0.65, abs=0.01)
+        assert entry.confidence > 0.6
         assert entry.is_active is True
         # Dedup confirm bumps confidence/confirmations -> cache must refresh.
         mock_inv.assert_awaited_once_with(session, "conn-1")
