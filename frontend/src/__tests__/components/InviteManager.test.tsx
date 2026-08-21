@@ -11,6 +11,7 @@ const mockResend = vi.fn();
 const mockRemoveMember = vi.fn();
 const mockUpdateMemberRole = vi.fn();
 const mockTransferOwnership = vi.fn();
+const mockLeaveProject = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -23,6 +24,7 @@ vi.mock("@/lib/api", () => ({
       removeMember: (...args: unknown[]) => mockRemoveMember(...(args as [])),
       updateMemberRole: (...args: unknown[]) => mockUpdateMemberRole(...(args as [])),
       transferOwnership: (...args: unknown[]) => mockTransferOwnership(...(args as [])),
+      leaveProject: (...args: unknown[]) => mockLeaveProject(...(args as [])),
     },
   },
 }));
@@ -85,6 +87,7 @@ beforeEach(() => {
   mockRemoveMember.mockResolvedValue({ ok: true });
   currentUserId = "u1";
   mockTransferOwnership.mockResolvedValue(undefined);
+  mockLeaveProject.mockResolvedValue(undefined);
   mockUpdateMemberRole.mockResolvedValue({
     id: "m2",
     project_id: "proj1",
@@ -416,5 +419,89 @@ describe("Ownership transfer (F-PROJ-10)", () => {
     await userEvent.click(await screen.findByRole("button", { name: /make owner/i }));
 
     expect(mockTransferOwnership).not.toHaveBeenCalled();
+  });
+});
+
+describe("Leave project (SCN-127, F-PROJ-12)", () => {
+  const owner = () => makeMember({ id: "m1", user_id: "u1", role: "owner", email: "owner@test.com" });
+  const bob = () =>
+    makeMember({ id: "m2", user_id: "u2", role: "editor", email: "bob@test.com", display_name: "Bob" });
+
+  it("offers a way out to a non-owner member", async () => {
+    // Before F-PROJ-12 there was none: only an owner could remove a member, so a person
+    // who no longer needed the project stayed in it until someone else acted.
+    currentUserId = "u2";
+    mockListMembers.mockResolvedValue([owner(), bob()]);
+    await renderInviteManager();
+    expect(await screen.findByRole("button", { name: /leave project/i })).toBeTruthy();
+  });
+
+  it("does not offer it to the owner", async () => {
+    // Leaving would strand the workspace — the state SCN-126 exists to prevent. The
+    // backend refuses with 400; the button is absent so nobody is invited to try.
+    currentUserId = "u1";
+    mockListMembers.mockResolvedValue([owner(), bob()]);
+    await renderInviteManager();
+    await screen.findByText("bob@test.com");
+    expect(screen.queryByRole("button", { name: /leave project/i })).toBeNull();
+  });
+
+  it("names the consequence before doing it", async () => {
+    const { confirmAction } = await import("@/components/ui/ConfirmModal");
+    (confirmAction as unknown as { mockResolvedValue: (v: boolean) => void }).mockResolvedValue(true);
+    currentUserId = "u2";
+    mockListMembers.mockResolvedValue([owner(), bob()]);
+    await renderInviteManager();
+
+    await userEvent.click(await screen.findByRole("button", { name: /leave project/i }));
+
+    const [message, opts] = (confirmAction as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0] as [string, { detail?: string }];
+    const said = `${message} ${opts?.detail ?? ""}`;
+    expect(said).toMatch(/lose access|no longer/i);
+    expect(said).toMatch(/owner|invite/i);
+  });
+
+  it("calls the endpoint with no user id and reloads", async () => {
+    const { confirmAction } = await import("@/components/ui/ConfirmModal");
+    (confirmAction as unknown as { mockResolvedValue: (v: boolean) => void }).mockResolvedValue(true);
+    currentUserId = "u2";
+    mockListMembers.mockResolvedValue([owner(), bob()]);
+    await renderInviteManager();
+
+    await userEvent.click(await screen.findByRole("button", { name: /leave project/i }));
+
+    // One argument only: the request cannot name anyone else.
+    await waitFor(() => expect(mockLeaveProject).toHaveBeenCalledWith("proj1"));
+  });
+
+  it("does nothing when the confirm is declined", async () => {
+    const { confirmAction } = await import("@/components/ui/ConfirmModal");
+    (confirmAction as unknown as { mockResolvedValue: (v: boolean) => void }).mockResolvedValue(false);
+    currentUserId = "u2";
+    mockListMembers.mockResolvedValue([owner(), bob()]);
+    await renderInviteManager();
+
+    await userEvent.click(await screen.findByRole("button", { name: /leave project/i }));
+    expect(mockLeaveProject).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the server's refusal rather than pretending it worked", async () => {
+    const { confirmAction } = await import("@/components/ui/ConfirmModal");
+    (confirmAction as unknown as { mockResolvedValue: (v: boolean) => void }).mockResolvedValue(true);
+    mockLeaveProject.mockRejectedValue(new Error("The project owner cannot leave"));
+    currentUserId = "u2";
+    mockListMembers.mockResolvedValue([owner(), bob()]);
+    await renderInviteManager();
+
+    const { toast } = await import("@/stores/toast-store");
+
+    await userEvent.click(await screen.findByRole("button", { name: /leave project/i }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.stringContaining("owner cannot leave"),
+        "error",
+      ),
+    );
   });
 });
