@@ -25,6 +25,19 @@ from rank_bm25 import BM25Okapi
 
 logger = logging.getLogger(__name__)
 
+#: Why a BM25 leg came back empty (F-KNOW-07). Only ``MISS_NO_MATCH`` and
+#: ``MISS_NO_QUERY_TOKENS`` are healthy — the index worked and had nothing to say.
+#: The rest mean hybrid retrieval is silently dense-only until a reindex.
+MISS_NO_SNAPSHOT = "no_snapshot"
+MISS_CORRUPT = "corrupt"
+MISS_SCHEMA_MISMATCH = "schema_mismatch"
+MISS_NO_QUERY_TOKENS = "no_query_tokens"
+MISS_NO_MATCH = "no_match"
+MISS_SCORE_ERROR = "score_error"
+
+#: Reasons that mean the index is unusable, not merely unhelpful.
+BM25_UNUSABLE = frozenset({MISS_NO_SNAPSHOT, MISS_CORRUPT, MISS_SCHEMA_MISMATCH, MISS_SCORE_ERROR})
+
 # Tokenization knobs.
 _MAX_TOKENS_PER_DOC = 1024  # cap to keep BM25 fast even on huge files.
 _MIN_TOKEN_LEN = 2
@@ -218,13 +231,24 @@ class BM25Index:
 
     def load(self, project_id: str) -> BM25Snapshot | None:
         """Return the cached/loaded snapshot, or ``None`` if absent or corrupted."""
+        return self.load_with_reason(project_id)[0]
+
+    def load_with_reason(self, project_id: str) -> tuple[BM25Snapshot | None, str]:
+        """Like :meth:`load`, but say *why* there is no snapshot.
+
+        F-KNOW-07: a missing file means hybrid retrieval is dense-only for this
+        project until a reindex — on an ephemeral disk that is every restart. A
+        corrupt or stale-schema file means the same thing for a different reason
+        and wants a different fix. ``None`` alone could not tell them apart, so
+        the caller's degradation metric labelled all of them identically.
+        """
         with self._lock:
             cached = self._snapshots.get(project_id)
             if cached is not None:
-                return cached
+                return cached, "ok"
             path = self._path(project_id)
             if not path.exists():
-                return None
+                return None, MISS_NO_SNAPSHOT
             try:
                 with path.open("rb") as fh:
                     snap = pickle.load(fh)
@@ -234,9 +258,10 @@ class BM25Index:
                     path,
                     exc_info=True,
                 )
-                return None
+                return None, MISS_CORRUPT
             if not isinstance(snap, BM25Snapshot):
-                return None
+                logger.warning("bm25_index: %s holds %s, not a snapshot", path, type(snap).__name__)
+                return None, MISS_CORRUPT
             if snap.schema_version != _SCHEMA_VERSION:
                 logger.info(
                     "bm25_index: schema mismatch for %s (have v%d, expected v%d)",
@@ -244,9 +269,9 @@ class BM25Index:
                     snap.schema_version,
                     _SCHEMA_VERSION,
                 )
-                return None
+                return None, MISS_SCHEMA_MISMATCH
             self._snapshots[project_id] = snap
-            return snap
+            return snap, "ok"
 
     def query(
         self,
@@ -261,19 +286,33 @@ class BM25Index:
 
             [{"id": ..., "document": ..., "metadata": ..., "score": float}, ...]
         """
-        snap = self.load(project_id)
+        return self.query_with_reason(project_id, query_text, n_results)[0]
+
+    def query_with_reason(
+        self,
+        project_id: str,
+        query_text: str,
+        n_results: int = 20,
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Like :meth:`query`, plus why the list is empty when it is.
+
+        One of the reasons is healthy: ``no_match`` means the index worked and
+        the query had no lexical overlap. Counting that as degradation is what
+        made ``retrieval_degraded_total`` unreadable in both directions.
+        """
+        snap, load_reason = self.load_with_reason(project_id)
         if snap is None:
-            return []
+            return [], load_reason
         tokens = tokenize_code(query_text)
         if not tokens:
-            return []
+            return [], MISS_NO_QUERY_TOKENS
         try:
             scores = snap.bm25.get_scores(tokens)
         except Exception:
             logger.warning("bm25_index: scoring failed for %s", project_id[:8], exc_info=True)
-            return []
+            return [], MISS_SCORE_ERROR
         if not len(scores):
-            return []
+            return [], MISS_NO_MATCH
         # Pick top-n indices by score descending.
         # ``argsort`` is O(n log n); for small corpora that's fine.
         idx_sorted = sorted(
@@ -297,7 +336,7 @@ class BM25Index:
                     "score": score,
                 }
             )
-        return out
+        return out, ("ok" if out else MISS_NO_MATCH)
 
     def delete(self, project_id: str) -> None:
         """Remove a project's snapshot from disk and the in-memory cache."""

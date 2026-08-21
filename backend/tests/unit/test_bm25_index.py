@@ -90,3 +90,79 @@ def test_empty_corpus_produces_no_results(bm25_dir):
     bm25 = BM25Index(bm25_dir)
     bm25.build("p", indexed_sha="s", documents=[])
     assert bm25.query("p", "anything") == []
+
+
+# ---------------------------------------------------------------------------
+# F-KNOW-07: why the leg was empty, not just that it was
+# ---------------------------------------------------------------------------
+
+
+#: BM25's IDF is zero for a term present in every document, so a one-document
+#: index returns nothing for any query. Tests needing hits need a real corpus.
+_CORPUS = [
+    ("c1", "analyze_query function with a docstring", {}),
+    ("c2", "UserService class managing users", {}),
+    ("c3", "validate email format helper", {}),
+]
+
+
+class TestEmptyReason:
+    """``[]`` had five causes and one of them is healthy.
+
+    A missing snapshot means hybrid retrieval is dense-only for this project
+    until a reindex; a query that matches nothing means the index is working.
+    Both returned ``[]``, and the caller labelled both ``empty_result``.
+    """
+
+    def test_absent_snapshot_is_named(self, bm25_dir):
+        hits, reason = BM25Index(bm25_dir).query_with_reason("never-built", "anything")
+        assert hits == []
+        assert reason == "no_snapshot"
+
+    def test_healthy_no_match_is_not_a_miss(self, bm25_dir):
+        bm25 = BM25Index(bm25_dir)
+        bm25.build("p", indexed_sha="sha", documents=_CORPUS)
+        hits, reason = bm25.query_with_reason("p", "zzzz_unrelated_identifier")
+        assert hits == []
+        assert reason == "no_match", "a working index that matched nothing is not degraded"
+
+    def test_hits_report_ok(self, bm25_dir):
+        bm25 = BM25Index(bm25_dir)
+        bm25.build("p", indexed_sha="sha", documents=_CORPUS)
+        hits, reason = bm25.query_with_reason("p", "analyze_query")
+        assert hits and reason == "ok"
+
+    def test_corrupt_snapshot_is_named(self, bm25_dir):
+        bm25 = BM25Index(bm25_dir)
+        bm25.build("p", indexed_sha="sha", documents=[("c1", "alpha beta", {})])
+        bm25._snapshots.clear()  # force a re-read from disk
+        bm25._path("p").write_bytes(b"not a pickle")
+        hits, reason = bm25.query_with_reason("p", "alpha")
+        assert hits == []
+        assert reason == "corrupt"
+
+    def test_schema_mismatch_is_named(self, bm25_dir):
+        bm25 = BM25Index(bm25_dir)
+        bm25.build("p", indexed_sha="sha", documents=[("c1", "alpha beta", {})])
+        snap = bm25.load("p")
+        assert snap is not None
+        object.__setattr__(snap, "schema_version", snap.schema_version + 99)
+        bm25._path("p").write_bytes(pickle.dumps(snap))
+        bm25._snapshots.clear()
+        hits, reason = bm25.query_with_reason("p", "alpha")
+        assert hits == []
+        assert reason == "schema_mismatch"
+
+    def test_untokenizable_query_is_named(self, bm25_dir):
+        bm25 = BM25Index(bm25_dir)
+        bm25.build("p", indexed_sha="sha", documents=[("c1", "alpha beta", {})])
+        hits, reason = bm25.query_with_reason("p", "a the x")  # all stopwords/short
+        assert hits == []
+        assert reason == "no_query_tokens"
+
+    def test_query_keeps_its_list_only_contract(self, bm25_dir):
+        """Existing callers must be untouched by the new channel."""
+        bm25 = BM25Index(bm25_dir)
+        bm25.build("p", indexed_sha="sha", documents=_CORPUS)
+        out = bm25.query("p", "analyze_query")
+        assert isinstance(out, list) and out and isinstance(out[0], dict)

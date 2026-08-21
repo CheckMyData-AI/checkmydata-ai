@@ -40,10 +40,16 @@ class _StubVector:
         return list(self._results)
 
 
-def _make_bm25(results: list[dict[str, Any]]) -> MagicMock:
-    """Return a BM25Index mock that returns `results` from .query()."""
+def _make_bm25(results: list[dict[str, Any]], reason: str = "ok") -> MagicMock:
+    """Return a BM25Index mock answering `.query_with_reason()`.
+
+    F-KNOW-07: an empty leg now has to say *why*. ``no_snapshot`` means the index
+    is not there — hybrid retrieval is dense-only until a reindex — while
+    ``no_match`` means the index worked and the query had no lexical overlap.
+    Only the first is degradation, so every test here names which it means.
+    """
     mock = MagicMock(spec=BM25Index)
-    mock.query = MagicMock(return_value=list(results))
+    mock.query_with_reason = MagicMock(return_value=(list(results), reason))
     return mock
 
 
@@ -55,7 +61,7 @@ def _make_bm25(results: list[dict[str, Any]]) -> MagicMock:
 @pytest.mark.asyncio
 async def test_bm25_empty_chroma_hits_emits_degraded_bm25_leg():
     """When BM25 returns [] but Chroma has hits → emit leg='bm25'."""
-    bm25 = _make_bm25([])
+    bm25 = _make_bm25([], reason="no_snapshot")
     chroma = _StubVector(results=_CHROMA_HITS)
     retr = HybridRetriever(bm25=bm25, vector_store=chroma)
 
@@ -72,7 +78,10 @@ async def test_bm25_empty_chroma_hits_emits_degraded_bm25_leg():
     mock_emit.assert_awaited_once()
     _, kwargs = mock_emit.call_args
     assert kwargs["leg"] == "bm25"
-    assert kwargs["reason"]  # non-empty reason string
+    assert kwargs["reason"] == "no_snapshot", (
+        "a truthy-string assertion is how this label stayed `empty_result` while "
+        "standing for five different causes"
+    )
 
 
 @pytest.mark.asyncio
@@ -95,7 +104,7 @@ async def test_chroma_empty_bm25_hits_emits_degraded_dense_leg():
     mock_emit.assert_awaited_once()
     _, kwargs = mock_emit.call_args
     assert kwargs["leg"] == "dense"
-    assert kwargs["reason"]
+    assert kwargs["reason"] == "empty_cause_unknown"
 
 
 @pytest.mark.asyncio
@@ -118,7 +127,7 @@ async def test_both_legs_have_hits_no_emit():
 @pytest.mark.asyncio
 async def test_both_legs_empty_no_emit():
     """When both legs return [] → no degraded event (degenerate/no-results case)."""
-    bm25 = _make_bm25([])
+    bm25 = _make_bm25([], reason="no_snapshot")
     chroma = _StubVector(results=[])
     retr = HybridRetriever(bm25=bm25, vector_store=chroma)
 
@@ -135,7 +144,7 @@ async def test_both_legs_empty_no_emit():
 @pytest.mark.asyncio
 async def test_tracker_and_workflow_id_forwarded_to_emit():
     """tracker and wf_id positional args are forwarded correctly to emit_retrieval_degraded."""
-    bm25 = _make_bm25([])
+    bm25 = _make_bm25([], reason="no_snapshot")
     chroma = _StubVector(results=_CHROMA_HITS)
     tracker = MagicMock()
     wf_id = "wf-test-123"
@@ -163,7 +172,7 @@ async def test_tracker_and_workflow_id_forwarded_to_emit():
 @pytest.mark.asyncio
 async def test_no_tracker_still_fires_metric():
     """When no tracker is injected, emit is still called with tracker=None (metric fires)."""
-    bm25 = _make_bm25([])
+    bm25 = _make_bm25([], reason="no_snapshot")
     chroma = _StubVector(results=_CHROMA_HITS)
     # No tracker / workflow_id passed (defaults)
     retr = HybridRetriever(bm25=bm25, vector_store=chroma)
@@ -178,3 +187,24 @@ async def test_no_tracker_still_fires_metric():
     args, _ = mock_emit.call_args
     # First positional arg (tracker) must be None when not injected
     assert args[0] is None
+
+
+@pytest.mark.asyncio
+async def test_healthy_bm25_no_match_emits_nothing():
+    """A working index that found no lexical overlap is not degradation.
+
+    This is the case that made the counter unreadable: it fired on the normal
+    path, so a non-zero `retrieval_degraded_total` proved nothing either way.
+    """
+    bm25 = _make_bm25([], reason="no_match")
+    chroma = _StubVector(results=_CHROMA_HITS)
+    retr = HybridRetriever(bm25=bm25, vector_store=chroma)
+
+    with patch(
+        "app.knowledge.hybrid_retriever.emit_retrieval_degraded",
+        new_callable=AsyncMock,
+    ) as mock_emit:
+        out = await retr.query("p", "analyze query")
+
+    assert len(out) > 0
+    mock_emit.assert_not_awaited()

@@ -27,6 +27,12 @@ const LEG_LABEL: Record<string, string> = {
   dense: "semantic search",
 };
 
+/** The index is not there — a reindex is the fix, and the question was never at fault. */
+const INDEX_ABSENT_REASONS = new Set(["no_snapshot", "corrupt", "schema_mismatch"]);
+
+/** The index exists but the leg failed this time — nothing for the reader to fix. */
+const LEG_FAILED_REASONS = new Set(["timeout", "error", "score_error"]);
+
 type ExtraBag = Record<string, unknown>;
 
 function previewFromExtra(extra: ExtraBag) {
@@ -160,10 +166,33 @@ export function pipelineEventToTransition(
       // the exception — the BM25 snapshot lives on the dyno's ephemeral disk.
       const leg = extra.leg as string | undefined;
       const label = leg ? LEG_LABEL[leg] : undefined;
+      const reason = extra.reason as string | undefined;
+      if (!label) {
+        return {
+          retrievalNote:
+            "Part of the search index did not answer, so this rests on less than the full index.",
+        };
+      }
+      // F-KNOW-07: the cause changes what the reader should do, so it changes the
+      // sentence. "Returned nothing for this question" was written when the backend
+      // labelled every empty leg `empty_result` — said of a missing index it sends
+      // someone to rewrite a question that was never the problem, while the half of
+      // the search that would have answered it was never consulted.
+      if (reason && INDEX_ABSENT_REASONS.has(reason)) {
+        return {
+          retrievalNote:
+            `${label} is unavailable for this project, so the answer rests on the other half ` +
+            `of the index. Re-indexing the repository restores it.`,
+        };
+      }
+      if (reason && LEG_FAILED_REASONS.has(reason)) {
+        return {
+          retrievalNote:
+            `${label} did not respond in time, so the answer rests on the other half of the index.`,
+        };
+      }
       return {
-        retrievalNote: label
-          ? `${label} returned nothing for this question, so the answer rests on the other half of the index.`
-          : "Part of the search index did not answer, so this rests on less than the full index.",
+        retrievalNote: `${label} returned nothing for this question, so the answer rests on the other half of the index.`,
       };
     }
 

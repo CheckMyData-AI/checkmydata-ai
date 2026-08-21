@@ -323,3 +323,44 @@ def test_indexes_entries_with_only_table_name(schema_dir):
     hits = retriever.query("conn-empty", "users")
     names = [h["metadata"]["table_name"] for h in hits]
     assert "users" in names
+
+
+# ---------------------------------------------------------------------------
+# F-KNOW-07: the schema snapshot lives on the same ephemeral disk, and its
+# absence was only ever a debug line
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaSnapshotMissIsObservable:
+    """`schema_retrieval_enabled` is default-on, so a missing snapshot means every
+    query quietly uses the legacy relevance safety net instead. That fallback is
+    designed; being unable to *tell* it is happening is not — the only trace was
+    `logger.debug`, and debug is off in production.
+    """
+
+    async def test_absent_schema_snapshot_increments_the_degradation_metric(
+        self, tmp_path, monkeypatch
+    ):
+        from app.agents import sql_agent as sql_agent_mod
+
+        recorded: list[tuple[str, str]] = []
+
+        class _Collector:
+            def record_retrieval_degraded(self, *, leg: str, reason: str) -> None:
+                recorded.append((leg, reason))
+
+        monkeypatch.setattr(
+            "app.knowledge.retrieval_degradation.get_metrics_collector",
+            lambda: _Collector(),
+        )
+        monkeypatch.setattr(sql_agent_mod.settings, "bm25_data_dir", str(tmp_path / "nothing"))
+
+        agent = sql_agent_mod.SQLAgent.__new__(sql_agent_mod.SQLAgent)
+        out = await agent._retrieve_tables_for_question(
+            connection_id="c-never-indexed",
+            question="how many orders yesterday",
+            entries_by_name={},
+            k=5,
+        )
+        assert out == []
+        assert recorded == [("schema", "no_snapshot")]

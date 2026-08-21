@@ -149,7 +149,7 @@ async def test_chroma_error_falls_back_to_bm25_only(bm25):
 @pytest.mark.asyncio
 async def test_bm25_error_falls_back_to_chroma_only(tmp_path):
     failing_bm25 = MagicMock(spec=BM25Index)
-    failing_bm25.query = MagicMock(side_effect=RuntimeError("boom"))
+    failing_bm25.query_with_reason = MagicMock(side_effect=RuntimeError("boom"))
     chroma = _StubVector(
         results=[
             {"id": "x", "document": "only chroma", "distance": 0.1, "metadata": {}},
@@ -165,7 +165,7 @@ async def test_bm25_error_falls_back_to_chroma_only(tmp_path):
 @pytest.mark.asyncio
 async def test_both_retrievers_fail_returns_empty(tmp_path):
     failing_bm25 = MagicMock(spec=BM25Index)
-    failing_bm25.query = MagicMock(side_effect=RuntimeError("boom"))
+    failing_bm25.query_with_reason = MagicMock(side_effect=RuntimeError("boom"))
     chroma = _StubVector(results=RuntimeError("boom"))
     retr = HybridRetriever(bm25=failing_bm25, vector_store=chroma)
     out = await retr.query("p", "query")
@@ -202,3 +202,93 @@ async def test_empty_query_returns_empty(bm25):
     retr = HybridRetriever(bm25=bm25, vector_store=chroma)
     assert await retr.query("p", "") == []
     assert await retr.query("p", "   ") == []
+
+
+# ---------------------------------------------------------------------------
+# F-KNOW-07: the degradation signal must name the cause, and stay quiet when
+# the index is healthy
+# ---------------------------------------------------------------------------
+
+
+class _RecordingTracker:
+    """Captures ``retrieval_degraded`` emissions with their structured extras."""
+
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+
+    async def emit(self, workflow_id, event, status, message, **extra):  # noqa: ARG002
+        self.events.append({"event": event, **extra})
+
+    def degraded(self) -> list[dict[str, Any]]:
+        return [e for e in self.events if e["event"] == "retrieval_degraded"]
+
+
+class TestDegradationCause:
+    async def test_absent_snapshot_reports_no_snapshot(self, tmp_path):
+        tracker = _RecordingTracker()
+        r = HybridRetriever(
+            bm25=BM25Index(tmp_path / "empty"),
+            vector_store=_StubVector(
+                [{"id": "d1", "document": "x", "metadata": {}, "distance": 0.1}]
+            ),
+            tracker=tracker,
+            workflow_id="wf",
+        )
+        await r.query("never-built", "anything at all")
+        assert tracker.degraded() == [
+            {"event": "retrieval_degraded", "leg": "bm25", "reason": "no_snapshot"}
+        ]
+
+    async def test_healthy_no_match_emits_nothing(self, bm25):
+        """The index worked and the query had no lexical overlap.
+
+        This is the whole reason the counter was unreadable: it fired on the
+        normal case, so a non-zero value proved nothing either way.
+        """
+        tracker = _RecordingTracker()
+        r = HybridRetriever(
+            bm25=bm25,
+            vector_store=_StubVector(
+                [{"id": "d1", "document": "x", "metadata": {}, "distance": 0.1}]
+            ),
+            tracker=tracker,
+            workflow_id="wf",
+        )
+        await r.query("p", "zzzz_totally_unrelated_identifier")
+        assert tracker.degraded() == []
+
+    async def test_bm25_timeout_reports_timeout(self, bm25, monkeypatch):
+        tracker = _RecordingTracker()
+
+        def _hang(*a, **kw):  # noqa: ARG001
+            import time
+
+            time.sleep(0.5)
+            return []
+
+        monkeypatch.setattr(bm25, "query_with_reason", _hang)
+        r = HybridRetriever(
+            bm25=bm25,
+            vector_store=_StubVector(
+                [{"id": "d1", "document": "x", "metadata": {}, "distance": 0.1}]
+            ),
+            tracker=tracker,
+            workflow_id="wf",
+            retriever_timeout_sec=0.1,
+        )
+        await r.query("p", "analyze_query")
+        assert [e["reason"] for e in tracker.degraded()] == ["timeout"]
+
+    async def test_dense_empty_does_not_claim_to_know_why(self, bm25):
+        """The dense leg has no cause channel yet; its label must say so."""
+        tracker = _RecordingTracker()
+        r = HybridRetriever(
+            bm25=bm25,
+            vector_store=_StubVector([]),
+            tracker=tracker,
+            workflow_id="wf",
+        )
+        await r.query("p", "analyze_query")
+        assert [(e["leg"], e["reason"]) for e in tracker.degraded()] == [
+            ("dense", "empty_cause_unknown")
+        ]

@@ -254,3 +254,41 @@ describe("retrieval_degraded — AUD-0819-03", () => {
     expect(t?.retrievalNote).toBeTruthy();
   });
 });
+
+describe("retrieval_degraded wording follows the cause — F-KNOW-07", () => {
+  it("says the keyword half is unavailable when its index is missing", () => {
+    // The old line — "returned nothing for this question" — was written when the
+    // backend labelled every empty leg `empty_result`. It is the wrong sentence for
+    // a missing snapshot: the question is fine, the index is not there. Telling a
+    // reader their question found nothing, when in fact half the search was never
+    // consulted, sends them to rewrite a question that was never the problem.
+    const t = pipelineEventToTransition("retrieval_degraded", {
+      status: "in_progress",
+      detail: "retrieval leg 'bm25' degraded: no_snapshot",
+      extra: { leg: "bm25", reason: "no_snapshot" },
+    });
+    expect(t!.retrievalNote).toMatch(/unavailable/i);
+    expect(t!.retrievalNote).not.toMatch(/returned nothing for this question/i);
+    expect(t!.retrievalNote).toMatch(/re-?index/i);
+  });
+
+  it("says it did not respond when the leg timed out", () => {
+    const t = pipelineEventToTransition("retrieval_degraded", {
+      status: "in_progress",
+      detail: "retrieval leg 'bm25' degraded: timeout",
+      extra: { leg: "bm25", reason: "timeout" },
+    });
+    expect(t!.retrievalNote).toMatch(/did not respond|timed out/i);
+    expect(t!.retrievalNote).not.toMatch(/re-?index/i);
+  });
+
+  it("keeps the vaguer sentence when the cause is genuinely unknown", () => {
+    const t = pipelineEventToTransition("retrieval_degraded", {
+      status: "in_progress",
+      detail: "retrieval leg 'dense' degraded: empty_cause_unknown",
+      extra: { leg: "dense", reason: "empty_cause_unknown" },
+    });
+    expect(t!.retrievalNote).toMatch(/semantic/i);
+    expect(t!.retrievalNote).not.toMatch(/unavailable/i);
+  });
+});
