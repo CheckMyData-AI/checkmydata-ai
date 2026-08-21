@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the freshness warnings named the wrong subject (F-GIT-04)
+
+- **F-GIT-04 as written:** W5 built `classify_freshness` (exact AHEAD/BEHIND/DIVERGED
+  with counts) and wired it into `KnowledgeFreshnessService`, leaving
+  `GitAgent._freshness_warning` on `count_commits_ahead`. One signal, two producers, one
+  fixed. The two invisible states matter most there because GitAgent answers from the
+  **working tree**: BEHIND means blame and diffs come from a tree the index has already
+  moved past; DIVERGED means the two sources can contradict outright. It said nothing.
+- All four states now go through the same classifier. Only AHEAD keeps a threshold — a
+  clone a commit or two ahead is the normal state of an active repository, and warning on
+  it is the noise that trains people to ignore warnings. BEHIND and DIVERGED have none:
+  losing history the index still describes is never benign.
+- **The worse defect was in the producer W5 did fix.** `classify_freshness` defines
+  `ahead` as commits on HEAD the index cannot reach, and `behind` as commits the index has
+  that HEAD lacks. The warnings took the knowledge base as their subject without flipping
+  the terms:
+  - BEHIND read "Knowledge base is N commit(s) BEHIND current HEAD; **pull** before
+    trusting answers about recent code." It is the *clone* that lost commits, and a pull
+    cannot restore rewritten history.
+  - AHEAD promised re-indexing would "capture removed code" when `ahead` means code
+    *added*.
+  - DIVERGED attributed both counts to the wrong side.
+- **A warning that prescribes an action which cannot help is worse than silence** — it
+  spends the reader's trust and their time, and the discrepancy is still there afterwards.
+- It survived because a test pinned it: `test_behind_emits_pull_warning` asserted
+  `"pull" in warning`. Asserting a word is not asserting a meaning. Renamed to
+  `test_behind_names_the_clone_as_the_one_missing_commits` and re-pointed, along with two
+  other W5 assertions.
+
 ### Fixed — a reconnect re-ran the command it had just lost (F-SSH-07)
 
 - `_run_command` caught a lost SSH connection, reconnected, and re-sent the **same**

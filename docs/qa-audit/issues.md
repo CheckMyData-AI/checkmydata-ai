@@ -86,10 +86,10 @@ frontend **A** (563 smells, 7 SOLID).
 | 🔴 Critical | 0 |
 | 🟠 High | **0** |
 | 🟡 Medium | 0 |
-| 🟢 Low | 37 |
+| 🟢 Low | 36 |
 | ⚪ Info | 10 |
 
-*Counted 2026-08-21, not estimated: 47 open rows and 62 struck
+*Counted 2026-08-21, not estimated: 46 open rows and 63 struck
 through, by `grep -c '^| F-'` / `grep -c '^| ~~F-'` over this file. The `~` figures this
 replaced had drifted — the tally is now derived from the rows it summarises.*
 
@@ -244,7 +244,7 @@ gate, durable AuditLog, idempotency).
 | ~~F-CONN-09~~ | ✅ | **Found by sweeping the shape rather than the instance** (2026-08-20). Three fields in two days were guarded on create and free on PATCH — `db_type`, `db_name`, `branch` — so an AST sweep of all 109 `BaseModel` classes under `app/api/routes/` compared every `Create`/`Update` pair field by field. Three more, all on `ConnectionUpdate`: **`mcp_env` unbounded** (create caps 50 entries / 255-char keys / 4096-char values; `update()` encrypts and stores whatever arrives into a Text column and hands it to a spawned MCP subprocess), **`connection_string` unstripped** (a DSN's trailing newline reached `encrypt()`), and `name` (covered downstream — harmless, and indistinguishable from the other two by reading either model). Fixed structurally: `_ConnectionFieldRules` is a base both models inherit. Ratchet: `tests/unit/test_create_update_validator_parity.py`, whose allow-list takes a reason rather than an entry. |
 | F-GIT-02 | 🟢 | `git_agent_auto_pull` does network fetch + tree update (inherits F-KNOW-02 risk) |
 | F-GIT-03 | 🟢 | `except (TimeoutError, Exception)` over-broad on auto-pull |
-| F-GIT-04 | 🟢 | Freshness warning detects only "ahead", not "behind/diverged" |
+| ~~F-GIT-04~~ | ✅ | ~~Freshness warning detects only "ahead", not "behind/diverged"~~ — **accurate, and looking at it found a worse defect beside it.** W5 built `classify_freshness` (exact AHEAD/BEHIND/DIVERGED with counts) and wired it into `KnowledgeFreshnessService`, leaving `GitAgent._freshness_warning` on `count_commits_ahead` — one signal, two producers, one fixed. The two invisible states matter most there because GitAgent answers from the **working tree**: BEHIND means blame and diffs come from a tree the index has already moved past, DIVERGED means the two sources can contradict outright, and it said nothing. Now all four states via the same classifier. Only AHEAD keeps a threshold — a clone a commit or two ahead is the normal state of an active repository — while BEHIND and DIVERGED have none, because losing history the index still describes is never benign. **The worse defect: the producer W5 did fix named the wrong subject in all three of its messages.** `classify_freshness`'s docstring defines `ahead` as commits on HEAD the index cannot reach and `behind` as commits the index has that HEAD lacks; the warnings took the knowledge base as subject without flipping the terms. BEHIND read "Knowledge base is N commit(s) BEHIND current HEAD; **pull** before trusting answers" — it is the *clone* that lost commits, and a pull cannot restore rewritten history. AHEAD promised re-indexing would "capture removed code" when `ahead` means code *added*. DIVERGED attributed both counts to the wrong side. **A warning that prescribes an action which cannot help is worse than silence.** And it survived because a test pinned it: `test_behind_emits_pull_warning` asserted `"pull" in warning` — asserting a word, not a meaning. Renamed and re-pointed. Evidence: `tests/unit/test_git_agent_freshness_states.py` (8), `test_freshness_warning_direction.py` (4), three W5 assertions corrected; six plants. |
 | F-GIT-05 | 🟢 | `list_releases` scans all tags then output-caps (unbounded scan) |
 | F-GIT-06 | ⚪ | `review_signals` trailers are forgeable commit text presented as review data |
 
