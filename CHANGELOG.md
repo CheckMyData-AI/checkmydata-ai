@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — per-key lock lifecycle on the SSH seam (F-SSH-05, F-SSH-09)
+
+- **F-SSH-09 was accurate.** `close_for_config`, `cleanup_idle` and `close_all` each
+  popped `_tunnels` and `_refs` and none touched `_locks` — one `asyncio.Lock` per
+  distinct cache key, forever. The key carries a credential discriminator, so rotating a
+  password mints a new key and a new lock, and deleting a connection leaves its lock.
+- **The obvious fix is a trap.** Popping a *held* lock is worse than the leak: the next
+  caller builds a fresh one and two coroutines end up inside the critical section
+  together. `_release_lock` checks `locked()` and pops in the same synchronous step —
+  nothing interleaves on one event loop, and an `asyncio.Lock` queues waiters only while
+  held, so `not locked()` means nobody is queued. A held lock is skipped and
+  `cleanup_idle` sweeps what was skipped; best-effort without a later sweep would leave
+  the leak in exactly the cases that cause it.
+- `_MEMORY_PINS` is deliberately **not** treated as the same bug: a pin is meant to last
+  the process lifetime, which is the point of a memory pin.
+- **F-SSH-05 does not reproduce.** `_connect_with_memory_pin` runs read-key → compare →
+  pin with zero `await`s, and `_host_key_blob` is a plain `def`, so two concurrent
+  first-connects cannot both see "unpinned". The evidence is that both concurrency tests
+  written to fail **passed against unmodified code**. A lock would be complexity for a
+  race that cannot happen; an AST test now asserts no `await` appears between reading the
+  pin and writing it. Planting `await asyncio.sleep(0)` there fails two tests — the guard
+  and the race test — which shows the described mechanism is real and merely absent.
+
 ### Security — the SSH pre-command hatch was five switches in one (F-SSH-03, F-SSH-04)
 
 - **F-SSH-03.** `SSH_PRE_COMMAND_ALLOWLIST_ENABLED=false` returned the input untouched,
