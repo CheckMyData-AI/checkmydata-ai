@@ -840,7 +840,13 @@ class Settings(BaseSettings):
     # missing even one impossible value defeats the gate — so 0 (default) scans
     # the FULL in-memory result. Set a positive value only to bound the scan.
     data_gate_value_range_sample: int = 0
-    data_gate_percent_min: float = -1.0
+    # Floor for "bounded percent" columns — the only place this is read. F-DG-05: the
+    # interval was tightened on one side only. The upper bound got its own setting
+    # (`data_gate_percent_bounded_max = 100.5`, a rounding tolerance) while this stayed
+    # at -1.0, so a `conversion_pct` of -0.9 passed a check whose whole premise is that
+    # the column is a 0..100 share. A negative share is exactly as impossible as 150%,
+    # so the tolerance is now symmetric: 0.5 below zero, 0.5 above one hundred.
+    data_gate_percent_min: float = -0.5
     # Loose upper bound for "rate"-kind columns (rate/ratio/growth) which can
     # legitimately exceed 100% (e.g. 150% YoY growth).
     data_gate_percent_max: float = 200.0
