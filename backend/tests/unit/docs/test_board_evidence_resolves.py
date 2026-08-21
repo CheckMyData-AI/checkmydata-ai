@@ -31,8 +31,13 @@ BOARD = REPO / "docs" / "qa-audit" / "issues.md"
 #: Paths in a citation, e.g. `tests/unit/test_x.py` or `app/core/y.py:42-58`. Anchored on
 #: the directories this project actually has, so prose like "the demo path" is not mistaken
 #: for a file.
+#: The extension alternation is longest-first AND followed by a not-a-word-character
+#: guard. Both are needed: the quantifier before it is lazy, so with `ts` ahead of `tsx`
+#: the engine matched `page.ts` out of `page.tsx` and reported a missing file — and had a
+#: `page.ts` existed beside it, the check would have passed while verifying the wrong file.
 _PATH = re.compile(
-    r"\b((?:backend/|frontend/)?(?:app|tests|src|docs|alembic)/[\w./\[\]-]+?\.(?:py|ts|tsx|md))"
+    r"\b((?:backend/|frontend/)?(?:app|tests|src|docs|alembic)/[\w./\[\]-]+?"
+    r"\.(?:tsx|ts|py|md))(?!\w)"
 )
 
 #: A citation may name a file that has since been renamed *by design* — record why here
@@ -96,3 +101,9 @@ def test_the_tally_matches_the_rows_it_summarises() -> None:
     assert int(stated.group(2)) == closed_rows, (
         f"tally says {stated.group(2)} struck through, the file has {closed_rows}"
     )
+
+
+def test_extractor_takes_a_tsx_path_whole() -> None:
+    """A truncated extension silently verifies the wrong file when a sibling exists."""
+    found = _PATH.findall("Evidence: `frontend/src/app/dashboard/[id]/page.tsx:320` and src/a.ts")
+    assert found == ["frontend/src/app/dashboard/[id]/page.tsx", "src/a.ts"], found
