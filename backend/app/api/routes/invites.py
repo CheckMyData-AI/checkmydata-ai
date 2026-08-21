@@ -24,9 +24,17 @@ _membership_svc = MembershipService()
 _email_svc = EmailService()
 
 
+#: Roles an invite or a role-change may confer. Sourced from the service so the two
+#: schemas cannot drift: `owner` is absent because ownership has one entrance,
+#: `POST /transfer-ownership`, which enforces the receiving owner's plan quota
+#: (F-PROJ-10). Offering it here promised a role the route answers 400 to — the schema
+#: is what a client generates against, so it was promising a rejection (F-PROJ-08).
+AssignableRole = Literal["editor", "viewer"]
+
+
 class InviteCreate(BaseModel):
     email: EmailStr
-    role: Literal["owner", "editor", "viewer"] = "editor"
+    role: AssignableRole = "editor"
 
 
 class InviteResponse(BaseModel):
@@ -47,11 +55,8 @@ class InviteResponse(BaseModel):
 
 
 class RoleUpdate(BaseModel):
-    # "owner" is deliberately absent: ownership moves through
-    # POST /{project_id}/transfer-ownership, which enforces the receiving owner's
-    # plan quota and keeps `Project.owner_id` and the member row in step. Allowing
-    # it here would create a second, unguarded path to the same state.
-    role: Literal["editor", "viewer"]
+    # "owner" is deliberately absent: see `AssignableRole` above.
+    role: AssignableRole
 
 
 class OwnershipTransfer(BaseModel):

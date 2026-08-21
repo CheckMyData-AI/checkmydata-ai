@@ -27,6 +27,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Two existing tests pinned the flat `+0.1`** and were re-pointed. They asserted the
   increment, which is the thing that made pumping possible — the same shape as the
   freshness test that pinned the word "pull".
+### Fixed — a role is a value with a domain (F-PROJ-07, F-PROJ-08, F-PROJ-11)
+
+- **F-PROJ-07 failed *open*, which the row does not say.**
+  `ROLE_HIERARCHY.get(min_role, 0)` gave an unknown *required* role a rank of 0 — below
+  every real role — so a typo in the required role did not deny access, it granted it to
+  everyone including viewers. Measured before changing anything: **143 literal
+  `require_role` call sites, all three literals valid** (`viewer` 76, `owner` 46,
+  `editor` 21). Latent, and what made it latent was 143 bare strings happening to be
+  right with nothing checking them.
+- An unknown `min_role` now raises `UnknownRoleError`. The mirror case — a *stored* role
+  outside the domain — still fails closed but no longer silently: a member locked out of
+  everything by a corrupt row left no trace of why. `VALID_ROLES` and `ASSIGNABLE_ROLES`
+  are declared once, and `add_member` checks its argument so the corrupt state cannot be
+  created in the first place.
+- **F-PROJ-08 — the schema promised a rejection.** The route already answered 400 for
+  `owner`, so nothing was reachable; but the schema is what a client generates against.
+  `AssignableRole` is declared once and shared with `RoleUpdate`, because ownership has
+  one entrance — the transfer route that enforces the receiving owner's plan quota — and
+  two schemas offering it independently is how that stops being true.
+- **F-PROJ-11 — the losing writer surfaced a 500.** Read-then-insert against the
+  `(project_id, user_id)` UNIQUE constraint now rolls back, re-reads, and applies the
+  requested role to the winner's row. When the constraint fires and no row appears it
+  re-raises: that is not the race, and without the re-raise the code reaches `None.role`
+  and blames this function instead of the constraint that fired.
+- Two plants were invisible until the tests asked a sharper question. Direct indexing
+  into `ROLE_HIERARCHY` already raises `KeyError`, so the explicit check earns its place
+  on the **message** — `KeyError: 'Owner'` is loud and useless — and the race branch
+  decides **which** error surfaces rather than whether one does.
 
 ### Fixed — three DataGate checks that concluded from the wrong thing (F-DG-05, F-DG-06, F-DG-08)
 
