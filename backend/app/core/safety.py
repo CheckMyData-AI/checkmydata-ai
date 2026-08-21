@@ -198,3 +198,19 @@ class SafetyGuard:
         if db_type in {"mongodb", "mongo"}:
             return self.validate_mongo(query)
         return self.validate_sql(query)
+
+
+def is_read_only_statement(query: str, db_type: str) -> bool:
+    """True when *query* is a single statement that cannot change data.
+
+    Delegates to the read-only :class:`SafetyGuard` rather than re-deriving the
+    answer: comment stripping, the multi-statement refusal and the leading-keyword
+    allow-list are all already there, and a second definition of "read-only" is the
+    kind that drifts from the first.
+
+    Used by the SSH-exec connector to decide whether a command interrupted by a lost
+    connection may be re-sent (F-SSH-07). A read-only statement is safe to repeat; a
+    mutating one is not, and the connector cannot know whether the first attempt
+    reached the server.
+    """
+    return SafetyGuard(SafetyLevel.READ_ONLY).validate(query, db_type).is_safe

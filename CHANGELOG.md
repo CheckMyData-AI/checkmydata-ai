@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a reconnect re-ran the command it had just lost (F-SSH-07)
+
+- `_run_command` caught a lost SSH connection, reconnected, and re-sent the **same**
+  command. `asyncssh.ConnectionLost` cannot say whether the command reached the server
+  first, so an unconditional retry can apply an `UPDATE` twice — and this path serves
+  note execution, batch `/execute` and the agent's `execute_query`, on connections that
+  are not always read-only.
+- The retry decision is not the connector's to guess. `idempotent` is now a keyword
+  argument defaulting to **False**; a command nobody declared repeatable surfaces an
+  honest "it may already have run on the server, it was NOT re-sent" instead of being
+  applied again on a hunch.
+- **The query path computes the answer rather than asserting it.** A read-only
+  *connection* makes anything repeatable, because the DB session itself refuses writes;
+  otherwise the statement must classify as read-only. That classification reuses
+  `SafetyGuard` through a new `core/safety.is_read_only_statement` — comment stripping,
+  the multi-statement refusal and the leading-keyword allow-list are already there, and a
+  second definition of "read-only" is the kind that drifts from the first. So
+  `/* SELECT */ DELETE FROM t` and `SELECT 1; DROP TABLE t` are both refused a retry.
+- The other twelve call sites — introspection for all four engines, plus the connection
+  and SSH probes — declare `idempotent=True` with a reason, and an AST test holds them
+  to it.
+- **My tests were wrong first**, and instructively: they counted `run` calls, but the
+  reconnect path sends a liveness probe of its own, so the count answered a different
+  question. They now record every send by text and assert the *original command* was not
+  sent twice.
+
 ### Fixed — per-key lock lifecycle on the SSH seam (F-SSH-05, F-SSH-09)
 
 - **F-SSH-09 was accurate.** `close_for_config`, `cleanup_idle` and `close_all` each
