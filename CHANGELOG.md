@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — the SSH pre-command hatch was five switches in one (F-SSH-03, F-SSH-04)
+
+- **F-SSH-03.** `SSH_PRE_COMMAND_ALLOWLIST_ENABLED=false` returned the input untouched,
+  disabling five protections at once: the 20-command cap, the 512-character limit, the
+  non-empty-string check, the shell-metacharacter screen and the command-shape allowlist.
+  Only the last is allowlist *policy*. The flag is documented as an emergency hatch for
+  an unusual bastion command — and an unusual *shape* is a different request from command
+  substitution. The hatch now relaxes exactly one check; `;`, `|`, backticks, `$(`,
+  newlines and both caps hold either way.
+- Opening it logs **once per process**. On every call it would be the noise that teaches
+  people to ignore warnings; never, and a disabled screen stays invisible for as long as
+  the setting survives.
+- Rating kept at Low deliberately: the flag defaults to `True` and nothing sets it, so
+  this was a foot-gun rather than a live hole. But a hatch that silently opens the
+  injection surface is one nobody can safely use, which made the documented escape route
+  unusable in practice.
+- **F-SSH-04** is accurate about the code and was **not exploitable**, and both halves
+  are worth stating. `db_port` was the one placeholder excluded from `format_template`'s
+  escape list, and it had no path in: the request schema bounds it to 1..65535, the column
+  is `Integer`, and both `ConnectionConfig` construction sites build from the model.
+  Fixed by escaping **every** value rather than adding one more name to the list — an
+  allowlist of *which values are dangerous* goes stale the moment a template gains a
+  placeholder, and `shlex.quote` of digits returns the digits.
+
 ### Security — the BM25 snapshot is no longer a pickle (F-KNOW-06)
 
 - **The row named its own ordering — "swap to safe format *before* F-KNOW-07" — and I

