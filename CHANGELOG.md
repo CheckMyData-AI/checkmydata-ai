@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a run nobody could tell was stuck (F-SCHED-03)
+
+- **The race the row named does not reproduce; the hole is its mirror image.**
+  `_stale_run`'s NULL-heartbeat branch demands `started_at < cutoff`, and `heartbeat()`
+  writes a beat before its first interval, so a just-started run is never reaped early —
+  two tests written for this assertion were green against the unmodified code. What no
+  branch matched was a `running` row with **neither** reference. `IndexingRun.started_at`
+  is nullable, so such a row lived forever: the spinning-UI failure the reaper exists to
+  end.
+- "Age unknown" is now stale. Reaping is the safe direction, because `REAP_ERROR` lets
+  `RunCoordinator` reconcile a run that turns out to still be alive — whereas nothing ever
+  reconciles a row nobody can see is stuck. The state is unreachable through today's code
+  (`run_coordinator.py:189` sets both columns), which is exactly why nothing else would
+  ever report that it had stopped being unreachable.
+- **Reaping it silently would swap one invisible state for another** — a run flipped to
+  `failed` with no account of why. The count is taken before the update and logged at
+  warning naming the invariant that broke, and deliberately **not** on an ordinary timeout
+  reap, which keeps its own info line.
+- `_stale` gets no equivalent branch on purpose: `updated_at` is NOT NULL on all three
+  models it serves, so it would be defensive code no test could reach.
+- Checked and **not** the defect: a long stage starving the heartbeat. `code_symbol_embed`
+  runs 23+ minutes in production, but it goes through `asyncio.to_thread`, so the beacon
+  task keeps getting scheduled.
+
 ### Fixed — one request, one wall clock (F-SQL-03)
 
 - **Two of this finding's three multiplications were already closed; the third was

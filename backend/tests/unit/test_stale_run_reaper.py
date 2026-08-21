@@ -99,6 +99,12 @@ async def test_reaper_logs_sweep_when_rowcount_unknown(caplog):
     class FakeResult:
         rowcount = -1
 
+        # F-SCHED-03 added a COUNT before the updates; this stub stands in for
+        # every execute(), so it has to answer both shapes.
+        @staticmethod
+        def scalar_one() -> int:
+            return 0
+
     # Create a fake session that returns the fake result on every execute(),
     # and supports flush() as an async no-op.
     fake_session = MagicMock()
@@ -127,3 +133,163 @@ async def _id(session, model, conn):
 
     res = await session.execute(select(model.id).where(model.connection_id == conn))
     return res.scalar_one()
+
+
+# ---------------------------------------------------------------------------
+# F-SCHED-03: the row named an immediate-reap race. It does not reproduce —
+# the hole is the mirror image.
+# ---------------------------------------------------------------------------
+
+
+class TestUnaccountableRunIsNotImmortal:
+    """`_stale_run`'s NULL-heartbeat branch requires `started_at IS NOT NULL`.
+
+    A `running` row with *neither* reference is therefore matched by no branch and
+    lives forever, which is precisely the spinning-UI failure the reaper exists to
+    end. `IndexingRun.started_at` is nullable (`models/indexing_run.py:54`), so the
+    only thing preventing it today is that the single creator
+    (`run_coordinator.py:189`) happens to set both columns — a convention, not a
+    constraint, and a backfill or a manual fix breaks it invisibly.
+
+    Reaping is the safe direction here: the reaper already tolerates flipping a
+    live run, because `REAP_ERROR` lets RunCoordinator reconcile one that turns out
+    to still be alive.
+    """
+
+    async def test_running_run_with_no_reference_at_all_is_reaped(self, db_session):
+        from app.models.indexing_run import IndexingRun
+
+        db_session.add(
+            IndexingRun(
+                project_id="p1",
+                workflow_id="wf-p1",
+                kind="repo_index",
+                trigger="manual",
+                status="running",
+                started_at=None,
+                heartbeat_at=None,
+            )
+        )
+        await db_session.commit()
+
+        out = await StaleRunReaper().reap_once(db_session, timeout_seconds=300)
+        await db_session.commit()
+
+        assert out["runs"] == 1, (
+            "a running row whose age cannot be established must not be treated as fresh"
+        )
+
+    async def test_cancelling_run_with_no_reference_at_all_is_reaped(self, db_session):
+        from app.models.indexing_run import IndexingRun
+
+        db_session.add(
+            IndexingRun(
+                project_id="p2",
+                workflow_id="wf-p2",
+                kind="repo_index",
+                trigger="manual",
+                status="cancelling",
+                started_at=None,
+                heartbeat_at=None,
+            )
+        )
+        await db_session.commit()
+
+        out = await StaleRunReaper().reap_once(db_session, timeout_seconds=300)
+        await db_session.commit()
+
+        assert out["runs"] == 1
+
+    async def test_just_started_run_keeps_its_grace(self, db_session):
+        """The grace the row's own 'immediate-reap' concern is about must survive."""
+        from app.models.indexing_run import IndexingRun
+
+        db_session.add(
+            IndexingRun(
+                project_id="p3",
+                workflow_id="wf-p3",
+                kind="repo_index",
+                trigger="manual",
+                status="running",
+                started_at=datetime.now(UTC) - timedelta(seconds=5),
+                heartbeat_at=None,
+            )
+        )
+        await db_session.commit()
+
+        out = await StaleRunReaper().reap_once(db_session, timeout_seconds=300)
+
+        assert out["runs"] == 0, "a run that started 5s ago must not be reaped"
+
+    async def test_fresh_heartbeat_still_wins_over_an_old_start(self, db_session):
+        from app.models.indexing_run import IndexingRun
+
+        db_session.add(
+            IndexingRun(
+                project_id="p4",
+                workflow_id="wf-p4",
+                kind="repo_index",
+                trigger="manual",
+                status="running",
+                started_at=datetime.now(UTC) - timedelta(seconds=6000),
+                heartbeat_at=datetime.now(UTC) - timedelta(seconds=5),
+            )
+        )
+        await db_session.commit()
+
+        out = await StaleRunReaper().reap_once(db_session, timeout_seconds=300)
+
+        assert out["runs"] == 0, "a long run that is still beating must be left alone"
+
+    async def test_the_unaccountable_reap_is_reported_not_silent(self, db_session, caplog):
+        """Reaping it silently swaps one invisible state for another."""
+        import logging
+
+        from app.models.indexing_run import IndexingRun
+
+        db_session.add(
+            IndexingRun(
+                project_id="p5",
+                workflow_id="wf-p5",
+                kind="repo_index",
+                trigger="manual",
+                status="running",
+                started_at=None,
+                heartbeat_at=None,
+            )
+        )
+        await db_session.commit()
+
+        with caplog.at_level(logging.WARNING, logger="app.services.stale_run_reaper"):
+            await StaleRunReaper().reap_once(db_session, timeout_seconds=300)
+        await db_session.commit()
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warnings, "an invariant break must not be reaped without a word"
+        assert "unaccountable" in warnings[0].getMessage()
+
+    async def test_no_warning_on_an_ordinary_timeout_reap(self, db_session, caplog):
+        """A caveat on the normal path is the noise that teaches people to ignore it."""
+        import logging
+
+        from app.models.indexing_run import IndexingRun
+
+        db_session.add(
+            IndexingRun(
+                project_id="p6",
+                workflow_id="wf-p6",
+                kind="repo_index",
+                trigger="manual",
+                status="running",
+                started_at=datetime.now(UTC) - timedelta(seconds=6000),
+                heartbeat_at=datetime.now(UTC) - timedelta(seconds=6000),
+            )
+        )
+        await db_session.commit()
+
+        with caplog.at_level(logging.WARNING, logger="app.services.stale_run_reaper"):
+            out = await StaleRunReaper().reap_once(db_session, timeout_seconds=300)
+        await db_session.commit()
+
+        assert out["runs"] == 1
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
