@@ -1,7 +1,10 @@
 """Service for project membership (role-based access control)."""
 
+import logging
+
 from fastapi import HTTPException
 from sqlalchemy import or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -9,7 +12,35 @@ from app.core.audit import audit_log
 from app.models.project import Project
 from app.models.project_member import ProjectMember
 
+logger = logging.getLogger(__name__)
+
 ROLE_HIERARCHY = {"owner": 3, "editor": 2, "viewer": 1}
+
+#: The domain of a role. Every entrance that takes a role string checks against this,
+#: because `ROLE_HIERARCHY.get(x, 0)` treats anything outside it as rank 0 — and rank 0
+#: is *below* every real role, which makes an unknown **required** role admit everyone
+#: instead of no one (F-PROJ-07). Measured when this was written: 143 literal
+#: `require_role` call sites, all three literals valid — so the exposure was 143 bare
+#: strings happening to be right, with nothing checking them.
+VALID_ROLES: frozenset[str] = frozenset(ROLE_HIERARCHY)
+
+#: Roles an invite or a role-change may confer. `owner` is absent on purpose:
+#: ownership has one entrance, `POST /transfer-ownership`, which enforces the receiving
+#: owner's plan quota and moves `Project.owner_id` and the member row together
+#: (F-PROJ-10). A second door would be a quota bypass wearing a feature's name.
+ASSIGNABLE_ROLES: frozenset[str] = frozenset({"editor", "viewer"})
+
+
+class UnknownRoleError(ValueError):
+    """Raised when a role string is outside :data:`VALID_ROLES`."""
+
+
+def _require_valid_role(role: str, *, what: str) -> str:
+    if role not in VALID_ROLES:
+        raise UnknownRoleError(
+            f"{what} {role!r} is not a known role; expected one of {sorted(VALID_ROLES)}"
+        )
+    return role
 
 
 class MembershipService:
@@ -55,11 +86,31 @@ class MembershipService:
         user_id: str,
         min_role: str = "viewer",
     ) -> str:
-        """Return the role if sufficient, otherwise raise 403."""
+        """Return the role if sufficient, otherwise raise 403.
+
+        An unknown *min_role* raises rather than ranking 0 (F-PROJ-07): rank 0 is below
+        every real role, so a typo in the required role would admit every member
+        including viewers. Failing loudly on a caller's mistake is the only safe
+        direction — a 500 says the code is wrong, where the old behaviour said "come in".
+        """
+        _require_valid_role(min_role, what="Required role")
         role = await self.get_role(db, project_id, user_id)
         if role is None:
             raise HTTPException(status_code=403, detail="Not a member of this project")
-        if ROLE_HIERARCHY.get(role, 0) < ROLE_HIERARCHY.get(min_role, 0):
+        if role not in VALID_ROLES:
+            # Fails closed, which is right — but silently locking someone out leaves
+            # nothing to follow, and the stored value is the only clue to how it
+            # happened.
+            logger.warning(
+                "Membership for user %s on project %s has unrecognised role %r; "
+                "denying access. Fix the row: expected one of %s",
+                user_id[:8],
+                project_id[:8],
+                role,
+                sorted(VALID_ROLES),
+            )
+            raise HTTPException(status_code=403, detail="Not a member of this project")
+        if ROLE_HIERARCHY[role] < ROLE_HIERARCHY[min_role]:
             raise HTTPException(
                 status_code=403,
                 detail=f"Requires at least '{min_role}' role",
@@ -73,6 +124,17 @@ class MembershipService:
         user_id: str,
         role: str = "viewer",
     ) -> ProjectMember:
+        """Add or update a membership.
+
+        F-PROJ-07: the role is checked against :data:`VALID_ROLES`, so a typo cannot be
+        stored — a stored typo ranks 0 and locks the member out of everything.
+
+        F-PROJ-11: the read-then-insert races against the `(project_id, user_id)` UNIQUE
+        constraint. Two concurrent accepts of one invite both see no row, both insert,
+        and the loser used to surface a 500. It now re-reads and applies the role to the
+        winner's row, which is the outcome the caller asked for either way.
+        """
+        _require_valid_role(role, what="Member role")
         existing = await db.execute(
             select(ProjectMember).where(
                 ProjectMember.project_id == project_id,
@@ -82,14 +144,29 @@ class MembershipService:
         member = existing.scalar_one_or_none()
         if member:
             member.role = role
-        else:
-            member = ProjectMember(
-                project_id=project_id,
-                user_id=user_id,
-                role=role,
+            await db.commit()
+            await db.refresh(member)
+            return member
+
+        member = ProjectMember(project_id=project_id, user_id=user_id, role=role)
+        db.add(member)
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            again = await db.execute(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == user_id,
+                )
             )
-            db.add(member)
-        await db.commit()
+            member = again.scalar_one_or_none()
+            if member is None:
+                # The constraint fired but no row is visible: not the race, so the
+                # caller must see the real failure rather than a fabricated success.
+                raise
+            member.role = role
+            await db.commit()
         await db.refresh(member)
         return member
 
