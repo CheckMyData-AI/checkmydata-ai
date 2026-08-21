@@ -31,6 +31,7 @@ from app.connectors.exec_templates import (
 from app.connectors.ssh_known_hosts import connect_with_policy
 from app.connectors.ssh_pre_commands import validate_pre_commands
 from app.core.redaction import safe_error
+from app.core.safety import is_read_only_statement
 
 logger = logging.getLogger(__name__)
 
@@ -195,10 +196,21 @@ class SSHExecConnector(BaseConnector):
         command: str,
         timeout: int = SSH_COMMAND_TIMEOUT,
         stdin: str | None = None,
+        *,
+        idempotent: bool = False,
     ) -> tuple[str, str, int]:
         """Run a command over SSH and return (stdout, stderr, exit_code).
 
-        Automatically attempts one reconnection if the SSH connection is lost.
+        Reconnects once if the SSH connection is lost — but re-sends the command
+        **only when the caller says repeating it is safe** (F-SSH-07).
+
+        `asyncssh.ConnectionLost` cannot tell you whether the command reached the
+        server before the socket died, so an unconditional retry can apply an `UPDATE`
+        twice. This path serves note execution, batch `/execute` and the agent's
+        `execute_query`, and a connection is not always read-only. The decision is
+        therefore the caller's, and the default is fail-closed: a command nobody has
+        declared repeatable surfaces an honest "outcome unknown" instead of being run
+        again on a hunch.
         """
         if not self._conn:
             raise RuntimeError("Not connected")
@@ -228,6 +240,13 @@ class SSHExecConnector(BaseConnector):
                         await self.connect(self._config)
             if not self._conn:
                 raise RuntimeError("Reconnect failed")
+            if not idempotent:
+                raise RuntimeError(
+                    "The SSH connection dropped while this command was in flight, so it "
+                    "may already have run on the server. It was NOT re-sent, because "
+                    "repeating it could apply the same change twice. Re-run it yourself "
+                    "if that is safe."
+                ) from exc
             result = await self._conn.run(command, timeout=timeout, check=False, input=stdin)
 
         stdout = str(result.stdout or "")
@@ -255,8 +274,14 @@ class SSHExecConnector(BaseConnector):
             command_timeout = SSH_COMMAND_TIMEOUT
         try:
             command, stdin = self._build_command("query", query)
+            # F-SSH-07: repeating a read-only statement changes nothing, so it may be
+            # re-sent after a reconnect. A read-only *connection* makes anything
+            # repeatable, because the DB session itself refuses writes.
+            repeatable = bool(self._config and self._config.is_read_only) or is_read_only_statement(
+                query, self.db_type
+            )
             stdout, stderr, exit_code = await self._run_command(
-                command, timeout=command_timeout, stdin=stdin
+                command, timeout=command_timeout, stdin=stdin, idempotent=repeatable
             )
             elapsed = (time.monotonic() - start) * 1000
 
@@ -318,17 +343,23 @@ class SSHExecConnector(BaseConnector):
 
     async def _introspect_mysql(self, db_name: str) -> SchemaInfo:
         tables_cmd, tables_cmd_stdin = self._build_command("introspect_tables")
-        stdout, stderr, exit_code = await self._run_command(tables_cmd, stdin=tables_cmd_stdin)
+        stdout, stderr, exit_code = await self._run_command(
+            tables_cmd, stdin=tables_cmd_stdin, idempotent=True
+        )
         self._check_introspection_result("mysql:tables", stdout, stderr, exit_code)
         _, table_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
         cols_cmd, cols_cmd_stdin = self._build_command("introspect_columns")
-        stdout, stderr, exit_code = await self._run_command(cols_cmd, stdin=cols_cmd_stdin)
+        stdout, stderr, exit_code = await self._run_command(
+            cols_cmd, stdin=cols_cmd_stdin, idempotent=True
+        )
         self._check_introspection_result("mysql:columns", stdout, stderr, exit_code)
         _, col_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
         fks_cmd, fks_cmd_stdin = self._build_command("introspect_fks")
-        stdout, stderr, exit_code = await self._run_command(fks_cmd, stdin=fks_cmd_stdin)
+        stdout, stderr, exit_code = await self._run_command(
+            fks_cmd, stdin=fks_cmd_stdin, idempotent=True
+        )
         self._check_introspection_result("mysql:fks", stdout, stderr, exit_code)
         _, fk_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
@@ -378,7 +409,9 @@ class SSHExecConnector(BaseConnector):
 
         # Tables (now includes approx row counts)
         tables_cmd, tables_cmd_stdin = self._build_command("introspect_tables")
-        stdout, stderr, exit_code = await self._run_command(tables_cmd, stdin=tables_cmd_stdin)
+        stdout, stderr, exit_code = await self._run_command(
+            tables_cmd, stdin=tables_cmd_stdin, idempotent=True
+        )
         self._check_introspection_result("postgres:tables", stdout, stderr, exit_code)
         table_info_raw: list[tuple[str, int | None]] = []
         for line in stdout.strip().splitlines():
@@ -397,7 +430,9 @@ class SSHExecConnector(BaseConnector):
 
         # Columns
         cols_cmd, cols_cmd_stdin = self._build_command("introspect_columns")
-        stdout, stderr, exit_code = await self._run_command(cols_cmd, stdin=cols_cmd_stdin)
+        stdout, stderr, exit_code = await self._run_command(
+            cols_cmd, stdin=cols_cmd_stdin, idempotent=True
+        )
         self._check_introspection_result("postgres:columns", stdout, stderr, exit_code)
         col_map: dict[str, list[ColumnInfo]] = {}
         for line in stdout.strip().splitlines():
@@ -417,7 +452,9 @@ class SSHExecConnector(BaseConnector):
         fk_map: dict[str, list[ForeignKeyInfo]] = {}
         try:
             fks_cmd, fks_cmd_stdin = self._build_command("introspect_fks")
-            stdout, stderr, exit_code = await self._run_command(fks_cmd, stdin=fks_cmd_stdin)
+            stdout, stderr, exit_code = await self._run_command(
+                fks_cmd, stdin=fks_cmd_stdin, idempotent=True
+            )
             self._check_introspection_result("postgres:fks", stdout, stderr, exit_code)
             for line in stdout.strip().splitlines():
                 parts = line.strip().split("\t")
@@ -436,7 +473,9 @@ class SSHExecConnector(BaseConnector):
         idx_map: dict[str, list[IndexInfo]] = {}
         try:
             idx_cmd, idx_cmd_stdin = self._build_command("introspect_indexes")
-            stdout, stderr, exit_code = await self._run_command(idx_cmd, stdin=idx_cmd_stdin)
+            stdout, stderr, exit_code = await self._run_command(
+                idx_cmd, stdin=idx_cmd_stdin, idempotent=True
+            )
             self._check_introspection_result("postgres:indexes", stdout, stderr, exit_code)
             for line in stdout.strip().splitlines():
                 parts = line.strip().split("\t")
@@ -465,13 +504,17 @@ class SSHExecConnector(BaseConnector):
 
     async def _introspect_clickhouse(self, db_name: str) -> SchemaInfo:
         tables_cmd, tables_cmd_stdin = self._build_command("introspect_tables")
-        stdout, stderr, exit_code = await self._run_command(tables_cmd, stdin=tables_cmd_stdin)
+        stdout, stderr, exit_code = await self._run_command(
+            tables_cmd, stdin=tables_cmd_stdin, idempotent=True
+        )
         self._check_introspection_result("clickhouse:tables", stdout, stderr, exit_code)
         _, table_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
         table_names = [r[0] for r in table_rows if r]
 
         cols_cmd, cols_cmd_stdin = self._build_command("introspect_columns")
-        stdout, stderr, exit_code = await self._run_command(cols_cmd, stdin=cols_cmd_stdin)
+        stdout, stderr, exit_code = await self._run_command(
+            cols_cmd, stdin=cols_cmd_stdin, idempotent=True
+        )
         self._check_introspection_result("clickhouse:columns", stdout, stderr, exit_code)
         _, col_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
@@ -499,7 +542,9 @@ class SSHExecConnector(BaseConnector):
     async def test_connection(self) -> bool:
         try:
             command, stdin = self._build_command("test")
-            _, stderr, exit_code = await self._run_command(command, timeout=15, stdin=stdin)
+            _, stderr, exit_code = await self._run_command(
+                command, timeout=15, stdin=stdin, idempotent=True
+            )
             if exit_code != 0:
                 logger.warning(
                     "SSH exec test_connection failed (exit=%d): %s",
@@ -520,6 +565,8 @@ class SSHExecConnector(BaseConnector):
             stdout, _, _ = await self._run_command(
                 f"echo {_marker} && hostname",
                 timeout=10,
+                # An echo and a hostname read: repeating them changes nothing.
+                idempotent=True,
             )
             ok = _marker in stdout
             hostname = "unknown"
