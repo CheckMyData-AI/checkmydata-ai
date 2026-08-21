@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the release scan is proportional to the request (F-GIT-02, F-GIT-03, F-GIT-05)
+
+- **F-GIT-05** was accurate and about *work*, not correctness. `list_releases` resolved
+  `tag.commit` for every tag in the repository, built a dict per tag, sorted the lot and
+  only then sliced to `max_count` — on a repository that tags each CI build, returning
+  100 releases meant thousands of GitPython object resolutions and a full sort, on the
+  answer path. Object resolution is the expensive part and is now proportional to the
+  request: one `for-each-ref` yields name + date as text, the top `count` are chosen from
+  that, and only those are resolved. Reading the ref list stays proportional to the
+  repository, inherently — you cannot know which tags are newest without looking at all
+  of them.
+- Both date forms are asked for (`committerdate` and `*committerdate`) because one is
+  always empty: a lightweight tag's ref points at the commit, an annotated tag's at a tag
+  object, and a single sort key is undefined for half the tag kinds. **Ordering is
+  unchanged** — a test proved the existing commit-date order correct *before* the change,
+  which is why the sort key was left alone.
+- That test surfaced something else worth keeping: twelve commits made within one second
+  have no defined "newest", so the fixture now sets dates a minute apart. An ordering
+  assertion over same-second tags tests the tie-break, not the sort.
+- **F-GIT-02 does not reproduce.** The inherited risk is `repo_url` transport injection,
+  and `RepoAnalyzer.clone_or_pull` validates the URL and branch and pins
+  `GIT_ALLOW_PROTOCOL` **itself** — so `_maybe_auto_pull`, which passes both through
+  unchecked, inherits the protection rather than having to remember it. That is the shape
+  F-GIT-04 lacked, which is why that one was real and this is not. A test now asserts the
+  validation lives *inside* the callee, so hoisting it to callers fails instead of
+  silently unguarding this path.
+- What is real about the flag, and now written where it is defined: it **moves the
+  working tree mid-conversation**, so two answers in one session can come from different
+  trees and a follow-up can contradict the answer it follows up on.
+- **F-GIT-03 was already fixed** by AUD-0819-13, and the handler carries the reasoning:
+  `except (TimeoutError, Exception)` read as a narrowing and was not one, since
+  `TimeoutError` has been an `Exception` subclass since 3.11. The breadth is deliberate,
+  and the pinned invariant is that widening to `BaseException` would start swallowing
+  cancellation.
+
 ### Fixed — the freshness warnings named the wrong subject (F-GIT-04)
 
 - **F-GIT-04 as written:** W5 built `classify_freshness` (exact AHEAD/BEHIND/DIVERGED
