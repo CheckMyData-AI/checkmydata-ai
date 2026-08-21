@@ -50,6 +50,25 @@ function timeAgo(iso: string | null): string {
   return `${days}d ago`;
 }
 
+function ageMs(iso: string | null): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return null;
+  return Date.now() - t;
+}
+
+// A card that declares a refresh interval has promised how old its data may get.
+// One missed tick is normal (the interval only runs while the tab is open), so the
+// marker waits for the second before calling the promise broken.
+const LATE_TOLERANCE = 2;
+
+function isLate(card: DashboardCard, note: SavedNote): boolean {
+  const ms = (card.refresh_interval ?? 0) * 1000;
+  if (ms <= 0) return false;
+  const age = ageMs(note.last_executed_at);
+  return age === null || age > ms * LATE_TOLERANCE;
+}
+
 function ResultTable({ data }: { data: { columns: string[]; rows: unknown[][]; total_rows: number } }) {
   return (
     <div className="overflow-x-auto max-h-64 overflow-y-auto">
@@ -100,7 +119,47 @@ function DashboardPageContent() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [cardErrors, setCardErrors] = useState<Map<string, string>>(new Map());
   const intervalRefs = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+  // Every refresh — on open, on a tick, or from Refresh All — goes through here, so
+  // a failure is recorded in one place instead of being swallowed at three call sites.
+  const refreshCard = useCallback(async (noteId: string): Promise<boolean> => {
+    const fail = (msg: string) => {
+      setCardErrors((prev) => new Map(prev).set(noteId, msg));
+      return false;
+    };
+    try {
+      const res = await api.notes.execute(noteId);
+      if (res.error) return fail(res.error);
+      const n = await api.notes.get(noteId);
+      setNotes((prev) => new Map(prev).set(noteId, n));
+      setCardErrors((prev) => {
+        if (!prev.has(noteId)) return prev;
+        const next = new Map(prev);
+        next.delete(noteId);
+        return next;
+      });
+      return true;
+    } catch (err) {
+      return fail(err instanceof Error ? err.message : "Refresh failed");
+    }
+  }, []);
+
+  // Cards that declared an interval and are already past due are run on open, one at
+  // a time. `setInterval` fires first only after a full period and the load path only
+  // reads the stored snapshot, so without this a card promising hourly data can show
+  // a days-old number for an hour with that promise attached. Only cards that opted
+  // into a schedule are touched — opening a dashboard never executes anything else.
+  const refreshDue = useCallback(
+    async (ids: string[], signal: { stale: boolean }) => {
+      for (const id of ids) {
+        if (signal.stale) return;
+        await refreshCard(id);
+      }
+    },
+    [refreshCard],
+  );
+
   const loadDashboard = useCallback(async (signal: { stale: boolean }) => {
     try {
       const d = await api.dashboards.get(id);
@@ -124,12 +183,24 @@ function DashboardPageContent() {
         if (entry) map.set(entry[0], entry[1]);
       }
       setNotes(map);
+      const due = cards
+        .filter((c) => {
+          const ms = (c.refresh_interval ?? 0) * 1000;
+          const n = map.get(c.note_id);
+          if (ms <= 0 || !n) return false;
+          const age = ageMs(n.last_executed_at);
+          return age === null || age >= ms;
+        })
+        .map((c) => c.note_id);
+      // Deliberately not awaited: cards paint their stored snapshot with its honest
+      // age immediately, then update as each refresh lands.
+      if (due.length > 0) void refreshDue(due, signal);
     } catch (err) {
       if (!signal.stale) toast(err instanceof Error ? err.message : "Failed to load dashboard", "error");
     } finally {
       if (!signal.stale) setLoading(false);
     }
-  }, [id]);
+  }, [id, refreshDue]);
 
   useEffect(() => {
     const signal = { stale: false };
@@ -152,14 +223,8 @@ function DashboardPageContent() {
     for (const card of cards) {
       const ms = (card.refresh_interval ?? 0) * 1000;
       if (ms > 0 && !refs.has(card.note_id)) {
-        const interval = setInterval(async () => {
-          try {
-            const res = await api.notes.execute(card.note_id);
-            if (!res.error) {
-              const n = await api.notes.get(card.note_id);
-              setNotes((prev) => new Map(prev).set(card.note_id, n));
-            }
-          } catch { /* */ }
+        const interval = setInterval(() => {
+          void refreshCard(card.note_id);
         }, ms);
         refs.set(card.note_id, interval);
       }
@@ -169,7 +234,7 @@ function DashboardPageContent() {
       for (const interval of refs.values()) clearInterval(interval);
       refs.clear();
     };
-  }, [dashboard]);
+  }, [dashboard, refreshCard]);
 
   const handleRefreshAll = useCallback(async () => {
     if (!dashboard || refreshing) return;
@@ -180,24 +245,14 @@ function DashboardPageContent() {
     let fail = 0;
     try {
       for (const card of cards) {
-        try {
-          const res = await api.notes.execute(card.note_id);
-          if (res.error) {
-            fail++;
-            continue;
-          }
-          ok++;
-          const n = await api.notes.get(card.note_id);
-          setNotes((prev) => new Map(prev).set(card.note_id, n));
-        } catch {
-          fail++;
-        }
+        if (await refreshCard(card.note_id)) ok++;
+        else fail++;
       }
     } finally {
       setRefreshing(false);
     }
     toast(`Refreshed: ${ok} succeeded${fail ? `, ${fail} failed` : ""}`, fail ? "error" : "info");
-  }, [dashboard, refreshing]);
+  }, [dashboard, refreshing, refreshCard]);
 
   const handleSaveEdit = (updated: Dashboard) => {
     setDashboard(updated);
@@ -311,15 +366,40 @@ function DashboardPageContent() {
                 );
               }
               const result = parseResult(note.last_result_json);
+              const late = isLate(card, note);
+              const cardError = cardErrors.get(card.note_id);
               return (
                 <SectionErrorBoundary key={card.note_id} sectionName={note.title}>
-                  <div className="bg-surface-1 border border-border-subtle rounded-lg overflow-hidden">
+                  <div
+                    data-note-id={card.note_id}
+                    className="bg-surface-1 border border-border-subtle rounded-lg overflow-hidden"
+                  >
                     <div className="px-4 py-3 border-b border-border-subtle flex items-center justify-between">
                       <h3 className="text-xs font-medium text-text-primary truncate">{note.title}</h3>
+                      {/* The dashboard header says "Updated …" about the dashboard itself.
+                          A bare relative age here reads as the same thing, so this one
+                          names what it measures: when the data was produced. */}
                       <span className="text-kicker text-text-muted shrink-0 ml-2">
-                        {timeAgo(note.last_executed_at)}
+                        {note.last_executed_at
+                          ? `Data from ${timeAgo(note.last_executed_at)}`
+                          : "Never run"}
                       </span>
                     </div>
+                    {late && (
+                      <p className="flex items-start gap-1.5 px-4 py-2 text-kicker text-warning bg-warning-muted/12 border-b border-border-subtle">
+                        <Icon name="alert-triangle" size={11} className="shrink-0 mt-px" aria-hidden />
+                        <span>
+                          This card is not refreshing on its schedule — the figures below are
+                          older than it promises.
+                        </span>
+                      </p>
+                    )}
+                    {cardError && (
+                      <p className="flex items-start gap-1.5 px-4 py-2 text-kicker text-danger border-b border-border-subtle">
+                        <Icon name="alert-triangle" size={11} className="shrink-0 mt-px" aria-hidden />
+                        <span>Last refresh failed: {cardError}</span>
+                      </p>
+                    )}
                     <div className="p-3">
                       {result ? (
                         <ResultTable data={result} />

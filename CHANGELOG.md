@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — dashboard card freshness (F-VIZ-01)
+
+- **A dashboard card said how old its data was; it could not say whether that was a
+  fault.** The finding read "no freshness signal", and a signal existed
+  (`frontend/src/app/dashboard/[id]/page.tsx:320`). Four things it could not express are
+  now expressed: the age is labelled ("Data from 3d ago" / "Never run") because the page
+  header already prints "Updated …" about the dashboard itself; a card that declared a
+  `refresh_interval` and exceeds twice it says the schedule is not being kept, while a
+  card that declared none carries no marker (age alone cannot tell a stale number from a
+  broken promise); past-due interval cards run once on open instead of waiting a full
+  period, since `setInterval` fires first only after one and the load path merely read
+  stored snapshots; and a failed refresh lands on the card rather than in
+  `catch { /* */ }`. All three refresh paths — open, tick, Refresh All — share one
+  function. Cards with no declared interval are still never executed by opening the page.
+- **The board's own evidence checker truncated `.tsx` to `.ts`** — a lazy quantifier with
+  `ts` ahead of `tsx` in the alternation. It surfaced as a missing file here; with a
+  `page.ts` beside the `page.tsx` it would have passed while verifying the wrong file.
+  Alternation is longest-first and followed by a `(?!\w)` guard, with a test on the
+  extractor itself.
+
 ### Fixed — a failed email returned 200 and said nothing (2026-08-21)
 
 F-PROJ-06 was recorded as *"commit-then-await-email → partial-success 500s"*. Measured, the

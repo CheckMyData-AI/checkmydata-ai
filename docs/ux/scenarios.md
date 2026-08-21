@@ -1448,11 +1448,15 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User opens the dashboard link
 - **Expected result:** header + card grid render; auto-refresh per card interval; viewers see no Edit/Add
-- **UI elements:** "Back to app", "Refresh All", card grid, ResultTable (cap 50 rows)
-- **States covered:** loading, empty, error, success
-- **Errors & recovery:** empty → "This dashboard has no cards yet."; per-card "No data" / "Note not found". Refresh-All tracks per-card success/failure and toasts the real counts — "Refreshed: N succeeded, M failed" (error toast when M>0, info when all pass)
+- **UI elements:** "Back to app", "Refresh All", card grid, ResultTable (cap 50 rows), per-card data-age label, late marker, per-card refresh error
+- **States covered:** loading, empty, error, success, **stale**
+- **Data age, and what the label must be able to say (F-VIZ-01):** every card names *when its data was produced* — "Data from 3d ago", or "Never run" — because the page header already says "Updated …" about the dashboard itself and a second, bare relative age beside a title reads as the same measurement. Age alone cannot separate the two ways a card gets old, so the card distinguishes them:
+  - A card with **no declared `refresh_interval`** is simply as old as the last person who ran it. That is not a fault and carries no marker.
+  - A card that **declared an interval** has promised how old its figures may get. When its data exceeds twice that interval (one missed tick is normal — the interval only runs while a tab is open) the card says so: "This card is not refreshing on its schedule — the figures below are older than it promises." A broken promise is a different fact from an old number and must not render identically to it.
+- **Refreshing on open:** opening a dashboard reads stored snapshots and executes nothing — **except** cards that declared an interval and are already past due, which run once, sequentially, as they paint. `setInterval` fires first only after a full period, so without this a card promising hourly data can show a days-old figure for an hour with that promise attached. Cards with no declared interval are never executed by opening the page.
+- **Errors & recovery:** empty → "This dashboard has no cards yet."; per-card "No data" / "Note not found". A failed refresh — on open, on a tick, or from Refresh All — is shown on the card itself ("Last refresh failed: …") and cleared by the next success; a card whose query started failing must never look like a card nobody refreshed. Refresh-All tracks per-card success/failure and toasts the real counts — "Refreshed: N succeeded, M failed" (error toast when M>0, info when all pass)
 - **Status:** implemented
-- **Coverage:** app/dashboard/[id]/page.tsx:198-325
+- **Coverage:** app/dashboard/[id]/page.tsx:113-419; `frontend/src/__tests__/components/DashboardPage.test.tsx` (8)
 
 ### SCN-085: Shared dashboard link invalid / expired
 - **Persona:** viewer
