@@ -91,9 +91,9 @@ class EmailService:
         html: str,
         idempotency_key: str | None = None,
         tags: list[dict[str, str]] | None = None,
-    ) -> None:
+    ) -> bool:
         if not self._is_configured():
-            return
+            return False
         params: resend.Emails.SendParams = {
             "from": settings.resend_from_email,
             "to": [to],
@@ -114,7 +114,7 @@ class EmailService:
                     result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
                 )
                 logger.info("Email sent id=%s to=%s subject=%r", email_id, to, subject)
-                return
+                return True
             except Exception as exc:
                 last_exc = exc
                 if attempt < _MAX_RETRIES and _is_retryable(exc):
@@ -130,6 +130,11 @@ class EmailService:
                     continue
                 break
 
+        # F-PROJ-06: this used to end in `return None` and every caller treated the
+        # failure as a success. The log line was the only record, and a route that answers
+        # 200 while nothing was delivered is the shape `vision.md` §7 forbids. Still no
+        # raise — the row is already committed, and turning a notification failure into a
+        # 500 would tell the caller the whole operation failed.
         logger.exception(
             "Failed to send email to=%s subject=%r after %d attempt(s)",
             to,
@@ -137,12 +142,13 @@ class EmailService:
             (attempt + 1),  # noqa: F821
             exc_info=last_exc,
         )
+        return False
 
     # ------------------------------------------------------------------
     # Public email methods
     # ------------------------------------------------------------------
 
-    async def send_welcome_email(self, *, user_id: str, email: str, display_name: str) -> None:
+    async def send_welcome_email(self, *, user_id: str, email: str, display_name: str) -> bool:
         name = escape(display_name or email.split("@")[0])
         app_link = settings.app_url
 
@@ -163,7 +169,7 @@ class EmailService:
   If you did not create this account you can safely ignore this email.
 </p>"""
 
-        await self._send(
+        return await self._send(
             to=email,
             subject="Welcome to CheckMyData.ai",
             html=_base_html("Welcome to CheckMyData.ai", body),
@@ -173,7 +179,7 @@ class EmailService:
 
     async def send_verification_email(
         self, *, user_id: str, email: str, token: str, display_name: str = ""
-    ) -> None:
+    ) -> bool:
         """Send the email-verification link (F-PROJ-01)."""
         name = escape(display_name or email.split("@")[0])
         verify_link = f"{settings.app_url.rstrip('/')}/verify-email?token={token}"
@@ -194,7 +200,7 @@ class EmailService:
   If you did not create this account you can safely ignore this email.
 </p>"""
 
-        await self._send(
+        return await self._send(
             to=email,
             subject="Verify your CheckMyData.ai email",
             html=_base_html("Verify your email", body),
@@ -202,7 +208,7 @@ class EmailService:
             tags=[{"name": "category", "value": "verify"}],
         )
 
-    async def send_password_reset_email(self, *, email: str, token: str) -> None:
+    async def send_password_reset_email(self, *, email: str, token: str) -> bool:
         """Send the password-reset link (SCN-013).
 
         Mirrors :meth:`send_verification_email`. The recipient's display name is not
@@ -228,7 +234,7 @@ class EmailService:
   password will remain unchanged.
 </p>"""
 
-        await self._send(
+        return await self._send(
             to=email,
             subject="Reset your CheckMyData.ai password",
             html=_base_html("Reset your password", body),
@@ -244,7 +250,7 @@ class EmailService:
         project_name: str,
         inviter_name: str,
         role: str,
-    ) -> None:
+    ) -> bool:
         safe_inviter = escape(inviter_name)
         safe_project = escape(project_name)
         safe_role = escape(role)
@@ -267,7 +273,7 @@ class EmailService:
   Sign up or log in with <strong>{safe_email}</strong> to accept automatically.
 </p>"""
 
-        await self._send(
+        return await self._send(
             to=to_email,
             subject=f"{safe_inviter} invited you to {safe_project} — CheckMyData.ai",
             html=_base_html("Project Invite", body),
@@ -282,7 +288,7 @@ class EmailService:
         description: str,
         message: str,
         user_id: str,
-    ) -> None:
+    ) -> bool:
         safe_email = escape(requester_email)
         safe_desc = escape(description)
         safe_msg = escape(message).replace("\n", "<br>")
@@ -318,7 +324,7 @@ class EmailService:
             f"</table>"
         )
 
-        await self._send(
+        return await self._send(
             to="contact@checkmydata.ai",
             subject=f"Project access request from {safe_email}",
             html=_base_html("Access Request", body),
@@ -335,7 +341,7 @@ class EmailService:
         accepted_user_email: str,
         accepted_user_name: str,
         project_name: str,
-    ) -> None:
+    ) -> bool:
         who = escape(accepted_user_name or accepted_user_email)
         greeting = escape(inviter_name or inviter_email.split("@")[0])
         safe_accepted_email = escape(accepted_user_email)
@@ -356,7 +362,7 @@ Hi {greeting}, your invite was accepted!</h2>
   </a>
 </p>"""
 
-        await self._send(
+        return await self._send(
             to=inviter_email,
             subject=f"{who} joined {safe_project} — CheckMyData.ai",
             html=_base_html("Invite Accepted", body),

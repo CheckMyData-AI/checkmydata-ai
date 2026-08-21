@@ -73,7 +73,17 @@ class InviteService:
             )
         )
         if existing_invite.scalar_one_or_none():
-            raise HTTPException(status_code=409, detail="Invite already pending for this email")
+            # F-PROJ-06: "already pending" reads as *already done*, which is exactly the
+            # wrong conclusion for the person most likely to see it — somebody retrying
+            # because they suspect the first email never arrived. Name the way out.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "An invite is already pending for this email. If it never arrived, "
+                    "resend it from the project's members list rather than creating a "
+                    "second one."
+                ),
+            )
 
         invite = ProjectInvite(
             project_id=project_id,
