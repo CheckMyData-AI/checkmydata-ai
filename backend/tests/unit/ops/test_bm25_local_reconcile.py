@@ -18,6 +18,8 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
+import app.models.connection  # noqa: F401
+import app.models.db_index  # noqa: F401
 import app.models.knowledge_doc  # noqa: F401
 import app.models.project  # noqa: F401
 import app.models.repository  # noqa: F401
@@ -225,3 +227,123 @@ class TestLocalSnapshotReconcile:
 
         assert written == 0
         assert idx.indexed_sha(pid) is None, "an empty snapshot hides the gap it should report"
+
+
+class TestSchemaSnapshotsToo:
+    """F-KNOW-06 bumped the snapshot format, which invalidates the SCHEMA snapshots
+    as well — and those are built by the DB-index pipeline, not the repo index.
+
+    Leaving them to rot until someone re-indexes a database would be a gap this
+    change introduced, not one it inherited: `schema_retrieval_enabled` reads as on
+    while every query silently falls back to the legacy relevance safety net.
+    """
+
+    @staticmethod
+    async def _connection_with_index(factory) -> str:
+        from datetime import UTC, datetime
+
+        import app.models.connection  # noqa: F401
+        import app.models.db_index  # noqa: F401
+        from app.models.connection import Connection
+        from app.models.db_index import DbIndex
+
+        async with factory() as s:
+            p = Project(name=f"p-{uuid.uuid4().hex[:6]}")
+            s.add(p)
+            await s.flush()
+            c = Connection(project_id=p.id, name="c", db_type="postgres")
+            s.add(c)
+            await s.flush()
+            # Discriminative descriptions on purpose: BM25's IDF is zero for a term
+            # present in every document, so a corpus of near-identical rows scores
+            # nothing for any query. (Same property that bit the index tests.)
+            topics = [
+                "customer purchase records",
+                "warehouse shipping manifests",
+                "payroll ledgers",
+            ]
+            for i, topic in enumerate(topics):
+                s.add(
+                    DbIndex(
+                        connection_id=c.id,
+                        table_name=f"orders_{i}",
+                        business_description=topic,
+                        relevance_score=4,
+                        indexed_at=datetime.now(UTC),
+                    )
+                )
+            await s.commit()
+            return c.id
+
+    @pytest.mark.asyncio
+    async def test_a_missing_schema_snapshot_is_rebuilt(self, factory, tmp_path, monkeypatch):
+        from app.config import settings
+        from app.knowledge.schema_retriever import SchemaRetriever
+        from app.ops.bm25_local_reconcile import reconcile_local_bm25
+
+        monkeypatch.setattr(settings, "bm25_data_dir", str(tmp_path), raising=False)
+        monkeypatch.setattr(settings, "hybrid_retrieval_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "schema_retrieval_enabled", True, raising=False)
+        cid = await self._connection_with_index(factory)
+
+        retriever = SchemaRetriever(data_dir=str(tmp_path))
+        assert not retriever.has_index(cid), "nothing on this disk yet"
+
+        out = await reconcile_local_bm25(session_factory=factory)
+
+        assert out.schema_rebuilt == 1
+        assert retriever.has_index(cid)
+        assert retriever.query(cid, "warehouse shipping"), "the rebuilt snapshot must answer"
+
+    @pytest.mark.asyncio
+    async def test_an_existing_schema_snapshot_is_left_alone(self, factory, tmp_path, monkeypatch):
+        from app.config import settings
+        from app.ops.bm25_local_reconcile import reconcile_local_bm25
+
+        monkeypatch.setattr(settings, "bm25_data_dir", str(tmp_path), raising=False)
+        monkeypatch.setattr(settings, "hybrid_retrieval_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "schema_retrieval_enabled", True, raising=False)
+        await self._connection_with_index(factory)
+
+        first = await reconcile_local_bm25(session_factory=factory)
+        second = await reconcile_local_bm25(session_factory=factory)
+        assert first.schema_rebuilt == 1
+        assert second.schema_rebuilt == 0
+
+    @pytest.mark.asyncio
+    async def test_the_schema_pass_respects_its_own_flag(self, factory, tmp_path, monkeypatch):
+        """`schema_retrieval_enabled` is a separate switch from hybrid retrieval."""
+        from app.config import settings
+        from app.ops.bm25_local_reconcile import reconcile_local_bm25
+
+        monkeypatch.setattr(settings, "bm25_data_dir", str(tmp_path), raising=False)
+        monkeypatch.setattr(settings, "hybrid_retrieval_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "schema_retrieval_enabled", False, raising=False)
+        await self._connection_with_index(factory)
+
+        out = await reconcile_local_bm25(session_factory=factory)
+        assert out.schema_rebuilt == 0
+
+    @pytest.mark.asyncio
+    async def test_a_connection_with_no_index_rows_is_skipped(self, factory, tmp_path, monkeypatch):
+        import app.models.connection  # noqa: F401
+        from app.config import settings
+        from app.knowledge.schema_retriever import SchemaRetriever
+        from app.models.connection import Connection
+        from app.ops.bm25_local_reconcile import reconcile_local_bm25
+
+        monkeypatch.setattr(settings, "bm25_data_dir", str(tmp_path), raising=False)
+        monkeypatch.setattr(settings, "hybrid_retrieval_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "schema_retrieval_enabled", True, raising=False)
+        async with factory() as s:
+            p = Project(name="p")
+            s.add(p)
+            await s.flush()
+            c = Connection(project_id=p.id, name="c", db_type="postgres")
+            s.add(c)
+            await s.commit()
+            cid = c.id
+
+        out = await reconcile_local_bm25(session_factory=factory)
+        assert out.schema_rebuilt == 0
+        assert not SchemaRetriever(data_dir=str(tmp_path)).has_index(cid)

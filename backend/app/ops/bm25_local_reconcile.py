@@ -4,7 +4,7 @@ The finding said snapshots live on an ephemeral disk, so hybrid retrieval goes
 dense-only "after every restart". The measurement is sharper than that. `Procfile`
 declares `web` and `worker` as separate Heroku process types, so they have separate
 filesystems; `bm25_data_dir` is a local path (`config.py:653`) with no shared volume.
-The repo index writes the `.pkl` in the **worker** (`worker.py:221` →
+The repo index writes the snapshot in the **worker** (`worker.py:221` →
 `pipeline_runner.py:1257`), and every reader on the chat path — `context_loader.py:79`,
 `knowledge_agent.py:61`, `knowledge_catalog_service.py:89` — runs in the **web** dyno.
 The file was written on one machine and read on another, so the BM25 leg had no
@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 class Bm25ReconcileResult:
     status: str = "ok"
     rebuilt: int = 0
+    schema_rebuilt: int = 0
     skipped_present: int = 0
     skipped_no_docs: int = 0
     failed: int = 0
@@ -88,6 +89,63 @@ async def _build_one(session: AsyncSession, project_id: str, bm25: BM25Index) ->
     )
     await asyncio.to_thread(bm25.build, project_id, sha or "unknown", entries)
     return len(entries)
+
+
+async def _reconcile_schema_snapshots(
+    factory: async_sessionmaker, result: Bm25ReconcileResult
+) -> None:
+    """Rebuild missing per-connection SCHEMA snapshots on this process's disk.
+
+    Separate flag (`schema_retrieval_enabled`) and separate builder: these are
+    produced by the DB-index pipeline, not the repo index, so a project's snapshot
+    being present says nothing about a connection's. Same rules as the project pass:
+    missing only, never stale, never empty.
+    """
+    if not settings.schema_retrieval_enabled:
+        return
+    from app.knowledge.schema_retriever import SchemaRetriever
+    from app.models.connection import Connection
+    from app.models.db_index import DbIndex
+
+    retriever = SchemaRetriever(data_dir=settings.bm25_data_dir)
+    async with factory() as session:
+        connection_ids = list(
+            (
+                await session.scalars(
+                    select(Connection.id)
+                    .join(DbIndex, DbIndex.connection_id == Connection.id)
+                    .group_by(Connection.id)
+                    .having(func.count(DbIndex.id) > 0)
+                )
+            ).all()
+        )
+
+    for cid in connection_ids:
+        if await asyncio.to_thread(retriever.has_index, cid):
+            result.skipped_present += 1
+            continue
+        try:
+            async with factory() as session:
+                entries = list(
+                    (
+                        await session.scalars(select(DbIndex).where(DbIndex.connection_id == cid))
+                    ).all()
+                )
+            if not entries:
+                continue
+            # Same freshness key the pipeline uses: the newest `indexed_at`, stringified.
+            latest = max((e.indexed_at for e in entries if e.indexed_at), default=None)
+            sha = latest.isoformat() if latest else "empty"
+            await asyncio.to_thread(retriever.build, cid, sha, entries)
+            result.schema_rebuilt += 1
+        except Exception:
+            result.failed += 1
+            logger.error(
+                "bm25_local_reconcile: could not rebuild the schema snapshot for "
+                "connection %s — SQL table selection stays on the relevance safety net",
+                cid[:8],
+                exc_info=True,
+            )
 
 
 async def reconcile_local_bm25(
@@ -143,10 +201,14 @@ async def reconcile_local_bm25(
                     exc_info=True,
                 )
 
-        if result.rebuilt or result.failed:
+        await _reconcile_schema_snapshots(factory, result)
+
+        if result.rebuilt or result.schema_rebuilt or result.failed:
             logger.info(
-                "bm25_local_reconcile: rebuilt=%d present=%d no_docs=%d failed=%d",
+                "bm25_local_reconcile: rebuilt=%d schema_rebuilt=%d present=%d "
+                "no_docs=%d failed=%d",
                 result.rebuilt,
+                result.schema_rebuilt,
                 result.skipped_present,
                 result.skipped_no_docs,
                 result.failed,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
-
 import pytest
 
 from app.knowledge.bm25_index import BM25Index, tokenize_code
@@ -63,12 +61,16 @@ def test_build_is_atomic_no_tmp_leftover(bm25_dir):
     # No `.tmp` file should remain after a successful build.
     tmp_files = list(bm25_dir.glob("*.tmp"))
     assert tmp_files == []
-    # The persisted file should be pickleable.
-    pkl_files = list(bm25_dir.glob("*.pkl"))
-    assert len(pkl_files) == 1
-    with pkl_files[0].open("rb") as fh:
-        loaded = pickle.load(fh)
-    assert loaded.indexed_sha == "s"
+    # F-KNOW-06 replaced the pickle with gzip JSON. The assertion — one persisted file,
+    # readable, carrying the SHA — is unchanged; only the reader is.
+    import gzip
+    import json
+
+    written = list(bm25_dir.glob("*.json.gz"))
+    assert len(written) == 1
+    with gzip.open(written[0], "rt", encoding="utf-8") as fh:
+        loaded = json.load(fh)
+    assert loaded["indexed_sha"] == "s"
 
 
 def test_indexed_sha_returns_value_after_build(bm25_dir):
@@ -144,10 +146,15 @@ class TestEmptyReason:
     def test_schema_mismatch_is_named(self, bm25_dir):
         bm25 = BM25Index(bm25_dir)
         bm25.build("p", indexed_sha="sha", documents=[("c1", "alpha beta", {})])
-        snap = bm25.load("p")
-        assert snap is not None
-        object.__setattr__(snap, "schema_version", snap.schema_version + 99)
-        bm25._path("p").write_bytes(pickle.dumps(snap))
+        import gzip
+        import json
+
+        path = bm25._path("p")
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        payload["schema_version"] = payload["schema_version"] + 99
+        with gzip.open(path, "wt", encoding="utf-8") as fh:
+            json.dump(payload, fh)
         bm25._snapshots.clear()
         hits, reason = bm25.query_with_reason("p", "alpha")
         assert hits == []
@@ -166,3 +173,124 @@ class TestEmptyReason:
         bm25.build("p", indexed_sha="sha", documents=_CORPUS)
         out = bm25.query("p", "analyze_query")
         assert isinstance(out, list) and out and isinstance(out[0], dict)
+
+
+# ---------------------------------------------------------------------------
+# F-KNOW-06: pickle.load on a snapshot is a latent RCE primitive
+# ---------------------------------------------------------------------------
+
+
+class TestNoPickle:
+    """The row asked for this **before** F-KNOW-07. It was done after, and F-KNOW-12
+    widened the exposure in between — the boot reconcile now reads a snapshot in both
+    the web and the worker process, on every start.
+
+    `pickle.load` executes whatever the payload says. Today the file is written by the
+    app to its own local disk, which is why the row says *latent* — but the directory
+    is configurable (`BM25_DATA_DIR`), and the shared-storage fix that F-KNOW-12
+    nearly took would have put it on a volume several processes can write.
+    """
+
+    def test_the_module_does_not_import_pickle_at_all(self):
+        """Unused is not the same as absent.
+
+        A module that still imports `pickle` invites the next person to reach for it,
+        and a grep for the primitive keeps finding a hit. The assertion is on the
+        import graph, not on a call site.
+        """
+        import ast
+        import inspect
+
+        from app.knowledge import bm25_index
+
+        tree = ast.parse(inspect.getsource(bm25_index))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.split(".")[0])
+        assert "pickle" not in imported, "the primitive must be gone, not merely unused"
+
+    def test_the_snapshot_on_disk_is_not_a_pickle(self, bm25_dir):
+        bm25 = BM25Index(bm25_dir)
+        bm25.build("p", indexed_sha="sha", documents=_CORPUS)
+        written = [f for f in bm25_dir.iterdir() if f.is_file()]
+        assert written, "nothing was persisted"
+        assert not any(f.suffix == ".pkl" for f in written)
+        raw = written[0].read_bytes()
+        assert raw[:2] == b"\x1f\x8b", "expected gzip, so the payload is data not opcodes"
+
+    def test_a_legacy_pickle_is_never_loaded(self, bm25_dir):
+        """Not even once, not even to migrate.
+
+        Reading it "just for the upgrade" keeps the primitive alive for exactly the
+        window an attacker needs. Snapshots are derived data (F-KNOW-12), so the
+        correct upgrade path is to rebuild, which the boot reconcile does for free.
+        """
+        import pickle as _pickle
+
+        bm25_dir.mkdir(parents=True, exist_ok=True)
+        legacy = bm25_dir / "p.pkl"
+        legacy.write_bytes(_pickle.dumps({"anything": "at all"}))
+
+        bm25 = BM25Index(bm25_dir)
+        hits, reason = bm25.query_with_reason("p", "alpha")
+        assert hits == []
+        assert reason == "no_snapshot", "a leftover .pkl must read as absent, not as data"
+
+    def test_a_legacy_pickle_is_removed_when_the_snapshot_is_rebuilt(self, bm25_dir):
+        import pickle as _pickle
+
+        bm25_dir.mkdir(parents=True, exist_ok=True)
+        (bm25_dir / "p.pkl").write_bytes(_pickle.dumps({"x": 1}))
+
+        bm25 = BM25Index(bm25_dir)
+        bm25.build("p", indexed_sha="sha", documents=_CORPUS)
+        assert not (bm25_dir / "p.pkl").exists(), "the primitive should not be left on disk"
+
+    def test_a_legacy_pickle_is_removed_on_delete(self, bm25_dir):
+        import pickle as _pickle
+
+        bm25_dir.mkdir(parents=True, exist_ok=True)
+        (bm25_dir / "p.pkl").write_bytes(_pickle.dumps({"x": 1}))
+        bm25 = BM25Index(bm25_dir)
+        bm25.build("p", indexed_sha="sha", documents=_CORPUS)
+        bm25.delete("p")
+        assert not (bm25_dir / "p.pkl").exists()
+        assert not list(bm25_dir.glob("p.json*"))
+
+    def test_ranking_survives_the_format_change(self, bm25_dir):
+        """Reconstructing BM25 from stored tokens must not reorder results."""
+        bm25 = BM25Index(bm25_dir)
+        bm25.build("p", indexed_sha="sha", documents=_CORPUS)
+        in_memory = [h["id"] for h in bm25.query("p", "analyze_query")]
+
+        reloaded = BM25Index(bm25_dir)  # forces a read from disk
+        from_disk = [h["id"] for h in reloaded.query("p", "analyze_query")]
+        assert from_disk == in_memory and from_disk, from_disk
+
+    def test_metadata_and_documents_survive_the_round_trip(self, bm25_dir):
+        bm25 = BM25Index(bm25_dir)
+        bm25.build(
+            "p",
+            indexed_sha="sha",
+            documents=[
+                ("c1", "analyze_query function", {"source_path": "a.py", "n": 3}),
+                ("c2", "UserService class", {"source_path": "b.py"}),
+                ("c3", "validate email", {}),
+            ],
+        )
+        hit = BM25Index(bm25_dir).query("p", "analyze_query")[0]
+        assert hit["id"] == "c1"
+        assert hit["document"] == "analyze_query function"
+        assert hit["metadata"]["source_path"] == "a.py"
+        assert hit["metadata"]["n"] == 3
+
+    def test_a_corrupt_snapshot_reads_as_corrupt(self, bm25_dir):
+        bm25 = BM25Index(bm25_dir)
+        bm25.build("p", indexed_sha="sha", documents=_CORPUS)
+        bm25._snapshots.clear()
+        bm25._path("p").write_bytes(b"not gzip, not json")
+        hits, reason = bm25.query_with_reason("p", "analyze_query")
+        assert hits == [] and reason == "corrupt"

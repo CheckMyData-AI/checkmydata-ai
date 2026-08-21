@@ -178,8 +178,8 @@ The repo indexer (`backend/app/knowledge/pipeline_runner.py`) is a checkpointed 
 |---|---|---|---|
 | `project_profile` → … → `embed_and_store` | (always on) | — | Baseline EntityInfo + ChromaDB chunks |
 | `ast_parse` → `graph_build` | `code_graph_enabled` | **on** | `code_graph_symbols`, `code_graph_edges` |
-| `bm25_build` | `hybrid_retrieval_enabled` | **on** | `data/bm25/{project_id}.pkl` |
-| `schema_embed` (per connection) | `schema_retrieval_enabled` | **on** | `data/bm25/schema_{connection_id}.pkl` |
+| `bm25_build` | `hybrid_retrieval_enabled` | **on** | `data/bm25/{project_id}.json.gz` |
+| `schema_embed` (per connection) | `schema_retrieval_enabled` | **on** | `data/bm25/schema_{connection_id}.json.gz` |
 | `graph_db_bridge` | `lineage_enabled` | **on** | Code→DB lineage onto EntityInfo |
 | `graph_clustering` | `clustering_enabled`, `cluster_llm_label_enabled` | **off** / on | `code_cluster` rows |
 
@@ -284,7 +284,7 @@ Learnings are stored per-connection by default (`cross_connection_learnings_enab
 
 - App data: SQLite in dev (`backend/data/agent.db`), PostgreSQL in production (`DATABASE_URL`).
 - Vectors: ChromaDB (`CHROMA_PERSIST_DIR` or `CHROMA_SERVER_URL` for remote); collections named `project_{project_id}`.
-- BM25 snapshots: `backend/data/bm25/{project_id}.pkl` and `schema_{connection_id}.pkl`.
+- BM25 snapshots: `backend/data/bm25/{project_id}.json.gz` and `schema_{connection_id}.json.gz` — **gzip JSON, not pickle, since 2026-08-21 (F-KNOW-06)**: `pickle.load` executes its payload, and `BM25_DATA_DIR` is configurable. The tokenized corpus is stored and `BM25Okapi` is rebuilt on load; a leftover `.pkl` is deleted, never read. Both are rebuilt from Postgres at start-up when missing (`app/ops/bm25_local_reconcile.py`).
 - Redis (`REDIS_URL`): rate limiting, agent concurrency tokens, WS tickets, ARQ task queue. In-memory fallback for dev — keep it working when adding Redis features.
 - Backups: `backend/data/backups/` when `backup_enabled=True`.
 

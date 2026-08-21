@@ -7,13 +7,13 @@ project / connection is deleted. The artifacts below are intentionally
 when their parent goes away:
 
 * ``./data/repos/{project_id}/`` — the git clone, i.e. the project's whole source tree.
-* ``./data/bm25/{project_id}.pkl`` — code corpus BM25 snapshot (M3).
-* ``./data/bm25/schema_{connection_id}.pkl`` — schema BM25 snapshot (M4).
+* ``./data/bm25/{project_id}.json.gz`` — code corpus BM25 snapshot (M3).
+* ``./data/bm25/schema_{connection_id}.json.gz`` — schema BM25 snapshot (M4).
 * ChromaDB collection ``project_{project_id}`` — the dense knowledge corpus.
 
 Every function here is **idempotent** and **non-throwing**: failures are
 logged but never propagate, because cleanup runs in the same transaction
-boundary that ships the user-visible delete; a leaked ``.pkl`` is preferable
+boundary that ships the user-visible delete; a leaked snapshot is preferable
 to a 500.
 """
 

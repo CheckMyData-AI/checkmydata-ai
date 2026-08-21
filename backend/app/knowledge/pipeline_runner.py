@@ -430,7 +430,7 @@ class IndexingPipelineRunner:
                 "No file changes detected since last index, skipping doc generation",
             )
             # R3-6: a no-op exit historically skipped the BM25 step entirely,
-            # so a missing/stale snapshot (deleted .pkl, crashed prior build,
+            # so a missing/stale snapshot (deleted file, crashed prior build,
             # or sha drift) would never self-heal and the hybrid retriever
             # would degrade silently to dense-only. Verify + repair here.
             await self._repair_bm25_if_stale(db, project_id, state.head_sha, wf_id)
@@ -1340,7 +1340,7 @@ class IndexingPipelineRunner:
         """Rebuild the BM25 snapshot if missing or out of sync with *head_sha*.
 
         R3-6: called on the no-change early-exit path so a deleted/corrupt/
-        stale ``.pkl`` self-heals instead of silently degrading the hybrid
+        stale snapshot self-heals instead of silently degrading the hybrid
         retriever to dense-only. No-op when hybrid retrieval is disabled or the
         snapshot already matches the current head.
         """
