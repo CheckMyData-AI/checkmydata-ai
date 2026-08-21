@@ -1561,3 +1561,87 @@ structured concurrency. A window is an arbitrary number that stays wrong in both
 directions. The precise question is an AST one — *inside the enclosing function, is the
 assigned name used for anything other than `add_done_callback`?* — and it flagged exactly
 one site, which was real.
+
+## 26. The board drifted from the code, and nothing was watching it
+
+Two kinds of drift, found within minutes of each other while reading the list for an
+unrelated reason:
+
+**A row left open after the work shipped.** F-KNOW-08's clone cleanup reached `main` in
+#194 — `shutil.rmtree` in `indexing_artifacts.py`, ten tests in
+`test_clone_cleanup_on_delete.py` — and its row stayed open for two more iterations. It was
+noticed by accident.
+
+**A citation pointing at a file that no longer exists.** F-EXP-01 cited
+`tests/unit/test_demo_seed.py`, a file **I renamed in the same iteration that wrote the
+citation**. The row read as verified and its proof pointed at nothing.
+
+That second one is the worse failure, and it is the same shape as the UX coverage ratchet
+finding ten stale paths in `scenarios.md` on the same day. A record that claims proof and
+points nowhere is worse than a row with no citation at all, because the missing citation
+invites a check and the broken one forecloses it.
+
+`test_board_evidence_resolves.py` now asserts three things:
+
+- every path cited by a struck-through row exists;
+- the stated tally equals the rows it summarises — one row of drift is exactly what
+  surfaced an entire iteration's work sitting outside `main` earlier today;
+- there are closed rows to check at all, because a regex that matches nothing passes
+  everything downstream by vacuity and looks green doing it. That guard exists because the
+  heavy-enqueue sweep needed the same one two sections ago.
+
+It deliberately does not read the cited test, count its assertions or check that it passes —
+the suite does that. The narrow question is whether the pointer resolves, and the narrow
+question is the one that had no answer.
+
+### The pattern, stated plainly
+
+Four artifacts in this audit have now been given the same treatment: the silent-degradation
+ratchet, the UX coverage ratchet, the heavy-enqueue check, and the board itself. In every
+case the fix was the same move — **stop trusting a number or a claim, and derive it from
+the thing it describes.** A tally computed from its own rows catches an edit that a stored
+count cannot. A sweep over the code catches a call site an enumeration cannot. A citation
+that must resolve catches a rename that prose cannot.
+
+None of these were the findings the audit set out to fix. All of them were bookkeeping that
+looked correct because nothing asked it to prove itself.
+
+## 27. Three producers of one lie, and a `| head` that hid the fourth
+
+`QueryResult.row_count` is `len(data)` after the row cap and the byte cap — rows
+**returned**. Three separate places told the model it was a total:
+
+| Producer | Why it is worse than it looks |
+|---|---|
+| `result_handler.format_query_results` | the original finding: on a truncated result the prompt contradicted its own banner |
+| `viz_agent._summarize_results` | this is what the chart layer reasons over — a caption claiming a total it does not have is a wrong number in a picture, and nobody re-checks a picture |
+| `tool_dispatcher` enrichment summary | a model may compute a share or a percentage from it |
+
+Only the first was in the finding. The other two were found because a sweep ran **before**
+the row was closed, and the sweep ran because this audit had already made the same mistake
+twice — three of six heavy `enqueue` sites, two of five rules callers. On the third
+occurrence it stopped being bad luck and became a step in the procedure.
+
+The tell was that two consumers already disagreed: `answer_validator.py` wrote "rows
+returned" while the formatters wrote "Total rows". **A disagreement between two descriptions
+of the same value is a bug in one of them**, and it costs nothing to look.
+
+### And the sweep itself was truncated
+
+Searching the tests for the old label, I wrote:
+
+```
+grep -rn '"Total rows' tests/ | head
+```
+
+`head` cut the output at ten lines. The tenth was a binary `.pyc` match, and
+`test_viz_agent.py:305` sat on line eleven — so a completeness sweep reported completeness
+it had not checked, and the suite caught it two runs later.
+
+That is the same substitution this whole audit keeps finding, performed on the audit's own
+tooling: **a proxy standing in for the answer.** A count instead of the line. A window
+instead of the AST. An enumeration instead of the code. The first ten matches instead of
+all of them.
+
+The cheap defence is the one that worked everywhere else: when the question is "are there
+any others", never pipe the answer through anything that can shorten it.

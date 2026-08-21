@@ -1357,7 +1357,11 @@ class TestSQLAgentFormatQueryResultsTruncation:
         text = SQLAgent._format_query_results(qr)
         assert "TRUNCATED" in text
         # The row data is still rendered after the warning.
-        assert "Total rows:" in text
+        # F-SQL-02: the count line said "Total rows" while `row_count` is rows RETURNED,
+        # so on a truncated result this prompt contradicted its own banner. The label is
+        # what changed; the number and the rows are untouched.
+        assert "Rows returned:" in text
+        assert "partial" in text
         assert "| id | amount |" in text
 
     def test_non_truncated_result_has_no_banner(self):
@@ -1370,4 +1374,7 @@ class TestSQLAgentFormatQueryResultsTruncation:
         )
         text = SQLAgent._format_query_results(qr)
         assert "TRUNCATED" not in text
-        assert "Total rows:" in text
+        assert "Rows returned:" in text
+        # And no truncation language when nothing was truncated — a warning that fires on
+        # a complete result teaches the agent to discount the warning.
+        assert "partial" not in text

@@ -234,9 +234,19 @@ class VizAgent(BaseAgent):
     def _summarize_results(results: QueryResult, max_rows: int = 20) -> str:
         if not results.rows:
             return "No rows returned."
+        # F-SQL-02, second producer of the same claim. `row_count` is rows RETURNED —
+        # len(data) after the row and byte caps — so "Total rows" reads as a total the
+        # caller never had. It matters more here than it looks: this summary is what the
+        # chart layer reasons over, and a chart captioned with a total it does not have is
+        # a wrong number in a picture, which nobody re-checks.
+        returned = (
+            f"Rows returned: {results.row_count} (partial — the result was truncated)"
+            if results.truncated
+            else f"Rows returned: {results.row_count}"
+        )
         lines = [
             f"Columns ({len(results.columns)}): {', '.join(results.columns)}",
-            f"Total rows: {results.row_count}",
+            returned,
         ]
         for row in results.rows[:max_rows]:
             lines.append(" | ".join(str(v) for v in row))

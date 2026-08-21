@@ -32,8 +32,22 @@ def format_query_results(results: QueryResult, max_rows: int = 20) -> str:
         return "Query executed successfully but returned no rows."
     header = "| " + " | ".join(results.columns) + " |"
     sep = "| " + " | ".join("---" for _ in results.columns) + " |"
+    # F-SQL-02. This said "Total rows", and `row_count` is what every connector sets to
+    # `len(data)` AFTER the row cap and the byte cap — rows *returned*. A query matching
+    # fifty thousand rows against a thousand-row cap produced "Total rows: 1000", and where
+    # truncation was detected the banner below contradicted it in the same prompt, with the
+    # mislabelled line reading like the fact. `answer_validator.py` already wrote "rows
+    # returned"; the two consumers disagreed and the formatter was the wrong one.
+    #
+    # An agent told it has the total will state a total, and the user cannot see that it
+    # counted a page — `vision.md` §7, not wording.
+    returned = (
+        f"Rows returned: {results.row_count} (partial — see the notice above)"
+        if results.truncated
+        else f"Rows returned: {results.row_count}"
+    )
     lines = [
-        f"Total rows: {results.row_count}, Execution time: {results.execution_time_ms:.1f}ms",
+        f"{returned}, Execution time: {results.execution_time_ms:.1f}ms",
         "",
         _UNTRUSTED_ROWS_NOTE,
         _BEGIN_UNTRUSTED,

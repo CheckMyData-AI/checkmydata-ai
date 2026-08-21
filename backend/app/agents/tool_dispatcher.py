@@ -621,7 +621,17 @@ class ToolDispatcher:
         result_qr = processed.query_result
         parts: list[str] = [f"**Data Processing:** {processed.summary}", ""]
         parts.append(f"**Columns:** {', '.join(result_qr.columns)}")
-        parts.append(f"**Total rows:** {result_qr.row_count}")
+        # F-SQL-02, third producer of the same claim, and the worst placed of the three:
+        # this is the enrichment/aggregation summary, so a model reading "Total rows" here
+        # may compute a percentage or a share from it. `row_count` is rows RETURNED —
+        # len(data) after the row and byte caps.
+        if result_qr.truncated:
+            parts.append(
+                f"**Rows returned:** {result_qr.row_count} (partial — the result was "
+                "truncated, so shares and totals computed from it are wrong)"
+            )
+        else:
+            parts.append(f"**Rows returned:** {result_qr.row_count}")
 
         if operation == "aggregate_data":
             parts.append("")

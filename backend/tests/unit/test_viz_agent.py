@@ -302,7 +302,12 @@ class TestVizAgent:
         summary = agent._summarize_results(qr, max_rows=20)
 
         assert "Columns (2)" in summary
-        assert "Total rows: 50" in summary
+        # F-SQL-02: `row_count` is rows RETURNED — len(data) after the row and byte caps —
+        # and this summary is what the chart layer reasons over, so a caption claiming a
+        # total it does not have is a wrong number in a picture nobody re-checks.
+        assert "Rows returned: 50" in summary
+        # `... and N more rows` is about THIS function's display cap (max_rows), a third
+        # meaning for the same number, and it has to stay distinct from both.
         assert "and 30 more rows" in summary
         lines = summary.strip().split("\n")
         assert len(lines) == 23  # header(2) + 20 data rows + 1 truncation notice
