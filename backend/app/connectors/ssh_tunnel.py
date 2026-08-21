@@ -252,6 +252,40 @@ class SSHTunnelManager:
             self._locks[key] = asyncio.Lock()
         return self._locks[key]
 
+    def _release_lock(self, key: str) -> None:
+        """Drop a per-key lock once the key it guards is gone (F-SSH-09).
+
+        `_locks` used to grow one `asyncio.Lock` per distinct cache key and nothing
+        ever removed one — every close popped `_tunnels` and `_refs` and left the lock.
+        The key carries a credential discriminator, so rotating a password mints a new
+        key and a new lock; deleting a connection leaves its lock behind too.
+
+        The obvious fix is a trap: popping a **held** lock is worse than the leak,
+        because the next caller builds a fresh one and two coroutines end up inside the
+        critical section together. So the check and the pop happen in one synchronous
+        step — on a single event loop nothing can interleave between them, and an
+        `asyncio.Lock` queues waiters only while it is held, so `not locked()` means
+        nobody is queued.
+
+        Best-effort by design: a lock that *is* held here is skipped, and
+        :meth:`cleanup_idle` sweeps whatever was skipped. Skipping without a later
+        sweep would leave the leak in exactly the cases that cause it.
+        """
+        lock = self._locks.get(key)
+        if lock is not None and not lock.locked():
+            del self._locks[key]
+
+    def _sweep_orphaned_locks(self) -> int:
+        """Drop free locks whose key no longer has a tunnel. Returns the count."""
+        orphaned = [
+            key
+            for key, lock in self._locks.items()
+            if key not in self._tunnels and not lock.locked()
+        ]
+        for key in orphaned:
+            del self._locks[key]
+        return len(orphaned)
+
     _RECONNECT_MAX_ATTEMPTS = 3
     _RECONNECT_BACKOFF_SECONDS = 2
 
@@ -333,8 +367,10 @@ class SSHTunnelManager:
         self._refs.pop(key, None)
         if tunnel:
             await tunnel.stop()
+            self._release_lock(key)
             logger.info("Closed SSH tunnel for %s", key)
             return True
+        self._release_lock(key)
         return False
 
     async def cleanup_idle(self, max_idle: float = IDLE_TUNNEL_TTL) -> int:
@@ -349,6 +385,12 @@ class SSHTunnelManager:
             if tunnel:
                 await tunnel.stop()
                 logger.info("Closed idle SSH tunnel: %s (idle %.0fs)", key, tunnel.idle_seconds)
+            self._release_lock(key)
+        # Reclaim locks that were held when their tunnel closed and so were skipped.
+        # This periodic pass is what stops `_release_lock` being best-effort in name only.
+        swept = self._sweep_orphaned_locks()
+        if swept:
+            logger.debug("Swept %d orphaned SSH tunnel lock(s)", swept)
         return len(to_remove)
 
     async def close_all(self):
@@ -356,6 +398,9 @@ class SSHTunnelManager:
             await tunnel.stop()
         self._tunnels.clear()
         self._refs.clear()
+        # Every key is gone, so every free lock is orphaned by definition. A held one
+        # is left for the sweep rather than yanked from under its holder.
+        self._sweep_orphaned_locks()
 
     @property
     def active_count(self) -> int:

@@ -371,3 +371,171 @@ class TestSSHTunnelPortForwardFailure:
             tunnel._listener = await fake_conn.forward_local_port(
                 "127.0.0.1", 0, cfg.db_host, cfg.db_port
             )
+
+
+# ---------------------------------------------------------------------------
+# F-SSH-09: `_locks` grew one asyncio.Lock per key and nothing removed them
+# ---------------------------------------------------------------------------
+
+
+class TestPerKeyLockLifecycle:
+    """`close_for_config`, `cleanup_idle` and `close_all` all pop `_tunnels` and
+    `_refs` and none of them touched `_locks`.
+
+    One `asyncio.Lock` per distinct cache key, forever, in a process that lives for
+    days. The key carries a credential discriminator, so rotating a password mints a
+    new key and a new lock; deleting a connection leaves its lock behind too.
+
+    The trap is the obvious fix: popping a lock that is **held** is worse than the
+    leak, because the next caller builds a fresh one and two coroutines enter the
+    critical section at once. `locked()` is checked and the pop happens in the same
+    synchronous step — on one event loop nothing can interleave between them, and an
+    `asyncio.Lock` only queues waiters while it is held, so `not locked()` means
+    nobody is queued.
+    """
+
+    @staticmethod
+    def _cfg(cid: str, host: str = "db.example.com"):
+        from app.connectors.base import ConnectionConfig
+
+        return ConnectionConfig(
+            db_type="postgresql",
+            db_host=host,
+            db_port=5432,
+            ssh_host="jump.example.com",
+            ssh_port=22,
+            ssh_user="tunnel-user",
+            connection_id=cid,
+        )
+
+    def _alive(self):
+        t = SSHTunnel()
+        t._conn = MagicMock()
+        t._listener = MagicMock()
+        t._listener.get_port.return_value = 9999
+        t._local_host = "127.0.0.1"
+        t._local_port = 9999
+        t._conn.get_extra_info.return_value = MagicMock()
+        t.is_alive = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        return t
+
+    @pytest.mark.asyncio
+    async def test_closing_a_tunnel_drops_its_lock(self):
+        mgr = SSHTunnelManager()
+        cfg = self._cfg("conn-a")
+        key = mgr._key(cfg)
+        mgr._tunnels[key] = self._alive()
+        # `get_or_create`'s fast path returns a cached tunnel without taking the lock,
+        # and these tests pre-seed one to avoid a real SSH connect — so take it the way
+        # the creation path does.
+        mgr._get_lock(key)
+        await mgr.get_or_create(cfg)
+        assert key in mgr._locks
+
+        mgr._tunnels[key].stop = AsyncMock()
+        await mgr.close_for_config(cfg, force=True)
+        assert key not in mgr._locks, "the lock outlived the tunnel it guarded"
+
+    @pytest.mark.asyncio
+    async def test_a_shared_tunnel_keeps_its_lock_until_the_last_reference_goes(self):
+        mgr = SSHTunnelManager()
+        a, b = self._cfg("conn-a"), self._cfg("conn-b")
+        key = mgr._key(a)
+        mgr._tunnels[key] = self._alive()
+        mgr._get_lock(key)
+        await mgr.get_or_create(a)
+        await mgr.get_or_create(b)
+
+        await mgr.close_for_config(a)  # one ref released; tunnel stays
+        assert key in mgr._locks, "the tunnel is still live, so its lock must stay"
+
+        mgr._tunnels[key].stop = AsyncMock()
+        await mgr.close_for_config(b)
+        assert key not in mgr._locks
+
+    @pytest.mark.asyncio
+    async def test_idle_cleanup_drops_the_lock_too(self):
+        mgr = SSHTunnelManager()
+        cfg = self._cfg("conn-a")
+        key = mgr._key(cfg)
+        t = self._alive()
+        mgr._tunnels[key] = t
+        mgr._get_lock(key)
+        await mgr.get_or_create(cfg)
+        t.stop = AsyncMock()
+        t._last_used = time.monotonic() - 10_000
+
+        await mgr.cleanup_idle(max_idle=1)
+        assert key not in mgr._tunnels
+        assert key not in mgr._locks
+
+    @pytest.mark.asyncio
+    async def test_close_all_drops_every_lock(self):
+        mgr = SSHTunnelManager()
+        for i in range(3):
+            cfg = self._cfg(f"conn-{i}", host=f"db{i}.example.com")
+            key = mgr._key(cfg)
+            t = self._alive()
+            t.stop = AsyncMock()
+            mgr._tunnels[key] = t
+            mgr._get_lock(key)
+            await mgr.get_or_create(cfg)
+        assert len(mgr._locks) == 3
+
+        await mgr.close_all()
+        assert mgr._locks == {}
+
+    @pytest.mark.asyncio
+    async def test_a_held_lock_is_never_dropped(self):
+        """Popping a held lock turns a memory leak into two coroutines in one
+        critical section, which is the worse of the two problems."""
+        mgr = SSHTunnelManager()
+        cfg = self._cfg("conn-a")
+        key = mgr._key(cfg)
+        lock = mgr._get_lock(key)
+        await lock.acquire()
+        try:
+            mgr._release_lock(key)
+            assert key in mgr._locks, "a held lock must survive"
+        finally:
+            lock.release()
+        mgr._release_lock(key)
+        assert key not in mgr._locks, "and be reclaimed once it is free"
+
+    @pytest.mark.asyncio
+    async def test_a_lock_orphaned_while_held_is_reclaimed_later(self):
+        """If the lock was busy at close time it is skipped, so something has to come
+        back for it — otherwise the leak survives exactly the cases that caused it."""
+        mgr = SSHTunnelManager()
+        cfg = self._cfg("conn-a")
+        key = mgr._key(cfg)
+        lock = mgr._get_lock(key)
+        await lock.acquire()
+        mgr._release_lock(key)  # skipped: held
+        lock.release()
+
+        assert key in mgr._locks
+        await mgr.cleanup_idle(max_idle=1)  # no tunnels at all, but locks are swept
+        assert key not in mgr._locks
+
+    @pytest.mark.asyncio
+    async def test_the_sweep_leaves_a_live_tunnel_s_lock_alone(self):
+        """ "Orphaned" means the key is gone, not merely that the lock is free.
+
+        Dropping a free lock whose tunnel is still live is not a correctness bug — the
+        next caller just builds another — but it makes `_sweep_orphaned_locks` do
+        something other than its name, and churns a lock for every live tunnel on every
+        idle pass. A plant removing the `key not in self._tunnels` condition was
+        invisible until this test existed.
+        """
+        mgr = SSHTunnelManager()
+        cfg = self._cfg("conn-a")
+        key = mgr._key(cfg)
+        t = self._alive()
+        t.stop = AsyncMock()
+        mgr._tunnels[key] = t
+        mgr._get_lock(key)
+        t._last_used = time.monotonic()  # fresh: not idle, so it is not closed
+
+        assert mgr._sweep_orphaned_locks() == 0
+        assert key in mgr._locks, "a live tunnel's lock is not orphaned"
