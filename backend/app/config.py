@@ -88,6 +88,11 @@ class Settings(BaseSettings):
         return self
 
     master_encryption_key: str = ""
+    #: Comma-separated retired Fernet keys, kept for READING only (F-CONN-05).
+    #: Rotation: put the new key in ``master_encryption_key``, move the previous one
+    #: here, deploy. `app.ops.credential_rotation` then sweeps stored rows onto the
+    #: new key; once its pending count reaches zero the old key can be dropped.
+    master_encryption_keys_old: str = ""
 
     chroma_persist_dir: str = "./data/chroma"
     chroma_server_url: str = ""

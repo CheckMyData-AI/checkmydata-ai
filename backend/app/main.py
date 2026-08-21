@@ -138,6 +138,24 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Embedding reconcile failed at startup", exc_info=True)
 
+    # Self-completing deploy: re-encrypt stored secrets when MASTER_ENCRYPTION_KEY
+    # changed, so rotating it costs the operator two config values and a deploy
+    # (F-CONN-05). Advisory-locked, idempotent, never blocks boot. A `partial` result
+    # leaves the marker alone: the retired key must stay in MASTER_ENCRYPTION_KEYS_OLD
+    # until every row has moved, and the log names the rows that have not.
+    try:
+        from app.ops.encryption_reconcile import reconcile_encryption_keys
+
+        _enc = await reconcile_encryption_keys()
+        logger.info(
+            "Encryption reconcile at startup: %s (rotated=%d failed=%d)",
+            _enc.status,
+            _enc.rotated,
+            _enc.failed,
+        )
+    except Exception:
+        logger.warning("Encryption reconcile failed at startup", exc_info=True)
+
     from app.core.workflow_events import start_workflow_event_subscriber
 
     await start_workflow_event_subscriber()
