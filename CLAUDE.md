@@ -154,6 +154,7 @@ Frontend (ChatPanel)
             → ORCH-T03: re-prompts once on no-tool/no-data turn to keep loop alive
           PATH B — multi-stage pipeline (ORCH-R01: now taken for complex non-DB questions too):
             → AdaptivePlanner (quick or full plan; replan up to MAX_PIPELINE_REPLANS=2)
+            → **One wall-clock deadline per request, established once and shared** (F-SQL-03, 2026-08-21): `_new_pipeline_deadline()` in `orchestrator.py` is passed to every `StageExecutor.execute()` and into `_run_pipeline_replans`, which refuses to start another plan once it is spent. `execute()` only computes its own when handed none, so a standalone caller (eval harness, tests) still gets a budget. Before this, `execute()` computed `monotonic() + budget` on **every entry** and the replan loop re-enters it per replan — so Path B's worst case was `(1 + max_pipeline_replans) x pipeline_max_wall_seconds`, i.e. **540 s against a documented 180 s limit** (`pipeline_max_wall_seconds` defaults to 0 → falls back to `agent_wall_clock_timeout_seconds`=180). ORCH-V02 had bounded the retries *inside* one plan and left the plan count multiplying that bound.
             → StageExecutor — topological scheduler, runs up to PIPELINE_MAX_PARALLEL_STAGES=3 stages concurrently
               → Per-stage sub-agents: SQLAgent / KnowledgeAgent / VizAgent / GitAgent / McpSourceAgent / InvestigationAgent
               → StageValidator + DataGate (intermediate quality checks; DATA_GATE_HARD_CHECKS_ENABLED blocks impossible numbers)

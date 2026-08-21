@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — one request, one wall clock (F-SQL-03)
+
+- **Two of this finding's three multiplications were already closed; the third was
+  invisible to both fixes.** `sql_agent_deadline_enabled` (2026-08-08) bounded the SQL
+  tool loop and Path A threads the remaining wall clock down; ORCH-V02 bounded the
+  per-stage × validation × data-gate retries inside `StageExecutor` and checks the
+  deadline inside every retry loop. But `StageExecutor.execute` computed
+  `deadline = monotonic() + budget` **on entry**, and `_run_pipeline_replans` re-enters it
+  once per replan — so Path B's worst case was `(1 + max_pipeline_replans)` times the
+  budget: **540 s against a documented 180 s limit**, plus a planner LLM call before each
+  replan and the final synthesis, all outside any of it. ORCH-V02 had bounded the retries
+  *inside* one plan and left the plan count multiplying that bound.
+- `_new_pipeline_deadline()` establishes it once per request. It is passed to all three
+  `executor.execute()` entries and into the replan loop, which refuses to start another
+  plan once it is spent — the check sits **before** the replan, because a replan is an LLM
+  call plus a whole fresh execution, the most expensive thing that loop can do.
+  `execute()` still computes a budget when handed none, so the eval harness and
+  standalone callers are unaffected.
+- **Two of six plants walked past every behavioural test.** They enter at the replan loop,
+  so dropping the deadline at the *initial* executor entry was invisible to all of them.
+  Caught by AST tests that ask the wiring question directly: within one method, the initial
+  `executor.execute` and the `_run_pipeline_replans` that follows must be handed the same
+  deadline name, and no `executor.execute` may omit it.
+- A test that **hung** under one plant was rewritten. Its stub never recorded a stage
+  result, so whenever the deadline check did not fire the stage loop spun forever — and a
+  test that hangs under a defect reports a CI timeout, which is indistinguishable from an
+  infra flake. The stub now records a result the way the real collaborator does, so the
+  same plant produces a clean assertion failure.
+
 ### Fixed — the degradation metric fired on the healthy path (F-KNOW-07)
 
 - **`retrieval_degraded_total` existed since W0, and that was the problem.** `BM25Index.query`

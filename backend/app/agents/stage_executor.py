@@ -159,6 +159,7 @@ class StageExecutor:
         resume_from: int = 0,
         stage_ctx: StageContext | None = None,
         staleness_warning: str | None = None,
+        deadline: float | None = None,
     ) -> _StageExecutorResult:
         """Run stages topologically — parallel where dependencies allow.
 
@@ -192,10 +193,19 @@ class StageExecutor:
         # surface (per-stage × validation × data-gate) by refusing to dispatch a
         # new batch once the budget is spent. 0 → fall back to the per-request
         # agent wall-clock limit.
+        #
+        # F-SQL-03: the caller may hand a deadline down, and when it does that one
+        # wins. Computing it here on every entry is what let the replan count
+        # multiply the bound: `_run_pipeline_replans` re-enters this method once per
+        # replan, so a request whose documented limit is
+        # `agent_wall_clock_timeout_seconds` could spend
+        # `(1 + max_pipeline_replans)` times it. A standalone caller that passes
+        # nothing still gets a budget, so the eval harness and tests are unaffected.
         budget_seconds = (
             settings.pipeline_max_wall_seconds or settings.agent_wall_clock_timeout_seconds
         )
-        deadline = time.monotonic() + budget_seconds if budget_seconds > 0 else None
+        if deadline is None and budget_seconds > 0:
+            deadline = time.monotonic() + budget_seconds
 
         while True:
             completed_ids = set(stage_ctx.results.keys())

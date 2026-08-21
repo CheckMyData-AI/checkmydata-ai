@@ -462,6 +462,7 @@ class TestPipelineScopedContext:
             resume_from=0,
             stage_ctx=None,
             staleness_warning=None,
+            **kwargs,  # F-SQL-03 added `deadline=`; this stub asserts about `context`
         ):
             captured_ctx["ctx"] = context
             return _FakeExecResult(

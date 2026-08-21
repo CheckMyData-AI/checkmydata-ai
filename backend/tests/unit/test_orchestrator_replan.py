@@ -612,3 +612,247 @@ class TestReplanLearningGetsTool:
         assert kw.get("failed_stage_tool") != "fetch_rev", (
             "failed_stage_tool should be the tool name, not the stage_id"
         )
+
+
+# ---------------------------------------------------------------------------
+# F-SQL-03: one request, one wall clock — the replan count must not multiply it
+# ---------------------------------------------------------------------------
+
+
+class TestReplansShareOneDeadline:
+    """ORCH-V02 bounded the retries *inside* one plan and left the plan count
+    multiplying that bound.
+
+    ``StageExecutor.execute`` computed ``deadline = monotonic() + budget`` on
+    entry, and ``_run_pipeline_replans`` re-entered it once per replan — so the
+    worst case was ``(1 + max_pipeline_replans) x pipeline_max_wall_seconds``,
+    540 s against a documented 180 s limit, plus planner calls outside all of it.
+    """
+
+    @staticmethod
+    def _orch() -> Any:
+        from app.agents.orchestrator import OrchestratorAgent
+
+        orch = object.__new__(OrchestratorAgent)
+        orch._llm = MagicMock()
+        orch._tracker = MagicMock()
+        orch._tracker.emit = AsyncMock()
+        return orch
+
+    async def test_executor_honours_a_deadline_it_is_handed(self) -> None:
+        """An already-spent deadline must stop the executor before any stage runs."""
+        import time as _time
+
+        from app.agents.stage_context import StageContext
+
+        ex = object.__new__(StageExecutor)
+        ex._tracker = MagicMock()
+        ex._tracker.emit = AsyncMock()
+        plan = ExecutionPlan(
+            plan_id="p1",
+            question="q",
+            stages=[PlanStage(stage_id="s1", description="d", tool="query_database")],
+        )
+        stage_ctx = StageContext(plan=plan)
+        dispatched: list[str] = []
+
+        # The stub records a result the way the real collaborator does. Without that,
+        # the stage loop spins forever whenever the deadline check does *not* fire —
+        # and a test that hangs under a planted defect reports a CI timeout rather
+        # than a failure, which is indistinguishable from an infra flake.
+        async def _fake_stage(stage: Any, *a: Any, **k: Any) -> None:
+            dispatched.append(stage.stage_id)
+            stage_ctx.set_result(
+                stage.stage_id, StageResult(stage_id=stage.stage_id, status="completed")
+            )
+
+        ex._process_one_stage = _fake_stage
+
+        res = await ex.execute(
+            plan, MagicMock(), stage_ctx=stage_ctx, deadline=_time.monotonic() - 1.0
+        )
+
+        assert dispatched == [], "a spent deadline must not dispatch a stage"
+        assert res is not None
+
+    async def test_replans_forward_the_deadline_they_were_given(self) -> None:
+        """Every replan's execute() must carry the request's original deadline."""
+        import time as _time
+
+        orch = self._orch()
+        request_deadline = _time.monotonic() + 42.0
+
+        first = MagicMock()
+        first.status = "stage_failed"
+        first.replan_eligible = True
+        first.stage_ctx = MagicMock()
+        first.stage_ctx.results = {}
+        first.data_gate_outcome = None
+
+        after = MagicMock()
+        after.status = "completed"
+        after.replan_eligible = False
+
+        seen: list[float | None] = []
+
+        async def mock_execute(plan: Any, ctx: Any, **kwargs: Any) -> Any:
+            seen.append(kwargs.get("deadline"))
+            return after
+
+        executor = MagicMock()
+        executor.execute = mock_execute
+
+        new_plan = ExecutionPlan(
+            plan_id="p2",
+            question="q",
+            stages=[PlanStage(stage_id="s2", description="d", tool="query_database")],
+        )
+        adaptive = MagicMock()
+        adaptive.replan = AsyncMock(return_value=new_plan)
+
+        ctx = MagicMock()
+        ctx.user_question = "q"
+        ctx.preferred_provider = None
+        ctx.model = None
+
+        with patch("app.agents.orchestrator.settings") as st:
+            st.max_pipeline_replans = 2
+            await orch._run_pipeline_replans(
+                executor=executor,
+                exec_result=first,
+                pipeline_ctx=MagicMock(),
+                context=ctx,
+                adaptive=adaptive,
+                table_map="",
+                db_type="postgres",
+                staleness_warning=None,
+                run_id="r",
+                wf_id="w",
+                deadline=request_deadline,
+            )
+
+        assert seen, "the replan must have re-entered the executor"
+        assert all(d == request_deadline for d in seen), (
+            f"a replan started a fresh budget instead of sharing the request's: {seen}"
+        )
+
+    async def test_replans_stop_once_the_shared_deadline_is_spent(self) -> None:
+        """A spent request deadline must end the replan loop, not start a new plan."""
+        import time as _time
+
+        orch = self._orch()
+
+        first = MagicMock()
+        first.status = "stage_failed"
+        first.replan_eligible = True
+        first.stage_ctx = MagicMock()
+        first.stage_ctx.results = {}
+        first.data_gate_outcome = None
+
+        executor = MagicMock()
+        executor.execute = AsyncMock(side_effect=AssertionError("must not re-execute"))
+        adaptive = MagicMock()
+        adaptive.replan = AsyncMock(side_effect=AssertionError("must not replan"))
+
+        ctx = MagicMock()
+        ctx.user_question = "q"
+        ctx.preferred_provider = None
+        ctx.model = None
+
+        with patch("app.agents.orchestrator.settings") as st:
+            st.max_pipeline_replans = 2
+            out, history = await orch._run_pipeline_replans(
+                executor=executor,
+                exec_result=first,
+                pipeline_ctx=MagicMock(),
+                context=ctx,
+                adaptive=adaptive,
+                table_map="",
+                db_type="postgres",
+                staleness_warning=None,
+                run_id="r",
+                wf_id="w",
+                deadline=_time.monotonic() - 1.0,
+            )
+
+        assert out is first
+        assert history == []
+
+
+class TestOneDeadlinePerPipelineEntry:
+    """The invariant is about wiring: within one method, the initial
+    ``executor.execute(...)`` and the ``_run_pipeline_replans(...)`` that follows it
+    must be handed the *same* deadline name.
+
+    Driving ``_run_complex_pipeline`` end to end needs planners, contexts and a DB
+    session; asking the question directly of the syntax tree is both cheaper and
+    exact. A plant that changed the initial call to ``deadline=None`` walked past
+    every behavioural test here, because they enter at the replan loop.
+    """
+
+    @staticmethod
+    def _deadline_arg(call: Any) -> str | None:
+        import ast
+
+        for kw in call.keywords:
+            if kw.arg == "deadline":
+                return kw.value.id if isinstance(kw.value, ast.Name) else "<not-a-name>"
+        return None
+
+    def _pairs(self) -> list[tuple[str, str | None, str | None]]:
+        """(enclosing function, execute's deadline, replans' deadline) per call site."""
+        import ast
+        import inspect
+
+        from app.agents import orchestrator as mod
+
+        tree = ast.parse(inspect.getsource(mod))
+        out = []
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.AsyncFunctionDef):
+                continue
+            execs, replans = [], []
+            for n in ast.walk(fn):
+                if not isinstance(n, ast.Call) or not isinstance(n.func, ast.Attribute):
+                    continue
+                if n.func.attr == "execute" and getattr(n.func.value, "id", "") == "executor":
+                    execs.append(self._deadline_arg(n))
+                elif n.func.attr == "_run_pipeline_replans":
+                    replans.append(self._deadline_arg(n))
+            for e in execs:
+                for r in replans:
+                    out.append((fn.name, e, r))
+        return out
+
+    def test_every_entry_shares_one_deadline_with_its_replans(self) -> None:
+        pairs = self._pairs()
+        assert pairs, "found no executor.execute + _run_pipeline_replans pair to check"
+        for fn, exec_dl, replan_dl in pairs:
+            assert exec_dl is not None, f"{fn}: executor.execute got no deadline"
+            assert replan_dl is not None, f"{fn}: _run_pipeline_replans got no deadline"
+            assert exec_dl == replan_dl, (
+                f"{fn}: the initial execution used `{exec_dl}` while its replans used "
+                f"`{replan_dl}` — two budgets for one request is the F-SQL-03 defect"
+            )
+
+    def test_every_executor_entry_is_handed_a_deadline(self) -> None:
+        """No `executor.execute` may compute its own budget by omission."""
+        import ast
+        import inspect
+
+        from app.agents import orchestrator as mod
+
+        tree = ast.parse(inspect.getsource(mod))
+        missing = [
+            n.lineno
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "execute"
+            and getattr(n.func.value, "id", "") == "executor"
+            and self._deadline_arg(n) is None
+        ]
+        assert not missing, (
+            f"executor.execute at line(s) {missing} passes no deadline, so it starts a "
+            "fresh budget — which is how the replan count multiplied the request limit"
+        )
