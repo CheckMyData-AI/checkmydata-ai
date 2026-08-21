@@ -190,18 +190,22 @@ def _dquote_escape(value: str) -> str:
 def format_template(template: str, config_vars: dict[str, str]) -> str:
     """Substitute placeholders in a template string.
 
-    Values for db_name, db_user, db_host, and db_password are shell-escaped.
-    When a placeholder sits inside double quotes (e.g. "{db_password}"),
-    the value is escaped for double-quote context. Otherwise it is
-    single-quoted for bare shell context.
+    **Every** value is shell-escaped. When a placeholder sits inside double quotes
+    (e.g. "{db_password}"), the value is escaped for double-quote context. Otherwise
+    it is single-quoted for bare shell context.
+
+    F-SSH-04: ``db_port`` used to be excluded. It was not exploitable — the request
+    schema bounds it (``db_port: int | None = Field(ge=1, le=65535)``), the column is
+    ``Integer``, and both ``ConnectionConfig`` construction sites build from the model,
+    so a metacharacter has no path in. But that guarantee was spread across three
+    files and two call sites, and escaping costs nothing: ``shlex.quote`` of digits
+    returns the digits. An allowlist of *which values are dangerous* is the kind of
+    list that goes stale when a template gains a placeholder; escaping everything
+    cannot.
     """
-    _escape_keys = {"db_name", "db_user", "db_host", "db_password"}
     result = template
     for key, value in config_vars.items():
         placeholder = f"{{{key}}}"
-        if key not in _escape_keys:
-            result = result.replace(placeholder, value)
-            continue
         dq_placeholder = f'"{placeholder}"'
         if dq_placeholder in result:
             result = result.replace(dq_placeholder, '"' + _dquote_escape(value) + '"')
