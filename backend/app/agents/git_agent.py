@@ -124,7 +124,24 @@ class GitAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _freshness_warning(self, project_id: str, repo_dir: Path) -> str | None:
-        """Warn when the local clone has fallen behind the indexed HEAD."""
+        """Describe how the working tree relates to the indexed commit (F-GIT-04).
+
+        This used to call ``count_commits_ahead`` and could therefore see exactly one
+        of four states. W5 built ``classify_freshness`` — exact AHEAD/BEHIND/DIVERGED
+        with counts — and wired it into ``KnowledgeFreshnessService``, leaving this
+        second producer of the same signal on the naive path.
+
+        The two invisible states are the ones that matter most here, because this agent
+        answers from the **working tree**: blame, diffs, file churn. BEHIND means its
+        answers come from a tree the index has already moved past; DIVERGED means the
+        two sources can contradict each other outright. Neither said anything at all.
+
+        Only AHEAD carries a threshold: a clone a commit or two ahead is the normal
+        state of any active repository, and warning on it is the noise that trains
+        people to ignore warnings. Being *behind* is never normal — it means the clone
+        lost history the index still describes — so no count makes it benign.
+        """
+        from app.knowledge.git_tracker import GitFreshness
         from app.models.base import async_session_factory
 
         try:
@@ -137,12 +154,46 @@ class GitAgent(BaseAgent):
         if not last_sha:
             return None
 
-        ahead = await self._git_tracker.count_commits_ahead(repo_dir, last_sha)
-        if ahead >= settings.git_staleness_warn_commits:
+        try:
+            state, ahead, behind = await self._git_tracker.classify_freshness_async(
+                repo_dir, last_sha, "HEAD"
+            )
+        except Exception:  # noqa: BLE001 — freshness is best-effort
+            # Not a routine event: the repo resolved and the indexed SHA resolved, so a
+            # failure here means a bad SHA, a corrupt clone or a fetch problem — worth a
+            # warning, and it cannot fire per-request in normal operation. The reader
+            # gets a caveat too: returning None would say "nothing to warn about", which
+            # is indistinguishable from "this clone is in step with the index".
+            logger.warning(
+                "Freshness check: could not classify this clone against indexed SHA %s",
+                last_sha[:10],
+                exc_info=True,
+            )
             return (
-                f"The local clone is ~{ahead} commits ahead of the last indexed "
-                f"commit ({last_sha[:10]}). Git history is live so this is fine, "
-                "but the semantic knowledge base may be behind."
+                "Could not determine how this clone relates to the indexed commit "
+                f"({last_sha[:10]}), so treat any claim about how current these answers "
+                "are as unverified."
+            )
+
+        if state is GitFreshness.BEHIND:
+            return (
+                f"This clone is missing {behind} commit(s) that the knowledge base was "
+                f"built from ({last_sha[:10]}) — it was reset or force-pushed. Answers "
+                "here describe the current tree, which may no longer contain code the "
+                "knowledge base still refers to."
+            )
+        if state is GitFreshness.DIVERGED:
+            return (
+                f"This clone and the knowledge base have diverged: the clone has {ahead} "
+                f"commit(s) the index never saw, and the index was built from {behind} "
+                f"commit(s) this clone no longer has ({last_sha[:10]}). Git answers and "
+                "knowledge-base answers can contradict each other until a re-index."
+            )
+        if state is GitFreshness.AHEAD and ahead >= settings.git_staleness_warn_commits:
+            return (
+                f"The knowledge base has not seen the newest ~{ahead} commit(s) on this "
+                f"clone (indexed at {last_sha[:10]}). Git history here is live so these "
+                "answers are current, but semantic answers may lag."
             )
         return None
 

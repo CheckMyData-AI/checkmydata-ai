@@ -159,7 +159,11 @@ class TestEvaluate:
 
     @pytest.mark.asyncio
     async def test_git_behind_reported_via_classify(self, tmp_path):
-        """BEHIND state sets git_behind_commits and emits a 'BEHIND' warning."""
+        """BEHIND state sets git_behind_commits and names the clone as the short side.
+
+        The literal "3 commit(s) BEHIND" this used to look for was the inverted
+        sentence; the field it also checks is what the row is really about.
+        """
         svc = KnowledgeFreshnessService()
         with patch("app.knowledge.git_tracker.GitTracker") as mock_tracker_cls:
             mock_tracker_cls.return_value = _make_tracker_mock(
@@ -173,7 +177,7 @@ class TestEvaluate:
                 repo_clone_dir=tmp_path,
             )
         assert snap.git_behind_commits == 3
-        assert any("3 commit(s) BEHIND" in w for w in snap.warnings)
+        assert any("missing 3 commit(s)" in w for w in snap.warnings), snap.warnings
 
     @pytest.mark.asyncio
     async def test_code_graph_populated_no_warning(self, monkeypatch):
@@ -313,7 +317,13 @@ class TestGitFreshnessPerState:
 
     @pytest.mark.asyncio
     async def test_ahead_emits_reindex_recommended_warning(self, tmp_path: Path) -> None:
-        """AHEAD n → warning mentions clone is n commits AHEAD + re-index recommended."""
+        """AHEAD n → the index has not seen n commits; re-index to include them.
+
+        This test used to assert the word "ahead" appeared and the count was present.
+        Both held while the sentence told the reader re-indexing would "capture removed
+        code" — `ahead` counts commits the index has *never seen*, so the code in
+        question is added, not removed. Asserting a word is not asserting the meaning.
+        """
         svc = KnowledgeFreshnessService()
         with patch("app.knowledge.git_tracker.GitTracker") as mock_cls:
             mock_cls.return_value = _make_tracker_mock(
@@ -327,18 +337,27 @@ class TestGitFreshnessPerState:
                 repo_clone_dir=tmp_path,
             )
 
-        git_warnings = [w for w in snap.warnings if "ahead" in w.lower()]
+        git_warnings = [w for w in snap.warnings if "commit" in w.lower()]
         assert git_warnings, "Expected an AHEAD warning"
         warning = git_warnings[0]
         assert "5" in warning, f"Expected commit count 5 in warning: {warning!r}"
-        assert "ahead" in warning.lower(), f"Expected 'ahead' in warning: {warning!r}"
         assert "re-index" in warning.lower() or "reindex" in warning.lower(), (
             f"Expected re-index recommendation in warning: {warning!r}"
         )
+        assert "removed code" not in warning.lower(), (
+            f"ahead means commits the index has not seen — added, not removed: {warning!r}"
+        )
 
     @pytest.mark.asyncio
-    async def test_behind_emits_pull_warning(self, tmp_path: Path) -> None:
-        """BEHIND n → warning mentions n commits BEHIND + pull before trusting."""
+    async def test_behind_names_the_clone_as_the_one_missing_commits(self, tmp_path: Path) -> None:
+        """BEHIND n → this clone is missing n commits the index was built from.
+
+        Renamed from `test_behind_emits_pull_warning`, which asserted `"pull" in
+        warning` — and so pinned the wrong remedy in place. `behind` counts commits the
+        *indexed SHA* can reach that HEAD cannot, i.e. the clone was reset or
+        force-pushed; a pull cannot restore rewritten history. A test that checks for a
+        word will happily hold a sentence that sends the reader somewhere useless.
+        """
         svc = KnowledgeFreshnessService()
         with patch("app.knowledge.git_tracker.GitTracker") as mock_cls:
             mock_cls.return_value = _make_tracker_mock(
@@ -352,12 +371,16 @@ class TestGitFreshnessPerState:
                 repo_clone_dir=tmp_path,
             )
 
-        git_warnings = [w for w in snap.warnings if "behind" in w.lower()]
+        git_warnings = [w for w in snap.warnings if "commit" in w.lower()]
         assert git_warnings, "Expected a BEHIND warning"
         warning = git_warnings[0]
         assert "7" in warning, f"Expected commit count 7 in warning: {warning!r}"
-        assert "behind" in warning.lower(), f"Expected 'behind' in warning: {warning!r}"
-        assert "pull" in warning.lower(), f"Expected 'pull' in warning: {warning!r}"
+        assert "this clone is missing" in warning.lower(), (
+            f"the clone is the side that lost commits: {warning!r}"
+        )
+        assert "pull" not in warning.lower(), (
+            f"a pull cannot restore rewritten history: {warning!r}"
+        )
 
     @pytest.mark.asyncio
     async def test_diverged_emits_explicit_diverged_warning(self, tmp_path: Path) -> None:

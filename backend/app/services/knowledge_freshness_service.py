@@ -249,27 +249,29 @@ class KnowledgeFreshnessService:
                             # Everything is up to date — no warning.
                             pass
                         elif state is GitFreshness.AHEAD:
-                            # Clone HEAD is ahead of the indexed SHA: the
-                            # knowledge base was indexed from a more recent
-                            # commit than the current HEAD (e.g. after a
-                            # force-push / reset). Re-indexing picks up any
-                            # code deleted since then.
+                            # `ahead` counts commits on HEAD that the indexed SHA
+                            # cannot reach: the clone has moved on and the knowledge
+                            # base has not seen that work yet. The ordinary case.
                             _warn(
-                                f"Clone is {ahead} commit(s) ahead of indexed HEAD;"
-                                " re-index recommended to capture removed code.",
+                                f"The knowledge base has not seen the newest {ahead}"
+                                " commit(s) on this clone; re-index to include them.",
                                 category="git",
                                 action_kind="reindex_repo",
                                 action_label="Re-index repository",
                             )
                         elif state is GitFreshness.BEHIND:
-                            # Knowledge base was indexed at a commit that is
-                            # no longer in the current lineage — the local
-                            # clone needs a pull before the index reflects the
-                            # latest code.
+                            # `behind` counts commits the indexed SHA can reach that
+                            # HEAD cannot: the knowledge base describes work this
+                            # clone no longer has, so the clone was reset or
+                            # force-pushed. Telling the reader to pull was the wrong
+                            # remedy — a pull cannot restore rewritten history, and the
+                            # answers at risk are the ones about code that is *gone*.
                             snapshot.git_behind_commits = behind
                             _warn(
-                                f"Knowledge base is {behind} commit(s) BEHIND current HEAD;"
-                                " pull before trusting answers about recent code.",
+                                f"This clone is missing {behind} commit(s) the knowledge"
+                                " base was built from — it was reset or force-pushed."
+                                " Answers may describe code no longer in the tree;"
+                                " re-index to match the current history.",
                                 category="git",
                                 action_kind="reindex_repo",
                                 action_label="Re-index repository",
@@ -280,9 +282,10 @@ class KnowledgeFreshnessService:
                             # onto a different history). Re-indexing is the
                             # only way to reconcile.
                             _warn(
-                                f"Knowledge base has diverged from HEAD"
-                                f" ({ahead} commit(s) ahead, {behind} commit(s) behind);"
-                                " re-index required for accurate answers.",
+                                "The knowledge base and this clone have diverged: the"
+                                f" clone has {ahead} commit(s) the index never saw, and"
+                                f" the index was built from {behind} commit(s) this clone"
+                                " no longer has. Re-index before trusting either.",
                                 category="git",
                                 action_kind="reindex_repo",
                                 action_label="Re-index repository",
