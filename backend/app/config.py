@@ -215,6 +215,14 @@ class Settings(BaseSettings):
     # ``git_agent_auto_pull`` lets the GitAgent refresh the local clone before
     # answering when it has fallen behind the indexed HEAD; off by default
     # because a pull costs network IO + can block on auth.
+    #
+    # F-GIT-02: it also **moves the working tree mid-conversation**, so two answers in
+    # one session can come from different trees and a follow-up question can contradict
+    # the answer it follows up on. The transport risk the row worried about does not
+    # apply — `RepoAnalyzer.clone_or_pull` validates the URL and branch and pins
+    # `GIT_ALLOW_PROTOCOL` itself, so this caller inherits the guard — but the
+    # consistency cost is real and is the reason to leave this off unless a deployment
+    # specifically wants live answers over stable ones.
     git_agent_auto_pull: bool = False
     git_clone_pull_timeout_s: int = 60
     # Bounded iterations for the GitAgent tool-calling loop.

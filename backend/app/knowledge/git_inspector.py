@@ -395,13 +395,25 @@ class GitInspector:
 
         def _run() -> list[dict[str, Any]]:
             repo = self._open_repo()
+
+            # F-GIT-05: this used to resolve `tag.commit` for EVERY tag, build a dict
+            # for each, sort the lot and only then slice to `count`. On a repository
+            # that tags each CI build, returning 100 releases meant thousands of
+            # GitPython object resolutions and a full sort, on the answer path.
+            #
+            # Object resolution is the expensive part, so it is now proportional to the
+            # request: one `for-each-ref` yields name + date as text — cheap, one
+            # subprocess — the top `count` are chosen from that, and only those are
+            # resolved below. Reading the ref list is still proportional to the
+            # repository and inherently so: you cannot know which tags are newest
+            # without looking at all of them.
+            selected = self._newest_tag_names(repo, tag_prefix, count)
             releases: list[dict[str, Any]] = []
-            for tag in repo.tags:
-                if tag_prefix and not tag.name.startswith(tag_prefix):
-                    continue
+            for name in selected:
                 try:
+                    tag = repo.tags[name]
                     commit = tag.commit
-                except (ValueError, GitCommandError):
+                except (ValueError, KeyError, IndexError, GitCommandError):
                     continue
                 raw_message: str | bytes = ""
                 tag_obj = getattr(tag, "tag", None)
@@ -427,10 +439,46 @@ class GitInspector:
                         "message": subject_lines[0] if subject_lines else "",
                     }
                 )
+            # Already ordered and limited by `_newest_tag_names`; the re-sort keeps the
+            # contract explicit for a caller reading only this function.
             releases.sort(key=lambda r: r["commit_date"], reverse=True)
-            return releases[:count]
+            return releases
 
         return await asyncio.to_thread(_run)
+
+    @staticmethod
+    def _newest_tag_names(repo: Any, tag_prefix: str, count: int) -> list[str]:
+        """The `count` newest tag names matching *tag_prefix*, newest first.
+
+        Ordering matches what the per-tag extraction reports: the **commit** date. A
+        lightweight tag's ref points at the commit, so `committerdate` is it; an
+        annotated tag's ref points at a tag object, so the dereferenced
+        `*committerdate` is. One of the two is always empty, and the non-empty one is
+        the answer — which is why both are asked for rather than relying on a single
+        sort key that is undefined for half the tag kinds.
+        """
+        pattern = f"refs/tags/{tag_prefix}*" if tag_prefix else "refs/tags/*"
+        try:
+            raw = repo.git.for_each_ref(
+                pattern,
+                "--format=%(refname:short)%09%(committerdate:iso-strict)"
+                "%09%(*committerdate:iso-strict)",
+            )
+        except GitCommandError:
+            logger.debug("for_each_ref failed; falling back to the tag list", exc_info=True)
+            return [t.name for t in repo.tags][:count]
+
+        rows: list[tuple[str, str]] = []
+        for line in (raw or "").splitlines():
+            parts = line.split("\t")
+            if not parts or not parts[0]:
+                continue
+            name = parts[0]
+            direct = parts[1] if len(parts) > 1 else ""
+            deref = parts[2] if len(parts) > 2 else ""
+            rows.append((deref or direct, name))
+        rows.sort(reverse=True)
+        return [name for _, name in rows[:count]]
 
     async def authors_stats(
         self, *, since_date: str | None = None, max_authors: int = 20
