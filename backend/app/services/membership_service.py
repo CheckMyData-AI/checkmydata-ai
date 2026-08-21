@@ -3,7 +3,7 @@
 import logging
 
 from fastapi import HTTPException
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -23,6 +23,12 @@ ROLE_HIERARCHY = {"owner": 3, "editor": 2, "viewer": 1}
 #: `require_role` call sites, all three literals valid — so the exposure was 143 bare
 #: strings happening to be right, with nothing checking them.
 VALID_ROLES: frozenset[str] = frozenset(ROLE_HIERARCHY)
+
+#: Bounds for the member listing (F-PROJ-13). The default is generous enough that a real
+#: team never meets it; the maximum exists so a caller cannot ask for the whole table by
+#: passing a large number.
+DEFAULT_MEMBER_PAGE = 500
+MAX_MEMBER_PAGE = 1000
 
 #: Roles an invite or a role-change may confer. `owner` is absent on purpose:
 #: ownership has one entrance, `POST /transfer-ownership`, which enforces the receiving
@@ -329,13 +335,102 @@ class MembershipService:
         self,
         db: AsyncSession,
         project_id: str,
+        *,
+        limit: int = DEFAULT_MEMBER_PAGE,
     ) -> list[ProjectMember]:
+        """Members of a project, bounded (F-PROJ-13).
+
+        This was a bare `SELECT` by project with `selectinload(user)` on top and nothing
+        bounding it. The cap is the easy half; the half that matters is not presenting a
+        partial list as a whole one, so hitting it logs at warning and the route
+        publishes the real total alongside. `count_members` is what anyone reporting
+        "how big is this team" should read.
+
+        A non-positive limit raises rather than meaning "unlimited" — that reading is
+        how a cap becomes decorative — and an absurd one is clamped.
+        """
+        if limit <= 0:
+            raise ValueError(f"limit must be positive, got {limit!r}")
+        capped = min(limit, MAX_MEMBER_PAGE)
         result = await db.execute(
             select(ProjectMember)
             .where(ProjectMember.project_id == project_id)
             .options(selectinload(ProjectMember.user))
+            .order_by(ProjectMember.created_at, ProjectMember.id)
+            .limit(capped)
         )
-        return list(result.scalars().all())
+        rows = list(result.scalars().all())
+        if len(rows) == capped:
+            total = await self.count_members(db, project_id)
+            if total > capped:
+                logger.warning(
+                    "Member list for project %s truncated to %d of %d rows; the caller "
+                    "sees a partial list and must not report it as the team size",
+                    project_id[:8],
+                    capped,
+                    total,
+                )
+        return rows
+
+    async def count_members(self, db: AsyncSession, project_id: str) -> int:
+        """How many members the project actually has, capped list or not."""
+        return int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(ProjectMember)
+                    .where(ProjectMember.project_id == project_id)
+                )
+            ).scalar_one()
+        )
+
+    async def leave_project(self, db: AsyncSession, project_id: str, user_id: str) -> bool:
+        """Remove the caller's own membership (F-PROJ-12). False when not a member.
+
+        An owner is refused: walking out would leave the project with nobody able to
+        manage it, which is precisely the stranded workspace F-PROJ-10 was raised
+        about. Leaving is coherent now *because* that row was fixed — the owner can
+        transfer first and then leave — so the refusal names the route that unblocks it.
+
+        Ownership is read the way `get_role` reads it, from the member row **or**
+        `Project.owner_id`: checking only one of the two would let an owner whose row
+        disagrees with the column slip out.
+        """
+        role = await self.get_role(db, project_id, user_id)
+        if role is None:
+            return False
+        if role == "owner":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "The project owner cannot leave — the workspace would have nobody "
+                    "who can manage it. Transfer ownership first "
+                    "(POST /api/invites/{project_id}/transfer-ownership), then leave."
+                ),
+            )
+        member = await db.scalar(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == user_id,
+            )
+        )
+        if member is None:
+            # `get_role` found a role without a member row, which means it came from
+            # `Project.owner_id` — already refused above. Anything else is corruption,
+            # and reporting a successful departure that removed nothing would be a lie.
+            return False
+        await db.delete(member)
+        await db.commit()
+        audit_log(
+            "member.left",
+            user_id=user_id,
+            project_id=project_id,
+            resource_type="member",
+            resource_id=user_id,
+            detail="member left the project",
+            previous_role=role,
+        )
+        return True
 
     async def get_accessible_projects(
         self,

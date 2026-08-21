@@ -139,6 +139,7 @@ human review moves them to `validated`.
 | SCN-124 | A result reads as a ledger — aligned, labelled, and the same in both themes | chat | analyst | implemented | 2026-08-16 PASS |
 | SCN-125 | The answer is the page, not a speech bubble | chat | analyst | implemented | 2026-08-16 PARTIAL → fixed |
 | SCN-126 | Transfer project ownership | members | owner | implemented | 2026-08-21 PASS |
+| SCN-127 | Leave a project | analyst | members | implemented | 2026-08-21 PASS |
 
 ## Personas
 
@@ -517,6 +518,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** loading, error, success
 - **Errors & recovery:** update fails → optimistic revert + toast (`InviteManager.tsx:158-161`). Note: role change has no confirm dialog
 - **`owner` is not one of the choices, by design (F-PROJ-10):** the select offers `editor`/`viewer` and the route's schema accepts only those. Ownership moves through SCN-126, which enforces the receiving owner's plan quota and keeps `Project.owner_id` and the member row in step; allowing "owner" here would be a second, unguarded path to the same state.
+- **The member list is bounded (F-PROJ-13):** the API returns at most 500 members (hard maximum 1000) and marks a partial page with `X-Result-Capped: true`, carrying the real total in `X-Total-Count`. A team that large is not a case this product has met, but a page returned with no marker would read as the whole team — which is the same shape as a truncated query result reported as a total.
 - **Status:** implemented
 - **Coverage:** components/projects/InviteManager.tsx:237-254,149-165
 
@@ -541,6 +543,25 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **The stranded case is an admin action, not a UI one.** `Project.owner_id` is `ondelete="SET NULL"`, so a deleted account leaves a project with **no** owner and no member who may appoint one — the button does not appear for anyone. An admin (`ADMIN_EMAILS`) can transfer it via `POST /api/invites/{project_id}/transfer-ownership`; a non-admin member claiming it is refused with 403, since self-appointment is exactly the escalation that guard is for.
 - **Status:** implemented
 - **Coverage:** components/projects/InviteManager.tsx (row action + confirm), lib/api/workspace.ts `transferOwnership`, `backend/app/services/membership_service.py::transfer_ownership`, `backend/app/api/routes/invites.py::transfer_ownership`; tests `frontend/src/__tests__/components/InviteManager.test.tsx` (6), `backend/tests/unit/test_membership_service.py` (9), `backend/tests/unit/test_ownership_transfer_route.py` (5)
+
+### SCN-127: Leave a project
+- **Persona:** analyst (any member who is not the owner)
+- **Feature:** members
+- **Entry point:** AccessModal → "Leave project" on your own row
+- **Preconditions:** the viewer is a member and is **not** the owner
+- **Steps:**
+  1. Member clicks "Leave project"
+  2. Member confirms
+- **Expected result:** the membership is removed, the project disappears from their list, and they are returned to the project picker
+- **UI elements:** "Leave project" action on the caller's own row only; confirm dialog
+- **States covered:** success, refused (owner), error
+- **Why it exists (F-PROJ-12):** there was no way out. Only an owner could remove a member, so a person who no longer needed a project stayed in it — and the project stayed in their list — until someone else acted.
+- **The owner cannot leave, and the refusal is the point.** An owner walking out would leave the workspace with nobody able to manage it, which is exactly the stranded state SCN-126 exists to prevent. So the answer is 400 with a message naming the way out: transfer ownership first, then leave. This scenario is only coherent *because* SCN-126 shipped — before it, "you must transfer first" would have been advice with no route behind it.
+- **Ownership is read from both places.** A role comes from the member row *or* `Project.owner_id`; an owner whose row disagrees with the column is still refused, because checking one of the two is how such a person slips out.
+- **The request cannot name anyone else.** The endpoint is `/members/me`, not `/members/{id}` — there is no guard to forget, because there is no way to express the thing a guard would refuse.
+- **Errors & recovery:** owner → 400 with the transfer hint; not a member → 404 (not a 204 that removed nothing); network failure → toast, membership unchanged
+- **Status:** implemented
+- **Coverage:** `backend/app/services/membership_service.py::leave_project`, `backend/app/api/routes/invites.py::leave_project`; tests `backend/tests/unit/test_membership_lists_and_leave.py` (17)
 
 ### SCN-023: Remove a member
 - **Persona:** owner
