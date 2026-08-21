@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — re-derivation weighed the same as a person's vote (F-LEARN-03)
+
+- Two paths added exactly `+0.1` to a learning's confidence, carrying very different
+  evidence. A **user upvote** is deduplicated per user by the `LearningVote` table — a
+  second identical vote is a no-op — and vision §7 makes user feedback the highest
+  authority there is. **Re-deriving the same lesson** was deduplicated *not at all*, so
+  four `create_learning` calls in one agent run took 0.6 to 1.0, and the number then read
+  as certainty earned from one lesson submitted four times.
+- Re-derivation now has diminishing returns — the Nth adds `0.1/N` — and a ceiling of
+  0.95. **Pumping is impossible by construction rather than by rule.** The first
+  re-derivation still moves the number, because an independently re-derived lesson *is*
+  evidence; forty of them cannot reach certainty.
+- The vote path is deliberately untouched, and a test says so: dampening a person saying
+  "this helped" would be the wrong lesson to take from this row. `times_confirmed` keeps
+  counting honestly — only the weight changed.
+- **Both mechanisms are load-bearing, and a plant proved it.** Raising the ceiling to 1.0
+  passed a 40-iteration test, because the harmonic steps need roughly 55 repetitions to
+  reach 1.0 unaided. The test now runs to 400 so the ceiling is what is actually left.
+- **Two existing tests pinned the flat `+0.1`** and were re-pointed. They asserted the
+  increment, which is the thing that made pumping possible — the same shape as the
+  freshness test that pinned the word "pull".
+
 ### Fixed — three DataGate checks that concluded from the wrong thing (F-DG-05, F-DG-06, F-DG-08)
 
 - **F-DG-05 — the bounded-percent interval was tightened on one side only.** `200.0` no

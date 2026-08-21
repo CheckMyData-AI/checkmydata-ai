@@ -372,6 +372,30 @@ async def _compile_lock(connection_id: str):
                 _COMPILE_LOCK_REFS[connection_id] = remaining
 
 
+#: Ceiling for confidence built from re-derivation alone (F-LEARN-03). Deliberately
+#: below 1.0: the same lesson being derived again is evidence, but repetition is not
+#: certainty, and a person upvoting it — the highest authority per vision §7 — is what
+#: can carry it the rest of the way.
+_REDERIVE_CEILING = 0.95
+
+
+def _rederive_bump(current: float, times_confirmed: int) -> float:
+    """Confidence after one more *re-derivation* of an existing lesson.
+
+    Diminishing returns, so pumping is impossible by construction rather than by rule:
+    the Nth re-derivation adds ``0.1 / N``. The first still moves the number — an
+    independently re-derived lesson IS evidence — while forty of them cannot reach
+    certainty. Before this, four identical submissions took 0.6 to 1.0, and the number
+    then read as certainty earned from one lesson submitted four times.
+
+    A user's upvote keeps the flat ``+0.1`` in :meth:`vote_learning`: the
+    ``LearningVote`` table already makes a second identical vote a no-op, so that path
+    was never the pumpable one and must not inherit this damping.
+    """
+    step = 0.1 / max(1, times_confirmed)
+    return min(_REDERIVE_CEILING, current + step)
+
+
 class AgentLearningService:
     """Manages the lifecycle of per-connection agent learnings."""
 
@@ -414,7 +438,7 @@ class AgentLearningService:
 
         if entry:
             entry.times_confirmed += 1
-            entry.confidence = min(1.0, entry.confidence + 0.1)
+            entry.confidence = _rederive_bump(entry.confidence, entry.times_confirmed)
             entry.is_active = True
             entry.updated_at = datetime.now(UTC)
             await session.flush()
@@ -430,7 +454,7 @@ class AgentLearningService:
         # contradiction, so we fall through to conflict resolution instead.
         if similar and not lessons_contradict(lesson, similar.lesson):
             similar.times_confirmed += 1
-            similar.confidence = min(1.0, similar.confidence + 0.1)
+            similar.confidence = _rederive_bump(similar.confidence, similar.times_confirmed)
             if len(lesson) > len(similar.lesson):
                 similar.lesson = lesson
                 similar.lesson_hash = lhash

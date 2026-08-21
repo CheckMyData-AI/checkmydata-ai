@@ -98,7 +98,13 @@ class TestCreateLearning:
         )
         assert result == existing
         assert existing.times_confirmed == 2
-        assert existing.confidence == pytest.approx(0.7, abs=0.01)
+        # F-LEARN-03: this used to assert 0.7 — a flat +0.1 per re-derivation, which is
+        # what let four identical submissions take 0.6 to 1.0. Re-derivation now has
+        # diminishing returns (the Nth adds 0.1/N), so the second confirmation adds
+        # 0.05. The assertion is on the property that matters: the number rises, and
+        # this repetition counts for less than the one before it.
+        assert existing.confidence == pytest.approx(0.65, abs=0.01)
+        assert existing.confidence > 0.6
 
     @pytest.mark.asyncio
     async def test_fuzzy_duplicate_merges(self, svc):
