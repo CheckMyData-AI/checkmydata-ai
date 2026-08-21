@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — three DataGate checks that concluded from the wrong thing (F-DG-05, F-DG-06, F-DG-08)
+
+- **F-DG-05 — the bounded-percent interval was tightened on one side only.** `200.0` no
+  longer bounds a percentage at all: it is the *warn-only* magnitude threshold for
+  **rate** columns, which legitimately exceed 100%. Bounded percents got their own
+  hard-fail ceiling of `100.5` — a rounding tolerance — while the floor stayed at `-1.0`,
+  so a `conversion_pct` of `-0.9` passed a check whose entire premise is that the column
+  is a 0..100 share. A negative share is exactly as impossible as 150%. Now symmetric,
+  and a test asserts the **defaults** stay symmetric, because the asymmetry was the
+  defect.
+- **F-DG-06 — the type-consistency check was wrong in both directions.** It counted
+  distinct type *names* and warned above two: `{int, str}` is two and passed — precisely
+  the pairing the module's own docstring blames for `"150"` bypassing every value-range
+  hard check — while `{int, float, Decimal}` is three and warned, which is what any SQL
+  numeric column looks like. A count cannot answer whether types are *related*, so the
+  comparison is now by **family**, and a within-family mix is not a mix. `bool` is its own
+  family despite being an `int` subclass: a column holding `True` and `3` is not
+  consistent, and folding it into numeric is how that goes unnoticed.
+- **F-DG-08 — the truncation half was already sound; the cross-stage half was not.**
+  `_check_truncation` reads the authoritative `truncated` flag first and treats the
+  common-LIMIT heuristic as a labelled fallback. The cartesian check divides one stage's
+  `row_count` by its dependency's — and `row_count` is rows **returned**, with `truncated`
+  the separate flag saying more existed. Two capped counts give a ratio near 1, so the
+  check reported nothing wrong: **a reassuring verdict that was never earned.** It now
+  says it could not judge, names which side was capped, and suggests what would make the
+  check meaningful. A genuine blow-up on untruncated inputs is still reported.
+
 ### Changed — the release scan is proportional to the request (F-GIT-02, F-GIT-03, F-GIT-05)
 
 - **F-GIT-05** was accurate and about *work*, not correctness. `list_releases` resolved

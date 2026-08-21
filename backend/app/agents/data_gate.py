@@ -21,7 +21,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from typing import Any
 
@@ -103,6 +103,29 @@ def _parse_numeric_string(text: str) -> float | None:
     except ValueError:
         return None
     return value if math.isfinite(value) else None
+
+
+def _type_family(value: Any) -> str:
+    """Group a value into a family, so a within-family mix is not reported as one.
+
+    ``bool`` is deliberately its own family even though it is an ``int`` subclass in
+    Python: a column holding both ``True`` and ``3`` is not a consistent column, and
+    treating it as numeric is how that would go unnoticed. Order matters here — the
+    bool test has to come before the numeric one for the same reason.
+    """
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int | float | Decimal):
+        return "number"
+    if isinstance(value, str):
+        return "text"
+    if isinstance(value, bytes | bytearray | memoryview):
+        return "binary"
+    if isinstance(value, datetime | date | time):
+        return "temporal"
+    if isinstance(value, list | tuple | set | dict):
+        return "container"
+    return type(value).__name__
 
 
 def _hashable(value: object) -> object:
@@ -291,12 +314,21 @@ class DataGate:
                 )
 
     def _check_type_consistency(self, qr: QueryResult, outcome: DataGateOutcome) -> None:
-        """Warn if a column has a mix of unrelated Python types."""
+        """Warn if a column mixes *unrelated* types.
+
+        F-DG-06: this counted distinct type names and warned above two, which is wrong
+        in both directions. ``{int, str}`` is two and is precisely the pairing that let
+        ``"150"`` slip past the value-range hard checks; ``{int, float, Decimal}`` is
+        three and is what any SQL numeric column looks like. The question is whether the
+        types are *related*, and a count cannot answer it — so the comparison is by
+        family, and a within-family mix is not a mix.
+        """
         sample = qr.rows[: self._max_sample]
         if not sample:
             return
         for col_idx, col_name in enumerate(qr.columns):
-            type_set: set[str] = set()
+            families: set[str] = set()
+            names: set[str] = set()
             for row in sample:
                 try:
                     val = row[col_idx]
@@ -304,10 +336,11 @@ class DataGate:
                     continue
                 if val is None:
                     continue
-                type_set.add(type(val).__name__)
-            if len(type_set) > 2:
+                families.add(_type_family(val))
+                names.add(type(val).__name__)
+            if len(families) > 1:
                 outcome.warn(
-                    f"Column '{col_name}' has mixed types: {sorted(type_set)}",
+                    f"Column '{col_name}' has mixed types: {sorted(names)}",
                     suggestion=(f"CAST '{col_name}' to a consistent type in the SQL query."),
                 )
 
@@ -598,6 +631,29 @@ class DataGate:
                 continue
             dep_qr = dep.query_result
             cartesian_mul = settings.data_gate_cartesian_multiplier
+
+            # F-DG-08: `row_count` is the number of rows RETURNED; `truncated` is the
+            # separate flag saying more existed. Dividing two capped counts yields a
+            # ratio near 1 and the check would report nothing wrong — a reassuring
+            # verdict that was never earned, since the true ratio is unknowable from
+            # what is in hand. So it says it could not judge instead of judging.
+            if qr.truncated or dep_qr.truncated:
+                which = []
+                if qr.truncated:
+                    which.append(f"'{stage.stage_id}'")
+                if dep_qr.truncated:
+                    which.append(f"'{dep_id}'")
+                outcome.warn(
+                    f"Cannot check stage '{stage.stage_id}' for a cartesian join against "
+                    f"'{dep_id}': {' and '.join(which)} returned a truncated result, so "
+                    "the row counts are capped and their ratio means nothing.",
+                    suggestion=(
+                        "Push the aggregation into SQL, or narrow the query so the "
+                        "result fits, and the check becomes meaningful."
+                    ),
+                )
+                continue
+
             if dep_qr.row_count > 0 and qr.row_count > dep_qr.row_count * cartesian_mul:
                 outcome.warn(
                     f"Stage '{stage.stage_id}' produced {qr.row_count} rows "
