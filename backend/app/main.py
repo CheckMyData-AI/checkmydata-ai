@@ -156,6 +156,32 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Encryption reconcile failed at startup", exc_info=True)
 
+    # F-KNOW-12: the BM25 snapshot is written by the repo index in the WORKER and read
+    # by the chat path in THIS process, and on Heroku those are separate filesystems —
+    # so the reader never had the file. Snapshots are derived from KnowledgeDoc rows,
+    # so each process rebuilds what it is about to read. Off the boot path on purpose:
+    # tokenizing every project's docs must not delay accepting requests, and until it
+    # lands retrieval degrades honestly (`reason="no_snapshot"`) rather than lying.
+    # Deliberately NOT advisory-locked — see the module docstring.
+    try:
+        from app.core.background import spawn_tracked
+        from app.ops.bm25_local_reconcile import reconcile_local_bm25
+
+        async def _bm25_boot_rebuild() -> None:
+            out = await reconcile_local_bm25()
+            logger.info(
+                "BM25 local reconcile: %s (rebuilt=%d present=%d no_docs=%d failed=%d)",
+                out.status,
+                out.rebuilt,
+                out.skipped_present,
+                out.skipped_no_docs,
+                out.failed,
+            )
+
+        spawn_tracked(_bm25_boot_rebuild(), name="bm25_local_reconcile")
+    except Exception:
+        logger.warning("BM25 local reconcile could not be scheduled", exc_info=True)
+
     from app.core.workflow_events import start_workflow_event_subscriber
 
     await start_workflow_event_subscriber()
