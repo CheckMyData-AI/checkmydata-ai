@@ -21,7 +21,12 @@ _invite_svc = InviteService()
 _email_svc = EmailService()
 
 
-def _auth_response(user, token: str) -> "AuthResponse":  # noqa: ANN001
+def _auth_response(
+    user,  # noqa: ANN001
+    token: str,
+    *,
+    verification_email_sent: bool | None = None,
+) -> "AuthResponse":
     """Build the auth response.
 
     Under cookie auth the JWT is omitted from the JSON body (F-AUTH-04) so the SPA
@@ -31,6 +36,7 @@ def _auth_response(user, token: str) -> "AuthResponse":  # noqa: ANN001
     return AuthResponse(
         token="" if settings.auth_cookie_enabled else token,
         expires_in=settings.jwt_expire_minutes * 60,
+        verification_email_sent=verification_email_sent,
         user={
             "id": user.id,
             "email": user.email,
@@ -88,6 +94,11 @@ class AuthResponse(BaseModel):
     # lets the SPA schedule proactive refresh without reading the JWT — required
     # because under cookie auth `token` is empty (F-AUTH-04).
     expires_in: int = 0
+    #: F-PROJ-06. `None` on every path that does not attempt a verification mail
+    #: (login, Google), which is deliberately different from `False` — "we tried and
+    #: it did not go". Without the mail the account cannot verify, so a silent failure
+    #: leaves somebody waiting for a link that will never arrive.
+    verification_email_sent: bool | None = None
 
 
 class UserResponse(BaseModel):
@@ -123,16 +134,22 @@ async def register(
     # sent; pending invites are auto-accepted only once the address is verified (below).
     audit_log("auth.register", user_id=user.id, detail=user.email)
     verify_token = await _auth.issue_email_verification(db, user)
-    await _email_svc.send_verification_email(
+    verification_email_sent = await _email_svc.send_verification_email(
         user_id=user.id, email=user.email, token=verify_token, display_name=user.display_name
     )
+    if not verification_email_sent:
+        logger.warning(
+            "registered %s but the verification email could not be sent — the account "
+            "cannot verify until it is resent",
+            user.email,
+        )
     await _email_svc.send_welcome_email(
         user_id=user.id, email=user.email, display_name=user.display_name
     )
     token = _auth.create_token(user.id, user.email, user.token_version)
     if settings.auth_cookie_enabled:
         set_session_cookies(response, token)
-    return _auth_response(user, token)
+    return _auth_response(user, token, verification_email_sent=verification_email_sent)
 
 
 @router.post("/verify-email")
@@ -196,6 +213,12 @@ async def forgot_password(
     """
     token = await _auth.issue_password_reset(db, body.email)
     if token:
+        # F-PROJ-06 deliberately stops here. `send_password_reset_email` reports whether it
+        # sent, and every other caller now surfaces that — but reporting it on THIS route
+        # rebuilds the account-enumeration oracle the uniform `{"ok": True}` above exists to
+        # prevent: a field that can only appear when a reset was actually issued tells the
+        # caller the address is real. The failure is logged by `_send` and is visible to an
+        # operator, which is the only audience that can act on it anyway.
         await _email_svc.send_password_reset_email(email=body.email.lower().strip(), token=token)
         audit_log("auth.forgot_password", detail=body.email.lower().strip())
     return {"ok": True}

@@ -1,5 +1,6 @@
 """REST routes for project invitations and membership management."""
 
+import logging
 import time
 from typing import Literal
 
@@ -13,6 +14,8 @@ from app.core.rate_limit import limiter
 from app.services.email_service import EmailService
 from app.services.invite_service import InviteService
 from app.services.membership_service import MembershipService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _invite_svc = InviteService()
@@ -35,6 +38,11 @@ class InviteResponse(BaseModel):
     created_at: str | None = None
     accepted_at: str | None = None
     project_name: str | None = None
+    #: F-PROJ-06. The invite row is committed before the email is attempted and the sender
+    #: never raises, so without this a failed delivery answered 200 and said nothing. `None`
+    #: means "not attempted on this response" (listing an existing invite), which is
+    #: deliberately different from `False`, "we tried and it did not go".
+    email_sent: bool | None = None
 
 
 class RoleUpdate(BaseModel):
@@ -77,7 +85,12 @@ async def create_invite(
         resource_id=invite.id,
         detail=body.email,
     )
-    await _email_svc.send_invite_email(
+    # F-PROJ-06: the invite row is committed before this runs, and `_send` never raises —
+    # so a failed send used to answer 200 with an invitation the recipient never hears
+    # about. Worse, retrying answers 409 "already pending", which reads as *already done*
+    # and confirms the owner's wrong belief. Reporting it is the whole fix: the invite
+    # exists either way, and the owner needs to know whether to resend or paste the link.
+    email_sent = await _email_svc.send_invite_email(
         invite_id=invite.id,
         to_email=invite.email,
         project_name=invite.project.name if invite.project else project_id,
@@ -86,7 +99,14 @@ async def create_invite(
         ),
         role=invite.role,
     )
+    if not email_sent:
+        logger.warning(
+            "invite %s created for %s but the email could not be sent",
+            invite.id,
+            invite.email,
+        )
     return InviteResponse(
+        email_sent=email_sent,
         id=invite.id,
         project_id=invite.project_id,
         email=invite.email,
@@ -165,7 +185,7 @@ async def resend_invite(
         resource_id=invite_id,
         detail=invite.email,
     )
-    await _email_svc.send_invite_email(
+    email_sent = await _email_svc.send_invite_email(
         invite_id=f"{invite.id}/resend/{int(time.time())}",
         to_email=invite.email,
         project_name=invite.project.name if invite.project else project_id,
@@ -174,7 +194,14 @@ async def resend_invite(
         ),
         role=invite.role,
     )
-    return {"ok": True}
+    # F-PROJ-06: `{"ok": True}` from a resend that did not send is the same lie as the
+    # create path told, and worse here — resending is what somebody does *because* they
+    # suspect the first one never arrived.
+    if not email_sent:
+        logger.warning(
+            "invite %s resent to %s but the email could not be sent", invite.id, invite.email
+        )
+    return {"ok": True, "email_sent": email_sent}
 
 
 @router.post("/accept/{invite_id}")

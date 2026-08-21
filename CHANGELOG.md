@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a failed email returned 200 and said nothing (2026-08-21)
+
+F-PROJ-06 was recorded as *"commit-then-await-email → partial-success 500s"*. Measured, the
+opposite happens. `EmailService._send` caught everything, called `logger.exception` and
+returned `None`, so a failed send never reached the route: it answered **200 with an
+invitation the recipient will never hear about**. Retrying then returned 409 *"Invite already
+pending"*, which reads as *already done* and confirms the sender's wrong belief.
+
+A 200 hiding a failure, not a 500 hiding a success — and `vision.md` §7 either way.
+
+One mechanism, a decision per call site, because the consequences differ:
+
+- `_send` and all six senders return `bool`. Still no raise: the row is already committed,
+  and turning a notification failure into a 500 would say the whole operation failed.
+- **Invite create and resend report `email_sent`.** Resending is what somebody does
+  *because* they suspect the first never arrived, so `{"ok": True}` from a resend that did
+  not send is the worse of the two lies.
+- **Registration reports `verification_email_sent`.** Without that mail the account cannot
+  verify and the user waits for a link that will never arrive.
+- **The duplicate 409 now names the resend route** instead of reading as *done*.
+- **`forgot_password` deliberately stays silent.** It answers a uniform `{"ok": True}` so the
+  response cannot be used to probe which addresses exist, and a field that appears only when
+  a reset was actually issued rebuilds that oracle. The reason is written at the call site so
+  the next reader does not "fix" the silence.
+
+`None` and `False` are kept distinct throughout: *not attempted on this response* is not the
+same claim as *we tried and it did not go*.
+
+Five planted defects, and **four walked past the first version of the tests** — asserting that
+a response field *exists* says nothing about whether the route populates it. The replacements
+drive the route with a real minimal `Request` (it carries `@limiter.limit`, and faking that
+would mean patching machinery the test has no business touching) and check the registration
+hand-off as a **call argument in the AST**, because a name appearing somewhere in a function
+says nothing about where it goes.
+
+
 ### Security — a plan change through the Customer Portal did not change the plan (2026-08-21)
 
 `_resolve_plan_id` read `metadata.plan_id` off the Stripe subscription and returned it
