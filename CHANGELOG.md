@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the result label said "Total rows" and the number was rows returned (2026-08-21)
+
+`QueryResult.row_count` is set by every connector to `len(data)` **after** the row cap and
+the byte cap. It means rows *returned*. The formatter the model reads said `Total rows: N`,
+so a query matching fifty thousand rows against a thousand-row cap produced
+`Total rows: 1000` (F-SQL-02).
+
+Where truncation was detected, the banner above it already said "capped at 1000 rows (the
+database has more)" — a prompt contradicting itself, with the mislabelled line reading like
+the fact. **The two consumers already disagreed**, and that is what located it:
+`answer_validator.py` wrote "rows returned" while the formatter wrote "Total rows".
+
+An agent told it has the total states a total, and the user cannot see that it counted a
+page. `vision.md` §7, not wording.
+
+The line now reads `Rows returned: N`, with a partial marker when the result was truncated,
+so the count and the banner agree.
+
+**Three producers wrote that claim, not one.** An AST sweep ran before the finding was
+closed — because fixing the site you found and asserting completeness is a mistake this
+audit had already made twice — and turned up `viz_agent._summarize_results`, which is what
+the chart layer reasons over, and `tool_dispatcher`'s enrichment summary, where a model may
+compute a share from the number. A caption carrying a total it does not have is a wrong
+number in a picture, and nobody re-checks a picture. Also closed: F-KNOW-08's board
+row, which had stayed open for two iterations after the clone cleanup shipped in #194.
+
+### Added — the board's own citations have to resolve (2026-08-21)
+
+`docs/qa-audit/issues.md` records what was found and what was done, and nothing checked that
+its evidence existed. Two kinds of drift, both real:
+
+- **F-KNOW-08 was left open after the work shipped**, noticed by accident while reading the
+  list for something else.
+- **F-EXP-01 cited `tests/unit/test_demo_seed.py`** — a file renamed in the same iteration
+  that wrote the citation. The row read as verified and pointed at nothing.
+
+`test_board_evidence_resolves.py` asserts every cited path exists, that the stated tally
+equals the rows it summarises, and that there are closed rows to check at all — a regex
+matching nothing passes everything downstream by vacuity and looks green doing it.
+
+
 ### Fixed — the rules budget existed at two call sites of five, and CLAUDE.md said otherwise (2026-08-21)
 
 Rule text goes straight into an LLM prompt, and nothing in the code bounds its size: files

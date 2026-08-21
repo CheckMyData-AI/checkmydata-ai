@@ -35,7 +35,10 @@ def test_format_query_results_single_row():
     out = format_query_results(qr)
     assert "| id | name |" in out
     assert "| 1 | alice |" in out
-    assert "Total rows: 1" in out
+    # F-SQL-02: `row_count` is rows RETURNED — set to len(data) after the row and byte
+    # caps — so "Total rows" was a label that lied whenever a cap applied. The number
+    # is unchanged; only the claim about it is.
+    assert "Rows returned: 1" in out
 
 
 def test_format_query_results_more_rows_banner():
