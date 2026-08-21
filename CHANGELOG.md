@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — a plan change through the Customer Portal did not change the plan (2026-08-21)
+
+`_resolve_plan_id` read `metadata.plan_id` off the Stripe subscription and returned it
+immediately, consulting the price only when metadata was absent.
+
+Stripe's `metadata` is written once, when our Checkout session creates the subscription, and
+**does not change when the price on that subscription changes**. So a customer moving plans
+through the Customer Portal kept the plan they originally bought (F-BILL-01):
+
+- **downgrade Team → Pro** — they pay Pro and keep Team's limits;
+- **upgrade Pro → Team** — they pay Team and keep Pro's.
+
+Both directions are wrong and both are money.
+
+The price is what Stripe actually charges, so the price is now the authority. Metadata is
+consulted for exactly one situation — the price is real and no catalog row matches it, which
+means the catalog is behind Stripe. Falling back there beats returning `None`, because the
+caller leaves `sub.plan_id` untouched on `None` and a paying customer would silently keep
+whatever they had. That fallback logs at warning naming both the price and the metadata plan,
+since a stale catalog otherwise surfaces only as somebody's wrong entitlement.
+
+
 ### Fixed — the result label said "Total rows" and the number was rows returned (2026-08-21)
 
 `QueryResult.row_count` is set by every connector to `len(data)` **after** the row cap and
