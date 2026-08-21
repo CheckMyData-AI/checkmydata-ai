@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — encryption key rotation (F-CONN-05)
+
+- **There was one key and no way off it.** Swapping `MASTER_ENCRYPTION_KEY` made every
+  stored credential permanently unreadable, so the only path was a hand-written
+  re-encryption script — which meant the key was never rotated. `MASTER_ENCRYPTION_KEY`
+  is now the only key that **writes**; `MASTER_ENCRYPTION_KEYS_OLD` is a comma-separated
+  list of retired keys kept for **reading**. Rotation is two config values and a deploy,
+  with nothing unreadable at any point.
+- Two variables rather than one ordered list, on purpose: the primary is the one thing
+  that must never be ambiguous, and a stray comma in a single list would silently change
+  which key writes. **A malformed retired key raises at first use** — a silently-skipped
+  entry is how a rotation appears to succeed while leaving rows nobody can read.
+- **Retirement is made reachable, and countable.** `app.ops.encryption_reconcile` detects
+  the primary key's fingerprint changing at boot and sweeps every stored secret onto it —
+  advisory-locked, idempotent, never blocks boot, mirroring `embedding_reconcile`. The
+  marker advances **only on a clean sweep**: a row readable by no configured key leaves
+  the status `partial`, names the row, and tells the operator to keep the old key.
+  `pending_rotation_count` is the retirement gate; zero is the green light.
+- The deploy marker is a SHA-256 prefix of the key, never the key — it is written to the
+  database and appears in logs.
+- **The column set is derived, not remembered.** A test compares the sweep's map against
+  every mapped column whose name ends in `_encrypted`, and it immediately found a seventh
+  that an AST sweep over `encrypt(` calls could not see, because nothing writes it:
+  `ProjectRepository.auth_token_encrypted` (now swept anyway, and tracked as F-REPO-04).
+- Runbook: `SECURITY.md` → *Rotating the encryption key*, including the table of boot-log
+  outcomes and the one irreversible mistake available (clearing the retired key on a
+  `partial`).
+
 ### Added — transfer project ownership (F-PROJ-10)
 
 - **The owner was permanent.** `update_member_role` refuses to touch an owner and the
