@@ -117,10 +117,10 @@ heroku logs -a checkmydata-api --tail | grep -E "bm25_build|hybrid_search|Hybrid
 | `_hybrid_search` returning empty → falling back to dense | < 5 % of queries | > 25 % (BM25 not building) |
 | RRF score distribution | Long-tail decay | All zeros (tokenizer broken) |
 | `bm25_build` step duration | < 30 s for ≤ 5k chunks | > 120 s |
-| `./data/bm25/*.pkl` disk usage | < 100 MB per project | Unbounded |
+| `./data/bm25/*.json.gz` disk usage | < 100 MB per project | Unbounded |
 
 **Rollback:** flip flag off → `_handle_search_knowledge` reverts to
-dense-only. The `.pkl` files stay on disk but are not read.
+dense-only. The snapshot files stay on disk but are not read.
 
 ---
 

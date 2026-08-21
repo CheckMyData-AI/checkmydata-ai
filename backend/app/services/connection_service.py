@@ -278,7 +278,7 @@ class ConnectionService:
 
         # Wipe the per-connection schema BM25 snapshot so future re-creates
         # don't accidentally serve stale tables. Postgres rows are removed by
-        # FK cascade; the .pkl is not.
+        # FK cascade; the BM25 snapshot file is not.
         try:
             from app.services.indexing_artifacts import cleanup_connection_artifacts
 

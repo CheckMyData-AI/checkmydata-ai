@@ -395,8 +395,12 @@ def test_indexing_artifacts_cleanup_is_idempotent(tmp_path, monkeypatch):
         indexed_sha="sha-cleanup",
         documents=[("d1", "hello", {})],
     )
-    pkls_before = list(tmp_path.glob("*.pkl"))
-    assert pkls_before, "build should have written a .pkl"
+    # F-KNOW-06 moved the snapshot from pickle to gzip JSON. The contract this test
+    # asserts is unchanged; only the filename is. The `.pkl` assertion is kept as a
+    # negative one, so a regression that reintroduces the primitive fails here too.
+    snaps_before = list(tmp_path.glob("*.json.gz"))
+    assert snaps_before, "build should have written a snapshot"
+    assert not list(tmp_path.glob("*.pkl")), "no pickle may ever be written"
 
     cleanup_project_artifacts(project_id)
     # Idempotent — the second call must not raise even though file is gone.
@@ -405,8 +409,8 @@ def test_indexing_artifacts_cleanup_is_idempotent(tmp_path, monkeypatch):
     # The contract is "the on-disk snapshot is gone". In-memory caches in
     # other BM25Index instances are a separate concern (each instance owns
     # its own cache).
-    pkls_after = list(tmp_path.glob("*.pkl"))
-    assert not pkls_after, f"expected no .pkl after cleanup, got {pkls_after}"
+    snaps_after = list(tmp_path.glob("*.json.gz"))
+    assert not snaps_after, f"expected no snapshot after cleanup, got {snaps_after}"
 
     # Schema retriever path mirrors the same contract. Use a real DbIndex
     # row (not persisted — just constructed) so attribute access matches

@@ -6,15 +6,29 @@ and SQL keywords). Used as the lexical leg of :class:`HybridRetriever`.
 
 Persistence layout::
 
-    {bm25_data_dir}/{project_id}.pkl   # pickled BM25Snapshot
-    {bm25_data_dir}/{project_id}.tmp   # atomic-write staging file
+    {bm25_data_dir}/{project_id}.json.gz   # gzip-compressed JSON snapshot
+    {bm25_data_dir}/{project_id}.tmp       # atomic-write staging file
+
+F-KNOW-06: this was a pickle, and ``pickle.load`` executes whatever the payload
+says. The file is written by the app to its own disk, which is why the finding
+called the risk *latent* — but ``BM25_DATA_DIR`` is configurable, and the
+shared-volume fix that F-KNOW-12 nearly took would have put it somewhere several
+processes can write. The stored form is now data, not opcodes: the **tokenized
+corpus** is persisted and :class:`BM25Okapi` is reconstructed on load, which also
+means the on-disk format is inspectable with ``zcat``.
+
+A leftover ``.pkl`` from an older build is **never read** — not even once, not to
+migrate. Reading it "just for the upgrade" keeps the primitive alive for exactly
+the window an attacker needs, and snapshots are derived data anyway: the start-up
+reconcile (F-KNOW-12) rebuilds a missing one from Postgres for free.
 """
 
 from __future__ import annotations
 
+import gzip
+import json
 import logging
 import os
-import pickle
 import re
 import threading
 from dataclasses import dataclass, field
@@ -73,7 +87,7 @@ _STOPWORDS: frozenset[str] = frozenset(
 
 # Snapshot format version. Bump on breaking changes; older snapshots will be
 # treated as "missing" and rebuilt on next index run.
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -87,6 +101,9 @@ class BM25Snapshot:
     doc_metadatas: list[dict[str, Any]]
     bm25: BM25Okapi
     raw_texts: list[str] = field(default_factory=list)
+    #: The tokenized corpus. This is what is persisted; ``bm25`` is rebuilt from it
+    #: on load, so nothing on disk has to be a class instance.
+    tokenized: list[list[str]] = field(default_factory=list)
 
 
 def tokenize_code(text: str) -> list[str]:
@@ -150,9 +167,24 @@ class BM25Index:
         self._snapshots: dict[str, BM25Snapshot] = {}
         self._lock = threading.RLock()
 
+    def _safe_name(self, project_id: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9_-]", "_", project_id)[:64]
+
     def _path(self, project_id: str) -> Path:
-        safe = re.sub(r"[^a-zA-Z0-9_-]", "_", project_id)[:64]
-        return self._dir / f"{safe}.pkl"
+        return self._dir / f"{self._safe_name(project_id)}.json.gz"
+
+    def _legacy_pickle_path(self, project_id: str) -> Path:
+        """Where an older build left its pickle. Only ever deleted, never read."""
+        return self._dir / f"{self._safe_name(project_id)}.pkl"
+
+    def _drop_legacy_pickle(self, project_id: str) -> None:
+        legacy = self._legacy_pickle_path(project_id)
+        try:
+            if legacy.exists():
+                legacy.unlink()
+                logger.info("bm25_index: removed legacy pickle snapshot %s", legacy)
+        except OSError:
+            logger.warning("bm25_index: could not remove %s", legacy, exc_info=True)
 
     # ------------------------------------------------------------------
     # Build / persist
@@ -198,8 +230,10 @@ class BM25Index:
             doc_metadatas=metadatas,
             bm25=bm25,
             raw_texts=raw_texts,
+            tokenized=tokenized,
         )
         self._persist(project_id, snapshot)
+        self._drop_legacy_pickle(project_id)
         with self._lock:
             self._snapshots[project_id] = snapshot
         logger.info(
@@ -213,9 +247,18 @@ class BM25Index:
     def _persist(self, project_id: str, snapshot: BM25Snapshot) -> None:
         target = self._path(project_id)
         tmp = target.with_suffix(".tmp")
+        payload = {
+            "schema_version": snapshot.schema_version,
+            "project_id": snapshot.project_id,
+            "indexed_sha": snapshot.indexed_sha,
+            "doc_ids": snapshot.doc_ids,
+            "doc_metadatas": snapshot.doc_metadatas,
+            "raw_texts": snapshot.raw_texts,
+            "tokenized": snapshot.tokenized,
+        }
         try:
-            with tmp.open("wb") as fh:
-                pickle.dump(snapshot, fh, protocol=pickle.HIGHEST_PROTOCOL)
+            with gzip.open(tmp, "wt", encoding="utf-8") as fh:
+                json.dump(payload, fh)
             os.replace(tmp, target)
         except Exception:
             try:
@@ -248,10 +291,14 @@ class BM25Index:
                 return cached, "ok"
             path = self._path(project_id)
             if not path.exists():
+                # A leftover `.pkl` is deliberately NOT consulted here: an absent
+                # snapshot is the honest answer, and the start-up reconcile rebuilds
+                # it from Postgres (F-KNOW-12). Reading the pickle to "migrate" it
+                # would keep the primitive alive for exactly the window that matters.
                 return None, MISS_NO_SNAPSHOT
             try:
-                with path.open("rb") as fh:
-                    snap = pickle.load(fh)
+                with gzip.open(path, "rt", encoding="utf-8") as fh:
+                    raw = json.load(fh)
             except Exception:
                 logger.warning(
                     "bm25_index: failed to load %s (corrupted? rebuilding will fix)",
@@ -259,17 +306,36 @@ class BM25Index:
                     exc_info=True,
                 )
                 return None, MISS_CORRUPT
-            if not isinstance(snap, BM25Snapshot):
-                logger.warning("bm25_index: %s holds %s, not a snapshot", path, type(snap).__name__)
+            if not isinstance(raw, dict):
+                logger.warning("bm25_index: %s holds %s, not a snapshot", path, type(raw).__name__)
                 return None, MISS_CORRUPT
-            if snap.schema_version != _SCHEMA_VERSION:
+            if raw.get("schema_version") != _SCHEMA_VERSION:
                 logger.info(
-                    "bm25_index: schema mismatch for %s (have v%d, expected v%d)",
+                    "bm25_index: schema mismatch for %s (have %s, expected v%d)",
                     project_id[:8],
-                    snap.schema_version,
+                    raw.get("schema_version"),
                     _SCHEMA_VERSION,
                 )
                 return None, MISS_SCHEMA_MISMATCH
+            try:
+                tokenized = [list(map(str, doc)) for doc in raw["tokenized"]]
+                snap = BM25Snapshot(
+                    schema_version=_SCHEMA_VERSION,
+                    project_id=str(raw["project_id"]),
+                    indexed_sha=str(raw["indexed_sha"]),
+                    doc_ids=[str(d) for d in raw["doc_ids"]],
+                    doc_metadatas=[dict(m) for m in raw["doc_metadatas"]],
+                    # Rebuilt from the stored tokens: the corpus is data on disk and
+                    # only becomes an object here, in this process.
+                    bm25=BM25Okapi(tokenized),
+                    raw_texts=[str(t) for t in raw.get("raw_texts", [])],
+                    tokenized=tokenized,
+                )
+            except Exception:
+                logger.warning(
+                    "bm25_index: %s parsed but does not describe a corpus", path, exc_info=True
+                )
+                return None, MISS_CORRUPT
             self._snapshots[project_id] = snap
             return snap, "ok"
 
@@ -348,6 +414,7 @@ class BM25Index:
                 path.unlink()
         except OSError:
             logger.warning("bm25_index: failed to delete %s", path, exc_info=True)
+        self._drop_legacy_pickle(project_id)
 
     def indexed_sha(self, project_id: str) -> str | None:
         """Cheap freshness check that doesn't deserialize the full snapshot.

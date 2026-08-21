@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — the BM25 snapshot is no longer a pickle (F-KNOW-06)
+
+- **The row named its own ordering — "swap to safe format *before* F-KNOW-07" — and I
+  broke it.** F-KNOW-07 and F-KNOW-12 both shipped first, and F-KNOW-12 *widened* the
+  exposure in between: the start-up reconcile it added reads a snapshot in both the web
+  and the worker process, on every boot.
+- `pickle.load` executes whatever its payload says. The stored form is now data, not
+  opcodes: the **tokenized corpus** is persisted as gzip JSON (`{id}.json.gz`) and
+  `BM25Okapi` is reconstructed on load, so nothing on disk is a class instance — and the
+  file is inspectable with `zcat`.
+- **`pickle` is not imported by the module at all**, asserted on the import graph.
+  *Unused* is not *absent*: a module that still imports it invites the next person to
+  reach for it, and a grep for the primitive keeps finding a hit.
+- **A leftover `.pkl` is never read** — not once, not to migrate. Reading it "just for
+  the upgrade" keeps the primitive alive for exactly the window that matters. It is
+  deleted on build and on delete, and the F-KNOW-12 reconcile rebuilds the snapshot from
+  Postgres for free — which is what makes the schema-version bump safe.
+- **Cleaning up after the bump:** it also invalidates the per-connection *schema*
+  snapshots, which the DB-index pipeline builds rather than the repo index. Leaving those
+  to rot until someone re-indexes a database would be a gap this change introduced, so
+  `bm25_local_reconcile` gained a schema pass under its own `schema_retrieval_enabled`
+  flag.
+- Twelve stale `.pkl` references in code comments, `CLAUDE.md` and `docs/ROLLOUT_M1_M6.md`
+  corrected in the same change.
+
 ### Fixed — the BM25 snapshot was written on one dyno and read on another (F-KNOW-12)
 
 - **The row I wrote said "dense-only after every restart". The measurement is sharper.**
