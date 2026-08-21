@@ -685,8 +685,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** IDX badge button, polling status
 - **States covered:** loading, success, error
 - **Errors & recovery:** timeout → toast; partial evidence → warning toast; failed/poll-lost → toast (`ConnectionSelector.tsx:124-165`). Viewers see a static badge
+- **A hard crash resolves to `failed`, never to a permanent spinner (F-SCHED-03, 2026-08-21):** a worker that dies mid-run stops writing `heartbeat_at`, and `StaleRunReaper` flips the row after `stale_running_heartbeat_timeout_seconds` (300 s, ten heartbeat intervals) so the badge shows a failure the user can retry instead of pulsing forever. Three properties this rests on, each held by a test: a **just-started** run is not reaped (its start time is inside the grace window, and `heartbeat()` writes a beat before the first interval); a **long but living** run is not reaped, because the beacon is an independent task and the heavy stages hand their work to a thread; and a run whose age **cannot be established at all** — no heartbeat and no start time — is reaped rather than assumed healthy, since a row nobody can tell is stuck is the one nothing will ever reconcile. A live run flipped by mistake is recoverable: the reap is marked, and `RunCoordinator` reconciles it when the still-running pipeline emits its terminal event.
 - **Status:** implemented
-- **Coverage:** components/connections/ConnectionSelector.tsx:1144-1184,116-165
+- **Coverage:** components/connections/ConnectionSelector.tsx:1144-1184,116-165; `backend/app/services/stale_run_reaper.py`; tests `backend/tests/unit/test_stale_run_reaper.py` (12)
 
 ### SCN-034: Run code↔DB sync
 - **Persona:** editor
