@@ -1808,3 +1808,60 @@ correctly. It is **"does an outer loop re-enter the function that sets the origi
 sites set the origin immediately outside the loop they bound, which is the correct pattern
 and the one `execute()` broke by putting the loop's origin at the method boundary while a
 *caller* did the looping.
+
+## 31. The row I wrote myself was wrong in the same way as the rest
+
+F-KNOW-12 was opened during this audit, by me, hours before it was closed. It read:
+
+> BM25 snapshots still live on the dyno's ephemeral disk — hybrid retrieval really is
+> dense-only after every restart until a reindex.
+
+Every clause is true and the conclusion is too weak. Four files say why:
+
+| Evidence | What it establishes |
+|---|---|
+| `Procfile` — `web:` and `worker:` | two Heroku process types, therefore two filesystems |
+| `config.py:653` — `bm25_data_dir = "./data/bm25"` | a local path; `.env.example:540` overrides it with another local path |
+| `worker.py:221` → `pipeline_runner.py:1257` | the **writer** runs in the worker |
+| `context_loader.py:79`, `knowledge_agent.py:61`, `knowledge_catalog_service.py:89` | every **reader** runs in the web dyno |
+
+The file is written on one machine and read on another. Not "dense-only after a
+restart" — **dense-only always**, on any deployment with a separate worker, while
+`hybrid_retrieval_enabled` read as `on` the entire time.
+
+**"Ephemeral" was the wrong noun to reason from.** It suggested a *time* problem
+(the disk is wiped, so the window between reindexes is the exposure), and a time
+problem invites a durability fix: mount a volume, pay for object storage. The actual
+problem is *locality* — writer and reader are different machines — and durable shared
+storage was being priced to solve the wrong half.
+
+Once located, the fix stopped being an infrastructure decision at all: the snapshot is
+**derived data**, built from `KnowledgeDoc` rows in Postgres with no clone, no network
+and no LLM. Each process rebuilds what it is about to read, at start-up, and the whole
+shared-storage question evaporates.
+
+### The lock that would have been wrong
+
+Two reconciles already existed in `app/ops/` and both take a Postgres advisory lock, so
+copying that shape was the obvious move. It would have been a bug. Those two coordinate
+**one shared outcome in the database** — a marker, a queued reindex — where exactly one
+process should act. This one produces a **file on each process's own disk**, so a lock
+would let the first dyno satisfy the check while the second still reads nothing.
+
+The generalisation: *an advisory lock is right when the work is shared and wrong when the
+work is per-replica.* A pattern reused for its familiarity rather than its reason
+inverts.
+
+### The honest limit, stated in code
+
+At boot there is no clone, so the head SHA is unknowable. Rebuilding on a SHA mismatch
+would stamp the snapshot with the last *indexed* commit and present it as current — a
+claim the process has no way to support. So only **missing** snapshots are rebuilt;
+staleness stays with `_repair_bm25_if_stale`, which has a clone. A doc-less project is
+skipped rather than given an empty snapshot, because that converts `no_snapshot` — a real
+gap, reported since F-KNOW-07 — into a silent `no_match`.
+
+That last guard is unreachable from its own caller, whose query filters to projects that
+have docs. A plant removing it left all seven behavioural tests green. It is now asserted
+against `_build_one` directly: **a guard has to be tested where it lives, not through a
+caller that makes it unreachable.**

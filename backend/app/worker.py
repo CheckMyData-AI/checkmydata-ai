@@ -307,6 +307,25 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
     ctx["reaper_task"] = asyncio.create_task(reaper_loop())
     logger.info("ARQ worker started")
 
+    # F-KNOW-12: this process has its own ephemeral disk. The repo index writes the
+    # BM25 snapshot here, but a *restarted* worker (and any second worker dyno) starts
+    # with none, and batch/analytics paths in this process read it. Snapshots are
+    # derived from KnowledgeDoc rows, so rebuild what is missing rather than waiting
+    # for the next full index. Best-effort; never blocks the worker from taking jobs.
+    try:
+        from app.ops.bm25_local_reconcile import reconcile_local_bm25
+
+        _bm25 = await reconcile_local_bm25()
+        logger.info(
+            "BM25 local reconcile (worker): %s (rebuilt=%d present=%d failed=%d)",
+            _bm25.status,
+            _bm25.rebuilt,
+            _bm25.skipped_present,
+            _bm25.failed,
+        )
+    except Exception:
+        logger.warning("BM25 local reconcile failed in worker startup", exc_info=True)
+
 
 async def shutdown(ctx: dict) -> None:  # noqa: ARG001
     """Called once when the worker stops."""

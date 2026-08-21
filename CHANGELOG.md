@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the BM25 snapshot was written on one dyno and read on another (F-KNOW-12)
+
+- **The row I wrote said "dense-only after every restart". The measurement is sharper.**
+  `Procfile` declares `web` and `worker` as separate Heroku process types, so they have
+  separate ephemeral filesystems, and `bm25_data_dir` is a local path with no shared
+  volume. The repo index **writes** the `.pkl` in the worker; every reader on the chat
+  path runs in the web dyno. The file was written on one machine and read on another, so
+  the BM25 leg had **no snapshot to read at all** — while `hybrid_retrieval_enabled` read
+  as on the whole time.
+- **Shared storage was the wrong fix.** The snapshot is derived data: it is built from
+  `KnowledgeDoc` rows in Postgres, with no clone, no network and no LLM. Each process now
+  rebuilds what it is about to read — `app/ops/bm25_local_reconcile.py`, wired into the
+  web lifespan (off the boot path, so tokenizing does not delay accepting requests) and
+  the ARQ worker's `on_startup`.
+- **Deliberately not advisory-locked**, unlike the other two reconciles beside it. They
+  coordinate a single shared outcome in the database; this produces a file on *each*
+  process's own disk, so a lock would let one dyno satisfy the check while the other still
+  reads nothing.
+- **Only missing snapshots are rebuilt, never stale ones.** At boot there is no clone, so
+  the true head SHA is unknowable; stamping the last *indexed* commit and presenting it as
+  current is a claim this process cannot support. Staleness stays with
+  `_repair_bm25_if_stale`, which has a clone.
+- A project with no docs is skipped rather than given an empty snapshot — that would turn
+  `no_snapshot` (a real gap, reported since F-KNOW-07) into a silent `no_match`. The guard
+  is asserted where it lives, because the caller's own filter makes the branch unreachable
+  and a plant removing it left every behavioural test green.
+- Confirming measurement in production: `retrieval_degraded_total{leg="bm25",reason="no_snapshot"}`
+  should fall to zero after a boot.
+
 ### Added — encryption key rotation (F-CONN-05)
 
 - **There was one key and no way off it.** Swapping `MASTER_ENCRYPTION_KEY` made every
