@@ -241,21 +241,52 @@ class BillingService:
             sub.plan_id = plan_id
 
     async def _resolve_plan_id(self, db: AsyncSession, obj: dict) -> str | None:
-        """Map the subscription's Stripe price back to a catalog plan."""
-        meta_plan = obj.get("metadata", {}).get("plan_id")
-        if meta_plan:
-            return meta_plan
+        """Map the subscription's Stripe price back to a catalog plan.
+
+        F-BILL-01. This used to read `metadata.plan_id` first and return it immediately.
+        Stripe's `metadata` is written once, when our Checkout session creates the
+        subscription, and **does not change when the price on that subscription changes** —
+        so a customer who upgrades or downgrades through the Customer Portal kept the plan
+        they originally bought. Downgrade Team → Pro: they pay Pro and keep Team's limits.
+        Upgrade Pro → Team: they pay Team and keep Pro's. Both directions are wrong and
+        both are money.
+
+        The price is what Stripe actually charges, so the price is the authority. Metadata
+        is a statement of intent that ages badly, and it is consulted for exactly one
+        situation: the price is real but no catalog row matches it, which means the catalog
+        is behind Stripe. Falling back there beats returning `None`, because the caller
+        leaves `sub.plan_id` untouched on `None` and a paying customer would silently keep
+        whatever they had — and it warns, because a stale catalog otherwise surfaces only
+        as somebody's wrong entitlement.
+        """
         items = obj.get("items", {}).get("data", [])
         price_id = items[0].get("price", {}).get("id") if items else None
-        if not price_id:
+        meta_plan = obj.get("metadata", {}).get("plan_id")
+
+        if price_id:
+            plans = list((await db.execute(select(Plan))).scalars().all())
+            for plan in plans:
+                db_price = plan.stripe_price_id or getattr(settings, f"stripe_price_{plan.id}", "")
+                if db_price == price_id:
+                    return plan.id
+            if meta_plan:
+                logger.warning(
+                    "billing: no catalog plan matches stripe price %s; falling back to "
+                    "metadata plan_id=%s, which is what was bought and may not be what is "
+                    "being charged. Add the price to the plan catalog.",
+                    price_id,
+                    meta_plan,
+                )
+                return meta_plan
+            logger.warning(
+                "billing: no catalog plan matches stripe price %s and the subscription "
+                "carries no metadata plan_id — the subscription's plan is left unchanged",
+                price_id,
+            )
             return None
-        plans = list((await db.execute(select(Plan))).scalars().all())
-        for plan in plans:
-            db_price = plan.stripe_price_id or getattr(settings, f"stripe_price_{plan.id}", "")
-            if db_price == price_id:
-                return plan.id
-        logger.warning("billing: no plan matches stripe price %s", price_id)
-        return None
+
+        # No expanded items on this payload. Metadata is all there is.
+        return meta_plan or None
 
     async def _find_by_customer(
         self, db: AsyncSession, customer_id: str | None
