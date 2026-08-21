@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the rules budget existed at two call sites of five, and CLAUDE.md said otherwise (2026-08-21)
+
+Rule text goes straight into an LLM prompt, and nothing in the code bounds its size: files
+an operator drops in `rules/` plus rows a user adds through `manage_custom_rules`.
+CLAUDE.md described this as injected "with budget-aware truncation". Measured, that held at
+two of five callers:
+
+| site | cap |
+|---|---|
+| `orchestrator.py:605` | 2000 chars |
+| `sql_agent.py:1991` | 3000 chars |
+| `sql_agent.py:710` — the `get_custom_rules` tool | none |
+| `sql_agent.py:1974` — repair | none |
+| `code_db_sync_pipeline.py:509` | none |
+
+Both existing caps sliced the joined string, cutting the last rule mid-sentence and
+reporting `"... (truncated)"` — which tells the model something was removed and not what,
+so it cannot tell the user its answer may ignore rules they wrote (`vision.md` §7).
+
+The budget now lives in `rules_to_context` (`RULES_CONTEXT_MAX_CHARS`, default 3000):
+
+- **Whole rules are dropped, never half of one.** A truncated instruction is one the model
+  may still follow.
+- **The notice carries a count** — "N of M rules omitted" — so the degradation is
+  reportable rather than merely present.
+- **A single rule larger than the whole budget is cut and named**, pointing at the setting
+  to raise. Of the three bad options for that case — keep it whole and blow the prompt,
+  drop it silently and lose the user's business logic, or cut it — only the third can be
+  reported. It was found by a pre-existing test, not by the new ones.
+
+CLAUDE.md's sentence is corrected in place rather than quietly brought into line, because
+the way it was wrong is the useful part.
+
+
 ### Security — two concurrent creates both passed the same quota check (2026-08-21)
 
 `enforce_connection_quota` ran `SELECT COUNT(…)`, compared, and returned; the insert

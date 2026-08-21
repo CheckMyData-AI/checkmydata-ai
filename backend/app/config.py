@@ -170,6 +170,14 @@ class Settings(BaseSettings):
 
     custom_rules_dir: str = "./rules"
 
+    # F-RULE-03. Rule text goes straight into an LLM prompt and its size is bounded by
+    # nothing the code controls — files an operator drops in `rules/` plus rows a user adds
+    # through `manage_custom_rules`. The cap lives in `rules_to_context` so no caller can
+    # forget it; two of five used to carry their own unrelated numbers (2000 and 3000) and
+    # three had none. Whole rules are dropped rather than cut, and the notice says how many,
+    # so the agent can tell the user its answer may not reflect all of them.
+    rules_context_max_chars: int = 3000
+
     repo_clone_base_dir: str = "./data/repos"
 
     # Where the demo project's sample SQLite lives (F-EXP-01). A file, not `:memory:`:
