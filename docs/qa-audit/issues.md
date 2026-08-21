@@ -85,11 +85,11 @@ frontend **A** (563 smells, 7 SOLID).
 |---|---|
 | 🔴 Critical | 0 |
 | 🟠 High | **0** |
-| 🟡 Medium | 3 |
+| 🟡 Medium | 2 |
 | 🟢 Low | 43 |
 | ⚪ Info | 9 |
 
-*Counted 2026-08-21, not estimated: 55 open rows and 53 struck
+*Counted 2026-08-21, not estimated: 54 open rows and 54 struck
 through, by `grep -c '^| F-'` / `grep -c '^| ~~F-'` over this file. The `~` figures this
 replaced had drifted — the tally is now derived from the rows it summarises.*
 
@@ -176,7 +176,7 @@ gate, durable AuditLog, idempotency).
 | F-PROJ-07 | 🟢 | Service role methods don't validate role strings |
 | F-PROJ-08 | 🟢 | `InviteCreate.role` advertises `owner` but route rejects it |
 | F-PROJ-09 | ⚪ | `revoke_invite` ignores `_user_id`; authz only at route |
-| F-PROJ-10 | 🟡 | No ownership transfer / co-owner → owner departure strands workspace |
+| ~~F-PROJ-10~~ | ✅ | ~~No ownership transfer / co-owner → owner departure strands workspace~~ — **accurate as written, the first row this session that was.** `update_member_role` refuses to touch an owner (`membership_service.py:135`) and `RoleUpdate.role` is `Literal["editor", "viewer"]` (`invites.py:49`), so **no request could appoint a successor or resign** — the owner was permanent. New `POST /api/invites/{project_id}/transfer-ownership` plus a "Make owner" row action visible only to the owner. Four things a naive version gets wrong, each with a test: (1) **both records move together** — ownership is readable from `Project.owner_id` *and* a member row, so changing one leaves two owners, and the plant that moved only the column was invisible to every role assertion because `get_role` falls back to the column — what breaks is the **members list**, which would print the owner as a viewer; (2) the **receiving** owner's plan quota is enforced before any write, since quotas count by `owner_id` (`entitlement_service.py:216`) and skipping it makes transfer a limit bypass wearing a feature's name; (3) the target must already be a member, or transfer doubles as a covert access grant; (4) the old owner is **demoted to editor, not removed** — losing access is a different decision from losing ownership. The **stranded** case is the one the row is really about: `owner_id` is `ondelete="SET NULL"`, so a deleted account leaves a project with no owner and no member who may appoint one, and the route therefore does **not** gate on `require_role(…, "owner")` — that check would 403 everyone on exactly the project the feature exists to rescue. An admin can transfer it; a member claiming it self-appoints and gets 403. The confirm names the demotion and its irreversibility, because a confirm that omits the consequence asks someone to agree to something they were not told. Evidence: `tests/unit/test_membership_service.py` (+9), `test_ownership_transfer_route.py` (5), `frontend/src/__tests__/components/InviteManager.test.tsx` (+6); thirteen plants. SCN-126 added, SCN-022 cross-referenced. |
 | F-PROJ-11 | 🟢 | `add_member` upsert not `IntegrityError`-guarded → concurrent add 500 |
 | F-PROJ-12 | 🟢 | No self-service "leave project" |
 | F-PROJ-13 | 🟢 | `list_members`/`list_invites` no pagination cap |

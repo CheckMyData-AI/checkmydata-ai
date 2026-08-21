@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — transfer project ownership (F-PROJ-10)
+
+- **The owner was permanent.** `update_member_role` refuses to touch an owner and the
+  role route's schema accepts only `editor`/`viewer`, so no request could appoint a
+  successor or resign — an owner leaving took the workspace with them and there was no
+  in-product fix. New `POST /api/invites/{project_id}/transfer-ownership` and a "Make
+  owner" row action visible only to the owner.
+- **Both records move together.** Ownership is readable from `Project.owner_id` *and*
+  from a member row, so changing one leaves two owners. The plant that moved only the
+  column was invisible to every role assertion — `get_role` falls back to the column —
+  and what actually breaks is the members list, which would print the project's owner as
+  a viewer. That is the assertion the test now makes.
+- **The receiving owner's plan quota is enforced**, before any write. Quotas count
+  projects by `owner_id`, so a transfer that skips the check is a plan-limit bypass
+  wearing a feature's name.
+- **The target must already be a member** (transfer is not a covert access grant), and
+  the old owner is **demoted to editor, not removed** — losing access is a different
+  decision from losing ownership, and only the second was asked for.
+- **The stranded case is what the finding is really about.** `owner_id` is
+  `ondelete="SET NULL"`, so a deleted account leaves a project with no owner and no
+  member who may appoint one. The route therefore does **not** gate on
+  `require_role(..., "owner")`: that check would 403 everyone on exactly the project the
+  feature exists to rescue. An admin can transfer it; a member claiming it for themselves
+  gets 403, because self-appointment is the escalation that guard is for.
+- The confirm names the demotion and that it cannot be undone by the actor. A confirm
+  that omits the consequence asks someone to agree to something they were not told.
+
 ### Fixed — a run nobody could tell was stuck (F-SCHED-03)
 
 - **The race the row named does not reproduce; the hole is its mirror image.**

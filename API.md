@@ -355,6 +355,7 @@ Status codes:
 | GET | `/api/invites/pending` | List pending invites for current user |
 | GET | `/api/invites/{project_id}/members` | List project members |
 | DELETE | `/api/invites/{project_id}/members/{member_user_id}` | Remove member (owner) |
+| POST | `/api/invites/{project_id}/transfer-ownership` | **Transfer ownership** (F-PROJ-10). Body `{new_owner_user_id}`. `204` on success, no body. The target must already be a member (else `400`); the previous owner is demoted to **editor**, not removed; `Project.owner_id` and the member row move together. The **receiving** owner's plan project-quota is enforced before any write. Authorization is the current owner **or** an admin (`ADMIN_EMAILS`) — deliberately not `require_role(…, "owner")`, because `owner_id` is `ondelete="SET NULL"` and an orphaned project has no owner, so that check would `403` everyone on exactly the project this exists to rescue. A non-admin member claiming an orphaned project gets `403`. Rate limit `5/minute`. Note `PATCH …/members/{id}` accepts only `editor`/`viewer` — ownership has one way in, so the quota check cannot be bypassed. |
 
 ## Schedules
 

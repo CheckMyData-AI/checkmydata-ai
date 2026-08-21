@@ -117,6 +117,14 @@ export const invites = {
     request<{ ok: boolean }>(`/invites/${projectId}/members/${userId}`, {
       method: "DELETE",
     }),
+  // F-PROJ-10: ownership has one way in. `updateMemberRole` deliberately cannot set
+  // "owner" — this route also enforces the receiving owner's plan quota and keeps
+  // `Project.owner_id` and the member row in step. 204, no body.
+  transferOwnership: (projectId: string, newOwnerUserId: string) =>
+    request<void>(`/invites/${projectId}/transfer-ownership`, {
+      method: "POST",
+      body: JSON.stringify({ new_owner_user_id: newOwnerUserId }),
+    }),
 };
 
 export const notes = {
