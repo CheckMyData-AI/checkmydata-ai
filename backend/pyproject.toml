@@ -132,6 +132,19 @@ markers = [
 [tool.coverage.run]
 source = ["app"]
 omit = ["app/mcp_server/__main__.py"]
+# SQLAlchemy's async layer switches through a greenlet (`greenlet_spawn`), and
+# coverage does not follow a greenlet switch unless told to. Without this, every
+# statement after the first `await` against the database — inside the same frame —
+# was executed and reported as uncovered. That is most of every route body.
+#
+# Measured on `tests/integration` (673 tests, identical run, 2026-08-25):
+#   without → app/api/routes/chat.py  35%  (493 statements missing)
+#   with    → app/api/routes/chat.py  46%  (405 missing)
+# 88 statements on one file, all of them running the whole time.
+#
+# It also means the 35% that an audit reported for that file, and the number the
+# `fail_under` gate compares against, were both measuring less than was tested.
+concurrency = ["greenlet", "thread"]
 
 [tool.coverage.report]
 show_missing = true
