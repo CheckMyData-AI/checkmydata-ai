@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — Sentry was reachable by two secrets neither scrubbing layer could see (N3)
+
+`SENTRY_DSN` was set in production on 2026-08-25, which made this urgent rather than
+theoretical: from that moment an exception carrying a connection string would forward
+the password to a third party.
+
+- Sentry's built-in `EventScrubber` matches **key names**; `before_send` exists to catch
+  what it cannot — a credential embedded inside a string value. This project had layer 2
+  since T-OBS-1, but it walked only `exception.values`, `logentry` and `breadcrumbs`. It
+  never walked **`extra`** or **`contexts`** — and the default denylist carries neither
+  `dsn` nor `database_url`. A key of either name, in either place, was caught by
+  **neither layer**.
+- Measured on `sentry-sdk` 2.64.0 before the fix: `DEFAULT_DENYLIST` holds 33 keys,
+  `dsn` / `database_url` / `auth_key` absent; `scrub_event` left `SUPERSECRET` intact in
+  both `extra` and `contexts`. After: both clean, **and the host survives** — a redaction
+  that eats `db.internal` tells an operator nothing about what failed.
+- Layer 1 is now wired too, with the denylist **extended** (33 → 39) rather than
+  replaced: naming only the additions would have dropped `password`, `token`, `api_key`
+  and `authorization`.
+- `release` is taken from `HEROKU_SLUG_COMMIT`, and `None` when the platform does not
+  supply it. Inventing a release — a version string, a timestamp — produces one nothing
+  ever attached commits to, which is worse than none because it looks configured.
+  `runtime-dyno-metadata` enabled on the app so the variable exists at all.
+- Fifteen tests. One asserts **layer 1 alone still leaks values** — an assertion about
+  Sentry rather than about this code, so if the SDK ever starts scrubbing values the
+  redundancy question re-opens from a red test rather than from memory.
+
 ### Changed — the coverage gate meets reality: 72% → 80%
 
 - The gate had not moved while the tracing bug above kept its input systematically low.
