@@ -368,6 +368,8 @@ Per-connection, **not** a global flag: `collection_enabled` (default **on**) and
 | `reaper_interval_seconds` | 60 | How often the reaper sweeps for stuck rows |
 | `stale_running_heartbeat_timeout_seconds` | 300 | Rows older than this are reset to `failed` |
 
+**A reaped run now reaches `error_log` (N3, 2026-08-25).** `RunCoordinator` catalogs failures only on terminal-event paths (`run_coordinator.py:317`, `:450`, `:485`); the reaper flips rows with a bulk `UPDATE` and emits no terminal event, so 143 failed runs produced 3 catalog rows. `StaleRunReaper` reads the doomed rows before killing them and catalogs each — message carries the step (`stale run reaped (step: graph_build)`), so the concentration that identifies a cause is visible in `/api/logs` rather than only in ad-hoc SQL. The run's `error` column stays exactly `REAP_ERROR`, because `run_coordinator.py:393` compares it verbatim to reconcile a run that turns out to be alive.
+
 Stuck `running` DB-index / sync / repo-index rows self-heal: a crashed worker stops touching `heartbeat_at`, and the reaper flips the row to `failed` on the next sweep so the UI surfaces the failure instead of spinning indefinitely. New endpoint `GET /api/projects/{id}/sync-history` (see `API.md`) returns the last N daily-sync audit rows with per-project outcome details.
 
 ## Conventions

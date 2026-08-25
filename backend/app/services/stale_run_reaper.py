@@ -73,6 +73,51 @@ class StaleRunReaper:
             | (model.heartbeat_at.is_(None) & model.started_at.is_(None))
         )
 
+    async def _catalog(
+        self,
+        session: AsyncSession,
+        doomed: list[tuple[str, str, str, str | None, str | None]],
+    ) -> None:
+        """Record each reaped run in the product's own error catalog.
+
+        The message carries the **step**, not just the marker. ``stale run reaped``
+        alone collapses every reaped run of a kind onto one line; with the step it
+        separates, and separating is what made the cause findable — 64 of 70 failures
+        were `graph_build` specifically. An operator should get that concentration from
+        the product rather than from someone running SQL by hand.
+
+        The run's own ``error`` column stays exactly :data:`REAP_ERROR`:
+        ``run_coordinator.py:393`` compares it verbatim to recognise a reaped run and
+        reconcile it when the pipeline turns out to be alive. Only the catalog message
+        is enriched.
+
+        Best-effort by construction. The catalog is a diagnostic, and a diagnostic that
+        can abort the recovery it is describing is worse than one that is occasionally
+        incomplete — a failed write here would leave the `running` rows unreaped and the
+        UI spinning, which is the state this whole class exists to end.
+        """
+        if not doomed:
+            return
+        # Imported here rather than at module scope: `run_coordinator` imports
+        # REAP_ERROR from this module, and the service pulls in the model layer.
+        from app.services.error_log_service import ErrorLogService
+
+        catalog = ErrorLogService()
+        for run_id, project_id, kind, connection_id, current_step in doomed:
+            try:
+                await catalog.upsert(
+                    session,
+                    project_id=project_id,
+                    source="run",
+                    kind=kind,
+                    message=f"{REAP_ERROR} (step: {current_step or 'unknown'})",
+                    failure_kind="fatal",
+                    sample_ref=run_id,
+                    meta={"connection_id": connection_id, "current_step": current_step},
+                )
+            except Exception:
+                logger.warning("Reaper: failed to catalog reaped run %s", run_id[:8], exc_info=True)
+
     async def reap_once(self, session: AsyncSession, *, timeout_seconds: int) -> dict[str, int]:
         cutoff = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
 
@@ -113,6 +158,29 @@ class StaleRunReaper:
             )
         ).scalar_one()
 
+        # Read what is about to die *before* killing it, and keep plain values rather
+        # than ORM objects: the bulk UPDATE below may expire them, and this is the only
+        # moment the run's own step is still knowable.
+        #
+        # Why this exists at all: `RunCoordinator` catalogs failures in three places
+        # (`run_coordinator.py:317`, `:450`, `:485`) and every one sits on a
+        # terminal-event path. A reaped run emits no terminal event — its process is
+        # gone — so no writer was ever reached, and `error_log` held 3 rows against 143
+        # failed runs. The catalog is what `/api/logs` shows an operator; a failure it
+        # cannot see is a failure nobody is told about.
+        doomed = [
+            (r.id, r.project_id, r.kind, r.connection_id, r.current_step)
+            for r in (
+                await session.execute(
+                    select(IndexingRun).where(
+                        IndexingRun.status == "running", self._stale_run(IndexingRun, cutoff)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        ]
+
         runs_failed: CursorResult = await session.execute(  # type: ignore[assignment]
             update(IndexingRun)
             .where(IndexingRun.status == "running", self._stale_run(IndexingRun, cutoff))
@@ -129,6 +197,7 @@ class StaleRunReaper:
             .values(status="cancelled", finished_at=datetime.now(UTC))
         )
         await session.flush()
+        await self._catalog(session, doomed)
 
         # max(0, …) guards the -1 "rowcount unknown" sentinel some drivers return.
         runs_count = max(0, int(runs_failed.rowcount or 0)) + max(
