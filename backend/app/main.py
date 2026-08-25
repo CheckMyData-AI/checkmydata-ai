@@ -104,6 +104,14 @@ async def lifespan(app: FastAPI):
             logger.warning("Migration attempt %d failed, retrying in 2s…", _attempt, exc_info=True)
             await asyncio.sleep(2)
     await init_db()
+    # Say, on EVERY boot, which configured capabilities the image does not actually
+    # carry. `RERANKER_ENABLED=true` ran in production against an image with neither
+    # `sentence_transformers` nor `torch`; the only signal was one lazy WARNING on first
+    # vector-store use, hours past the boot log anyone reads after a deploy. Never
+    # raises — see the module docstring.
+    from app.ops.capability_report import report_capabilities
+
+    report_capabilities()
     await _check_alembic_head()
     await _cleanup_stale_checkpoints()
     from app.core.reaper_loop import run_reaper_sweep
