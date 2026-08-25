@@ -88,16 +88,8 @@ frontend **A** (563 smells, 7 SOLID).
 | 🟡 Medium | 0 |
 | 🟢 Low | 25 |
 | ⚪ Info | 12 |
-<<<<<<< HEAD
 
-*Counted 2026-08-21, not estimated: 34 open rows and 75 struck, by `grep -c '^| F-'` / `grep -c '^| ~~F-'` over this file — `F-` rows only. There are also **3 open `CB-` rows**, which those two commands do not see; the severity table above counts all 37 open rows of both kinds, which is why it does not match the figure here. Every number on this page is derived from the rows rather than typed.**3 open `CB-` rows**, which those two commands do not see; the severity table above counts all 39 open rows of both kinds, which is why it does not match the figure here. The two measure different sets and each now says which. Every number on this page is derived from the rows rather than typed — the two occasions this session when a figure drifted were both hand-typed ones.**39 open `F-` rows and 70 struck** by `grep -c '^| F-'` / `grep -c '^| ~~F-'`, plus **3 open `CB-` rows**. The severity table above counts all 42 open rows of both kinds, which is why it does not match the `F-` figure — the two measure different sets and each says which. Both are derived from the rows themselves; the `~` figures they replaced had drifted.*Counted 2026-08-21, not estimated: 39 open rows and 70 struck
-*Counted 2026-08-21, not estimated: 37 open rows and 72 struck
-through, by `grep -c '^| F-'` / `grep -c '^| ~~F-'` over this file. The `~` figures this
-replaced had drifted — the tally is now derived from the rows it summarises.*
-=======
-
-*Counted 2026-08-21, not estimated: 35 open rows and 74 struck, by `grep -c '^| F-'` / `grep -c '^| ~~F-'` over this file — `F-` rows only. There are also **3 open `CB-` rows**, which those two commands do not see; the severity table above counts all 38 open rows of both kinds, which is why it does not match the figure here. The two measure different sets and each now says which. Every number on this page is derived from the rows rather than typed.**35 open `F-` rows and 74 struck** by `grep -c '^| F-'` / `grep -c '^| ~~F-'`, plus **3 open `CB-` rows**. The severity table above counts all 38 open rows of both kinds, which is why it does not match the `F-` figure — the two measure different sets and each says which. Both are derived from the rows themselves.*
->>>>>>> 979d603 (wip(membership): leave + bounded lists — backend gates pending)
+*Counted 2026-08-25, not estimated: **34 open `F-` rows and 75 struck** by `grep -cE '^\| F-'` / `grep -cE '^\| ~~F-'` over this file, plus **3 open `CB-` rows** those two commands do not see. The severity table above counts all 37 open rows of both kinds, which is why it does not match the `F-` figure — the two measure different sets and each says which. Both are derived from the rows themselves.*
 
 *(R1+R2 closed 4 High + 8 Medium + 3 Low. R3 (`fbf8112`) closed 2 High (F-SSH-08, F-RULE-01) +
 5 Medium (F-RULE-05, F-DG-07/09, F-GRAPH-01, F-LEARN-07) + 1 Low (F-SSH-06). The 2026-07-19 UX

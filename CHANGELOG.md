@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a green gate that could not see a duplicate (N5)
+
+- `docs/qa-audit/issues.md` carried **three unresolved git conflict markers** (lines 91,
+  97, 100) and four copies of its tally paragraph, each claiming a different count:
+  34/75, 37/72, 39/70, 35/74. The whole suite stayed green through it.
+- The reason it stayed green is the interesting half. `test_the_tally_matches_the_rows_it_summarises`
+  used `re.search`, which returns the **first** match and stops. The first copy happened
+  to be the correct one, so the check passed and the three contradicting copies — and the
+  raw markers beside them — were invisible to the only test that reads this file. A check
+  that catches an absence but not a duplication is the case where a green gate is worse
+  than no gate.
+- The tally is now asserted to occur **exactly once** before its values are compared, and
+  the pattern accepts both phrasings in circulation (`34 open rows` and ``34 open `F-` rows``)
+  — a duplicate written in the other phrasing is precisely the one a narrow pattern lets
+  through, and `main` carries such a pair today.
+- New repository-wide ratchet: **no tracked file may contain a conflict marker.** It scans
+  `git ls-files`, not `docs/` — the board is where it happened this time; the next one
+  lands in a migration or a fixture, where the numbers look plausible and nobody re-reads
+  them. Only `<<<<<<< ` and `>>>>>>> ` count as evidence: a bare `=======` is also a legal
+  Markdown setext underline, and git never writes it without the other two, so excluding
+  it costs no detection and removes the one possible false positive.
+- The board's numbers are re-derived from the rows: **34 open `F-` rows, 75 struck, 3 open
+  `CB-` rows**, matching the severity table's 37.
+
 ### Fixed — re-derivation weighed the same as a person's vote (F-LEARN-03)
 
 - Two paths added exactly `+0.1` to a learning's confidence, carrying very different

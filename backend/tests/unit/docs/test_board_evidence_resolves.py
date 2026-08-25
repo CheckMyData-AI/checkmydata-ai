@@ -86,20 +86,36 @@ def test_every_cited_path_exists() -> None:
 def test_the_tally_matches_the_rows_it_summarises() -> None:
     """The stated count is derived, so a drift between it and the rows means one of them
     was edited without the other. One row of drift is what surfaced a whole iteration's
-    work sitting outside `main` earlier today."""
+    work sitting outside `main` earlier today.
+
+    **Exactly one tally, not at least one.** This assertion used `re.search`, which
+    returns the first match and stops. A merge left four copies of the paragraph in this
+    file claiming 34/75, 37/72, 39/70 and 35/74 open-and-struck rows; the first happened
+    to be right, so the check passed and the three contradicting copies stayed invisible
+    — alongside three raw conflict markers, in the very file this test exists to guard.
+    A check that catches an absence but not a duplication is the case where a green gate
+    is worse than no gate, so the count is asserted before the values are.
+    """
     text = BOARD.read_text(encoding="utf-8")
     open_rows = len(re.findall(r"^\| F-[A-Z]+-\d+ \|", text, re.M))
     closed_rows = len(re.findall(r"^\| ~~F-[A-Z0-9]+-\w+~~ \|", text, re.M))
 
-    stated = re.search(r"(\d+) open rows and (\d+) struck", text)
-    assert stated, (
-        "the tally paragraph is gone — it is the only thing tying the summary to the rows"
+    # ``F-`` is optional because the phrasing has drifted across rewrites — "34 open
+    # rows" and "34 open `F-` rows" both occur, and a duplicate written in the other
+    # phrasing is exactly the one a narrow pattern would let through. `main` carries
+    # such a pair right now: the bolded copy and a bare-worded fragment beneath it.
+    stated = re.findall(r"(\d+) open (?:`?F-`? )?rows and (\d+) struck", text)
+    assert len(stated) == 1, (
+        f"the board states its tally {len(stated)} times, not once: {stated}. A second "
+        "copy is a second source of truth, and the two drift apart silently — the "
+        "duplicate is usually a merge that was resolved by keeping both sides."
     )
-    assert int(stated.group(1)) == open_rows, (
-        f"tally says {stated.group(1)} open rows, the file has {open_rows}"
+    said_open, said_closed = stated[0]
+    assert int(said_open) == open_rows, (
+        f"tally says {said_open} open rows, the file has {open_rows}"
     )
-    assert int(stated.group(2)) == closed_rows, (
-        f"tally says {stated.group(2)} struck through, the file has {closed_rows}"
+    assert int(said_closed) == closed_rows, (
+        f"tally says {said_closed} struck through, the file has {closed_rows}"
     )
 
 
