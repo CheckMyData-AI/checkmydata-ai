@@ -299,6 +299,20 @@ Learnings are stored per-connection by default (`cross_connection_learnings_enab
 
 ## Feature flags
 
+### Deployment vs. code default — `make config-drift`
+
+Production is allowed to differ from a code default, but only on the record. Ten
+undocumented divergences were found on 2026-08-23 and unset on 2026-08-25, one of them
+`CROSS_CONNECTION_LEARNINGS_ENABLED`, which `vision.md` §7 calls an invariant.
+
+`make config-drift` compares every boolean setting deployed on Heroku against
+`backend/app/config.py` and **exits non-zero** on anything that is not recorded, with a
+reason, in the `DELIBERATE` map in `scripts/config_drift.py`. Five entries live there
+today: `BILLING_ENABLED`, `DAILY_KNOWLEDGE_SYNC_ENABLED`, `GIT_AGENT_AUTO_PULL`,
+`MCP_ENABLED`, `MCP_MOUNT_ENABLED`. Adding a key is how you record a decision; it belongs
+in the same change as the `heroku config:set` it describes.
+
+
 Most behavior ships behind flags in `backend/app/config.py`. Gate regressions the same way.
 
 **Code intelligence (note defaults):**
