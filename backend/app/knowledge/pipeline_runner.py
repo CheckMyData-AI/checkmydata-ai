@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -55,6 +56,36 @@ if TYPE_CHECKING:
     from app.services.ssh_key_service import SshKeyService
 
 logger = logging.getLogger(__name__)
+
+
+def next_regeneration_queue(
+    *,
+    prior_failed: Iterable[str],
+    requeued: Iterable[str],
+    still_failed: Iterable[str],
+) -> list[str]:
+    """Which document paths the next index run should try to regenerate.
+
+    Three inputs, and each term of the expression stops a different failure:
+
+    * ``prior_failed`` — what the previous run left owed.
+    * ``requeued`` — what *this* run actually attempted. Subtracting it is what lets a
+      path leave the queue: a path retried and not in ``still_failed`` succeeded, so
+      keeping it would mean a document that works is regenerated on every run forever.
+    * ``still_failed`` — what failed during this run, whether it was owed before or is
+      new. Union rather than replace, because a path the run never reached is still
+      owed; replacing would silently forgive everything a short run did not get to.
+
+    Extracted from ``_finalise`` so it can be tested at all. Inside an eighty-line
+    method that also writes the git index, saves caches and deletes the checkpoint, this
+    arithmetic was reachable only by driving the whole pipeline — which is why it had no
+    test, and why a wrong term here would surface as documents that quietly stop being
+    retried rather than as anything failing.
+
+    Sorted so the persisted value is stable: an unordered set would make every run look
+    like a change to whatever compares these.
+    """
+    return sorted((set(prior_failed) - set(requeued)) | set(still_failed))
 
 
 @dataclass
@@ -1808,18 +1839,16 @@ class IndexingPipelineRunner:
                 profile=state.profile,
             )
 
-            # Persist the regeneration queue: this run's still-failed docs plus
-            # any previously-queued paths we did NOT manage to retry this run,
-            # minus the ones that just succeeded. requeued_doc_paths that are
-            # not in failed_doc_paths succeeded and are dropped.
+            # Persist the regeneration queue. The arithmetic lives in
+            # ``next_regeneration_queue`` — see there for what each term protects.
             try:
                 prior_failed = await self._cache_svc.get_failed_doc_paths(db, project_id)
-                requeued = set(state.requeued_doc_paths)
-                still_failed = set(state.failed_doc_paths)
-                # Keep prior entries we never got to retry (not requeued this run),
-                # union with anything that failed this run.
-                pending = (set(prior_failed) - requeued) | still_failed
-                await self._cache_svc.set_failed_doc_paths(db, project_id, sorted(pending))
+                pending = next_regeneration_queue(
+                    prior_failed=prior_failed,
+                    requeued=state.requeued_doc_paths,
+                    still_failed=state.failed_doc_paths,
+                )
+                await self._cache_svc.set_failed_doc_paths(db, project_id, pending)
             except Exception:
                 # R3-7: this was a debug-level swallow, so a failure to persist
                 # the regeneration queue meant failed docs silently never got
