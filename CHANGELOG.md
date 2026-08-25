@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the coverage gate meets reality: 72% → 80%
+
+- The gate had not moved while the tracing bug above kept its input systematically low.
+  With coverage following the greenlet, the combined unit+integration run measures
+  **82%** (41 023 statements, 7 383 missing — CI on #228); the same run without the
+  setting measured **79%** (8 448 missing — CI on #227). **1 065 statements** across the
+  project were executing and counted as untested.
+- A gate ten points below reality cannot fail for any regression anybody would plausibly
+  ship, which makes it decoration. Two points of headroom are deliberate: a gate set at
+  the current number turns red on noise, and a gate that fires without a cause is one
+  people learn to route around.
+- **The number lived in four places** — `pyproject.toml`, `ci.yml`, and twice in
+  `CLAUDE.md`. That is the shape this repository spent the day finding elsewhere, so it
+  is now checked: `test_coverage_gate_is_stated_once.py` fails when the declared value,
+  the enforced value, and the documented value disagree. It caught the `CLAUDE.md` copy
+  on its first run, and a planted drift between the two config files on its second.
+- `CLAUDE.md`'s test and coverage figures re-measured with it: **7 528 tests** (6 819
+  backend collected + 709 frontend across 94 files), full backend run `6815 passed,
+  4 skipped, 1 xfailed`.
+
 ### Fixed — coverage stopped tracing at the first database `await`
 
 - `[tool.coverage.run]` carried no `concurrency` setting, so coverage used its default,
