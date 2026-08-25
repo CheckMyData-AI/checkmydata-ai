@@ -90,7 +90,10 @@ def upgrade() -> None:
         sa.Column("sample_ref", sa.String(length=36), nullable=True),
         sa.Column("occurrences", sa.Integer(), nullable=False, server_default="1"),
         sa.Column(
-            "first_seen_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+            "first_seen_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
         ),
         sa.Column(
             "last_seen_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False

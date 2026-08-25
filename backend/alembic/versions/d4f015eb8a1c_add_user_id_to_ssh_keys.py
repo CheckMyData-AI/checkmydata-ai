@@ -22,7 +22,11 @@ def upgrade() -> None:
         )
         batch_op.create_index("ix_ssh_keys_user_id", ["user_id"])
         batch_op.create_foreign_key(
-            "fk_ssh_keys_user_id", "users", ["user_id"], ["id"], ondelete="CASCADE",
+            "fk_ssh_keys_user_id",
+            "users",
+            ["user_id"],
+            ["id"],
+            ondelete="CASCADE",
         )
 
 

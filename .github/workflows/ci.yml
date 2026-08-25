@@ -2,9 +2,14 @@ name: CI
 
 on:
   push:
+    # Scoped on purpose: the pull_request trigger below already covers branch work,
+    # and a full suite on every push to every branch buys nothing.
     branches: [main]
   pull_request:
-    branches: [main]
+    # Deliberately UNfiltered by base branch. `branches: [main]` here meant a stacked
+    # PR — one whose base is another feature branch — ran no checks at all, and its
+    # page showed no red because nothing had run. PR #218 shipped three raw git
+    # conflict markers that way, over a lifetime of zero CI runs.
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -149,6 +154,18 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Seven high-severity advisories accumulated unnoticed and were cleared on
+      # 2026-08-25 (five by `npm audit fix`, postcss by a scoped override — next 15.5
+      # pins it to exactly 8.4.31). Nothing had been comparing the tree against the
+      # advisory database, so the count only moved upward.
+      #
+      # This gate is blocking on purpose. When an advisory lands that has no fix, the
+      # answer is to record the decision — the way `scripts/config_drift.py` records a
+      # deliberate divergence — not to soften the gate, because a gate that yields to
+      # the first inconvenient advisory protects nothing after that.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
 
       - name: Type check
         run: npx tsc --noEmit

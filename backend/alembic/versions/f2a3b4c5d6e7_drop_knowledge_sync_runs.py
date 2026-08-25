@@ -31,6 +31,4 @@ def downgrade() -> None:
         sa.Column("steps_json", sa.JSON(), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
     )
-    op.create_index(
-        "ix_knowledge_sync_runs_project_id", "knowledge_sync_runs", ["project_id"]
-    )
+    op.create_index("ix_knowledge_sync_runs_project_id", "knowledge_sync_runs", ["project_id"])

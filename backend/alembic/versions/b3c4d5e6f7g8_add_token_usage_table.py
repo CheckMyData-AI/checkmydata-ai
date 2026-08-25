@@ -4,6 +4,7 @@ Revision ID: b3c4d5e6f7g8
 Revises: a2b3c4d5e6f7
 Create Date: 2026-03-20 12:00:00.000000
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -44,7 +45,9 @@ def upgrade() -> None:
     with op.batch_alter_table("token_usage", schema=None) as batch_op:
         batch_op.create_index(batch_op.f("ix_token_usage_user_id"), ["user_id"], unique=False)
         batch_op.create_index(batch_op.f("ix_token_usage_project_id"), ["project_id"], unique=False)
-        batch_op.create_index("ix_token_usage_user_created", ["user_id", "created_at"], unique=False)
+        batch_op.create_index(
+            "ix_token_usage_user_created", ["user_id", "created_at"], unique=False
+        )
 
 
 def downgrade() -> None:

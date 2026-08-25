@@ -47,9 +47,7 @@ def upgrade() -> None:
     # cluster_id on code_graph_symbols was added in the M2 migration; here we
     # only ensure an index exists so cluster-scoped queries are cheap.
     with op.batch_alter_table("code_graph_symbols") as batch_op:
-        batch_op.create_index(
-            "ix_code_graph_symbols_cluster", ["project_id", "cluster_id"]
-        )
+        batch_op.create_index("ix_code_graph_symbols_cluster", ["project_id", "cluster_id"])
 
 
 def downgrade() -> None:

@@ -17,9 +17,7 @@ depends_on: str | None = None
 
 def upgrade() -> None:
     with op.batch_alter_table("projects") as batch_op:
-        batch_op.add_column(
-            sa.Column("max_orchestrator_steps", sa.Integer(), nullable=True)
-        )
+        batch_op.add_column(sa.Column("max_orchestrator_steps", sa.Integer(), nullable=True))
 
 
 def downgrade() -> None:

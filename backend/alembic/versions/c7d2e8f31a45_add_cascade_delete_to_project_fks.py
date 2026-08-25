@@ -4,12 +4,13 @@ Revision ID: c7d2e8f31a45
 Revises: a3f7c8d912b4
 Create Date: 2026-03-17
 """
+
 from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = 'c7d2e8f31a45'
-down_revision: str | None = 'a3f7c8d912b4'
+revision: str = "c7d2e8f31a45"
+down_revision: str | None = "a3f7c8d912b4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -31,8 +32,10 @@ def upgrade() -> None:
         with op.batch_alter_table(table, naming_convention=_NAMING) as batch_op:
             batch_op.drop_constraint(constraint, type_="foreignkey")
             batch_op.create_foreign_key(
-                constraint, ref_table,
-                [local_col], [ref_col],
+                constraint,
+                ref_table,
+                [local_col],
+                [ref_col],
                 ondelete="CASCADE",
             )
 
@@ -42,6 +45,8 @@ def downgrade() -> None:
         with op.batch_alter_table(table, naming_convention=_NAMING) as batch_op:
             batch_op.drop_constraint(constraint, type_="foreignkey")
             batch_op.create_foreign_key(
-                constraint, ref_table,
-                [local_col], [ref_col],
+                constraint,
+                ref_table,
+                [local_col],
+                [ref_col],
             )

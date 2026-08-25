@@ -53,7 +53,7 @@ def upgrade() -> None:
                 op.execute(
                     f'ALTER TABLE "{table}" '
                     f'ALTER COLUMN "{col}" TYPE TIMESTAMP WITH TIME ZONE '
-                    f'USING "{col}" AT TIME ZONE \'UTC\''
+                    f"USING \"{col}\" AT TIME ZONE 'UTC'"
                 )
             else:
                 with op.batch_alter_table(table) as batch_op:
@@ -74,8 +74,7 @@ def downgrade() -> None:
         for col in columns:
             if is_pg:
                 op.execute(
-                    f'ALTER TABLE "{table}" '
-                    f'ALTER COLUMN "{col}" TYPE TIMESTAMP WITHOUT TIME ZONE'
+                    f'ALTER TABLE "{table}" ALTER COLUMN "{col}" TYPE TIMESTAMP WITHOUT TIME ZONE'
                 )
             else:
                 with op.batch_alter_table(table) as batch_op:

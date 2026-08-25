@@ -40,7 +40,10 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now()),
         sa.UniqueConstraint(
-            "connection_id", "category", "subject", "lesson_hash",
+            "connection_id",
+            "category",
+            "subject",
+            "lesson_hash",
             name="uq_agent_learning_dedup",
         ),
     )

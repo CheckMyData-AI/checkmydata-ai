@@ -41,6 +41,81 @@ of 611 — the extra arriving from another branch, `StaleRunReaper._catalog` (N3
 swallow is deliberate: a diagnostic that can abort the recovery it describes would leave
 `running` rows unreaped. The ceiling was raised **with that reason recorded beside it**,
 which is the whole procedure this ratchet exists to force.
+### Removed — a dead encrypted column (F-REPO-04)
+
+- `ProjectRepository.auth_token_encrypted` was declared on the model and accepted as a
+  keyword by `RepositoryService.create`, but **no caller passed it**, it was absent from
+  `ALLOWED_UPDATE_FIELDS`, and nothing read it. Repositories authenticate through
+  `ssh_key_id`.
+- Measured before dropping: production held **0 rows** in `project_repositories`
+  (`SELECT count(*), count(auth_token_encrypted)` → `0 | 0`), so no ciphertext is lost.
+- A column shaped to hold secrets, with no writer and no reader, is not neutral — it is
+  the place the next feature stores a token without anyone reviewing how it got there.
+  Bringing it back is one migration, on the day HTTPS token auth is actually built.
+- Migration `6287a47828ca`, **hand-written and that is load-bearing**: `alembic revision
+  --autogenerate` against the SQLite dev database produced **194 DDL operations** for this
+  one-column change, including `op.drop_table('audit_logs')` — the durable auth audit
+  table from F-AUTH-15. SQLite's introspection disagrees with the model metadata about
+  NOT NULL defaults and index naming, and autogenerate reads the difference as intent.
+  Verified up → down → up on a rebuilt database.
+- **Two tests were pinned to facts that had to change**, and both are now derived:
+  - `test_credential_rotation.py` asserted `== 7` encrypted columns in four places. The
+    count now comes from the sweep's own map, so adding or removing a column moves it.
+    Editing four 7s into 6s is the same shape as the board tally that claimed four
+    different numbers at once.
+  - `test_alembic.py` ran `upgrade head` then `downgrade -1` to exercise
+    `d3e4f5a6b7c8`. Those are synonyms for that revision only until another lands on top:
+    the new migration made `downgrade -1` revert the wrong one, and the failure pointed
+    at demo connections rather than at the coupling. Both ends now name their revision.
+### Security — seven high-severity npm advisories cleared, without a framework major
+
+- `npm audit` reported **7 high** on the frontend: `brace-expansion`, `fast-uri`,
+  `js-yaml`, `nanoid`, `postcss`, `sharp`, `next`. npm's own remedy for the last three
+  was `next@16.3.3` — a **semver-major** framework upgrade.
+- It was not needed. `next` carried no vulnerability of its own: its advisory entry read
+  `via: ['postcss', 'sharp']` with `effects: []`, so it was flagged purely as a consumer
+  of two vulnerable transitives. Fix those and the entry clears.
+- `npm audit fix` — **no `--force`** — cleared five, `sharp` (0.34.5 → 0.35.3) among them.
+  The sixth, `postcss`, sits at `node_modules/next/node_modules/postcss` because next 15.5
+  pins it to exactly `8.4.31`; a **scoped override** (`overrides.next.postcss`) lifts that
+  nested copy to `^8.5.26` and leaves every other postcss in the tree alone. Three highs
+  go with it: XSS via an unescaped `</style>` in stringify output, and two arbitrary-file
+  reads through an attacker-controlled `sourceMappingURL`.
+- **`npm audit` now reports 0 across every severity**, including the `next` moderate that
+  came with them.
+- `sharp` crossed next's declared `^0.34.3` optional range, so the result is proved rather
+  than assumed: `tsc` clean, `eslint --max-warnings=0` clean, **709/709 tests**, and a
+  real production build of all 15 routes.
+- Worth recording about `sharp` specifically: its libvips CVEs need image bytes to flow
+  through it, and **`next/image` is imported in zero files** with no `images` block in
+  `next.config.ts`. The optimiser was never reached. That is a reason not to break a
+  framework over it — not a reason to leave it unpatched, which is why it is patched.
+- **New CI gate**: `npm audit --audit-level=high` in `frontend-build`. Nothing had been
+  comparing the tree against the advisory database, so the count only ever moved upward.
+  The gate is blocking on purpose — when an unfixable advisory lands, the answer is to
+  record the decision, the way `scripts/config_drift.py` records a deliberate divergence,
+  not to soften the gate.
+### Fixed — a stacked pull request ran no checks at all
+
+- `ci.yml` triggered on `pull_request: branches: [main]` — pull requests whose **base**
+  is `main`. PR #218 was stacked on #217, so its base was `proj/role-domain`, and
+  `gh run list --branch proj/leave-and-caps` returned nothing. Over its entire life that
+  PR ran **zero** checks.
+- That is how three raw git conflict markers reached a branch and survived review. They
+  were not missed by a check that looked; **nothing looked**. And it is the worst shape
+  of failure to spot, because the PR page shows no red — an unmeasured branch and a
+  passing one are visually identical.
+- The base branch of a pull request says nothing about whether its diff deserves testing,
+  so the filter is gone. `push` stays scoped to `main`: the pull-request trigger already
+  covers branch work.
+- **`deploy.yml` tightened in the same change, because widening CI widened what can
+  reach it.** Its `workflow_run` filter matches the *head* branch of the CI run, so a PR
+  opened **from** `main` would now produce a run that satisfies it. The deploy job
+  additionally requires `workflow_run.event == 'push'` — deploy follows a merge, never a
+  proposal.
+- Six tests over both workflow files, two verified red first. They also handle YAML 1.1
+  parsing an unquoted `on:` key as the boolean `True`, so the assertion does not depend
+  on how the file happens to quote it.
 ### Added — a boot check that says which configured capabilities the image does not carry (N4, N8)
 
 - `RERANKER_ENABLED=true` ran in production against an image carrying neither
