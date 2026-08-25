@@ -27,6 +27,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a diff.
 - Proved by planting two: a row stripped of its audit date, and a row added without
   regenerating the block. Both turned the suite red, and it went green again on restore.
+- **First batch re-audited, chosen by the tool rather than by taste.**
+  `ux_verification_status.py --backlog 2026-07-19` orders stale scenarios by how many of
+  their own Coverage files have changed since the audit; **107 of the 110 had at least
+  one**. The top five were all access scenarios whose backend had moved: SCN-011 (session
+  expiry, 8 files), SCN-013 (password reset, 7), SCN-012 (email verification, 4), SCN-015
+  (decline invite, 4), SCN-008 (log out, 3).
+- All five hold behaviourally, verified against the code: the reset token is a SHA-256
+  hash with an expiry, cleared on use, and bumps `token_version` to revoke prior sessions
+  (`auth_service.py:180-215`); `/forgot-password` always returns a generic `{"ok": True}`
+  so account existence is never revealed (`auth.py:200-225`); verification auto-accepts
+  pending email invites (`auth.py:155-169`); decline **deletes** the row rather than
+  flipping a status, because `uq_invite_project_email_status` would otherwise block a
+  re-invite; logout clears storage unconditionally and warns only on a non-401 failure.
+- **One defect, and it is the kind only a re-audit finds.** SCN-015 cited
+  `invites.py:212-227` and `invite_service.py:122-158`; the decline route now lives at
+  `253-270` and `decline_invite` at `159-196`. The existing board-evidence ratchet checks
+  that a cited *file* exists, not that the lines still contain what the citation claims —
+  so a citation can point confidently at unrelated code and pass. Corrected.
+- The anchor count fell 22 → **21** while this was written, and the reason is worth
+  keeping: `git grep` had been counting scenario ids mentioned in the tooling *about* the
+  scenarios. A prose mention is not an anchor, and counting it would let the figure rise
+  by writing about it — the exact failure the figure exists to expose. Those two files are
+  excluded now, which also means the original 22 was already one too many.
+- Stale ceiling lowered 110 → **105**.
 
 ### Removed — a dead encrypted column (F-REPO-04)
 

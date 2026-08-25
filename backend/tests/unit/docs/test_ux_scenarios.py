@@ -252,7 +252,13 @@ def test_legacy_coverage_paths_do_not_regress() -> None:
 #: `STALE_AFTER_DAYS`. A ratchet: it may fall, never rise. Lowering it is what a batch of
 #: `/ux-audit` produces; raising it would mean deciding to let verification rot, which is
 #: a decision that should cost somebody a sentence in a diff.
-STALE_VERIFICATION_CEILING = 110
+# 110 → 105 on 2026-08-25: SCN-008, SCN-011, SCN-012, SCN-013 and SCN-015 re-audited
+# against the code and re-dated. They were chosen by `ux_verification_status.py
+# --backlog`, which orders stale scenarios by how many of their own Coverage files
+# have changed since the audit — the five access scenarios whose backend moved most.
+# All five held behaviourally; SCN-015 carried two line references that no longer
+# pointed at the code they named, and those were corrected.
+STALE_VERIFICATION_CEILING = 105
 
 
 def _status_module():
