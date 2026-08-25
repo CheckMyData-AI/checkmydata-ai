@@ -39,13 +39,20 @@ APP = Path(__file__).resolve().parents[4] / "backend" / "app"
 #: Counts measured 2026-08-25 over `backend/app/`. Lower them as suppressions go; raise
 #: one only in the same commit as the suppression it admits, so the increase is reviewed.
 CEILINGS: dict[str, int] = {
-    # 611 → 612 on 2026-08-25, and the raise is the mechanism working rather than an
-    # exception to it. `StaleRunReaper._catalog` (N3) swallows a failure to write the
-    # error catalog, because a diagnostic that can abort the recovery it is describing
-    # would leave `running` rows unreaped and the UI spinning. The gate caught it
-    # arriving from another branch, which is exactly the case a number nobody
-    # recomputes would have missed.
-    "except Exception": 612,
+    # 611 → 613 on 2026-08-25, in two steps, and both raises are the mechanism working
+    # rather than exceptions to it. `StaleRunReaper._catalog` (N3) swallows a failure to
+    # write the error catalog, because a diagnostic that can abort the recovery it is
+    # describing would leave `running` rows unreaped. `report_capabilities` (N4/N8)
+    # swallows a claim it cannot evaluate, because a boot check that stops a boot is a
+    # worse bug than the one it reports.
+    #
+    # Both arrived from *other* branches while this one was open, and CI caught each on
+    # the way in. Worth naming, because it is the cost of the design: the counter is
+    # shared, so concurrent branches each adding a justified suppression will each turn
+    # this red. That friction is the point — every one of those raises is a sentence
+    # somebody had to write — but a burst of five parallel PRs makes it feel like noise
+    # rather than a decision, and it should be read as the latter.
+    "except Exception": 613,
     "except ...: pass": 53,
     "# type: ignore": 49,
     "# noqa": 128,
