@@ -9,6 +9,35 @@ found is recorded as a `draft` scenario with `Coverage: none yet`. Paths are
 relative to `frontend/src/` unless noted. All entries start `draft`; only a
 human review moves them to `validated`.
 
+<!-- verification-status:begin -->
+### Implemented is not verified
+
+Counted 2026-08-25 — regenerate with `make ux-status`. **Every number below is
+counted from the index table, never typed.**
+
+Ages are measured against the stamp above, not against the clock. A block that aged on
+its own would turn CI red on a day nobody changed anything, and a gate that fires
+without a cause is one people learn to ignore. It goes stale when the *table* changes.
+
+| | |
+|---|---|
+| Scenarios | **127** |
+| Status | implemented × 127 |
+| Last verdict | PARTIAL × 2, PASS × 125 |
+| Verified when | 2026-07-19 × 110, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2 |
+| **Verified more than 30 days ago** | **110 of 127** (oldest 37 days) |
+| Never verified (no date) | 0 |
+| Referenced from code or tests | **22 of 127** |
+
+*Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
+and that date has an age. A reader shown only the first will believe the second — which
+is how "100% implemented, 98% PASS" came to be quoted while 110 of the verdicts were
+five weeks old and 105 scenarios had no anchor a machine could check them by.
+
+The stale count is a ratchet: it may fall, never rise. Re-auditing a scenario and dating
+it is what moves it.
+<!-- verification-status:end -->
+
 ## Index
 
 | ID | Title | Feature | Persona | Status | Last audit |

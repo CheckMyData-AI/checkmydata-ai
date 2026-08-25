@@ -1,6 +1,6 @@
 .PHONY: setup setup-backend setup-frontend setup-env migrate \
        dev dev-backend dev-frontend stop logs \
-       test test-integration test-all test-frontend smoke lint check config-drift \
+       test test-integration test-all test-frontend smoke lint check config-drift ux-status \
        docker-up docker-down docker-clean docker-logs \
        clean
 
@@ -118,6 +118,14 @@ check: lint test-all
 # Nothing had flagged them because nothing compared the two.
 config-drift:
 	@python3 scripts/config_drift.py --app $(HEROKU_APP)
+
+# ── UX scenario verification status ──────────────────────────────────────
+# Rewrites the derived block in docs/ux/scenarios.md that separates "implemented"
+# from "verified". The index claimed 100% implemented / 98% PASS while 110 of the
+# 127 verdicts were five weeks old and 105 scenarios had no anchor in code. The
+# suite fails if the block and the table disagree.
+ux-status:
+	@python3 scripts/ux_verification_status.py --write
 
 # ── M1-M6 rollout helpers (see docs/ROLLOUT_M1_M6.md) ────────────
 # Reads ADMIN_TOKEN + HEROKU_APP from env (or defaults to production).
