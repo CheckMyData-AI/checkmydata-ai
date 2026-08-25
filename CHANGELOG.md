@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — three numbers that recompute themselves (N9, N13)
+
+Every discrepancy the 2026-08-23 audit turned up was a number nobody recalculates. Two
+more are now derived rather than remembered.
+
+**`API.md` names every route the application serves (N9).** It served 173 paths across
+210 operations while the document named 130; **27 were not mentioned at all** — not by
+path, not by last segment, not in prose. Whole groups: the five per-connection learnings
+endpoints, the three run controls, the query-failure log, `/api/chat/search`,
+`/api/chat/explain-sql`, `/api/projects/access-requests`. All of them are documented now,
+plus 21 more the strict comparison surfaced that a looser one had let through — with two
+new sections, **Connection Learnings** and **Runs**, and **Billing** given a home of its
+own. The ratchet's exemption list is **empty**: `/docs`, `/redoc` and `/openapi.json`
+never reach it, because FastAPI mounts them outside the schema. The check is deliberately
+shallow — it asserts the path is present, not that the prose is true — because what
+actually happened was a route the document had never heard of.
+
+**Suppression debt is counted (N13).** The board's `CB-M5` and `CB-L1` rows quoted
+figures that had all drifted, the largest by 18%: `except Exception` 516 → **611**,
+`except …: pass` 51 → **53**, `# type: ignore` 47 → **49**, `# noqa` 104 → **128**. The
+audit that raised this had itself drifted — it reported 54 `except …: pass` two days ago
+and there are 53. A ratchet now holds today's counts: down is free, up fails, and raising
+a ceiling has to happen in the same commit as the suppression it admits, so the increase
+is reviewed instead of discovered. The board rows point at the counter rather than
+carrying numbers. **Proved by planting one**: a probe file with an `except Exception` and
+a `# noqa` turned the suite red on both metrics, and green again when removed.
+
+A companion test guards the guard: a ceiling drifting more than 15 above the real count
+fails too, because a ratchet that never tightens stops being one.
+
+**It caught one on its way in.** CI went red at `except Exception` 612 against a ceiling
+of 611 — the extra arriving from another branch, `StaleRunReaper._catalog` (N3), whose
+swallow is deliberate: a diagnostic that can abort the recovery it describes would leave
+`running` rows unreaped. The ceiling was raised **with that reason recorded beside it**,
+which is the whole procedure this ratchet exists to force.
 ### Removed — a dead encrypted column (F-REPO-04)
 
 - `ProjectRepository.auth_token_encrypted` was declared on the model and accepted as a

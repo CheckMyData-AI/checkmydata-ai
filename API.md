@@ -42,6 +42,10 @@ Two mechanisms are supported (`backend/app/api/deps.py::get_current_user`):
 | POST | `/api/auth/mcp-tokens` | Issue a per-user MCP API token (plaintext shown once) |
 | GET | `/api/auth/mcp-tokens` | List the caller's MCP tokens (hash + prefix only) |
 | DELETE | `/api/auth/mcp-tokens/{token_id}` | Revoke an MCP token (404 if missing/not owned) |
+| POST | `/api/auth/verify-email` | Confirm an email address; on success the now-verified address auto-accepts its pending email invites (F-PROJ-01) |
+| POST | `/api/auth/resend-verification` | Re-issue and re-send the verification link for the current user |
+| POST | `/api/auth/forgot-password` | Request a password-reset link. Public and rate-limited (SCN-013) |
+| POST | `/api/auth/reset-password` | Set a new password from a reset link. Public and rate-limited (SCN-013) |
 
 **Rate limits**: Register: 5/min, Login: 10/min, Google: 10/min, MCP token create: 10/min, revoke: 30/min
 
@@ -60,6 +64,11 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 | GET | `/api/projects/{id}/pipeline-status` | Unified repo/DB index/code-DB sync running state |
 | GET | `/api/projects/{id}/knowledge-health` | Knowledge freshness panel data |
 | GET | `/api/projects/{id}/sync-history?limit=N` | Recent scheduled daily-sync runs (viewer). Returns `{"runs": [{id, kind, status, trigger, started_at, finished_at, duration_seconds, error, progress_pct}]}`. `started_at` / `finished_at` are ISO-8601 strings or `null`; `error` is the failure message (or `null`); `duration_seconds` is `null` until the run finishes. `limit` clamped to 1–50, default 20. |
+| POST | `/api/projects/access-requests` | Request the privilege to create projects |
+| POST | `/api/projects/{project_id}/sync-now` | Trigger a daily-sync run on demand (editor) |
+| GET | `/api/projects/{project_id}/sync-schedule` | Effective schedule for a project — its override, else the global setting |
+| PUT | `/api/projects/{project_id}/sync-schedule` | Set a per-project daily-sync override (editor) |
+| GET | `/api/projects/{project_id}/runs` | Background-run history for a project (viewer) |
 
 ## Connections
 
@@ -74,6 +83,12 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 | POST | `/api/connections/{id}/refresh-schema` | Refresh schema cache |
 | POST | `/api/connections/{id}/index-db` | Index database schema |
 | POST | `/api/connections/{id}/sync` | Trigger code-DB sync (202) |
+| POST | `/api/connections/{connection_id}/reconnect` | Re-run the health probe and reopen the connector. Analytics sources have no database to reach, so they are answered without one (editor) |
+| POST | `/api/connections/{connection_id}/test-ssh` | Test SSH reachability on its own, separately from the database behind it |
+| GET | `/api/connections/health` | Health of every connection the caller can see |
+| GET | `/api/connections/{connection_id}/health` | Health of one connection |
+| GET | `/api/connections/{connection_id}/index-db/status` | Schema-index status for a connection |
+| GET | `/api/connections/{connection_id}/sync/status` | Code↔DB sync status for a connection |
 
 ### Analytics-source fields on create / update
 
@@ -205,6 +220,13 @@ name `_connect`, which currently appears as an entry in `reports[]` with
 | GET | `/api/chat/suggestions` | Get query suggestions |
 | WS | `/api/chat/ws/{project_id}/{connection_id}` | WebSocket chat (single-use ticket via `Sec-WebSocket-Protocol`; mint with `POST /api/chat/ws-ticket`) |
 | POST | `/api/chat/feedback` | Rate a message (body: `{message_id, rating}`) |
+| GET | `/api/chat/search?project_id=&q=&limit=` | Full-text search across the project's chat messages (viewer) |
+| POST | `/api/chat/explain-sql` | Plain-language explanation of a SQL statement, with a computed complexity score; cached by statement hash (viewer) |
+| POST | `/api/chat/summarize` | Summarise one chat message (viewer) |
+| POST | `/api/chat/sessions/ensure-welcome` | Idempotently create the project's welcome session; returns whether it was created (viewer) |
+| POST | `/api/chat/sessions/{session_id}/generate-title` | Derive a session title from its first user message |
+| GET | `/api/chat/analytics/feedback/{project_id}` | Aggregated message-feedback statistics for a project |
+| POST | `/api/chat/sessions` | Create a chat session |
 
 **Chat concurrency & limits**: `/api/chat/ask` and `/api/chat/ask/stream` first check the user's token budget (`429` when exhausted), then acquire an `agent_limiter` concurrency slot (`429` when the per-user/global slot cap is hit) and hold a per-session lock (`409` if a request for the same session is already running). The agent run is bounded by a wall-clock timeout (`stream_timeout_seconds`, default 360s): the non-streaming `/ask` returns **`504`** on timeout; `/ask/stream` reports the timeout in-band as an SSE `error` event (`error_type: "timeout"`) since the HTTP status is already committed.
 
@@ -223,6 +245,7 @@ name `_connect`, which currently appears as an entry in `reports[]` with
 | GET | `/api/notes?project_id=` | List notes |
 | PATCH | `/api/notes/{id}` | Update note |
 | DELETE | `/api/notes/{id}` | Delete note |
+| POST | `/api/notes/{note_id}/execute` | Run a saved note's query. Routed through `SafetyGuard` like every other raw-SQL entry point |
 
 ## Batch Queries
 
@@ -234,6 +257,24 @@ name `_connect`, which currently appears as an entry in `reports[]` with
 | DELETE | `/api/batch/{id}` | Delete batch |
 | POST | `/api/batch/{id}/export` | Export batch results |
 
+## Connection Learnings
+
+Per-connection agent memory. Learnings are **not** shared across connections by default —
+`cross_connection_learnings_enabled` is off, and `vision.md` §7 treats that as an invariant.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/connections/{connection_id}/learnings` | List active learnings for a connection |
+| DELETE | `/api/connections/{connection_id}/learnings` | Clear every learning for a connection |
+| PATCH | `/api/connections/{connection_id}/learnings/{learning_id}` | Edit one learning (a user override outranks a derived lesson) |
+| DELETE | `/api/connections/{connection_id}/learnings/{learning_id}` | Remove one learning |
+| POST | `/api/connections/{connection_id}/learnings/{learning_id}/contradict` | Downvote a learning: lowers confidence and may deactivate it |
+| POST | `/api/connections/{connection_id}/learnings/recompile` | Force the learnings prompt to be rebuilt |
+| POST | `/api/connections/{connection_id}/learnings/validate-schema` | Cross-check learnings against the connection's current schema |
+| GET | `/api/connections/{connection_id}/learnings/status` | Learning count and last-compiled time |
+| GET | `/api/connections/{connection_id}/learnings/summary` | The compiled learnings prompt as the agent receives it |
+| POST | `/api/connections/{connection_id}/learnings/{learning_id}/confirm` | Upvote a learning: raises confidence and `times_confirmed`. Deduplicated per user — a second identical vote is a no-op |
+
 ## Repositories
 
 | Method | Endpoint | Description |
@@ -244,6 +285,10 @@ name `_connect`, which currently appears as an entry in `reports[]` with
 | DELETE | `/api/repos/repositories/{id}` | Delete repository |
 | POST | `/api/repos/{project_id}/index` | Index repository |
 | GET | `/api/repos/{project_id}/docs` | List indexed documents |
+| POST | `/api/repos/check-access` | Verify SSH/HTTPS reachability of a repository and list its branches |
+| POST | `/api/repos/{project_id}/check-updates` | Fetch the remote and compare HEAD against the last indexed SHA |
+| GET | `/api/repos/{project_id}/docs/{doc_id}` | Full content of one indexed document |
+| GET | `/api/repos/{project_id}/status` | Index state of the project's repository |
 
 ## Rules
 
@@ -272,6 +317,11 @@ name `_connect`, which currently appears as an entry in `reports[]` with
 | GET | `/api/logs/{project_id}/requests` | Paginated request traces |
 | GET | `/api/logs/{project_id}/requests/{trace_id}` | Full trace detail with spans |
 | GET | `/api/logs/{project_id}/summary` | Aggregated summary (totals, success rate, cost) |
+| PATCH | `/api/logs/{project_id}/errors/{error_id}` | Move an error through open → acknowledged → resolved |
+| GET | `/api/logs/{project_id}/query-failures` | Paginated list of captured query failures |
+| GET | `/api/logs/{project_id}/query-failures/{failure_id}` | One query failure in full, including its parsed attempt history |
+| GET | `/api/logs/{project_id}/errors` | Filterable, deduplicated error catalog. A run killed by the stale-run reaper is catalogued here, its message naming the step that died |
+| GET | `/api/logs/{project_id}/runs` | Background-run history for the observability screen |
 
 All logs endpoints require **owner** role. Query parameters: `days`, `user_id`, `status`, `date_from`, `date_to`, `page`, `page_size`.
 
@@ -358,6 +408,7 @@ Status codes:
 | POST | `/api/invites/{project_id}/transfer-ownership` | **Transfer ownership** (F-PROJ-10). Body `{new_owner_user_id}`. `204` on success, no body. The target must already be a member (else `400`); the previous owner is demoted to **editor**, not removed; `Project.owner_id` and the member row move together. The **receiving** owner's plan project-quota is enforced before any write. Authorization is the current owner **or** an admin (`ADMIN_EMAILS`) — deliberately not `require_role(…, "owner")`, because `owner_id` is `ondelete="SET NULL"` and an orphaned project has no owner, so that check would `403` everyone on exactly the project this exists to rescue. A non-admin member claiming an orphaned project gets `403`. Rate limit `5/minute`. Note `PATCH …/members/{id}` accepts only `editor`/`viewer` — ownership has one way in, so the quota check cannot be bypassed. |
 | DELETE | `/api/invites/{project_id}/members/me` | **Leave the project** (F-PROJ-12). Removes the caller's own membership; `204` on success, `404` when not a member. An **owner is refused with 400** — leaving would strand the workspace, which is what F-PROJ-10 exists to prevent — and the message names the transfer route. Ownership is read from the member row *or* `Project.owner_id`, so an owner whose row disagrees with the column is still refused. Path is `/me`, not `/{id}`: the request cannot express acting on anyone else. Rate limit `10/minute`. |
 | GET | `/api/invites/{project_id}/members` | List members, **bounded** (F-PROJ-13): default 500, hard maximum 1000. `X-Total-Count` carries the real total and `X-Result-Capped` is `true` when the body is a partial page — a capped page with no marker reads as complete. Headers rather than a wrapper object so the response shape is unchanged for existing clients. |
+| POST | `/api/invites/decline/{invite_id}` | Decline an invitation addressed to the caller |
 
 ## Schedules
 
@@ -386,6 +437,19 @@ Status codes:
 |--------|----------|-------------|
 | POST | `/api/visualizations/render` | Render visualization from columns/rows and config |
 | POST | `/api/visualizations/export` | Export query result as CSV, JSON, or XLSX |
+
+## Runs
+
+The `IndexingRun` projection behind every background job — repo index, DB index, code↔DB
+sync. A run reaped as stale carries `error='stale run reaped'`; `RunCoordinator`
+reconciles it if the pipeline turns out to still be alive.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/runs/{run_id}` | One run: status, current step, progress, failure kind |
+| GET | `/api/runs/{run_id}/events` | The run's step journal |
+| POST | `/api/runs/{run_id}/cancel` | Request cooperative cancellation (editor) |
+| POST | `/api/runs/{run_id}/retry` | Start a fresh run from the same trigger (editor) |
 
 ## Workflows
 
@@ -452,6 +516,18 @@ The following counters are registered by `MetricsCollector` and exposed via `/ap
 | POST | `/api/backup/trigger` | Run manual backup |
 | GET | `/api/backup/list` | List backup files on disk |
 | GET | `/api/backup/history` | Recent backup records from DB |
+
+## Billing
+
+Present only when `billing_enabled` is on; every route below returns **404** when it is off.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/billing/plans` | Public plan catalogue for the pricing page |
+| GET | `/api/billing/subscription` | The caller's plan, subscription state, and usage against its limits |
+| POST | `/api/billing/checkout` | Start a Stripe Checkout session for a plan |
+| POST | `/api/billing/portal` | Open the Stripe Customer Portal — invoices, cancellation, card update |
+| POST | `/api/billing/webhook` | Stripe webhook receiver. Signature-verified and idempotent (T-BILL-5) |
 
 ## Demo
 
