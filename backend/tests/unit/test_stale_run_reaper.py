@@ -1,4 +1,6 @@
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from typing import Any
 
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -104,6 +106,13 @@ async def test_reaper_logs_sweep_when_rowcount_unknown(caplog):
         @staticmethod
         def scalar_one() -> int:
             return 0
+
+        # N3 added a SELECT of the rows about to be reaped, so the catalog can name
+        # them — a third shape. An empty result is the right stand-in here: this test
+        # is about the rowcount=-1 log line, and nothing being catalogued keeps it so.
+        @staticmethod
+        def scalars() -> Any:
+            return SimpleNamespace(all=lambda: [])
 
     # Create a fake session that returns the fake result on every execute(),
     # and supports flush() as an async no-op.
