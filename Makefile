@@ -1,6 +1,6 @@
 .PHONY: setup setup-backend setup-frontend setup-env migrate \
        dev dev-backend dev-frontend stop logs \
-       test test-integration test-all test-frontend smoke lint check \
+       test test-integration test-all test-frontend smoke lint check config-drift \
        docker-up docker-down docker-clean docker-logs \
        clean
 
@@ -107,6 +107,17 @@ lint:
 	cd $(BACKEND_DIR) && $(VENV)/ruff check app/ tests/
 
 check: lint test-all
+
+# ── Deployment config drift ──────────────────────────────────────
+# Compares every boolean setting deployed on Heroku against the code default in
+# backend/app/config.py. Deliberate divergences are recorded, with a reason each,
+# in the DELIBERATE map inside the script; anything else exits non-zero.
+#
+# Ten undocumented divergences were found on 2026-08-23 — one of them
+# CROSS_CONNECTION_LEARNINGS_ENABLED, which vision.md §7 calls an invariant.
+# Nothing had flagged them because nothing compared the two.
+config-drift:
+	@python3 scripts/config_drift.py --app $(HEROKU_APP)
 
 # ── M1-M6 rollout helpers (see docs/ROLLOUT_M1_M6.md) ────────────
 # Reads ADMIN_TOKEN + HEROKU_APP from env (or defaults to production).

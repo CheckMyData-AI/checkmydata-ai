@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — production ran ten flags the code called off, one of them an invariant (N2, N4)
+
+- Measured against `backend/app/config.py`: `CLUSTERING_ENABLED`, `GIT_POLL_ENABLED`,
+  `GIT_WEBHOOK_ENABLED`, `AUTO_SYNC_AFTER_INDEX`, `FRESHNESS_RECONCILER_ENABLED`,
+  `SCHEMA_CHANGE_ALERTS_ENABLED`, `ANALYTICS_COLLECT_ENABLED`, `DATA_GATE_LLM_SEMANTICS`,
+  `RERANKER_ENABLED` and **`CROSS_CONNECTION_LEARNINGS_ENABLED`** were all `true` in
+  production against a `False` default. All ten unset (Heroku v262, one restart).
+- `CROSS_CONNECTION_LEARNINGS_ENABLED` is the sharp one: `vision.md` §7 states that
+  knowledge of one database never leaks into queries against another, and
+  `CLAUDE.md` calls it an invariant. The flag gates **reading only** —
+  `agent_learning_service.py:1077` decides whether other connections' lessons and global
+  patterns are injected into the prompt — so nothing had been written that has to be
+  undone, and the data was still clean. What was switched off was the protection, not
+  the compliance.
+- Two side effects worth naming. `graph_clustering` leaves the index manifest, and it is
+  the step that SIGKILLed the worker at 04:36 on 2026-08-25. `DATA_GATE_LLM_SEMANTICS`
+  off removes one LLM call per gate.
+- What is genuinely lost: re-index on git push and auto-sync after index stop.
+  `DAILY_KNOWLEDGE_SYNC_ENABLED` stays on, so the 03:00 refresh continues.
+  `ANALYTICS_COLLECT_ENABLED` cost nothing to unset — production holds two connections,
+  both `source_type='database'`, so the collector had nothing to collect.
+- **Five divergences remain and are now recorded rather than re-discovered**:
+  `BILLING_ENABLED`, `DAILY_KNOWLEDGE_SYNC_ENABLED`, `GIT_AGENT_AUTO_PULL`,
+  `MCP_ENABLED`, `MCP_MOUNT_ENABLED`. An undocumented deliberate divergence is
+  indistinguishable from drift, so every audit re-raises it until someone silences the
+  finding instead of the cause.
+- The record is a command, not a paragraph: `make config-drift` compares the deployment
+  against the code and exits non-zero on anything not in the `DELIBERATE` map with a
+  reason. Verified both ways — exit 0 against production as it stands, exit 1 against
+  the 2026-08-23 snapshot, listing all ten.
+- Nine tests on the checker itself, because a checker that parses nothing reports no
+  drift. One caught a real hole while being written: the pattern anchored on
+  end-of-line and so could not see the three settings declared with a trailing comment —
+  `code_graph_enabled`, `lineage_enabled`, `auth_cookie_secure`. Two of those three are
+  the flags most worth watching. The count is now asserted against `config.py` itself
+  rather than against a number typed into the test.
+
 ### Fixed — a step longer than five minutes was killed for being slow (N1)
 
 - `RunCoordinator.step` wrote `heartbeat_at` on entry and again on success, and nothing
