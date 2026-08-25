@@ -368,6 +368,8 @@ Per-connection, **not** a global flag: `collection_enabled` (default **on**) and
 | `reaper_interval_seconds` | 60 | How often the reaper sweeps for stuck rows |
 | `stale_running_heartbeat_timeout_seconds` | 300 | Rows older than this are reset to `failed` |
 
+**The beat runs *inside* a step, not only at its edges (N1, 2026-08-25).** `RunCoordinator.step` wrote `heartbeat_at` on entry and on success and nothing between, so any single step longer than `stale_running_heartbeat_timeout_seconds` (300) was reaped **while it was still working**. Production: 64 of 70 repo-index failures, all `current_step='graph_build'`, `error='stale run reaped'`, every day from 2026-08-07. It was invisible for thirteen days because a heartbeat *did* exist — `_run_index_background` (`repos.py:556-563`) ticks `IndexingCheckpoint`, and the reaper's `stale run reaped` marker lands on `IndexingRun`, a different row. The fix is in `step` because all four repo-index entry points (ARQ task, manual route, retry route, daily sync) reach the pipeline through it, and because `IndexingRun` is created and finished there. The writer uses **its own session** — the step's `db` driven from two tasks is a race, not a heartbeat — and a targeted `UPDATE` rather than an ORM load, so it cannot carry a stale `version` or overwrite columns it does not own.
+
 Stuck `running` DB-index / sync / repo-index rows self-heal: a crashed worker stops touching `heartbeat_at`, and the reaper flips the row to `failed` on the next sweep so the UI surfaces the failure instead of spinning indefinitely. New endpoint `GET /api/projects/{id}/sync-history` (see `API.md`) returns the last N daily-sync audit rows with per-project outcome details.
 
 ## Conventions

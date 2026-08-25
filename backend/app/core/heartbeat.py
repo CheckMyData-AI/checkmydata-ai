@@ -32,8 +32,11 @@ async def _beat(writer: HeartbeatWriter, interval_seconds: float) -> None:
 async def heartbeat(
     writer: HeartbeatWriter,
     *,
-    interval_seconds: int,
+    interval_seconds: float,
 ) -> AsyncIterator[None]:
+    # float, not int: the body already does float math (`max(0.001, …)`), and a
+    # caller that wants a sub-second beat — a test standing in for a 300 s timeout —
+    # had its interval rounded to zero by the annotation's implied contract.
     # Immediate first beat so a just-started row gets heartbeat_at before the
     # first interval elapses.
     try:
