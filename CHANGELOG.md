@@ -34,6 +34,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The gate is blocking on purpose — when an unfixable advisory lands, the answer is to
   record the decision, the way `scripts/config_drift.py` records a deliberate divergence,
   not to soften the gate.
+### Fixed — a stacked pull request ran no checks at all
+
+- `ci.yml` triggered on `pull_request: branches: [main]` — pull requests whose **base**
+  is `main`. PR #218 was stacked on #217, so its base was `proj/role-domain`, and
+  `gh run list --branch proj/leave-and-caps` returned nothing. Over its entire life that
+  PR ran **zero** checks.
+- That is how three raw git conflict markers reached a branch and survived review. They
+  were not missed by a check that looked; **nothing looked**. And it is the worst shape
+  of failure to spot, because the PR page shows no red — an unmeasured branch and a
+  passing one are visually identical.
+- The base branch of a pull request says nothing about whether its diff deserves testing,
+  so the filter is gone. `push` stays scoped to `main`: the pull-request trigger already
+  covers branch work.
+- **`deploy.yml` tightened in the same change, because widening CI widened what can
+  reach it.** Its `workflow_run` filter matches the *head* branch of the CI run, so a PR
+  opened **from** `main` would now produce a run that satisfies it. The deploy job
+  additionally requires `workflow_run.event == 'push'` — deploy follows a merge, never a
+  proposal.
+- Six tests over both workflow files, two verified red first. They also handle YAML 1.1
+  parsing an unquoted `on:` key as the boolean `True`, so the assertion does not depend
+  on how the file happens to quote it.
 ### Added — a boot check that says which configured capabilities the image does not carry (N4, N8)
 
 - `RERANKER_ENABLED=true` ran in production against an image carrying neither
