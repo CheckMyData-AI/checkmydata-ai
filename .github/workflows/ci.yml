@@ -112,13 +112,16 @@ jobs:
           MASTER_ENCRYPTION_KEY: ${{ env.MASTER_ENCRYPTION_KEY }}
 
       - name: Coverage gate (combined unit + integration)
-        # Authoritative coverage gate. Enforced threshold (72) matches
-        # `fail_under` in pyproject.toml and the value documented in
-        # README/CONTRIBUTING/DEPLOYMENT (T-QA-1). It runs on the COMBINED
-        # unit+integration data (~73%); the per-step pytest runs above pass
-        # --cov-fail-under=0 so a partial run never trips the gate early.
+        # Authoritative coverage gate. The threshold here and `fail_under` in
+        # pyproject.toml must agree — `test_coverage_gate_is_stated_once.py` fails
+        # when they drift, because the value lives in more than one file and a
+        # number in two places is a number that disagrees with itself eventually.
+        #
+        # Runs on the COMBINED unit+integration data (82% as of 2026-08-26); the
+        # per-step pytest runs above pass --cov-fail-under=0 so a partial run never
+        # trips the gate early.
         run: |
-          python -m coverage report --fail-under=72
+          python -m coverage report --fail-under=80
 
       - name: Upload coverage artifact
         if: always()

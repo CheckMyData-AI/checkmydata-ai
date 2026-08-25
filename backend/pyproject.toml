@@ -149,7 +149,16 @@ concurrency = ["greenlet", "thread"]
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
-fail_under = 72
+# 72 → 80 on 2026-08-26. The gate had not moved since the tracing bug in
+# `[tool.coverage.run]` above was making the input systematically low. With coverage
+# following the greenlet, the combined unit+integration run measures 82% (41 023
+# statements, 7 383 missing — CI on #228); the same run before the fix measured 79%
+# (8 448 missing — CI on #227). A gate ten points below reality cannot fail for any
+# regression anybody would plausibly ship, which makes it decoration.
+#
+# Two points of headroom, deliberately: a gate set at the current number turns red on
+# noise, and a gate that fires without a cause is one people learn to route around.
+fail_under = 80
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
