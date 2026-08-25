@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — coverage stopped tracing at the first database `await`
+
+- `[tool.coverage.run]` carried no `concurrency` setting, so coverage used its default,
+  `thread`. SQLAlchemy's async layer switches through a **greenlet**
+  (`greenlet_spawn`), and coverage does not follow a greenlet switch unless told to — so
+  every statement after the first `await` against the database, **inside the same
+  frame**, executed and was reported as uncovered. That is most of the body of most
+  routes.
+- Measured on `tests/integration`, 673 tests, the identical run twice:
+
+  | | `app/api/routes/chat.py` |
+  |---|---|
+  | without `concurrency` | **35%** — 493 statements missing |
+  | with `["greenlet", "thread"]` | **46%** — 405 missing |
+
+  Eighty-eight statements on one file, running the whole time, counted as untested.
+- **Two things had already been acted on before the cause was known.** An audit reported
+  "chat.py 35%" as a finding, and it was partly an artefact of the measurement rather
+  than a property of the tests. And `fail_under` compares against a number that was
+  systematically low, so the gate has been looser than its value suggests — a gate can
+  only be as honest as its input.
+- The proof that the code *ran* while coverage said otherwise: a test asserted `429`
+  from the token-budget gate at `chat.py:247`, planting a defect there turned it red,
+  and coverage still listed `247-598` as missing. With `greenlet` the same list starts
+  at `251`.
+- `thread` is kept alongside it: `concurrency` **replaces** the default rather than
+  adding to it, and this codebase runs work in threads (`asyncio.to_thread` in the
+  pipeline runner and at boot). Naming greenlet alone would trade one blind spot for
+  another.
+- Four tests guard the setting, including that `greenlet` is actually installed —
+  inert configuration reads as working configuration.
+
 ### Added — implemented is not verified (N10)
 
 - `docs/ux/scenarios.md` said `implemented` for all **127** scenarios and `PASS` for 125.
