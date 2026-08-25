@@ -2,9 +2,14 @@ name: CI
 
 on:
   push:
+    # Scoped on purpose: the pull_request trigger below already covers branch work,
+    # and a full suite on every push to every branch buys nothing.
     branches: [main]
   pull_request:
-    branches: [main]
+    # Deliberately UNfiltered by base branch. `branches: [main]` here meant a stacked
+    # PR — one whose base is another feature branch — ran no checks at all, and its
+    # page showed no red because nothing had run. PR #218 shipped three raw git
+    # conflict markers that way, over a lifetime of zero CI runs.
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
