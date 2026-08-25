@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — seven high-severity npm advisories cleared, without a framework major
+
+- `npm audit` reported **7 high** on the frontend: `brace-expansion`, `fast-uri`,
+  `js-yaml`, `nanoid`, `postcss`, `sharp`, `next`. npm's own remedy for the last three
+  was `next@16.3.3` — a **semver-major** framework upgrade.
+- It was not needed. `next` carried no vulnerability of its own: its advisory entry read
+  `via: ['postcss', 'sharp']` with `effects: []`, so it was flagged purely as a consumer
+  of two vulnerable transitives. Fix those and the entry clears.
+- `npm audit fix` — **no `--force`** — cleared five, `sharp` (0.34.5 → 0.35.3) among them.
+  The sixth, `postcss`, sits at `node_modules/next/node_modules/postcss` because next 15.5
+  pins it to exactly `8.4.31`; a **scoped override** (`overrides.next.postcss`) lifts that
+  nested copy to `^8.5.26` and leaves every other postcss in the tree alone. Three highs
+  go with it: XSS via an unescaped `</style>` in stringify output, and two arbitrary-file
+  reads through an attacker-controlled `sourceMappingURL`.
+- **`npm audit` now reports 0 across every severity**, including the `next` moderate that
+  came with them.
+- `sharp` crossed next's declared `^0.34.3` optional range, so the result is proved rather
+  than assumed: `tsc` clean, `eslint --max-warnings=0` clean, **709/709 tests**, and a
+  real production build of all 15 routes.
+- Worth recording about `sharp` specifically: its libvips CVEs need image bytes to flow
+  through it, and **`next/image` is imported in zero files** with no `images` block in
+  `next.config.ts`. The optimiser was never reached. That is a reason not to break a
+  framework over it — not a reason to leave it unpatched, which is why it is patched.
+- **New CI gate**: `npm audit --audit-level=high` in `frontend-build`. Nothing had been
+  comparing the tree against the advisory database, so the count only ever moved upward.
+  The gate is blocking on purpose — when an unfixable advisory lands, the answer is to
+  record the decision, the way `scripts/config_drift.py` records a deliberate divergence,
+  not to soften the gate.
 ### Fixed — a stacked pull request ran no checks at all
 
 - `ci.yml` triggered on `pull_request: branches: [main]` — pull requests whose **base**
