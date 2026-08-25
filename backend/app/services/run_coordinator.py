@@ -14,14 +14,16 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.heartbeat import heartbeat
 from app.core.workflow_tracker import WorkflowEvent, tracker
 from app.knowledge.run_manifests import (
     Step,
@@ -57,6 +59,44 @@ class RunCancelledError(Exception):
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _beat_interval() -> float:
+    """Seconds between beats inside a step.
+
+    Kept a float rather than the ``int()`` the other three heartbeat call sites use:
+    that cast exists to survive a ``MagicMock`` settings object in tests, and it also
+    rounds a sub-second interval to zero. The ``except`` below covers the mock case
+    without costing the precision — a test that wants a 50 ms beat gets one.
+    """
+    try:
+        return float(settings.heartbeat_interval_seconds)
+    except (TypeError, ValueError):
+        return 30.0
+
+
+def _run_beat(run_id: str) -> Callable[[], Awaitable[None]]:
+    """A writer that keeps *run_id* alive, on **its own session**.
+
+    Not the step's ``db``: a SQLAlchemy async session driven from two tasks at once is
+    a race, and the one thing this writer must never do is disturb the work it is
+    supposed to be protecting.
+
+    A targeted UPDATE rather than loading the ORM object, for two reasons that both
+    bite silently. ``version`` is bumped deliberately at the step boundaries and a
+    second session's flush could carry a stale value into it; and an ORM load here
+    would put a second copy of the row in a second identity map, so whichever session
+    committed last would win on **every** column, not just the one this writer owns.
+    """
+
+    async def _beat() -> None:
+        async with async_session_factory() as hb:
+            await hb.execute(
+                update(IndexingRun).where(IndexingRun.id == run_id).values(heartbeat_at=_now())
+            )
+            await hb.commit()
+
+    return _beat
 
 
 def _manifest_flags() -> dict[str, bool]:
@@ -266,7 +306,8 @@ class RunCoordinator:
 
         t0 = _now()
         try:
-            yield
+            async with heartbeat(_run_beat(run.id), interval_seconds=_beat_interval()):
+                yield
         except Exception as exc:
             elapsed = (_now() - t0).total_seconds() * 1000
             await self._record(
