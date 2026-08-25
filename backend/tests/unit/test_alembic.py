@@ -155,7 +155,12 @@ def test_legacy_demo_connections_are_pointed_at_a_real_file(tmp_db):
             },
         )
 
-    _run_alembic(async_url, "upgrade", "head")
+    # `d3e4f5a6b7c8`, named — not `head`. This read `head` and `-1`, which are
+    # synonyms for this migration only until another lands on top of it: adding
+    # `6287a47828ca` made `downgrade -1` revert the WRONG revision, and the
+    # failure pointed at demo connections rather than at the coupling. A test
+    # naming a moving target is the same shape as a tally nobody recomputes.
+    _run_alembic(async_url, "upgrade", "d3e4f5a6b7c8")
 
     with engine.begin() as conn:
         demo = conn.execute(
@@ -179,7 +184,7 @@ def test_legacy_demo_connections_are_pointed_at_a_real_file(tmp_db):
     assert odd[0] == ":memory:", "a non-sqlite connection was rewritten as if it were the demo"
     assert odd[1] in (0, False), "and its privileges were changed on the way past"
 
-    _run_alembic(async_url, "downgrade", "-1")
+    _run_alembic(async_url, "downgrade", "c2d3e4f5a6b7")
 
     with engine.begin() as conn:
         after = conn.execute(

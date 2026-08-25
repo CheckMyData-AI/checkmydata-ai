@@ -115,9 +115,7 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
-    op.create_index(
-        "ix_trace_spans_trace_order", "trace_spans", ["trace_id", "order_index"]
-    )
+    op.create_index("ix_trace_spans_trace_order", "trace_spans", ["trace_id", "order_index"])
     op.create_index("ix_trace_spans_type", "trace_spans", ["span_type"])
     op.create_index("ix_trace_spans_status", "trace_spans", ["status"])
 

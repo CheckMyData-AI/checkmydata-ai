@@ -46,12 +46,8 @@ def upgrade() -> None:
     )
     with op.batch_alter_table("code_graph_symbols") as batch_op:
         batch_op.create_index("ix_code_graph_symbols_project", ["project_id"])
-        batch_op.create_index(
-            "ix_code_graph_symbols_project_name", ["project_id", "name"]
-        )
-        batch_op.create_index(
-            "ix_code_graph_symbols_project_file", ["project_id", "file_path"]
-        )
+        batch_op.create_index("ix_code_graph_symbols_project_name", ["project_id", "name"])
+        batch_op.create_index("ix_code_graph_symbols_project_file", ["project_id", "file_path"])
         batch_op.create_index("ix_code_graph_symbols_uid", ["uid"])
 
     op.create_table(

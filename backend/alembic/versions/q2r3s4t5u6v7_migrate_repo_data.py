@@ -21,7 +21,9 @@ depends_on = None
 def upgrade() -> None:
     conn = op.get_bind()
     projects = conn.execute(
-        sa.text("SELECT id, name, repo_url, repo_branch, ssh_key_id FROM projects WHERE repo_url IS NOT NULL AND repo_url != ''")
+        sa.text(
+            "SELECT id, name, repo_url, repo_branch, ssh_key_id FROM projects WHERE repo_url IS NOT NULL AND repo_url != ''"
+        )
     ).fetchall()
 
     for row in projects:

@@ -75,12 +75,10 @@ class TestRepositoryCreate:
             branch="develop",
             provider="https",
             ssh_key_id="key-abc",
-            auth_token_encrypted="enc-token",
         )
         assert repo.branch == "develop"
         assert repo.provider == "https"
         assert repo.ssh_key_id == "key-abc"
-        assert repo.auth_token_encrypted == "enc-token"
 
 
 class TestRepositoryGet:

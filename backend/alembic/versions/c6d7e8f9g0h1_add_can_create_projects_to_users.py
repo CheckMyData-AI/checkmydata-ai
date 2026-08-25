@@ -16,9 +16,7 @@ down_revision = "b4c5d6e7f8g9"
 branch_labels = None
 depends_on = None
 
-_ADMIN_EMAILS = tuple(
-    e.strip() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()
-)
+_ADMIN_EMAILS = tuple(e.strip() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip())
 
 
 def upgrade() -> None:
@@ -34,9 +32,7 @@ def upgrade() -> None:
             sa.column("can_create_projects", sa.Boolean),
         )
         op.execute(
-            users.update()
-            .where(users.c.email.in_(_ADMIN_EMAILS))
-            .values(can_create_projects=True)
+            users.update().where(users.c.email.in_(_ADMIN_EMAILS)).values(can_create_projects=True)
         )
 
 

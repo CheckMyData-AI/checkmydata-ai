@@ -4,14 +4,15 @@ Revision ID: 2317bf9d9126
 Revises: a7c8d9e0f1a2
 Create Date: 2026-06-26 15:52:54.795013
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = '2317bf9d9126'
-down_revision: Union[str, None] = 'a7c8d9e0f1a2'
+revision: str = "2317bf9d9126"
+down_revision: Union[str, None] = "a7c8d9e0f1a2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

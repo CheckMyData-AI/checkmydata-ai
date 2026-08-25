@@ -4,6 +4,7 @@ Revision ID: k6l7m8n9o0p1
 Revises: j5k6l7m8n9o0
 Create Date: 2026-03-17
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -43,9 +44,7 @@ def upgrade() -> None:
         sa.Column("synced_at", sa.DateTime, server_default=sa.func.now()),
         sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime, server_default=sa.func.now()),
-        sa.UniqueConstraint(
-            "connection_id", "table_name", name="uq_code_db_sync_conn_table"
-        ),
+        sa.UniqueConstraint("connection_id", "table_name", name="uq_code_db_sync_conn_table"),
     )
 
     op.create_table(

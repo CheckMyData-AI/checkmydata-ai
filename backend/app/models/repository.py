@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -30,7 +30,6 @@ class ProjectRepository(Base):
     ssh_key_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("ssh_keys.id", ondelete="SET NULL"), nullable=True
     )
-    auth_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     indexing_status: Mapped[str] = mapped_column(String(20), default="idle")
     last_indexed_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
