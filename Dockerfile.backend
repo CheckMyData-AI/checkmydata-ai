@@ -29,6 +29,21 @@ RUN pip install --upgrade pip && \
 # ---------- runtime ----------
 FROM python:3.12-slim AS runtime
 
+# The commit this image was built from, baked in at build time.
+#
+# `HEROKU_SLUG_COMMIT` — which the Sentry docs and most guides tell you to use — is
+# populated only for slug (buildpack) deploys. This app is on the **container** stack,
+# where the variable exists and is always EMPTY (measured on v271, 2026-08-26). A Sentry
+# release built from it would be blank, issues would attach to a release with no commits,
+# and suspect-commit attribution would silently do nothing — which reads as "Sentry is
+# not very good" rather than as a wiring bug.
+#
+# The build already knows the SHA: `deploy.yml` checks out `workflow_run.head_sha`. An
+# image-baked value is also the honest one, because it cannot drift from the code inside
+# the image the way a config variable set separately can.
+ARG GIT_SHA=""
+ENV RELEASE=$GIT_SHA
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
