@@ -21,7 +21,13 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # `event == 'push'` is the half that is not obvious. `branches: [main]` above
+    # matches the HEAD branch of the CI run, and since CI now runs on every pull
+    # request, a PR opened *from* `main` would produce a run that satisfies it.
+    # Deploy follows a merge, never a proposal.
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push' }}
 
     steps:
       - uses: actions/checkout@v5
