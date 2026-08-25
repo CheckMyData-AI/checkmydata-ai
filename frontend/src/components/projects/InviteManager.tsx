@@ -45,6 +45,7 @@ export function InviteManager({ projectId, onClose }: Props) {
   const [refreshLoading, setRefreshLoading] = useState(true);
   const [updatingRoleId, setUpdatingRoleId] = useState<string | null>(null);
   const [transferringId, setTransferringId] = useState<string | null>(null);
+  const [leaving, setLeaving] = useState(false);
   const [resending, setResending] = useState<string | null>(null);
   const [resentIds, setResentIds] = useState<Set<string>>(new Set());
   const resendTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -158,6 +159,32 @@ export function InviteManager({ projectId, onClose }: Props) {
       toast(err instanceof Error ? err.message : "Failed to transfer ownership", "error");
     } finally {
       setTransferringId(null);
+    }
+  };
+
+  const handleLeave = async () => {
+    if (
+      !(await confirmAction("Leave this project?", {
+        detail:
+          "You will lose access to it immediately and it will disappear from your " +
+          "project list. Only an owner can invite you back.",
+        severity: "warning",
+        confirmText: "Leave project",
+      }))
+    )
+      return;
+    setLeaving(true);
+    try {
+      await api.invites.leaveProject(projectId);
+      toast("You have left the project", "info");
+      onClose();
+    } catch (err) {
+      // The server refuses an owner with a message naming the transfer route. Showing
+      // it verbatim is the point: a generic "failed to leave" would hide the one thing
+      // that tells the reader what to do instead.
+      toast(err instanceof Error ? err.message : "Failed to leave the project", "error");
+    } finally {
+      setLeaving(false);
     }
   };
 
@@ -286,6 +313,16 @@ export function InviteManager({ projectId, onClose }: Props) {
                   </select>
                 )}
               </div>
+              {m.user_id === myUserId && m.role !== "owner" && (
+                <button
+                  onClick={handleLeave}
+                  disabled={leaving}
+                  aria-label="Leave project"
+                  className="ml-2 px-2 py-0.5 text-kicker text-text-muted hover:text-error hover:bg-error/10 rounded transition-colors shrink-0 disabled:opacity-40"
+                >
+                  Leave project
+                </button>
+              )}
               {m.role !== "owner" && iAmOwner && (
                 <button
                   onClick={() =>

@@ -117,6 +117,12 @@ export const invites = {
     request<{ ok: boolean }>(`/invites/${projectId}/members/${userId}`, {
       method: "DELETE",
     }),
+  // F-PROJ-12: leaving takes no user id. The endpoint is `/members/me`, so a request
+  // cannot express "remove someone else" — removing another member is `removeMember`
+  // above, which needs owner rights. 204, no body. An owner is refused with 400 and a
+  // message naming the transfer route: leaving would strand the workspace.
+  leaveProject: (projectId: string) =>
+    request<void>(`/invites/${projectId}/members/me`, { method: "DELETE" }),
   // F-PROJ-10: ownership has one way in. `updateMemberRole` deliberately cannot set
   // "owner" — this route also enforces the receiving owner's plan quota and keeps
   // `Project.owner_id` and the member row in step. 204, no body.

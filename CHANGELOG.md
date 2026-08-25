@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a green gate that could not see a duplicate (N5)
+
+- `docs/qa-audit/issues.md` carried **three unresolved git conflict markers** (lines 91,
+  97, 100) and four copies of its tally paragraph, each claiming a different count:
+  34/75, 37/72, 39/70, 35/74. The whole suite stayed green through it.
+- The reason it stayed green is the interesting half. `test_the_tally_matches_the_rows_it_summarises`
+  used `re.search`, which returns the **first** match and stops. The first copy happened
+  to be the correct one, so the check passed and the three contradicting copies — and the
+  raw markers beside them — were invisible to the only test that reads this file. A check
+  that catches an absence but not a duplication is the case where a green gate is worse
+  than no gate.
+- The tally is now asserted to occur **exactly once** before its values are compared, and
+  the pattern accepts both phrasings in circulation (`34 open rows` and ``34 open `F-` rows``)
+  — a duplicate written in the other phrasing is precisely the one a narrow pattern lets
+  through, and `main` carries such a pair today.
+- New repository-wide ratchet: **no tracked file may contain a conflict marker.** It scans
+  `git ls-files`, not `docs/` — the board is where it happened this time; the next one
+  lands in a migration or a fixture, where the numbers look plausible and nobody re-reads
+  them. Only `<<<<<<< ` and `>>>>>>> ` count as evidence: a bare `=======` is also a legal
+  Markdown setext underline, and git never writes it without the other two, so excluding
+  it costs no detection and removes the one possible false positive.
+- The board's numbers are re-derived from the rows: **34 open `F-` rows, 75 struck, 3 open
+  `CB-` rows**, matching the severity table's 37.
+
 ### Fixed — re-derivation weighed the same as a person's vote (F-LEARN-03)
 
 - Two paths added exactly `+0.1` to a learning's confidence, carrying very different
@@ -27,6 +51,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Two existing tests pinned the flat `+0.1`** and were re-pointed. They asserted the
   increment, which is the thing that made pumping possible — the same shape as the
   freshness test that pinned the word "pull".
+### Added — leave a project; bounded member and invite lists (F-PROJ-12, F-PROJ-13)
+
+- **F-PROJ-12** — `DELETE /api/invites/{project_id}/members/me` removes the caller's own
+  membership. It is coherent only because F-PROJ-10 shipped first: an owner is **refused**,
+  because walking out would leave the workspace with nobody able to manage it — the exact
+  stranded state that row was raised about — so the refusal names the transfer route that
+  unblocks it. Ownership is read from the member row *or* `Project.owner_id`, since
+  checking one would let an owner whose row disagrees with the column slip out.
+- The path is `/members/me` rather than `/members/{id}` deliberately: no request can even
+  express "remove someone else", so there is no guard that could be forgotten.
+- **F-PROJ-13** — both lists were bare `SELECT` by project, with `selectinload(user)` on
+  top for members. Invites are the worse case: pending and expired rows are never pruned,
+  so that list grows with time rather than with the team. Now bounded (default 500, hard
+  maximum 1000).
+- **The cap was the easy half.** A page shorter than the total is marked
+  `X-Result-Capped: true` with the real number in `X-Total-Count`, and the service logs at
+  warning when the cap bites. A capped page returned with no marker is a partial answer
+  presented as a whole one. Headers rather than a wrapper object, because the response
+  shape is what every existing client is generated against.
+- `limit<=0` raises rather than meaning "unlimited" — that reading is how a cap becomes
+  decorative — and an absurd limit is clamped, so a caller cannot lift the ceiling by
+  asking for more.
+
 ### Fixed — a role is a value with a domain (F-PROJ-07, F-PROJ-08, F-PROJ-11)
 
 - **F-PROJ-07 failed *open*, which the row does not say.**

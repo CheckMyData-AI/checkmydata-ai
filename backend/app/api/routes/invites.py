@@ -290,14 +290,51 @@ async def list_pending_invites(
     ]
 
 
-@router.get("/{project_id}/members", response_model=list[MemberResponse])
-async def list_members(
+@router.delete("/{project_id}/members/me", status_code=204)
+@limiter.limit("10/minute")
+async def leave_project(
+    request: Request,
     project_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
+    """Leave a project you are a member of (F-PROJ-12).
+
+    Gated on membership, not on a role: any member may remove themselves, and the
+    service refuses an owner — walking out would leave nobody able to manage the
+    workspace, which is the stranded state F-PROJ-10 was raised about. Leaving is
+    coherent now *because* that row was fixed: transfer first, then leave.
+
+    Deliberately `/members/me` rather than `/members/{id}`: the caller is the only
+    person this can act on, and encoding that in the path means no request can express
+    "remove someone else" for the guard to have to refuse.
+    """
+    left = await _membership_svc.leave_project(db, project_id, user["user_id"])
+    if not left:
+        raise HTTPException(status_code=404, detail="You are not a member of this project")
+    return Response(status_code=204)
+
+
+@router.get("/{project_id}/members", response_model=list[MemberResponse])
+async def list_members(
+    project_id: str,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """List a project's members, bounded (F-PROJ-13).
+
+    The query is capped. `X-Total-Count` carries the real number and `X-Result-Capped`
+    says whether what came back is all of it — a capped page returned with no such
+    marker is a partial answer presented as a whole one, and a client cannot tell the
+    difference from the body alone. Headers rather than a wrapper object because the
+    response shape is what every existing client is generated against.
+    """
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
     members = await _membership_svc.list_members(db, project_id)
+    total = await _membership_svc.count_members(db, project_id)
+    response.headers["X-Total-Count"] = str(total)
+    response.headers["X-Result-Capped"] = "true" if len(members) < total else "false"
     result = []
     for m in members:
         email = None
