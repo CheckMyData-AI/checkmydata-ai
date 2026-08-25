@@ -236,3 +236,108 @@ def test_legacy_coverage_paths_do_not_regress() -> None:
         f"legacy unresolved Coverage paths grew from "
         f"{LEGACY_UNRESOLVED_COVERAGE_BASELINE} to {len(unresolved)}: {unresolved}"
     )
+
+
+# ---------------------------------------------------------------------------
+# N10: implemented is not verified.
+#
+# All 127 scenarios said `implemented` and 125 said `PASS`, and both were read as
+# current. 110 of them carried an audit date of 2026-07-19 while 152 commits had landed
+# on `main` since, and only 22 of 127 were referenced anywhere in code or tests — so for
+# 105 there was no anchor a machine could check them by. "100% implemented, 98% PASS" in
+# that state is an assertion, not a measurement.
+# ---------------------------------------------------------------------------
+
+#: Scenarios whose last audit predates the block's own stamp by more than
+#: `STALE_AFTER_DAYS`. A ratchet: it may fall, never rise. Lowering it is what a batch of
+#: `/ux-audit` produces; raising it would mean deciding to let verification rot, which is
+#: a decision that should cost somebody a sentence in a diff.
+# 110 → 105 on 2026-08-25: SCN-008, SCN-011, SCN-012, SCN-013 and SCN-015 re-audited
+# against the code and re-dated. They were chosen by `ux_verification_status.py
+# --backlog`, which orders stale scenarios by how many of their own Coverage files
+# have changed since the audit — the five access scenarios whose backend moved most.
+# All five held behaviourally; SCN-015 carried two line references that no longer
+# pointed at the code they named, and those were corrected.
+STALE_VERIFICATION_CEILING = 105
+
+
+def _status_module():
+    import importlib.util
+    import sys
+
+    script = REPO_ROOT / "scripts" / "ux_verification_status.py"
+    spec = importlib.util.spec_from_file_location("ux_verification_status", script)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["ux_verification_status"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_document_carries_a_verification_block() -> None:
+    mod = _status_module()
+    text = SCENARIOS_MD.read_text(encoding="utf-8")
+    assert mod.current_block(text) is not None, (
+        "the header must separate implemented from verified; regenerate with `make ux-status`"
+    )
+
+
+def test_the_block_agrees_with_the_table_it_summarises() -> None:
+    """Computed against the stamp the block carries, not against today — so this is a
+    statement about the table rather than about what day the suite runs."""
+    import re as _re
+    import subprocess as _sp
+
+    mod = _status_module()
+    completed = _sp.run(
+        ["python3", str(REPO_ROOT / "scripts" / "ux_verification_status.py"), "--check"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, (
+        "the verification block no longer matches the index table — a scenario was "
+        f"added, re-audited or re-dated without regenerating it.\n{completed.stderr}"
+    )
+    # And the stamp itself must exist, or `--check` degrades to comparing today with
+    # today and passes vacuously.
+    assert _re.search(
+        r"Counted \d{4}-\d{2}-\d{2}", mod.current_block(SCENARIOS_MD.read_text("utf-8"))
+    )
+
+
+def test_stale_verifications_do_not_grow() -> None:
+    from datetime import date as _date
+
+    mod = _status_module()
+    text = SCENARIOS_MD.read_text(encoding="utf-8")
+    stamp = _date.fromisoformat(
+        __import__("re").search(r"Counted (\d{4}-\d{2}-\d{2})", text).group(1)
+    )
+    summary = mod.summarise(text, today=stamp, anchors=mod.anchored_ids())
+
+    assert len(summary["stale"]) <= STALE_VERIFICATION_CEILING, (
+        f"{len(summary['stale'])} scenarios were verified more than "
+        f"{mod.STALE_AFTER_DAYS} days before the block's stamp, above the recorded "
+        f"ceiling of {STALE_VERIFICATION_CEILING}. Re-audit a batch and date it, or "
+        "raise the ceiling in this commit and say why verification is allowed to rot."
+    )
+
+
+def test_every_index_row_carries_a_date_and_a_verdict() -> None:
+    """A row saying only `implemented` cannot be told apart from one nobody has ever
+    checked — which is the state this whole section exists to make visible."""
+    mod = _status_module()
+    text = SCENARIOS_MD.read_text(encoding="utf-8")
+    import re as _re
+
+    undated = [
+        sid for sid, _st, audit in mod.rows(text) if not _re.search(r"\d{4}-\d{2}-\d{2}", audit)
+    ]
+    unjudged = [
+        sid
+        for sid, _st, audit in mod.rows(text)
+        if not _re.search(r"\b(PASS|FAIL|PARTIAL)\b", audit)
+    ]
+    assert not undated, f"no audit date: {undated}"
+    assert not unjudged, f"no verdict: {unjudged}"

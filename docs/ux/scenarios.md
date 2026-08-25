@@ -9,6 +9,35 @@ found is recorded as a `draft` scenario with `Coverage: none yet`. Paths are
 relative to `frontend/src/` unless noted. All entries start `draft`; only a
 human review moves them to `validated`.
 
+<!-- verification-status:begin -->
+### Implemented is not verified
+
+Counted 2026-08-25 — regenerate with `make ux-status`. **Every number below is
+counted from the index table, never typed.**
+
+Ages are measured against the stamp above, not against the clock. A block that aged on
+its own would turn CI red on a day nobody changed anything, and a gate that fires
+without a cause is one people learn to ignore. It goes stale when the *table* changes.
+
+| | |
+|---|---|
+| Scenarios | **127** |
+| Status | implemented × 127 |
+| Last verdict | PARTIAL × 2, PASS × 125 |
+| Verified when | 2026-07-19 × 105, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5 |
+| **Verified >30 days ago** | **105 of 127** (oldest 37 days) |
+| Never verified (no date) | 0 |
+| Referenced from code or tests | **21 of 127** |
+
+*Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
+and that date has an age. A reader shown only the first will believe the second — which
+is how "100% implemented, 98% PASS" came to be quoted while 110 of the verdicts were
+five weeks old and 105 scenarios had no anchor a machine could check them by.
+
+The stale count is a ratchet: it may fall, never rise. Re-auditing a scenario and dating
+it is what moves it.
+<!-- verification-status:end -->
+
 ## Index
 
 | ID | Title | Feature | Persona | Status | Last audit |
@@ -20,14 +49,14 @@ human review moves them to `validated`.
 | SCN-005 | Register with email + password | auth | new-user | implemented | 2026-07-19 PASS |
 | SCN-006 | Log in with email + password | auth | analyst | implemented | 2026-07-19 PASS |
 | SCN-007 | Sign in with Google | auth | analyst | implemented | 2026-07-19 PASS |
-| SCN-008 | Log out | auth | analyst | implemented | 2026-07-19 PASS |
+| SCN-008 | Log out | auth | analyst | implemented | 2026-08-25 PASS |
 | SCN-009 | Change password | auth | analyst | implemented | 2026-07-19 PASS |
 | SCN-010 | Delete account | auth | analyst | implemented | 2026-07-19 PASS |
-| SCN-011 | Session expiry → forced re-login | auth | analyst | implemented | 2026-07-19 PASS |
-| SCN-012 | Email verification after registration | auth | new-user | implemented | 2026-07-19 PASS |
-| SCN-013 | Forgot / reset password | auth | analyst | implemented | 2026-07-19 PASS |
+| SCN-011 | Session expiry → forced re-login | auth | analyst | implemented | 2026-08-25 PASS |
+| SCN-012 | Email verification after registration | auth | new-user | implemented | 2026-08-25 PASS |
+| SCN-013 | Forgot / reset password | auth | analyst | implemented | 2026-08-25 PASS |
 | SCN-014 | Accept a pending project invite | invites | analyst | implemented | 2026-07-19 PASS |
-| SCN-015 | Decline / reject an invite | invites | analyst | implemented | 2026-07-19 PASS |
+| SCN-015 | Decline / reject an invite | invites | analyst | implemented | 2026-08-25 PASS (line refs corrected) |
 | SCN-016 | Create a project | projects | owner | implemented | 2026-07-19 PASS |
 | SCN-017 | Switch between projects (multi-entity) | projects | analyst | implemented | 2026-07-19 PASS |
 | SCN-018 | Edit a project | projects | owner | implemented | 2026-07-19 PASS |
@@ -409,7 +438,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** loading (button "…"), success (row removed + toast), error (toast, row retained)
 - **Errors & recovery:** decline fails → toast "Failed to decline invite" (or the API error message) and the row is kept; a non-invitee is rejected 403 and a non-pending/unknown invite 400/404 server-side, surfaced as an error toast
 - **Status:** implemented
-- **Coverage:** backend route `POST /api/invites/decline/{invite_id}` (`backend/app/api/routes/invites.py:212-227`) → `InviteService.decline_invite` (`backend/app/services/invite_service.py:122-158`; deletes the row for constraint-safe re-invite — email-owner + pending checks mirror accept with 404/400/403); frontend `frontend/src/components/invites/PendingInvites.tsx:50-61,85-93` + `frontend/src/lib/api/workspace.ts:106-107`; tests `backend/tests/unit/test_invite_service.py::TestDeclineInvite`, `backend/tests/integration/test_invites.py::TestInviteRoutes::test_invitee_can_decline_invite`, `frontend/src/__tests__/components/PendingInvites.test.tsx`
+- **Coverage:** backend route `POST /api/invites/decline/{invite_id}` (`backend/app/api/routes/invites.py:253-270`) → `InviteService.decline_invite` (`backend/app/services/invite_service.py:159-196`; deletes the row for constraint-safe re-invite — email-owner + pending checks mirror accept with 404/400/403); frontend `frontend/src/components/invites/PendingInvites.tsx:50-61,85-93` + `frontend/src/lib/api/workspace.ts:106-107`; tests `backend/tests/unit/test_invite_service.py::TestDeclineInvite`, `backend/tests/integration/test_invites.py::TestInviteRoutes::test_invitee_can_decline_invite`, `frontend/src/__tests__/components/PendingInvites.test.tsx`
 
 ## projects
 
