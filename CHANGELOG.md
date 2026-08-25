@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the error catalog never heard about the failure it existed for (N3)
+
+- `error_log` is the product's own record of what is going wrong — what `/api/logs`
+  shows an operator. On 2026-08-23 it held **three rows**, newest 2026-08-17, while
+  `indexing_runs` held **143** at `status='failed'`. The single most frequent production
+  failure this system has was absent from the one place built to display it.
+- The cause is structural, not an oversight. `RunCoordinator` catalogs failures in three
+  places (`run_coordinator.py:317`, `:450`, `:485`) and every one sits on a *terminal
+  event* path — `finish`, or a pipeline reporting its own end. The reaper does neither:
+  it issues a bulk `UPDATE ... SET status='failed'` against rows whose process is gone,
+  so no terminal event is emitted and **no writer is ever reached**.
+- The reaper now reads the rows it is about to kill, then catalogs each one. The message
+  carries the **step**: `stale run reaped` alone collapses every reaped run of a kind
+  onto one line, and it was the step that made the cause findable — 64 of 70 failures
+  were `graph_build` specifically. The product can now state that concentration itself
+  instead of waiting for someone to run the SQL by hand.
+- The run's own `error` column is left exactly `REAP_ERROR`. `run_coordinator.py:393`
+  compares it verbatim to recognise a reaped run and reconcile it when the pipeline
+  turns out to be alive; enriching that column instead of the catalog message would have
+  broken reconciliation silently.
+- Cataloguing is best-effort and cannot abort the sweep: a diagnostic that stops the
+  recovery it describes would leave `running` rows unreaped and the UI spinning, which
+  is the state the reaper exists to end.
+- Six tests. Two are guards rather than features — the `error` column stays verbatim,
+  and a **cancelled** run is not catalogued as an error, because `cancelling` →
+  `cancelled` is somebody's decision.
 ### Fixed — a step longer than five minutes was killed for being slow (N1)
 
 - `RunCoordinator.step` wrote `heartbeat_at` on entry and again on success, and nothing
