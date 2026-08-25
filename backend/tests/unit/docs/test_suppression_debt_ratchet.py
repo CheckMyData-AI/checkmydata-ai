@@ -39,7 +39,13 @@ APP = Path(__file__).resolve().parents[4] / "backend" / "app"
 #: Counts measured 2026-08-25 over `backend/app/`. Lower them as suppressions go; raise
 #: one only in the same commit as the suppression it admits, so the increase is reviewed.
 CEILINGS: dict[str, int] = {
-    "except Exception": 611,
+    # 611 → 612 on 2026-08-25, and the raise is the mechanism working rather than an
+    # exception to it. `StaleRunReaper._catalog` (N3) swallows a failure to write the
+    # error catalog, because a diagnostic that can abort the recovery it is describing
+    # would leave `running` rows unreaped and the UI spinning. The gate caught it
+    # arriving from another branch, which is exactly the case a number nobody
+    # recomputes would have missed.
+    "except Exception": 612,
     "except ...: pass": 53,
     "# type: ignore": 49,
     "# noqa": 128,

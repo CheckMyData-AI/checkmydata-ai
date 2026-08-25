@@ -36,6 +36,12 @@ a `# noqa` turned the suite red on both metrics, and green again when removed.
 A companion test guards the guard: a ceiling drifting more than 15 above the real count
 fails too, because a ratchet that never tightens stops being one.
 
+**It caught one on its way in.** CI went red at `except Exception` 612 against a ceiling
+of 611 — the extra arriving from another branch, `StaleRunReaper._catalog` (N3), whose
+swallow is deliberate: a diagnostic that can abort the recovery it describes would leave
+`running` rows unreaped. The ceiling was raised **with that reason recorded beside it**,
+which is the whole procedure this ratchet exists to force.
+
 ### Changed — production ran ten flags the code called off, one of them an invariant (N2, N4)
 
 - Measured against `backend/app/config.py`: `CLUSTERING_ENABLED`, `GIT_POLL_ENABLED`,
