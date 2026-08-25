@@ -355,6 +355,8 @@ A timeout also gets **exactly one** LLM repair, prompted to narrow scope rather 
 
 Per-connection, **not** a global flag: `collection_enabled` (default **on**) and `collection_hour` (default **3**, local to `daily_knowledge_sync_timezone`). `collection_enabled` pauses only the *schedule* — `POST /api/connections/{id}/collect` deliberately ignores it, since pulling on demand is how a credential fix is verified.
 
+**Capability claims are checked at every boot.** `app/ops/capability_report.py` runs in the `lifespan` and logs one line per configured capability the runtime does not actually provide — `reranker_enabled` or `chroma_embedding_model` without the `ml` extra, and `chroma_server_url` at CRITICAL because the installed `chromadb` carries GHSA-f4j7-r4q5-qw2c (pre-auth code injection, no fixed version) and only the absence of an HTTP listener keeps it unreachable. It logs on success too, so silence never reads as a passing check, and it never raises.
+
 **Platform / security:**
 
 `billing_enabled`, `mcp_enabled`, `mcp_mount_enabled` (HTTP mount, requires `mcp_enabled`), `security_csp_enabled` / `security_csp`, `security_hsts_enabled`, `session_rotation_enabled`, `backup_enabled`, `sentry_dsn` (off unless set).

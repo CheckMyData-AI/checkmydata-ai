@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — a boot check that says which configured capabilities the image does not carry (N4, N8)
+
+- `RERANKER_ENABLED=true` ran in production against an image carrying neither
+  `sentence_transformers` nor `torch`. Nothing broke — the reranker degrades honestly to
+  a no-op — and that is the problem: an operator reading `heroku config` saw an enabled
+  feature that does not exist. The only signal was **one** WARNING, emitted lazily on
+  first use of the vector store, hours into a dyno's life and long past the boot log
+  anyone reads after a deploy. A warning that can be missed by scrolling is one that will
+  be.
+- `app/ops/capability_report.py` runs in the FastAPI `lifespan` on **every** boot and
+  logs one line per unmet claim, naming the consequence and the remedy. It also logs when
+  everything is satisfied, because silence is indistinguishable from the check not
+  running. It cannot raise: a boot-time diagnostic that stops a boot is a worse bug than
+  the one it reports.
+- Three claims today. `reranker_enabled` without the extra. `chroma_embedding_model`
+  without it, which is the worse one — the config names a 768-d model, Chroma silently
+  embeds at 384-d with its bundled MiniLM, and the two are **not comparable**, so it is a
+  wrong answer rather than a slow one. Production has the variable unset, but the
+  *default* is the 768-d model, so production has been running that mismatch all along.
+- **`chroma_server_url` is the third, and it defends a transition rather than a state
+  (N8).** The installed `chromadb` carries GHSA-f4j7-r4q5-qw2c / PYSEC-2026-311 —
+  pre-authentication code injection, CRITICAL, **no fixed version exists**. The embedded
+  `PersistentClient` has no HTTP listener, so today there is no pre-auth surface at all.
+  Setting one environment variable creates one. That claim logs at CRITICAL.
+- Ten tests, including one that the check must survive its own introspection failing.
+
 ### Fixed — a step longer than five minutes was killed for being slow (N1)
 
 - `RunCoordinator.step` wrote `heartbeat_at` on entry and again on success, and nothing
