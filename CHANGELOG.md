@@ -32,6 +32,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Six tests. Two are guards rather than features — the `error` column stays verbatim,
   and a **cancelled** run is not catalogued as an error, because `cancelling` →
   `cancelled` is somebody's decision.
+### Fixed — a step longer than five minutes was killed for being slow (N1)
+
+- `RunCoordinator.step` wrote `heartbeat_at` on entry and again on success, and nothing
+  in between. `IndexingRun` is the row `StaleRunReaper` reaps, so **any single step
+  running longer than the 300 s timeout was declared dead while it was still working**
+  and flipped to `failed` with `error='stale run reaped'`.
+- Production had been failing this way every day since 2026-08-07: **64 of 70**
+  repo-index failures, all on `current_step='graph_build'` — the step that walks 25 421
+  symbols. Runs made of many short steps completed fine at 417 s and 2 568 s, which is
+  the signature of a per-*step* limit rather than a per-run one.
+- **It hid for thirteen days because a heartbeat already existed, on the wrong row.**
+  `_run_index_background` (`repos.py:556-563`) ticks `IndexingCheckpoint`; the checkpoint
+  therefore stayed alive beside a run that was being reaped, so nothing about the failure
+  looked like a missing heartbeat.
+- The beat now wraps the step body. It lives in `step` rather than in any caller because
+  all four entry points into a repo index — the ARQ task, the manual route, the retry
+  route and the daily sync — reach the pipeline through this contextmanager; the fix
+  first considered (wrapping `worker.py`'s `run_repo_index`) would have covered one of
+  the four and added a second heartbeat beside the existing one.
+- The writer opens **its own session**: the step's `db` driven from two tasks
+  concurrently is a race, not a heartbeat. It issues a targeted `UPDATE` rather than
+  loading the ORM object, so it cannot carry a stale `version` into a column the step
+  boundaries bump deliberately, nor win on columns it does not own via a second identity
+  map.
+- Three tests, and the third is the point: the beat must **stop** when the step does, or
+  a genuinely crashed run stays immortal — the failure the reaper exists to catch,
+  reintroduced by its own fix.
 
 ### Fixed — a green gate that could not see a duplicate (N5)
 
