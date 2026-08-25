@@ -4,6 +4,7 @@ Revision ID: g2h3i4j5k6l7
 Revises: f1a2b3c4d5e6
 Create Date: 2026-03-17
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -18,9 +19,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     with op.batch_alter_table("chat_sessions") as batch_op:
-        batch_op.add_column(
-            sa.Column("connection_id", sa.String(36), nullable=True)
-        )
+        batch_op.add_column(sa.Column("connection_id", sa.String(36), nullable=True))
         batch_op.create_foreign_key(
             "fk_chat_sessions_connection_id",
             "connections",

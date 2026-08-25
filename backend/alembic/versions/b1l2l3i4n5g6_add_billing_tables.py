@@ -61,9 +61,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(30), nullable=False, server_default="free"),
         sa.Column("current_period_start", sa.DateTime(timezone=True), nullable=True),
         sa.Column("current_period_end", sa.DateTime(timezone=True), nullable=True),
-        sa.Column(
-            "cancel_at_period_end", sa.Boolean, nullable=False, server_default=sa.false()
-        ),
+        sa.Column("cancel_at_period_end", sa.Boolean, nullable=False, server_default=sa.false()),
         sa.Column("trial_end", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",

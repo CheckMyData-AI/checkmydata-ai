@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed — a dead encrypted column (F-REPO-04)
+
+- `ProjectRepository.auth_token_encrypted` was declared on the model and accepted as a
+  keyword by `RepositoryService.create`, but **no caller passed it**, it was absent from
+  `ALLOWED_UPDATE_FIELDS`, and nothing read it. Repositories authenticate through
+  `ssh_key_id`.
+- Measured before dropping: production held **0 rows** in `project_repositories`
+  (`SELECT count(*), count(auth_token_encrypted)` → `0 | 0`), so no ciphertext is lost.
+- A column shaped to hold secrets, with no writer and no reader, is not neutral — it is
+  the place the next feature stores a token without anyone reviewing how it got there.
+  Bringing it back is one migration, on the day HTTPS token auth is actually built.
+- Migration `6287a47828ca`, **hand-written and that is load-bearing**: `alembic revision
+  --autogenerate` against the SQLite dev database produced **194 DDL operations** for this
+  one-column change, including `op.drop_table('audit_logs')` — the durable auth audit
+  table from F-AUTH-15. SQLite's introspection disagrees with the model metadata about
+  NOT NULL defaults and index naming, and autogenerate reads the difference as intent.
+  Verified up → down → up on a rebuilt database.
+- **Two tests were pinned to facts that had to change**, and both are now derived:
+  - `test_credential_rotation.py` asserted `== 7` encrypted columns in four places. The
+    count now comes from the sweep's own map, so adding or removing a column moves it.
+    Editing four 7s into 6s is the same shape as the board tally that claimed four
+    different numbers at once.
+  - `test_alembic.py` ran `upgrade head` then `downgrade -1` to exercise
+    `d3e4f5a6b7c8`. Those are synonyms for that revision only until another lands on top:
+    the new migration made `downgrade -1` revert the wrong one, and the failure pointed
+    at demo connections rather than at the coupling. Both ends now name their revision.
+
 ### Changed — production ran ten flags the code called off, one of them an invariant (N2, N4)
 
 - Measured against `backend/app/config.py`: `CLUSTERING_ENABLED`, `GIT_POLL_ENABLED`,

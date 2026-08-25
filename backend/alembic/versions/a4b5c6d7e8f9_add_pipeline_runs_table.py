@@ -34,9 +34,7 @@ def upgrade() -> None:
         ),
         sa.Column("user_question", sa.Text(), nullable=False),
         sa.Column("plan_json", sa.Text(), nullable=False, server_default="{}"),
-        sa.Column(
-            "status", sa.String(20), nullable=False, server_default="planning"
-        ),
+        sa.Column("status", sa.String(20), nullable=False, server_default="planning"),
         sa.Column("current_stage_idx", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("stage_results_json", sa.Text(), nullable=False, server_default="{}"),
         sa.Column("user_feedback_json", sa.Text(), nullable=False, server_default="[]"),

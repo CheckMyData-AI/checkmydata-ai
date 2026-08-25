@@ -9,19 +9,19 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = 'c5f1d9e23a01'
-down_revision: str | None = 'b3c8f2a71e56'
+revision: str = "c5f1d9e23a01"
+down_revision: str | None = "b3c8f2a71e56"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table('chat_messages') as batch_op:
+    with op.batch_alter_table("chat_messages") as batch_op:
         batch_op.add_column(
-            sa.Column('user_rating', sa.Integer(), nullable=True),
+            sa.Column("user_rating", sa.Integer(), nullable=True),
         )
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('chat_messages') as batch_op:
-        batch_op.drop_column('user_rating')
+    with op.batch_alter_table("chat_messages") as batch_op:
+        batch_op.drop_column("user_rating")

@@ -26,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.base import async_session_factory
 from app.models.connection import Connection
-from app.models.repository import ProjectRepository
 from app.models.ssh_key import SshKey
 from app.models.vendor_credential import VendorCredential
 from app.services.encryption import is_on_primary_key, rotate_token
@@ -43,13 +42,6 @@ ENCRYPTED_COLUMNS: list[tuple[Any, tuple[str, ...]]] = [
         ("db_password_encrypted", "connection_string_encrypted", "mcp_env_encrypted"),
     ),
     (SshKey, ("private_key_encrypted", "passphrase_encrypted")),
-    # Currently dead: no caller passes it and nothing reads it (`RepositoryService.
-    # create` accepts the parameter, the route never supplies it, and it is absent
-    # from ALLOWED_UPDATE_FIELDS). Swept anyway — the derived-coverage test would
-    # otherwise fail, and more to the point a future writer must not be able to break
-    # rotation by populating a column the sweep does not know about. Tracked as
-    # F-REPO-04.
-    (ProjectRepository, ("auth_token_encrypted",)),
     (VendorCredential, ("secret_encrypted",)),
 ]
 

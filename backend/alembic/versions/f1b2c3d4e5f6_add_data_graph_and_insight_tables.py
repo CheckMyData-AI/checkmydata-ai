@@ -50,7 +50,9 @@ def upgrade() -> None:
         sa.Column("is_active", sa.Boolean(), server_default="1"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-        sa.UniqueConstraint("project_id", "name", "connection_id", name="uq_metric_def_project_name_conn"),
+        sa.UniqueConstraint(
+            "project_id", "name", "connection_id", name="uq_metric_def_project_name_conn"
+        ),
     )
 
     op.create_table(
@@ -85,7 +87,9 @@ def upgrade() -> None:
         sa.Column("confidence", sa.Float(), server_default="0.5"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-        sa.UniqueConstraint("metric_a_id", "metric_b_id", "relationship_type", name="uq_metric_rel_pair_type"),
+        sa.UniqueConstraint(
+            "metric_a_id", "metric_b_id", "relationship_type", name="uq_metric_rel_pair_type"
+        ),
     )
 
     op.create_table(

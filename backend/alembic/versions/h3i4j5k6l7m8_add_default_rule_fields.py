@@ -4,6 +4,7 @@ Revision ID: h3i4j5k6l7m8
 Revises: g2h3i4j5k6l7
 Create Date: 2026-03-17
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -23,9 +24,7 @@ naming_convention = {
 
 
 def upgrade() -> None:
-    with op.batch_alter_table(
-        "projects", naming_convention=naming_convention
-    ) as batch_op:
+    with op.batch_alter_table("projects", naming_convention=naming_convention) as batch_op:
         batch_op.add_column(
             sa.Column(
                 "default_rule_initialized",
@@ -35,9 +34,7 @@ def upgrade() -> None:
             )
         )
 
-    with op.batch_alter_table(
-        "custom_rules", naming_convention=naming_convention
-    ) as batch_op:
+    with op.batch_alter_table("custom_rules", naming_convention=naming_convention) as batch_op:
         batch_op.add_column(
             sa.Column(
                 "is_default",
@@ -49,12 +46,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table(
-        "custom_rules", naming_convention=naming_convention
-    ) as batch_op:
+    with op.batch_alter_table("custom_rules", naming_convention=naming_convention) as batch_op:
         batch_op.drop_column("is_default")
 
-    with op.batch_alter_table(
-        "projects", naming_convention=naming_convention
-    ) as batch_op:
+    with op.batch_alter_table("projects", naming_convention=naming_convention) as batch_op:
         batch_op.drop_column("default_rule_initialized")

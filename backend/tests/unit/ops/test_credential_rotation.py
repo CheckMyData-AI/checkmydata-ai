@@ -25,7 +25,6 @@ import app.services.encryption as enc
 from app.models.base import Base
 from app.models.connection import Connection
 from app.models.project import Project
-from app.models.repository import ProjectRepository
 from app.models.ssh_key import SshKey
 from app.models.user import User
 from app.models.vendor_credential import VendorCredential
@@ -52,12 +51,30 @@ def _use(monkeypatch, primary: str, old: str = "") -> None:
     enc.reset_cache()
 
 
+def _encrypted_column_count() -> int:
+    """How many encrypted columns the sweep actually carries — computed, not typed.
+
+    The assertions below were written as `== 7`. Dropping one dead column
+    (`ProjectRepository.auth_token_encrypted`, F-REPO-04) turned four of them red for a
+    reason that had nothing to do with what they test, and the tempting repair is to
+    edit a 7 into a 6 in four places. That is the same shape as the board tally that
+    claimed four different numbers at once: a figure maintained by hand, in more than
+    one place, read as if it were measured.
+    """
+    from app.ops.credential_rotation import ENCRYPTED_COLUMNS
+
+    return sum(len(fields) for _model, fields in ENCRYPTED_COLUMNS)
+
+
 async def _seed_every_encrypted_column(factory) -> None:
     """One value per encrypted column, written under whatever key is active.
 
-    Includes `ProjectRepository.auth_token_encrypted`, which no production path
-    currently writes (F-REPO-04) — seeding it here is what proves the sweep reaches a
-    column a future writer might populate.
+    `ProjectRepository.auth_token_encrypted` used to be seeded here — the sweep carried
+    it although nothing wrote it. The column was dropped in `6287a47828ca` (F-REPO-04)
+    after production was measured empty, so the sweep no longer has it to reach. The
+    derived-coverage assertion below is what keeps this fixture honest either way: it
+    compares the sweep's map against every mapped `_encrypted` column, so a column
+    added or removed shows up here rather than being remembered.
     """
     async with factory() as s:
         u = User(email=f"u-{uuid.uuid4().hex[:6]}@t.com", password_hash="x", display_name="T")
@@ -95,14 +112,6 @@ async def _seed_every_encrypted_column(factory) -> None:
                 fingerprint="vfp",
             )
         )
-        s.add(
-            ProjectRepository(
-                project_id=p.id,
-                name="r",
-                repo_url="https://example.com/r.git",
-                auth_token_encrypted=enc.encrypt("ghp_token"),
-            )
-        )
         await s.commit()
 
 
@@ -119,10 +128,12 @@ class TestRotationSweep:
         _use(monkeypatch, new, old=old)
 
         async with factory() as s:
-            assert await pending_rotation_count(s) == 7, "every one starts on the retired key"
+            assert await pending_rotation_count(s) == _encrypted_column_count(), (
+                "every one starts on the retired key"
+            )
 
         result = await rotate_credentials(session_factory=factory)
-        assert result.rotated == 7
+        assert result.rotated == _encrypted_column_count()
 
         async with factory() as s:
             assert await pending_rotation_count(s) == 0, (
@@ -165,7 +176,7 @@ class TestRotationSweep:
 
         result = await rotate_credentials(session_factory=factory)
         assert result.rotated == 0
-        assert result.examined == 7
+        assert result.examined == _encrypted_column_count()
 
     @pytest.mark.asyncio
     async def test_a_second_sweep_changes_nothing(self, factory, monkeypatch):
@@ -178,7 +189,7 @@ class TestRotationSweep:
 
         first = await rotate_credentials(session_factory=factory)
         second = await rotate_credentials(session_factory=factory)
-        assert first.rotated == 7
+        assert first.rotated == _encrypted_column_count()
         assert second.rotated == 0
 
     @pytest.mark.asyncio
@@ -262,7 +273,7 @@ class TestReconcileAtBoot:
         _use(monkeypatch, _key(), old=old)
         out = await reconcile_encryption_keys(session_factory=factory)
         assert out.status == "rotated"
-        assert out.rotated == 7
+        assert out.rotated == _encrypted_column_count()
         async with factory() as s:
             assert await pending_rotation_count(s) == 0
 

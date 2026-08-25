@@ -24,7 +24,6 @@ class RepositoryService:
         branch: str = "main",
         provider: str = "git_ssh",
         ssh_key_id: str | None = None,
-        auth_token_encrypted: str | None = None,
     ) -> ProjectRepository:
         repo = ProjectRepository(
             id=str(uuid.uuid4()),
@@ -34,7 +33,6 @@ class RepositoryService:
             repo_url=repo_url,
             branch=branch,
             ssh_key_id=ssh_key_id,
-            auth_token_encrypted=auth_token_encrypted,
         )
         session.add(repo)
         await session.commit()

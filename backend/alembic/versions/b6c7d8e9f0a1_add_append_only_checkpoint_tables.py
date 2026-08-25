@@ -31,9 +31,7 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),
         ),
-        sa.UniqueConstraint(
-            "checkpoint_id", "step_name", name="uq_indexing_checkpoint_step"
-        ),
+        sa.UniqueConstraint("checkpoint_id", "step_name", name="uq_indexing_checkpoint_step"),
     )
     op.create_index(
         "ix_indexing_checkpoint_step_cp",
@@ -56,9 +54,7 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),
         ),
-        sa.UniqueConstraint(
-            "checkpoint_id", "source_path", name="uq_indexing_checkpoint_doc"
-        ),
+        sa.UniqueConstraint("checkpoint_id", "source_path", name="uq_indexing_checkpoint_doc"),
     )
     op.create_index(
         "ix_indexing_checkpoint_doc_cp",
@@ -70,7 +66,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_indexing_checkpoint_doc_cp", table_name="indexing_checkpoint_doc")
     op.drop_table("indexing_checkpoint_doc")
-    op.drop_index(
-        "ix_indexing_checkpoint_step_cp", table_name="indexing_checkpoint_step"
-    )
+    op.drop_index("ix_indexing_checkpoint_step_cp", table_name="indexing_checkpoint_step")
     op.drop_table("indexing_checkpoint_step")
