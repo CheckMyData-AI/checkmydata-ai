@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — the frontend reports to Sentry, and the DSN goes where it can reach the browser
+
+- `NEXT_PUBLIC_SENTRY_DSN` is a **build** argument, not a runtime config variable. Next.js
+  inlines every `NEXT_PUBLIC_*` value into the bundle at build time, so one set on the
+  Heroku dyno would leave the browser reporting nothing **while looking configured** —
+  the same failure shape as `RERANKER_ENABLED` advertising a capability the image did not
+  carry. It follows the path `NEXT_PUBLIC_API_URL` already takes: repo variable →
+  `--build-arg` → `ARG`/`ENV` in `Dockerfile.frontend`.
+- Proved end to end rather than assumed: after a real build, the `checkmydata-web`
+  project id appears in **two browser chunks**. The id also confirms it is the web
+  project and not the API one — the two DSNs differ only in a trailing number, which is
+  exactly the kind of mistake nothing would report.
+- **A repo variable, not a secret, and that is the honest home.** A DSN is a write-only
+  ingest address that ships inside JavaScript anyone can read; storing it as a secret
+  would mask it in CI logs while it sits in the page source, which is assurance that
+  is not there.
+- **`SENTRY_AUTH_TOKEN` is deliberately not wired.** It is the opposite kind of value —
+  full API access — and `withSentryConfig` already degrades correctly without it
+  (`sourcemaps.disable: !SENTRY_AUTH_TOKEN`), so today source maps are simply not
+  uploaded. Turning that on is a decision about a real credential, and it belongs to the
+  operator rather than to this change.
+
 ### Security — Sentry was reachable by two secrets neither scrubbing layer could see (N3)
 
 `SENTRY_DSN` was set in production on 2026-08-25, which made this urgent rather than
