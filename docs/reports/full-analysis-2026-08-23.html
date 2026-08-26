@@ -1,0 +1,878 @@
+<title>CheckMyData Full Analysis</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --panel:#ffffff; --panel-2:#f5f3ef; --ink:#16150f; --ink-2:#4a4740;
+    --ink-3:#6f6b61; --line:#e3dfd6; --line-2:#cfc9bc;
+    --red:#b3261e; --orange:#a4560c; --yellow:#8a6a00; --green:#2f6b3a; --grey:#6f6b61;
+    --blue:#1f5c8b; --code-bg:#f2efe9; --shadow:0 1px 2px rgba(20,18,12,.06),0 8px 24px rgba(20,18,12,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#131210; --panel:#1b1a17; --panel-2:#222019; --ink:#f2efe8; --ink-2:#c8c3b8;
+      --ink-3:#98938a; --line:#2e2b25; --line-2:#3d3931;
+      --red:#f08b82; --orange:#e0a35c; --yellow:#d8c169; --green:#8ecb9b; --grey:#98938a;
+      --blue:#83bce8; --code-bg:#201e1a; --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#131210; --panel:#1b1a17; --panel-2:#222019; --ink:#f2efe8; --ink-2:#c8c3b8;
+    --ink-3:#98938a; --line:#2e2b25; --line-2:#3d3931;
+    --red:#f08b82; --orange:#e0a35c; --yellow:#d8c169; --green:#8ecb9b; --grey:#98938a;
+    --blue:#83bce8; --code-bg:#201e1a; --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.3);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.6 ui-sans-serif,-apple-system,"Segoe UI",Inter,system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1120px;margin:0 auto;padding:56px 24px 120px}
+  header.top{border-bottom:1px solid var(--line);padding-bottom:28px;margin-bottom:40px}
+  .kicker{font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+  h1{font-size:clamp(30px,4.4vw,46px);line-height:1.08;letter-spacing:-.022em;margin:14px 0 12px;font-weight:660}
+  .sub{color:var(--ink-2);font-size:17px;max-width:74ch;margin:0}
+  .meta{margin-top:20px;display:flex;flex-wrap:wrap;gap:8px}
+  .tag{font:500 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink-2);
+       background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:7px 11px}
+  h2{font-size:24px;letter-spacing:-.014em;margin:56px 0 6px;font-weight:640;scroll-margin-top:20px}
+  h2 .num{color:var(--ink-3);font:600 13px/1 ui-monospace,Menlo,monospace;margin-right:10px;vertical-align:2px}
+  h3{font-size:17px;margin:32px 0 8px;font-weight:640;letter-spacing:-.008em}
+  .lede{color:var(--ink-2);margin:0 0 22px;max-width:82ch}
+  p{max-width:82ch}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.875em}
+  code{background:var(--code-bg);border:1px solid var(--line);border-radius:4px;padding:.1em .34em}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+      overflow-x:auto;font-size:12.5px;line-height:1.55;margin:12px 0}
+  pre code{background:none;border:0;padding:0}
+  .grid{display:grid;gap:14px;margin:22px 0}
+  .g4{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow)}
+  .card .n{font:660 30px/1.05 ui-sans-serif,system-ui;letter-spacing:-.03em;display:block}
+  .card .l{color:var(--ink-3);font-size:12.5px;margin-top:7px;display:block;line-height:1.45}
+  .tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;margin:18px 0;background:var(--panel)}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px}
+  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel-2);font-weight:620;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);white-space:nowrap}
+  tr:last-child td{border-bottom:0}
+  td.mono,th.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;white-space:nowrap}
+  .sev{font:620 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.05em;padding:4px 7px;border-radius:5px;white-space:nowrap;display:inline-block}
+  .s-hi{color:var(--red);background:color-mix(in srgb,var(--red) 12%,transparent);border:1px solid color-mix(in srgb,var(--red) 30%,transparent)}
+  .s-md{color:var(--orange);background:color-mix(in srgb,var(--orange) 12%,transparent);border:1px solid color-mix(in srgb,var(--orange) 30%,transparent)}
+  .s-lo{color:var(--green);background:color-mix(in srgb,var(--green) 12%,transparent);border:1px solid color-mix(in srgb,var(--green) 30%,transparent)}
+  .s-in{color:var(--grey);background:color-mix(in srgb,var(--grey) 12%,transparent);border:1px solid color-mix(in srgb,var(--grey) 30%,transparent)}
+  .pill{font:600 11px/1 ui-monospace,Menlo,monospace;padding:3px 7px;border-radius:5px;white-space:nowrap}
+  .p-ok{color:var(--green);background:color-mix(in srgb,var(--green) 12%,transparent)}
+  .p-part{color:var(--orange);background:color-mix(in srgb,var(--orange) 12%,transparent)}
+  .p-no{color:var(--red);background:color-mix(in srgb,var(--red) 12%,transparent)}
+  .p-unk{color:var(--grey);background:color-mix(in srgb,var(--grey) 12%,transparent)}
+  .callout{border-left:3px solid var(--line-2);background:var(--panel);padding:16px 18px;border-radius:0 10px 10px 0;margin:20px 0}
+  .callout.warn{border-left-color:var(--red)}
+  .callout.note{border-left-color:var(--blue)}
+  .callout.good{border-left-color:var(--green)}
+  .callout h4{margin:0 0 7px;font-size:14px;font-weight:660;letter-spacing:-.005em}
+  .callout p{margin:0;font-size:14.5px;color:var(--ink-2)}
+  .callout p + p{margin-top:9px}
+  .ev{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--ink-3);
+      background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:9px 12px;margin-top:10px;overflow-x:auto}
+  .ev b{color:var(--ink-2);font-weight:620}
+  ul,ol{max-width:82ch;padding-left:22px}
+  li{margin:6px 0}
+  .finding{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:16px 0;box-shadow:var(--shadow)}
+  .finding .hd{display:flex;gap:11px;align-items:baseline;flex-wrap:wrap;margin-bottom:9px}
+  .finding .id{font:660 13px/1 ui-monospace,Menlo,monospace;color:var(--ink-3)}
+  .finding .ttl{font-weight:645;font-size:16.5px;letter-spacing:-.008em;flex:1;min-width:220px}
+  .finding p{margin:9px 0;font-size:14.7px;color:var(--ink-2)}
+  .finding .fix{font-size:14.5px;margin-top:11px;padding-top:11px;border-top:1px dashed var(--line)}
+  .finding .fix b{color:var(--ink)}
+  hr.rule{border:0;border-top:1px solid var(--line);margin:52px 0 0}
+  .foot{color:var(--ink-3);font-size:13px;margin-top:22px;line-height:1.65}
+  .toc{background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin:30px 0 0}
+  .toc ol{margin:0;padding-left:20px;columns:2;column-gap:34px}
+  .toc li{margin:4px 0;font-size:14px;break-inside:avoid}
+  .toc a{color:var(--ink-2);text-decoration:none;border-bottom:1px solid transparent}
+  .toc a:hover{color:var(--ink);border-bottom-color:var(--line-2)}
+  @media (max-width:700px){ .toc ol{columns:1} .wrap{padding:36px 16px 80px} }
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <div class="kicker">Инженерный аудит · измерено, не оценено</div>
+  <h1>CheckMyData.ai — полный разбор состояния</h1>
+  <p class="sub">Что готово, что не готово, что недоделано и что ломается в проде. Каждое утверждение
+  ниже несёт команду, файл со строкой или запрос, которым оно получено. Там, где измерить не удалось,
+  так и написано — вместо оценки.</p>
+  <div class="meta">
+    <span class="tag">23 августа 2026</span>
+    <span class="tag">main @ a5f6888</span>
+    <span class="tag">prod v259 · 21.08 09:03</span>
+    <span class="tag">версия в файлах 1.16.0</span>
+    <span class="tag">последний тег v1.15.1 · 09.07</span>
+  </div>
+</header>
+
+<div class="callout warn">
+  <h4>Короткий вывод в одном абзаце</h4>
+  <p><b>Код в очень хорошем состоянии; развёрнутая система — нет.</b> 6 741 бэкенд-тест зелёный,
+  покрытие 79% против гейта 72%, на доске нет ни одной находки выше Low, дизайн-система соблюдается
+  почти идеально, секретов в репозитории нет. При этом в проде: <b>индексация репозитория падает 85%
+  прогонов подряд шестнадцать дней</b> из-за отсутствующего heartbeat, <b>восемь флагов включены
+  вопреки коду и документации</b> (один из них назван инвариантом vision), <b>трекинга ошибок нет
+  вообще</b> — Sentry не сконфигурирован, а собственный журнал ошибок содержит три записи и не поймал
+  ни одного из 143 падений. Продукт задеплоен, но не эксплуатируется: 8 пользователей, 2 проекта,
+  0 подписок, 0 GA4-подключений. Разрыв не в качестве кода, а в наблюдаемости и конфигурации прода.</p>
+</div>
+
+<div class="toc">
+  <ol>
+    <li><a href="#m">Как это измерялось</a></li>
+    <li><a href="#num">Цифры</a></li>
+    <li><a href="#ready">Матрица готовности по подсистемам</a></li>
+    <li><a href="#prod">Прод: реальное состояние</a></li>
+    <li><a href="#new">Новые находки этого разбора</a></li>
+    <li><a href="#undone">Что не доделано</a></li>
+    <li><a href="#board">Существующая доска находок</a></li>
+    <li><a href="#docs">Документация и UX: честность утверждений</a></li>
+    <li><a href="#sec">Безопасность и зависимости</a></li>
+    <li><a href="#traps">Ловушки измерения, в которые я попал</a></li>
+    <li><a href="#plan">Что делать, по порядку</a></li>
+  </ol>
+</div>
+
+<h2 id="m"><span class="num">01</span>Как это измерялось</h2>
+<p class="lede">Одиннадцать срезов, все — на живых артефактах: рабочее дерево, прод-приложение Heroku,
+прод-Postgres (только SELECT), OSV API, OpenAPI-схема живого сервиса. Ни одно число ниже не
+перенесено из документации — все пересчитаны.</p>
+
+<div class="tblwrap"><table>
+<tr><th>Срез</th><th>Источник истины</th><th>Как получено</th></tr>
+<tr><td>Тесты и покрытие</td><td>полный прогон, не CI-кэш</td><td class="mono">pytest tests/ --cov=app · npx vitest run</td></tr>
+<tr><td>Гейты фронтенда</td><td>рабочее дерево</td><td class="mono">tsc --noEmit · eslint --max-warnings=0</td></tr>
+<tr><td>Прод-логи</td><td>1 500 строк, окно 07:42–11:27 UTC</td><td class="mono">heroku logs -n 1500</td></tr>
+<tr><td>Прод-состояние</td><td>66 таблиц Postgres</td><td class="mono">heroku pg:psql (только SELECT)</td></tr>
+<tr><td>Прод-конфигурация</td><td>68 переменных окружения</td><td class="mono">heroku config:get (значения скрыты)</td></tr>
+<tr><td>Прод-образ</td><td>one-off dyno</td><td class="mono">heroku run python -c "find_spec(...)"</td></tr>
+<tr><td>API-поверхность</td><td>OpenAPI живого сервиса</td><td class="mono">curl /openapi.json → 209 операций</td></tr>
+<tr><td>Уязвимости</td><td>OSV.dev, 180 пакетов</td><td class="mono">POST api.osv.dev/v1/querybatch</td></tr>
+<tr><td>Дефолты флагов</td><td>config.py против CLAUDE.md</td><td class="mono">regex-сверка 20 ключей</td></tr>
+<tr><td>Доска и сценарии</td><td>строки файлов, не сводки</td><td class="mono">Python-разбор таблиц Markdown</td></tr>
+<tr><td>Секреты</td><td>индекс git</td><td class="mono">git grep по 5 шаблонам</td></tr>
+</table></div>
+
+<h2 id="num"><span class="num">02</span>Цифры</h2>
+<p class="lede">Слева — то, что измерено сегодня. Где документация утверждает другое, это отмечено.</p>
+
+<div class="grid g4">
+  <div class="card"><span class="n" style="color:var(--green)">6 741</span><span class="l">бэкенд-тестов прошло<br>0 упало · 4 skip · 1 xfail · exit 0<br><span class="mono">11 мин 40 с</span></span></div>
+  <div class="card"><span class="n" style="color:var(--green)">79%</span><span class="l">покрытие бэкенда<br>40 963 инструкции, 8 445 непокрыто<br>гейт CI — 72%</span></div>
+  <div class="card"><span class="n" style="color:var(--orange)">707<span style="font-size:.55em"> / 709</span></span><span class="l">фронтенд-тестов<br>2 падают в полном прогоне,<br>проходят по одиночке — флак</span></div>
+  <div class="card"><span class="n" style="color:var(--green)">0</span><span class="l">TODO / FIXME / HACK<br>во всём <span class="mono">backend/app</span> и <span class="mono">frontend/src</span></span></div>
+</div>
+
+<div class="grid g4">
+  <div class="card"><span class="n">99 464</span><span class="l">строк Python в 381 модуле<br>+ 118 678 строк тестов в 515 файлах</span></div>
+  <div class="card"><span class="n">51 331</span><span class="l">строк TS/TSX в 312 файлах<br>94 тест-файла</span></div>
+  <div class="card"><span class="n">209</span><span class="l">HTTP-операций на 172 путях<br>по OpenAPI живого прода</span></div>
+  <div class="card"><span class="n">799</span><span class="l">коммитов · 146 за 30 дней<br>71 смерженный PR</span></div>
+</div>
+
+<div class="grid g4">
+  <div class="card"><span class="n" style="color:var(--red)">143</span><span class="l">упавших фоновых прогона в проде<br>из них <b>70</b> — индексация репозитория</span></div>
+  <div class="card"><span class="n" style="color:var(--red)">3</span><span class="l">записи в журнале ошибок продукта<br>Sentry не сконфигурирован</span></div>
+  <div class="card"><span class="n" style="color:var(--orange)">8</span><span class="l">флагов включены в проде<br>вопреки дефолтам кода</span></div>
+  <div class="card"><span class="n" style="color:var(--green)">0</span><span class="l">открытых находок<br>Critical / High / Medium на доске</span></div>
+</div>
+
+<div class="callout note">
+  <h4>Расхождение с документацией, которое стоит поправить</h4>
+  <p><code>CLAUDE.md</code> утверждает «7 009 тестов — 6 326 бэкенд + 683 фронтенд по 93 файлам,
+  покрытие 78%». Измерено сегодня: <b>6 746 бэкенд</b> (6 741 + 4 skip + 1 xfail) и <b>709 фронтенд
+  по 94 файлам</b>, покрытие <b>79%</b>. Цифра помечена «measured 2026-08-20» и просто устарела на три
+  дня — но она подаётся как текущая, а не как снимок.</p>
+</div>
+
+<h2 id="ready"><span class="num">03</span>Матрица готовности по подсистемам</h2>
+<p class="lede">«Готово» здесь означает: код есть, тесты зелёные, <b>и</b> в проде есть данные,
+доказывающие, что подсистема работала. «Не проверено в проде» — код и тесты есть, а прод-данных ноль;
+это не обвинение, а точное описание того, чего мы про подсистему не знаем.</p>
+
+<div class="tblwrap"><table>
+<tr><th>Подсистема</th><th>Статус</th><th>Доказательство из прода</th></tr>
+
+<tr><td><b>Аутентификация</b> (email/пароль, Google, верификация, сброс)</td>
+    <td><span class="pill p-ok">готово</span></td>
+    <td class="mono">users=8 · audit_logs=52</td></tr>
+
+<tr><td><b>Мультиарендность</b> — проекты, участники, роли, инвайты</td>
+    <td><span class="pill p-ok">готово</span></td>
+    <td class="mono">projects=2 · project_members=6</td></tr>
+
+<tr><td><b>Чат-агент</b> (REST / SSE / WS, оркестратор, гейты)</td>
+    <td><span class="pill p-ok">готово</span></td>
+    <td class="mono">sessions=22 · messages=116<br>traces=212 · spans=9 526</td></tr>
+
+<tr><td><b>Учёт токенов и бюджеты</b></td>
+    <td><span class="pill p-ok">готово</span></td>
+    <td class="mono">token_usage=5 953</td></tr>
+
+<tr><td><b>Индексация схемы БД</b></td>
+    <td><span class="pill p-ok">готово</span></td>
+    <td class="mono">37 completed / 5 failed<br>последнее падение 18.07</td></tr>
+
+<tr><td><b>Синхронизация код↔БД</b></td>
+    <td><span class="pill p-ok">готово</span></td>
+    <td class="mono">29 completed / 0 failed · rows=354</td></tr>
+
+<tr><td><b>MCP-сервер</b> (смонтированный, персональные токены)</td>
+    <td><span class="pill p-ok">готово</span></td>
+    <td class="mono">резолв токена в логах 11:24 сегодня</td></tr>
+
+<tr><td><b>Заголовки безопасности</b> CSP / HSTS / XFO</td>
+    <td><span class="pill p-ok">готово</span></td>
+    <td class="mono">проверено curl -I на живом хосте</td></tr>
+
+<tr><td><b>Восстановление BM25 на диске</b> (F-KNOW-12)</td>
+    <td><span class="pill p-ok">готово</span></td>
+    <td class="mono">rebuilt=1 schema_rebuilt=1 failed=0</td></tr>
+
+<tr><td><b>Обучение агента</b> (память по подключению)</td>
+    <td><span class="pill p-ok">готово</span></td>
+    <td class="mono">80 записей, все с connection_id</td></tr>
+
+<tr><td><b>Инсайты и trust-скоры</b></td>
+    <td><span class="pill p-ok">готово</span></td>
+    <td class="mono">insight_records=125 · trust_scores=125</td></tr>
+
+<tr><td><b>Индексация репозитория</b> (M1–M6)</td>
+    <td><span class="pill p-no">ломается</span></td>
+    <td class="mono">12 completed / <b>70 failed</b><br>64 из них на шаге graph_build</td></tr>
+
+<tr><td><b>Код-граф</b></td>
+    <td><span class="pill p-part">частично</span></td>
+    <td class="mono">25 421 символ, но всего <b>2 121</b> ребро<br>≈0,08 ребра на символ</td></tr>
+
+<tr><td><b>Кластеризация графа</b></td>
+    <td><span class="pill p-part">частично</span></td>
+    <td class="mono">code_clusters=147 (значит, доходит иногда)</td></tr>
+
+<tr><td><b>Реранкер</b> (кросс-энкодер)</td>
+    <td><span class="pill p-no">no-op</span></td>
+    <td class="mono">флаг=true, но sentence_transformers ABSENT</td></tr>
+
+<tr><td><b>Эмбеддер 768-d</b> (BAAI/bge-base)</td>
+    <td><span class="pill p-no">no-op</span></td>
+    <td class="mono">молча падает на MiniLM 384-d</td></tr>
+
+<tr><td><b>Биллинг Stripe</b></td>
+    <td><span class="pill p-unk">не проверено в проде</span></td>
+    <td class="mono">billing_enabled=true, но<br>subscriptions=0 · stripe_events=0</td></tr>
+
+<tr><td><b>Аналитика GA4</b></td>
+    <td><span class="pill p-unk">не проверено в проде</span></td>
+    <td class="mono">collect_enabled=true, но<br>vendor_credentials=0 · imports=0 · факты=0</td></tr>
+
+<tr><td><b>Расписания запросов</b></td>
+    <td><span class="pill p-unk">не проверено в проде</span></td>
+    <td class="mono">scheduled_queries=0</td></tr>
+
+<tr><td><b>Расследования данных</b> (InvestigationAgent)</td>
+    <td><span class="pill p-unk">не проверено в проде</span></td>
+    <td class="mono">data_investigations=0</td></tr>
+
+<tr><td><b>Голосование за обучения</b></td>
+    <td><span class="pill p-unk">не проверено в проде</span></td>
+    <td class="mono">learning_votes=0</td></tr>
+
+<tr><td><b>Уведомления</b></td>
+    <td><span class="pill p-unk">не проверено в проде</span></td>
+    <td class="mono">notifications=0</td></tr>
+
+<tr><td><b>Наблюдаемость / трекинг ошибок</b></td>
+    <td><span class="pill p-no">отсутствует</span></td>
+    <td class="mono">SENTRY_DSN не задан · error_log=3 строки</td></tr>
+</table></div>
+
+<div class="callout">
+  <h4>Что эта таблица на самом деле говорит</h4>
+  <p>Шесть подсистем — биллинг, GA4, расписания, расследования, голосование, уведомления — <b>написаны,
+  покрыты тестами, включены в проде и ни разу не выполнялись на живых данных</b>. Это не баг: продукт
+  ещё не в коммерческой эксплуатации. Но это значит, что для них «зелёный CI» — единственное
+  свидетельство, а первый реальный пользователь окажется первым интеграционным тестом. Про эти шесть
+  честная формулировка — «не проверено», а не «готово».</p>
+</div>
+
+<h2 id="prod"><span class="num">04</span>Прод: реальное состояние</h2>
+
+<h3>Масштаб эксплуатации</h3>
+<p>Приложение <code>checkmydata-api</code>, стек <code>container</code>, регион us,
+web + worker по одному Standard-1X дино, Postgres <code>essential-1</code>, Redis <code>mini</code>.
+Релиз <b>v259</b> от 21 августа 09:03 — и это <b>ровно HEAD ветки main</b>
+(<code>a5f68880</code>, деплой-workflow success), то есть прод не отстаёт от кода.</p>
+
+<div class="grid g4">
+  <div class="card"><span class="n">8</span><span class="l">пользователей</span></div>
+  <div class="card"><span class="n">2</span><span class="l">проекта · 2 подключения</span></div>
+  <div class="card"><span class="n">22</span><span class="l">чат-сессии · 116 сообщений</span></div>
+  <div class="card"><span class="n">0</span><span class="l">подписок · 0 событий Stripe</span></div>
+</div>
+
+<h3>Хроническое падение индексации — главная проблема прода</h3>
+<p>Индексация репозитория падает <b>каждый день с 7 августа</b>, всегда на одном и том же шаге,
+всегда с одной и той же причиной:</p>
+
+<div class="tblwrap"><table>
+<tr><th>Дата</th><th class="mono">Падений</th><th>Шаг, на котором умерло</th></tr>
+<tr><td>22.08</td><td class="mono">1</td><td class="mono">graph_build</td></tr>
+<tr><td>21.08</td><td class="mono">5</td><td class="mono">generate_docs, graph_build</td></tr>
+<tr><td>20.08</td><td class="mono">4</td><td class="mono">generate_docs</td></tr>
+<tr><td>19.08</td><td class="mono">5</td><td class="mono">graph_build</td></tr>
+<tr><td>18.08</td><td class="mono">5</td><td class="mono">graph_build</td></tr>
+<tr><td>17.08</td><td class="mono">5</td><td class="mono">graph_build</td></tr>
+<tr><td>16.08</td><td class="mono">1</td><td class="mono">graph_build</td></tr>
+<tr><td>13.08 → 07.08</td><td class="mono">30</td><td class="mono">graph_build (каждый день)</td></tr>
+</table></div>
+
+<p>Итог по всей истории: <b>64 из 70</b> падений — на <code>graph_build</code>,
+<code>failure_kind='fatal'</code>, <code>error='stale run reaped'</code>. Причина установлена и
+описана ниже как находка <b>N1</b> — это не исключение в коде графа, а отсутствующий heartbeat.</p>
+
+<h3>Память воркера: ровно 899 МБ, 150% квоты, без движения</h3>
+<p>За окно 3 ч 45 мин: <b>611 × Error R14</b> (Memory quota exceeded), <b>0 × R15</b> (SIGKILL),
+0 × H12/H13/H10. Значение памяти — плоское <code>mem=899M(150.4%)</code> во всех 611 замерах,
+минимум равен максимуму.</p>
+
+<div class="callout note">
+  <h4>Это меняет диагноз, который был у задачи #12</h4>
+  <p>Плоские 899 МБ без роста и без единого R15 означают, что <b>899 МБ — это базовый след воркера в
+  покое</b>, а не утечка индексации. Воркер превышает квоту, ничего не делая. Фикс размера батча
+  (<code>EMBEDDING_UPSERT_BATCH_SIZE=8</code>) держится — <b>SIGKILL исчез полностью</b>. Но задача
+  #12 формулировала блокер как «частота деплоев»: деплои прекратились 21 августа в 09:03, а падение
+  <code>graph_build</code> случилось и 22-го. <b>Частота деплоев была не при чём.</b> Настоящая
+  причина — N1.</p>
+</div>
+
+<h3>Чего в логах нет</h3>
+<p>За всё окно: <b>0 × <code>pipeline_end</code></b>, 0 × <code>pipeline_start</code>,
+0 × <code>code_symbol_embed</code>, 0 × <code>Traceback</code>, 0 × <code>DuplicateIDError</code>.
+Судить по этому нельзя: окно покрывает 09:42–13:27 по местному, а суточная синхронизация
+запускается в 00:00 и 02:00. Строки <code>skipped=2</code> в кроне — <b>не баг</b>: оба проекта
+просто ждут своего часа. Heroku хранит 1 500 строк, за пределы окна не заглянуть.</p>
+
+<div class="callout good">
+  <h4>Что в проде работает подтверждённо</h4>
+  <p><b>Восстановление BM25 после рестарта</b> (F-KNOW-12) — в логах старта сегодня:
+  <code>bm25_local_reconcile: rebuilt=1 schema_rebuilt=1 present=0 no_docs=1 failed=0</code>.
+  Оба индекса пересобрались на web-дино за 13 секунд. Это фикс из этой серии работ, и он держится.</p>
+  <p><b>Заголовки безопасности</b> — CSP с <code>frame-ancestors 'none'</code> и
+  <code>object-src 'none'</code>, HSTS <code>max-age=31536000; includeSubDomains</code>,
+  <code>X-Frame-Options: DENY</code>, <code>nosniff</code>,
+  <code>Referrer-Policy: strict-origin-when-cross-origin</code>. Полный образцовый набор.</p>
+</div>
+
+<h2 id="new"><span class="num">05</span>Новые находки этого разбора</h2>
+<p class="lede">Тринадцать находок, которых нет на доске. Каждая — с доказательством и с фиксом.
+Severity расставлена по достижимости в текущей конфигурации, а не по громкости названия.</p>
+
+<div class="finding">
+  <div class="hd"><span class="id">N1</span><span class="ttl">У <code>run_repo_index</code> нет heartbeat — и 300 секунд превратились в лимит на один шаг</span><span class="sev s-hi">HIGH</span></div>
+  <p>Из трёх долгих фоновых функций в <code>worker.py</code> две обёрнуты в
+  <code>heartbeat(...)</code>, а третья — нет. <code>heartbeat_at</code> у строки прогона обновляется
+  <b>только на входе в шаг и на выходе из него</b>; внутри шага ничто не тикает. Значит любой шаг,
+  идущий дольше <code>stale_running_heartbeat_timeout_seconds</code>, объявляется мёртвым, пока он
+  работает. <code>graph_build</code> на 25 421 символе идёт дольше — и его добивают. Каждый день.</p>
+  <p>Это объясняет и кажущееся противоречие: успешные прогоны длились 417 с и 2 568 с и не были
+  добиты, потому что у них много шагов, и каждый — короче 300 с.</p>
+  <div class="ev"><b>Код:</b> <code>backend/app/worker.py:221-233</code> — обёртки нет;
+  сравнить с <code>run_db_index</code> <code>:114-128</code> и <code>run_code_db_sync</code>
+  <code>:190-201</code>, где она есть · <code>app/services/run_coordinator.py:250-283</code> —
+  <code>heartbeat_at = _now()</code> на входе и выходе шага · <code>app/config.py:537</code> —
+  <code>stale_running_heartbeat_timeout_seconds: int = 300</code><br>
+  <b>Прод:</b> 64/70 падений с <code>current_step='graph_build'</code>,
+  <code>error='stale run reaped'</code>, ежедневно с 07.08</div>
+  <div class="fix"><b>Фикс:</b> обернуть <code>run_repo_index</code> в
+  <code>app.core.heartbeat.heartbeat</code> с тикером на строку <code>indexing_runs</code>, ровно как
+  сделано для двух других. Тест, который должен упасть до фикса: шаг-заглушка длиннее таймаута не
+  должен быть добит reaper'ом.</div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="id">N2</span><span class="ttl">Прод включает восемь флагов, которые код и документация объявляют выключенными</span><span class="sev s-hi">HIGH</span></div>
+  <p>Развёрнутая конфигурация существенно отличается от задокументированной. Особенно важен последний
+  ряд: <code>CLAUDE.md:274</code> прямо называет его инвариантом vision, а <code>vision.md:73</code>
+  формулирует так — «знание об одной базе никогда не протекает в запросы к другой».</p>
+  <div class="tblwrap"><table>
+  <tr><th>Флаг</th><th class="mono">Прод</th><th class="mono">Дефолт кода</th><th>Чем это грозит</th></tr>
+  <tr><td class="mono">CLUSTERING_ENABLED</td><td class="mono">true</td><td class="mono">False</td><td>+1 CPU-тяжёлый шаг в манифест</td></tr>
+  <tr><td class="mono">GIT_POLL_ENABLED</td><td class="mono">true</td><td class="mono">False</td><td>из семьи «ingestion automation», по правилу дома — off</td></tr>
+  <tr><td class="mono">GIT_WEBHOOK_ENABLED</td><td class="mono">true</td><td class="mono">False</td><td>то же</td></tr>
+  <tr><td class="mono">AUTO_SYNC_AFTER_INDEX</td><td class="mono">true</td><td class="mono">False</td><td>то же</td></tr>
+  <tr><td class="mono">FRESHNESS_RECONCILER_ENABLED</td><td class="mono">true</td><td class="mono">False</td><td>то же</td></tr>
+  <tr><td class="mono">SCHEMA_CHANGE_ALERTS_ENABLED</td><td class="mono">true</td><td class="mono">False</td><td>то же</td></tr>
+  <tr><td class="mono">ANALYTICS_COLLECT_ENABLED</td><td class="mono">true</td><td class="mono">False</td><td>по расписанию зовёт сторонние API</td></tr>
+  <tr><td class="mono">DATA_GATE_LLM_SEMANTICS</td><td class="mono">true</td><td class="mono">False</td><td>лишний LLM-вызов на каждый гейт</td></tr>
+  <tr><td class="mono">CROSS_CONNECTION_LEARNINGS_ENABLED</td><td class="mono">true</td><td class="mono">False</td><td><b>снимает защиту, названную инвариантом vision</b></td></tr>
+  </table></div>
+  <p>В данных инвариант <b>пока не нарушен</b>: все 80 строк <code>agent_learnings</code> имеют
+  непустой <code>connection_id</code>, глобальных нет. Выключена именно защита, а не соблюдение.</p>
+  <div class="ev"><b>Проверка:</b> <code>heroku config:get &lt;KEY&gt;</code> против
+  <code>grep -m1 '^\s*&lt;key&gt;:' backend/app/config.py</code> по 20 ключам ·
+  <code>SELECT (connection_id IS NULL), count(*) FROM agent_learnings GROUP BY 1</code> → <code>f | 80</code></div>
+  <div class="fix"><b>Фикс:</b> решить по каждому флагу отдельно — либо привести прод к дефолту, либо
+  изменить дефолт в коде и объяснить в <code>CLAUDE.md</code>, почему прежнее правило больше не
+  действует. Третий вариант — оставить как есть — допустим только для тех, где расхождение осознанно
+  и записано. <code>CROSS_CONNECTION_LEARNINGS_ENABLED</code> под это исключение не попадает: пока
+  <code>vision.md</code> называет его инвариантом, прод не должен его снимать молча.</div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="id">N3</span><span class="ttl">В проде нет трекинга ошибок — ни внешнего, ни внутреннего</span><span class="sev s-md">MEDIUM</span></div>
+  <p><code>SENTRY_DSN</code> отсутствует в списке 68 переменных окружения, то есть Sentry не
+  инициализируется вовсе — при том что <code>sentry-sdk[fastapi]</code> в зависимостях,
+  <code>@sentry/nextjs</code> в <code>package.json</code>, а код инициализации со скрабингом PII
+  написан и лежит в <code>app/core/sentry.py</code>. Готовая наблюдаемость просто не подключена.</p>
+  <p>Собственный журнал продукта <code>error_log</code> содержит <b>три записи</b>, самая свежая от
+  17 августа. Ни одно из <b>143 падений</b> фоновых прогонов в него не попало. То есть самая частая
+  производственная ошибка системы не видна ни в одном из двух предназначенных для этого каналов.</p>
+  <div class="ev"><b>Проверка:</b> <code>heroku config</code> — ключа <code>SENTRY_DSN</code> нет ·
+  <code>SELECT count(*) FROM error_log</code> → <b>3</b> ·
+  <code>SELECT status, count(*) FROM indexing_runs GROUP BY status</code> → failed <b>143</b><br>
+  <b>Ирония в данных:</b> одна из трёх записей — <code>«Stale: pipeline_end never received»</code>,
+  12 повторов, статус <code>open</code>. Журнал поймал проблему чата, но не индексации.</div>
+  <div class="fix"><b>Фикс:</b> (1) задать <code>SENTRY_DSN</code> — код уже готов; (2) писать в
+  <code>error_log</code> из пути reaper'а: строка, добитая как <code>fatal</code>, — это ровно то
+  событие, для которого журнал существует.</div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="id">N4</span><span class="ttl">Конфигурация утверждает две возможности, которых в образе нет</span><span class="sev s-md">MEDIUM</span></div>
+  <p><code>RERANKER_ENABLED=true</code> в проде, а в образе <b>нет ни
+  <code>sentence_transformers</code>, ни <code>torch</code></b> — проверено запуском внутри прода.
+  Реранкер честно деградирует в <code>NoopReranker</code> и один раз пишет в лог, так что аварии нет.
+  Но оператор, читающий <code>heroku config</code>, видит включённую фичу, которой не существует.</p>
+  <p>Та же форма у эмбеддера: дефолт <code>chroma_embedding_model</code> —
+  <code>BAAI/bge-base-en-v1.5</code> (768-d), в проде переменная не задана, библиотеки нет, и Chroma
+  молча берёт свой ONNX MiniLM (384-d). Предупреждение при импорте воспроизводится дословно.</p>
+  <div class="ev"><b>Прод:</b> <code>heroku run python -c "find_spec(...)"</code> →
+  <code>sentence_transformers → ABSENT</code>, <code>torch → ABSENT</code>,
+  <code>onnxruntime → PRESENT</code><br>
+  <b>Почему:</b> <code>Dockerfile.backend:27</code> — <code>pip install ".[redis]"</code>, а
+  <code>sentence-transformers</code> живёт в extra <code>ml</code> (<code>pyproject.toml:59-62</code>)<br>
+  <b>Дословно из лога импорта:</b> <code>Embedding model BAAI/bge-base-en-v1.5 requires the optional
+  'sentence-transformers' package, which is not installed; using ChromaDB's built-in default
+  (all-MiniLM-L6-v2, 384-dim)</code></div>
+  <div class="fix"><b>Фикс:</b> либо снять <code>RERANKER_ENABLED</code> с прода (честнее — сейчас он
+  ничего не даёт), либо поставить extra <code>ml</code> вместе с полным переиндексом, потому что
+  векторы 384-d и 768-d несопоставимы. Отдельно стоит сделать так, чтобы флаг, включённый без
+  зависимости, отказывался стартовать или писал предупреждение уровня <code>WARNING</code> при
+  каждом запуске, а не один раз.</div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="id">N5</span><span class="ttl">В файле доски закоммичены неразрешённые конфликт-маркеры git</span><span class="sev s-md">MEDIUM</span></div>
+  <p><code>docs/qa-audit/issues.md</code> на ветке <code>proj/leave-and-caps</code> — той, что несёт
+  открытый PR #218 — содержит три сырых маркера конфликта на строках 91, 97 и 100. Абзац с итогом
+  доски продублирован <b>четыре раза</b> с противоречащими числами. На <code>main</code> маркеров
+  нет, но дубль абзаца уже <b>смержен</b> — там их два.</p>
+  <p>Отдельно неприятно то, <b>почему это прошло</b>: doc-ratchet проверяет, что фраза «N open rows
+  and M struck» в файле <i>присутствует</i>, а не что она присутствует <i>однажды</i>. Проверка,
+  которая ловит отсутствие, но не ловит дублирование, — и есть тот случай, когда зелёный гейт хуже
+  отсутствующего.</p>
+  <div class="ev"><b>Проверка:</b> <code>git grep -nE '^(&lt;&lt;&lt;&lt;&lt;&lt;&lt; |=======$|&gt;&gt;&gt;&gt;&gt;&gt;&gt; )'</code>
+  → <code>docs/qa-audit/issues.md:91,97,100</code> · вхождений <code>'not estimated:'</code>: ветка
+  <b>4</b>, main <b>2</b>, должно быть <b>1</b></div>
+  <div class="fix"><b>Фикс:</b> вычистить маркеры и оставить один абзац с числами, выведенными из
+  строк; добавить в ratchet два утверждения — «маркеров конфликта нет ни в одном отслеживаемом
+  файле» и «абзац итога встречается ровно один раз». Первое стоит сделать общим для всего
+  репозитория, а не только для доски.</div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="id">N6</span><span class="ttl">Завершённая индексация репозитория навсегда показывает «шаг 9 из 15»</span><span class="sev s-lo">LOW</span></div>
+  <p>Манифест ставит <code>record_index</code> на позицию 9 и дописывает шесть флаговых шагов на
+  позиции 10–15. Раннер же выполняет <code>record_index</code> <b>последним</b> — после
+  <code>bm25_build</code>. В результате все 12 успешных прогонов в проде стоят на
+  <code>step_index=9, total_steps=15</code>. Процент при этом честный — 100, его выставляет
+  <code>finish()</code>, — так что пользователь видит «100%, шаг 9 из 15» одновременно.</p>
+  <div class="ev"><b>Код:</b> <code>app/knowledge/run_manifests.py:21-30</code> — порядок манифеста ·
+  <code>app/knowledge/pipeline_runner.py:1779</code> — <code>record_index</code> против
+  <code>:1254</code> — <code>bm25_build</code><br>
+  <b>Прод:</b> <code>SELECT status,current_step,step_index,total_steps,progress_pct,count(*)</code>
+  → <code>completed | record_index | 9 | 15 | 100 | 12</code></div>
+  <div class="fix"><b>Фикс:</b> привести порядок манифеста к порядку исполнения — флаговые шаги перед
+  <code>record_index</code>, а не после. Тест: <code>step_position</code> каждого шага должен
+  монотонно возрастать в том порядке, в котором раннер их вызывает.</div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="id">N7</span><span class="ttl"><code>/docs</code> и <code>/openapi.json</code> открыты в проде без аутентификации</span><span class="sev s-lo">LOW</span></div>
+  <p>Оба отдают HTTP 200 анонимно; схема — 227 139 байт, полный перечень 209 операций и всех моделей.
+  Для FastAPI это поведение по умолчанию, и многие команды сознательно его оставляют. Находка не в
+  том, что это опасно, а в том, что это <b>не выглядит решением</b>: ни в
+  <code>SECURITY.md</code>, ни в <code>docs/DEPLOYMENT.md</code> нет строки, объясняющей выбор.</p>
+  <div class="ev"><b>Проверка:</b>
+  <code>curl -o /dev/null -w '%{http_code}' https://&lt;prod&gt;/openapi.json</code> → <b>200</b>,
+  227 139 байт · <code>/docs</code> → <b>200</b></div>
+  <div class="fix"><b>Фикс:</b> либо закрыть в production через
+  <code>FastAPI(docs_url=None, openapi_url=None)</code> под флагом, либо записать решение оставить
+  открытым — с причиной. Молчание здесь и есть дефект.</div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="id">N8</span><span class="ttl">chromadb 1.5.9 в проде несёт CRITICAL-уязвимость без доступного фикса — но вектор недостижим</span><span class="sev s-lo">LOW</span></div>
+  <p>OSV даёт для установленной версии <code>GHSA-f4j7-r4q5-qw2c</code> /
+  <code>PYSEC-2026-311</code> — «pre-authentication code injection», severity <b>CRITICAL</b>,
+  и <b>исправленной версии не существует</b>.</p>
+  <p>Почему severity здесь всё-таки Low: <code>CHROMA_SERVER_URL</code> в проде не задан,
+  <code>CHROMA_PERSIST_DIR=/app/data/chroma</code>, и <code>vector_store.py:154-157</code> берёт
+  <code>HttpClient</code> только при заданном URL — иначе embedded <code>PersistentClient</code>.
+  HTTP-слушателя нет, значит и «pre-auth» вектора нет. <b>Но severity станет Critical в тот момент,
+  когда кто-то настроит удалённую Chroma</b>, и произойдёт это одной переменной окружения.</p>
+  <div class="ev"><b>OSV:</b> 180 пакетов через <code>querybatch</code>; у <code>chromadb==1.5.9</code>
+  2 advisory, <code>fixed-in: NONE</code> ·
+  <b>Конфигурация:</b> <code>heroku config:get CHROMA_SERVER_URL</code> → пусто</div>
+  <div class="fix"><b>Фикс:</b> добавить boot-проверку — при заданном
+  <code>CHROMA_SERVER_URL</code> и уязвимой версии <code>chromadb</code> отказываться стартовать или
+  писать <code>CRITICAL</code> в лог. Это тот случай, когда защищать надо не текущую конфигурацию, а
+  переход в следующую.</div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="id">N9</span><span class="ttl">25 эндпоинтов вообще не упомянуты в <code>API.md</code></span><span class="sev s-lo">LOW</span></div>
+  <p>В проде 172 пути и 209 операций. <code>API.md</code> называет 130 путей; 49 не совпадают
+  дословно, из них <b>25 не упомянуты никак</b> — ни путём, ни последним сегментом. Среди них целые
+  группы: пять эндпоинтов обучений по подключению, три управления прогонами
+  (<code>cancel</code> / <code>retry</code> / <code>GET</code>), три журнала ошибок и отказов
+  запросов, <code>/api/chat/search</code>, <code>/api/chat/explain-sql</code>,
+  <code>/api/projects/access-requests</code>.</p>
+  <div class="ev"><b>Проверка:</b> OpenAPI живого прода против путей в <code>API.md</code>,
+  нормализация <code>{param}→{id}</code>; вторым проходом отсеяны те, что упомянуты прозой или
+  wildcard'ом вроде <code>/api/auth/*</code></div>
+  <div class="fix"><b>Фикс:</b> дописать 25 строк — или, надёжнее, проверять покрытие тестом,
+  который сравнивает <code>app.openapi()</code> с <code>API.md</code> и падает на новом
+  недокументированном пути. Документация, синхронность которой доказывается кодом возврата,
+  не расходится.</div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="id">N10</span><span class="ttl">Все 127 UX-сценариев заявлены как «implemented / PASS», но 110 верификаций старше пяти недель</span><span class="sev s-lo">LOW</span></div>
+  <p>В индексе <code>docs/ux/scenarios.md</code> — 127 строк, <b>у всех 127 статус
+  <code>implemented</code></b>, у 125 вердикт <code>PASS</code>. Даты проверки: 110 из них —
+  <b>19 июля</b>, то есть 35 дней назад. За это время на main легло <b>152 коммита</b>, включая
+  изменения пользовательского поведения. Плюс: только <b>22 из 127</b> сценариев упоминаются
+  где-либо в коде или тестах — у остальных 105 нет якоря, по которому реализацию можно проверить
+  автоматически.</p>
+  <p>Формулировка «100% implemented, 98% PASS» здесь — <b>утверждение, а не измерение</b>.</p>
+  <div class="ev"><b>Проверка:</b> разбор таблицы-индекса Python'ом → <code>{'implemented': 127}</code>,
+  <code>{'PASS': 125, 'other': 2}</code>, даты <code>{'2026-07-19': 110, '2026-08-16': 5,
+  '2026-08-19': 9, '2026-08-20': 1, '2026-08-21': 2}</code> · перекрёстная сверка
+  <code>SCN-\d+</code> по всем <code>.py/.ts/.tsx</code> → 22 из 127</div>
+  <div class="fix"><b>Фикс:</b> отделить «реализовано» от «проверено» — второе с датой и с тем, чем
+  проверено. Дальше — прогонять <code>/ux-audit</code> партиями и ставить якоря
+  <code>SCN-NNN</code> в тесты, начиная со сценариев, которых коснулись последние 152 коммита.</div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="id">N11</span><span class="ttl">Тегирование релизов остановилось; 175 записей висят в <code>[Unreleased]</code></span><span class="sev s-in">INFO</span></div>
+  <p><code>pyproject.toml</code> и <code>package.json</code> согласованно говорят <b>1.16.0</b>, в
+  <code>CHANGELOG.md</code> есть датированная секция <code>[1.16.0]</code> — <b>но тега
+  <code>v1.16.0</code> не существует</b>. Последний тег — <code>v1.15.1</code> от <b>9 июля</b>,
+  с тех пор на main <b>152 коммита</b>, а в <code>[Unreleased]</code> накопилось
+  <b>175 пунктов на 1 176 строк</b>.</p>
+  <p>Причина понятна и сама по себе не порочна: авто-деплой на Heroku по мержу расцепил «деплой» и
+  «релиз». Но версия в файлах теперь не соответствует ни одному тегу, и «какой код в v259» отвечается
+  только по SHA.</p>
+  <div class="ev"><b>Проверка:</b> <code>git tag --sort=-creatordate</code> → <code>v1.15.1</code>
+  первый · <code>git rev-parse -q --verify refs/tags/v1.16.0</code> → пусто ·
+  <code>git rev-list --count v1.15.1..origin/main</code> → <b>152</b> · пунктов
+  <code>'^- '</code> в <code>[Unreleased]</code> → <b>175</b></div>
+  <div class="fix"><b>Фикс:</b> либо тегировать 1.16.0 на том коммите, который ей соответствует, и
+  вести теги дальше, либо перейти на схему «версия = SHA деплоя» и убрать номер из файлов. Сейчас
+  действуют обе схемы одновременно, и ни одна не отвечает на вопрос «что в проде».</div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="id">N12</span><span class="ttl">Фронтенд-сьют флакует под нагрузкой</span><span class="sev s-in">INFO</span></div>
+  <p>В полном прогоне (94 файла) падают 2 теста из 709 — <code>GA4ConnectionForm.test.tsx</code>,
+  оба по <code>Test timed out in 5000ms</code>. Тот же файл в одиночку: <b>10 passed</b>.
+  То есть тест не сломан, он не успевает при параллельной нагрузке. CI зелёный — значит там либо
+  быстрее, либо повезло, и это ровно тот класс дефекта, который проявляется у кого-то другого.</p>
+  <div class="ev"><b>Полный прогон:</b> <code>Test Files 2 failed | 92 passed (94)</code>,
+  <code>Tests 2 failed | 707 passed (709)</code> ·
+  <b>Одиночный:</b> <code>npx vitest run src/__tests__/components/GA4ConnectionForm.test.tsx</code>
+  → <code>1 passed (1) · 10 passed (10)</code></div>
+  <div class="fix"><b>Фикс:</b> поднять <code>testTimeout</code> для этого файла или убрать из него
+  ожидание, зависящее от планировщика. Флак в CI дороже, чем кажется: он учит игнорировать красное.</div>
+</div>
+
+<div class="finding">
+  <div class="hd"><span class="id">N13</span><span class="ttl">Долг подавлений вырос за числа, записанные на доске</span><span class="sev s-in">INFO</span></div>
+  <p>Строки <code>CB-M5</code> и <code>CB-L1</code> фиксируют конкретные числа. Пересчёт сегодня
+  даёт больше по всем четырём метрикам — сильнее всего по <code>except Exception</code>, +18%.</p>
+  <div class="tblwrap"><table>
+  <tr><th>Метрика</th><th class="mono">На доске</th><th class="mono">Сегодня</th><th class="mono">Δ</th></tr>
+  <tr><td class="mono">except Exception</td><td class="mono">516</td><td class="mono">611</td><td class="mono">+95</td></tr>
+  <tr><td class="mono">except …: pass</td><td class="mono">51</td><td class="mono">54</td><td class="mono">+3</td></tr>
+  <tr><td class="mono"># type: ignore</td><td class="mono">47</td><td class="mono">49</td><td class="mono">+2</td></tr>
+  <tr><td class="mono"># noqa</td><td class="mono">104</td><td class="mono">128</td><td class="mono">+24</td></tr>
+  </table></div>
+  <div class="fix"><b>Фикс:</b> превратить эти четыре числа в ratchet-тест — «не больше, чем
+  сегодня». Число в документе, которое никто не пересчитывает, дрейфует; число в тесте — нет.</div>
+</div>
+
+<h2 id="undone"><span class="num">06</span>Что не доделано</h2>
+
+<h3>Мёртвый код, который решает не разработчик</h3>
+<p><code>F-REPO-04</code> — <code>ProjectRepository.auth_token_encrypted</code>: колонка объявлена в
+модели, принимается параметром в <code>RepositoryService.create</code>, <b>не передаётся ни одним
+вызывающим</b>, отсутствует в <code>ALLOWED_UPDATE_FIELDS</code> и не читается нигде. Это либо
+незаконченная HTTPS-аутентификация репозитория, либо балласт. Колонка, предназначенная хранить
+секреты, не должна сидеть в схеме без объяснения — но выбор между «дописать» и «снять миграцией»
+продуктовый, не мой.</p>
+
+<h3>Находки, которым нужен не патч, а решение</h3>
+<p><code>F-LEARN-04</code> и <code>F-LEARN-05</code> — семантические противоречия между обучениями и
+дедупликация перефразировок. Обе требуют эмбеддингов или LLM-вызова там, где сейчас нет ни того, ни
+другого. Приклеить их к обычной правке значило бы спрятать стоимость: это выбор архитектуры и бюджета
+токенов, а не строчка кода.</p>
+
+<h3>Открытые PR</h3>
+<div class="tblwrap"><table>
+<tr><th class="mono">PR</th><th>Что несёт</th><th>База</th><th>CI</th><th>Блокер</th></tr>
+<tr><td class="mono">#217</td><td>домен роли: F-PROJ-07/08/11</td><td class="mono">main</td>
+    <td><span class="pill p-ok">SUCCESS ×2</span></td><td>готов к мержу</td></tr>
+<tr><td class="mono">#218</td><td>выход из проекта + ограниченные списки: F-PROJ-12/13</td>
+    <td class="mono">proj/role-domain</td><td><span class="pill p-unk">нет вердикта</span></td>
+    <td><b>N5</b> — конфликт-маркеры в файле; мержить после #217</td></tr>
+</table></div>
+<p>Стек на #217 сделан осознанно: #218 нужны <code>logger</code> и <code>VALID_ROLES</code> из него.
+Порядок — сначала #217, затем #218 перецелится на main автоматически. Но <b>#218 нельзя мержить как
+есть</b>: находка N5 — в его собственном диффе.</p>
+
+<h3>Самые непокрытые модули — там же, где болит</h3>
+<p>Покрытие 79% в целом, но распределено неровно, и наименее покрытые модули — это точка входа
+продукта и тот самый пайплайн, который падает в проде.</p>
+<div class="tblwrap"><table>
+<tr><th>Модуль</th><th class="mono">Покрытие</th><th class="mono">Не покрыто строк</th><th>Почему это важно</th></tr>
+<tr><td class="mono">app/api/routes/chat.py</td><td class="mono">35%</td><td class="mono">493</td><td>главная точка входа продукта</td></tr>
+<tr><td class="mono">app/main.py</td><td class="mono">40%</td><td class="mono">492</td><td>старт, кроны, lifespan</td></tr>
+<tr><td class="mono">app/knowledge/pipeline_runner.py</td><td class="mono">53%</td><td class="mono">326</td><td><b>падает в проде каждый день</b></td></tr>
+<tr><td class="mono">app/api/routes/repos.py</td><td class="mono">50%</td><td class="mono">229</td><td>запуск индексации</td></tr>
+<tr><td class="mono">app/knowledge/code_db_sync_pipeline.py</td><td class="mono">56%</td><td class="mono">208</td><td>код↔БД</td></tr>
+<tr><td class="mono">app/api/routes/chat_utility.py</td><td class="mono">31%</td><td class="mono">192</td><td>explain-sql, estimate, summarize</td></tr>
+<tr><td class="mono">app/connectors/ssh_exec.py</td><td class="mono">47%</td><td class="mono">158</td><td>только что переработан (F-SSH-07)</td></tr>
+<tr><td class="mono">app/api/routes/feed.py</td><td class="mono">13%</td><td class="mono">135</td><td>самое низкое покрытие в проекте</td></tr>
+</table></div>
+<p>Файлов с нулевым покрытием — <b>ноль</b> из 380. Это хороший знак: непокрытое здесь — это ветки,
+а не забытые модули.</p>
+
+<h2 id="board"><span class="num">07</span>Существующая доска находок</h2>
+<p class="lede">Числа пересчитаны из строк файла, не взяты из его сводки — и они <b>не совпали</b> с
+тем, что я сам сообщал в предыдущем отчёте.</p>
+
+<div class="grid g2">
+  <div class="card">
+    <b>origin/main</b>
+    <div class="tblwrap" style="margin:12px 0 0"><table>
+      <tr><td>открыто</td><td class="mono">42 (39 F- + 3 CB-)</td></tr>
+      <tr><td>закрыто</td><td class="mono">70</td></tr>
+      <tr><td>Critical / High / Medium</td><td class="mono">0 / 0 / 0</td></tr>
+      <tr><td>Low / Info</td><td class="mono">30 / 12</td></tr>
+    </table></div>
+  </div>
+  <div class="card">
+    <b>после мержа #217 + #218</b>
+    <div class="tblwrap" style="margin:12px 0 0"><table>
+      <tr><td>открыто</td><td class="mono">37 (34 F- + 3 CB-)</td></tr>
+      <tr><td>закрыто</td><td class="mono">75</td></tr>
+      <tr><td>Critical / High / Medium</td><td class="mono">0 / 0 / 0</td></tr>
+      <tr><td>Low / Info</td><td class="mono">25 / 12</td></tr>
+    </table></div>
+  </div>
+</div>
+
+<div class="callout warn">
+  <h4>Поправка к моему предыдущему отчёту</h4>
+  <p>В отчёте от 21 августа я написал «осталось 39 (27 Low, 12 Info)». Правильно: <b>42 открытых
+  строки — 30 Low и 12 Info</b>. Ошибка возникла так: <code>grep -oE</code> по emoji в этой локали
+  отдаёт неверный результат — на 42 строках он вернул «42 🟢» при том, что в файле явно есть строки с
+  ⚪. Пересчёт Python'ом по позиции ячейки даёт 30/12. Числа выше и в остальном отчёте получены
+  вторым способом.</p>
+</div>
+
+<p>Тринадцать находок из этой серии работ оказались <b>неверны как написаны</b> — и каждый раз это
+вскрывалось одинаково: тест, написанный чтобы упасть, проходил. Из тринадцати разобранных подробно
+восемь пришлось переформулировать инверсиями — «200 вместо 500», «сигнал неразличим» вместо «сигнала
+нет», «всегда» вместо «после рестарта», гонка, которой не существует. Это единственная процедура из
+той серии, которую стоит закрепить правилом: <b>находка не считается подтверждённой, пока тест,
+написанный чтобы упасть, действительно не упал</b>.</p>
+
+<h2 id="docs"><span class="num">08</span>Документация и UX: честность утверждений</h2>
+
+<div class="grid g4">
+  <div class="card"><span class="n">108</span><span class="l">md-файлов в <span class="mono">docs/</span><br>43 408 строк</span></div>
+  <div class="card"><span class="n">18</span><span class="l">корневых документов<br>7 795 строк</span></div>
+  <div class="card"><span class="n">127</span><span class="l">UX-сценариев<br>2 156 строк</span></div>
+  <div class="card"><span class="n" style="color:var(--green)">20/20</span><span class="l">дефолтов флагов в CLAUDE.md<br>совпали с config.py</span></div>
+</div>
+
+<div class="callout good">
+  <h4>Что в документации действительно хорошо</h4>
+  <p>Сверка двадцати дефолтов флагов из <code>CLAUDE.md</code> с <code>config.py</code> дала
+  <b>полное совпадение</b> — включая тонкие места вроде <code>reranker_enabled=False</code> (после
+  исправления 10 августа), <code>clustering_enabled=False</code>,
+  <code>embedding_upsert_batch_size=8</code>. Документация здесь не дрейфует, и это редкость на
+  100 тысячах строк кода.</p>
+  <p><code>CHANGELOG.md</code> на 3 468 строк, ADR на месте, у каждой находки на доске — id, severity
+  и путь. Инженерная гигиена документов заметно выше среднего.</p>
+</div>
+
+<p>Расхождения, которые нашлись, собраны в находках <b>N5</b> (маркеры конфликта и дубли абзаца),
+<b>N9</b> (25 эндпоинтов), <b>N10</b> (устаревшие верификации сценариев) и в поправке к числу тестов
+выше. Ни одно из них не про неверное описание архитектуры — все про <b>числа и списки, которые никто
+не пересчитывает</b>. Это ровно тот класс, который лечится ratchet-тестом, а не вычиткой.</p>
+
+<h2 id="sec"><span class="num">09</span>Безопасность и зависимости</h2>
+
+<div class="callout good">
+  <h4>Прод-образ чище локальной среды разработки</h4>
+  <p>Это важно и легко перепутать. Локальный venv несёт <b>32 advisory в 6 пакетах</b>, из них 17
+  исправимы обновлением. Но <code>Dockerfile</code> ставит зависимости по нижним границам, поэтому
+  прод, собранный 21 августа, получил <b>уже исправленные версии</b>: <code>aiohttp 3.14.3</code>
+  (fixed), <code>cryptography 50.0.0</code> (fixed), <code>GitPython 3.1.59</code> (fixed).
+  То есть <b>17 advisory, которые видит локальный аудит, прода не касаются</b> — их закрыли до сборки.
+  Устарел локальный venv, а не проект.</p>
+</div>
+
+<div class="tblwrap"><table>
+<tr><th>Пакет</th><th class="mono">Локально</th><th class="mono">В проде</th><th>Что реально висит на проде</th></tr>
+<tr><td class="mono">aiohttp</td><td class="mono">3.14.1</td><td class="mono">3.14.3</td><td><span class="pill p-ok">закрыто</span> 6 advisory исправлены</td></tr>
+<tr><td class="mono">cryptography</td><td class="mono">49.0.0</td><td class="mono">50.0.0</td><td><span class="pill p-ok">закрыто</span> 2 advisory исправлены</td></tr>
+<tr><td class="mono">GitPython</td><td class="mono">3.1.55</td><td class="mono">3.1.59</td><td><span class="pill p-ok">закрыто</span> 9 advisory исправлены</td></tr>
+<tr><td class="mono">chromadb</td><td class="mono">1.5.9</td><td class="mono">1.5.9</td><td><span class="pill p-part">висит</span> CRITICAL, фикса нет — см. <b>N8</b></td></tr>
+<tr><td class="mono">ecdsa</td><td class="mono">0.19.2</td><td class="mono">0.19.2</td><td><span class="pill p-part">висит</span> HIGH, фикса нет — но не на пути авторизации</td></tr>
+</table></div>
+
+<p><b>Про ecdsa честно:</b> <code>GHSA-wj6h-64fc-37mp</code> — тайминг-атака Minerva на P-256,
+исправленной версии нет. Пакет приходит транзитивно через <code>python-jose</code>, но
+<code>jwt_algorithm = "HS256"</code> (<code>config.py:148</code>) — алгоритм симметричный, ECDSA
+на P-256 в аутентификации не участвует. Severity в этой конфигурации — низкая, и это <b>вывод из
+конфигурации, а не из желания</b>.</p>
+
+<h3>Фронтенд: 7 high-уязвимостей</h3>
+<p><code>npm audit</code> — 0 critical, <b>7 high</b>, 0 moderate/low. Среди них сам
+<code>next</code>, а также <code>sharp</code> (наследует четыре CVE libvips),
+<code>postcss</code> (XSS через неэкранированный <code>&lt;/style&gt;</code>),
+<code>js-yaml</code>, <code>brace-expansion</code>, <code>fast-uri</code>, <code>nanoid</code>.
+Часть — только сборочные, но <code>next</code> и <code>sharp</code> — рантайм.</p>
+
+<h3>Секреты и соблюдение дизайн-системы</h3>
+<div class="grid g2">
+  <div class="card"><b>Секретов в репозитории нет.</b><br>
+  <span class="l">Поиск по 5 шаблонам (<code>sk-…</code>, <code>AKIA…</code>, PEM-заголовки,
+  <code>ghp_…</code>, <code>lin_api_…</code>) дал только placeholder-строки в UI
+  (<code>SshKeyManager.tsx</code>, <code>vendor-credentials.ts</code>). Отслеживаемых
+  <code>.env</code> — только два <code>.example</code>. Присваиваний
+  <code>SECRET=</code>/<code>TOKEN=</code> с высокой энтропией — ноль.</span></div>
+  <div class="card"><b>Дизайн-система соблюдается почти идеально.</b><br>
+  <span class="l">Запрещённых сырых палитровых классов Tailwind
+  (<code>bg-slate-500</code> и подобных) во всём <code>frontend/src</code> — <b>2</b>.
+  <code>console.log</code> в продакшн-коде — <b>0</b>. Использований типа <code>any</code> — <b>1</b>.
+  <code>@ts-ignore</code> — <b>0</b>; шесть <code>eslint-disable-next-line</code>, все точечные и
+  обоснованные. <code>tsc --noEmit</code> и <code>eslint --max-warnings=0</code> — оба чистые.</span></div>
+</div>
+
+<h2 id="traps"><span class="num">10</span>Ловушки измерения, в которые я попал</h2>
+<p class="lede">Шесть раз за этот разбор моя собственная команда соврала — и каждый раз в сторону
+более уверенного вывода. Записываю их, потому что вывод, полученный сломанным измерением, выглядит
+точно так же, как правильный.</p>
+
+<div class="tblwrap"><table>
+<tr><th>Что я сделал</th><th>Что получил</th><th>Как поймал</th></tr>
+<tr><td><code>npx vitest run … | tail -40</code></td>
+    <td><code>VITEST_EXIT=0</code> при двух упавших тестах — код возврата принадлежал <code>tail</code></td>
+    <td>увидел <code>2 failed</code> в тексте, который сам же напечатал</td></tr>
+<tr><td><code>grep -oE '🔴|🟠|🟡|🟢|⚪'</code></td>
+    <td>«42 🟢» при том, что в файле явно есть ⚪</td>
+    <td>прочитал строки глазами; пересчитал Python'ом по позиции ячейки</td></tr>
+<tr><td><code>uvx pip-audit</code> без аргументов</td>
+    <td>«No known vulnerabilities found» — проверена среда самого uvx, не проект</td>
+    <td>0 пакетов вместо 180; перешёл на OSV API по списку из <code>importlib.metadata</code></td></tr>
+<tr><td>regex по <code>@router.…</code> для путей API</td>
+    <td>«159 недокументированных» — префиксы роутеров не захватывались</td>
+    <td>пути вышли как <code>/ask</code> вместо <code>/api/chat/ask</code>; взял OpenAPI живого прода</td></tr>
+<tr><td>regex <code>(GET|POST) /api/</code> по <code>API.md</code></td>
+    <td>«19 упоминаний из 208» — документ использует табличный формат</td>
+    <td>цифра была слишком плохой, чтобы быть правдой; пересчёт дал 130 из 172</td></tr>
+<tr><td>вывод «шаги 10–15 пропущены» из <code>step 9/15</code></td>
+    <td>серьёзное обвинение пайплайну в молчаливом частичном успехе</td>
+    <td>проверил порядок вызовов в раннере: <code>record_index</code> — последний. Осталась находка
+        N6, но она Low, а не High</td></tr>
+</table></div>
+
+<div class="callout note">
+  <h4>Общая форма всех шести</h4>
+  <p>Пять из шести — это <b>сломанное измерение, выдающее правдоподобный результат</b>. Ни одно не
+  выглядело как ошибка: <code>exit=0</code>, «уязвимостей нет», «42 строки» — всё это нормальные
+  ответы. Единственное, что их вскрыло, — сверка второго измерения с первым и чтение исходных строк
+  глазами. Отсюда практическое правило: <b>число, на котором держится вывод, должно быть получено
+  дважды разными путями</b> — особенно когда первое измерение подтверждает то, что ты и так думал.</p>
+</div>
+
+<h2 id="plan"><span class="num">11</span>Что делать, по порядку</h2>
+<p class="lede">Порядок — по отношению «стоимость исправления к тому, что оно перестанет скрывать»,
+а не по severity.</p>
+
+<div class="tblwrap"><table>
+<tr><th class="mono">#</th><th>Действие</th><th>Почему первым</th><th>Объём</th></tr>
+<tr><td class="mono">1</td><td>Задать <code>SENTRY_DSN</code> в проде</td>
+    <td>код инициализации со скрабингом PII уже написан. Пока трекинга нет, каждая следующая находка
+        будет добываться так же вручную, как эта</td><td>одна переменная</td></tr>
+<tr><td class="mono">2</td><td>Обернуть <code>run_repo_index</code> в heartbeat (<b>N1</b>)</td>
+    <td>снимает 85% отказов индексации, которые идут 16 дней. Паттерн уже есть в том же файле для
+        двух других функций</td><td>~10 строк + тест</td></tr>
+<tr><td class="mono">3</td><td>Вычистить конфликт-маркеры и мержить #217 → #218 (<b>N5</b>)</td>
+    <td>#218 нельзя мержить как есть; #217 зелёный и ждёт</td><td>минуты</td></tr>
+<tr><td class="mono">4</td><td>Писать в <code>error_log</code> из пути reaper'а (<b>N3</b>)</td>
+    <td>журнал ошибок продукта не поймал ни одного из 143 падений — он существует ровно для этого</td>
+    <td>небольшой</td></tr>
+<tr><td class="mono">5</td><td>Решить по девяти флагам прода (<b>N2</b>)</td>
+    <td>сначала <code>CROSS_CONNECTION_LEARNINGS_ENABLED</code>: пока vision называет его инвариантом,
+        прод не должен его снимать молча</td><td>решение + запись</td></tr>
+<tr><td class="mono">6</td><td>Снять <code>RERANKER_ENABLED</code> или поставить extra <code>ml</code> (<b>N4</b>)</td>
+    <td>конфигурация не должна утверждать возможность, которой нет в образе</td>
+    <td>переменная, либо образ + переиндекс</td></tr>
+<tr><td class="mono">7</td><td>Ratchet-тесты на числа: конфликт-маркеры, дубль абзаца, покрытие API.md,
+        долг подавлений (<b>N5, N9, N13</b>)</td>
+    <td>все четыре расхождения этого разбора — числа, которые никто не пересчитывает. Лечится
+        тестом, а не вычиткой</td><td>средний</td></tr>
+<tr><td class="mono">8</td><td>Поднять покрытие <code>chat.py</code> (35%) и
+        <code>pipeline_runner.py</code> (53%)</td>
+    <td>точка входа продукта и модуль, падающий в проде, — наименее покрытые в проекте</td>
+    <td>крупный</td></tr>
+<tr><td class="mono">9</td><td>Разгрузить воркер: 899 МБ при квоте 512 МБ в покое</td>
+    <td>R15 ушли, но 611 × R14 за 4 часа — это постоянный свап. Resize или вынос индексации</td>
+    <td>инфраструктурный</td></tr>
+<tr><td class="mono">10</td><td>Прогнать <code>/ux-audit</code> по сценариям, которых коснулись
+        152 коммита (<b>N10</b>)</td>
+    <td>«100% implemented / PASS» — утверждение пятинедельной давности, а не измерение</td>
+    <td>крупный</td></tr>
+<tr><td class="mono">11</td><td>Решить судьбу <code>auth_token_encrypted</code> (F-REPO-04)</td>
+    <td>колонка под секреты без писателя и читателя. Выбор «дописать или снять» — продуктовый</td>
+    <td>решение</td></tr>
+<tr><td class="mono">12</td><td>Разобраться с 7 high в npm, начиная с <code>next</code> и <code>sharp</code></td>
+    <td>единственные два из семи, что попадают в рантайм</td><td>средний</td></tr>
+</table></div>
+
+<hr class="rule">
+<p class="foot">
+Отчёт собран 23 августа 2026 из рабочего дерева <code>proj/leave-and-caps</code>,
+<code>origin/main @ a5f6888</code> и живого прода <code>checkmydata-api v259</code>.<br>
+Прод-Postgres читался только запросами <code>SELECT</code>; персональные данные не извлекались —
+только агрегаты. Значения переменных окружения нигде не печатались; для <code>SENTRY_DSN</code>
+проверялось лишь наличие.<br>
+Всё, что не удалось измерить, названо в тексте неизмеренным. Шесть сломанных измерений,
+встретившихся по ходу, перечислены в разделе 10 вместе с тем, как каждое было поймано.
+</p>
+
+</div>
