@@ -583,6 +583,8 @@ def _extract_entities_from_schemas(
     for schema in schemas:
         if schema.doc_type != "orm_model":
             for tbl in schema.tables:
+                if not is_plausible_table_name(tbl):
+                    continue
                 knowledge.table_usage.setdefault(tbl, TableUsage(table_name=tbl))
             continue
 
@@ -590,6 +592,13 @@ def _extract_entities_from_schemas(
         file_path = schema.file_path
 
         table_matches = SQLALCHEMY_TABLE.findall(content)
+        # `protected $table = '…'` — the one place an Eloquent model states its name.
+        # It outranks the pluralised class name for the same reason `__tablename__` does:
+        # a declaration is a reading, and the plural is a guess.
+        if not table_matches:
+            from app.knowledge.repo_analyzer import ELOQUENT_TABLE_PROPERTY
+
+            table_matches = ELOQUENT_TABLE_PROPERTY.findall(content)
         django_fks = DJANGO_FK.findall(content)
         sa_fks = SQLALCHEMY_FK.findall(content)
 
@@ -599,7 +608,7 @@ def _extract_entities_from_schemas(
                 file_path=file_path,
             )
 
-            if table_matches:
+            if table_matches and is_plausible_table_name(table_matches[0]):
                 entity.table_name = table_matches[0]
             else:
                 entity.table_name = _model_name_to_table(model_name)
@@ -610,10 +619,15 @@ def _extract_entities_from_schemas(
                 entity.relationships.append(fk_target)
 
             knowledge.entities[model_name] = entity
-            knowledge.table_usage.setdefault(
-                entity.table_name,
-                TableUsage(table_name=entity.table_name),
-            ).orm_refs.append(file_path)
+            # `_model_name_to_table` returns "" when the class name is too short or the
+            # inference does not look like a table. The entity is still recorded — it is
+            # a real class — but it contributes no table, because a guess that reaches
+            # the code↔DB map is read there as a fact.
+            if entity.table_name:
+                knowledge.table_usage.setdefault(
+                    entity.table_name,
+                    TableUsage(table_name=entity.table_name),
+                ).orm_refs.append(file_path)
 
 
 def _extract_columns(
@@ -805,6 +819,8 @@ def _scan_table_usage(
        opener keywords (SELECT, INSERT, UPDATE, DELETE, WITH, MERGE, UPSERT)
        as well as the semicolon terminator.
     """
+    # Superseded by `is_plausible_table_name`, which subsumes these six and adds the
+    # shape rules. Kept as a named local only because the loop below reads better for it.
     sql_kw = {"select", "from", "where", "set", "values", "into"}
 
     # Step 1: blank out comments and string literals while preserving offsets.
@@ -852,7 +868,12 @@ def _scan_table_usage(
 
         for m in TABLE_REF_SQL.finditer(segment):
             tbl = m.group(1)
-            if tbl.lower() in sql_kw:
+            # Six keywords were filtered here; prose and pluralised fragments were not.
+            # `FROM|JOIN|INTO|UPDATE|TABLE` followed by a word also matches "update to
+            # the latest" and "insert into if needed", and production\'s code↔DB map
+            # carried `the`, `to`, `if`, `31`, `cascade` and `current_timestamp` because
+            # of it.
+            if tbl.lower() in sql_kw or not is_plausible_table_name(tbl):
                 continue
             usage = knowledge.table_usage.setdefault(tbl, TableUsage(table_name=tbl))
             if is_write and rel_path not in usage.writers:
@@ -1286,6 +1307,166 @@ def _resolve_enum_to_columns(knowledge: ProjectKnowledge) -> None:
                 col.enum_values = match
 
 
+#: The shortest string this module will accept as a table name. Measured, not chosen:
+#: on the one real customer repository (Laravel, 213-table MySQL) every two-character
+#: candidate was a SQL alias or a pluralised fragment, and every genuine table was three
+#: characters or more. Below this the recall is not worth the noise.
+_MIN_TABLE_NAME_LEN = 3
+
+#: Tokens that follow ``FROM``/``JOIN``/``INTO``/``UPDATE``/``TABLE`` in real SQL without
+#: being a table, plus the English words that make prose match the same pattern
+#: ("update **to** the latest", "insert **into if** needed", "from **every** angle").
+#:
+#: This list is a *floor*, not the mechanism. The shape rules in
+#: :func:`is_plausible_table_name` are what generalise; a blocklist alone would pass the
+#: repository it was written against and fail the next one.
+_NOT_A_TABLE: frozenset[str] = frozenset(
+    {
+        # SQL that legitimately follows one of the trigger keywords
+        "select",
+        "insert",
+        "update",
+        "delete",
+        "values",
+        "set",
+        "where",
+        "cascade",
+        "restrict",
+        "exists",
+        "distinct",
+        "only",
+        "all",
+        "any",
+        "some",
+        "null",
+        "current_timestamp",
+        "current_date",
+        "current_user",
+        "now",
+        "dual",
+        "table",
+        "temporary",
+        "if",
+        "not",
+        "and",
+        "or",
+        "as",
+        "on",
+        "using",
+        "group",
+        "order",
+        "limit",
+        "offset",
+        "having",
+        "union",
+        "end",
+        "begin",
+        "outer",
+        "inner",
+        "left",
+        "right",
+        "full",
+        "cross",
+        "natural",
+        "lateral",
+        # prose
+        "the",
+        "a",
+        "an",
+        "to",
+        "of",
+        "in",
+        "into",
+        "from",
+        "for",
+        "by",
+        "with",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "one",
+        "two",
+        "each",
+        "every",
+        "ever",
+        "never",
+        "get",
+        "put",
+        "post",
+        "here",
+        "there",
+        "then",
+        "when",
+        "what",
+        "whatever",
+        "which",
+        "who",
+        "how",
+        "why",
+        "also",
+        "just",
+        "your",
+        "our",
+        "their",
+        "them",
+        "you",
+        "we",
+        "they",
+        "he",
+        "she",
+    }
+)
+
+
+def is_plausible_table_name(name: str) -> bool:
+    """Could *name* be a table this codebase actually has?
+
+    Four shape rules, each earned from a real false positive in production
+    (`code_db_sync`, 2026-08-26 — 39 named tables, six of them real):
+
+    * **Long enough.** ``bs``, ``ls``, ``rs``, ``us`` came from pluralising a one-letter
+      SQL alias. ``a``, ``an`` came from prose.
+    * **Starts with a letter.** ``31`` came from ``UPDATE 31`` in a comment.
+    * **Not a keyword or a common word.** ``cascade`` and ``current_timestamp`` follow a
+      trigger keyword in valid SQL; ``the``, ``to``, ``if``, ``every`` make English match
+      the same pattern.
+    * **Not a bare plural suffix.** ``ses``, ``zes``, ``res``, ``pts``, ``sts``, ``xts``
+      are what the pluraliser emits from a two-character fragment. A name whose entire
+      body is a plural ending carries no noun.
+
+    Deliberately shape-based. A blocklist of the 33 words that happened to appear would
+    have passed that repository and failed the next.
+    """
+    token = (name or "").strip().strip('`"[]').lower()
+    if len(token) < _MIN_TABLE_NAME_LEN:
+        return False
+    if not token[0].isalpha():
+        return False
+    if token in _NOT_A_TABLE:
+        return False
+    # Short tokens that are nothing but a plural ending on a fragment or a keyword.
+    # `ses`, `zes`, `xts`, `pts` are the pluraliser applied to one or two characters;
+    # `ases` is it applied to the SQL keyword `as`, and `ends` to `end`. `log`, `job`,
+    # `tag`, `tags`, `jobs` survive because their stem is neither too short nor a keyword.
+    #
+    # Bounded at four characters on purpose: `orders` and `groups` are real tables whose
+    # singular IS a keyword, and a rule that reached them would cost more than it saves.
+    # EVERY reading is checked, not the first that matches. `ends` parses as `en`+`ds`
+    # and as `end`+`s`; the second is a keyword, and taking whichever ending matched
+    # first let it through. If any reading is a keyword or a fragment, refuse.
+    if len(token) <= 4:
+        for ending in ("s", "es", "ts", "ds", "ks", "ps"):
+            if not token.endswith(ending):
+                continue
+            stem = token[: -len(ending)]
+            if len(stem) < 2 or stem in _NOT_A_TABLE:
+                return False
+    return True
+
+
 # Irregular English plurals used when inferring table names from model names (CODEIDX-C16).
 # Extend as needed; the map is keyed on the *lower-case singular* form.
 _IRREGULAR_PLURALS: dict[str, str] = {
@@ -1325,17 +1506,27 @@ def _pluralize(word: str) -> str:
 def _model_name_to_table(model_name: str) -> str:
     """Convert CamelCase model name to snake_case pluralized table name.
 
+    Returns **""** for anything too short to be a model. `_extract_model_names` takes
+    every ``class \\w+`` in a non-Python file, so a minified or generated file hands this
+    single letters; pluralising them produced `zes`, `ses`, `pts` and nine more entries
+    in production\'s code↔DB map. An empty return is how the caller learns to skip.
+
     Pluralizes only the *last* segment so compound names like ``UserProfile``
     become ``user_profiles`` (not ``user_profiles`` via the old ``+s`` path).
     Uses :func:`_pluralize` for correct English plurals instead of a blind
     ``+s`` (CODEIDX-C16 / SYNC-L4).
     """
+    if len((model_name or "").strip()) < _MIN_TABLE_NAME_LEN:
+        return ""
     s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", model_name)
     snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
     # Pluralize only the last underscore-delimited segment.
     head, _, tail = snake.rpartition("_")
     plural_tail = _pluralize(tail)
-    return f"{head}_{plural_tail}" if head else plural_tail
+    table = f"{head}_{plural_tail}" if head else plural_tail
+    # The inference is a guess by construction. A guess that does not look like a table
+    # is worse than no guess: it reaches the code↔DB map as a fact.
+    return table if is_plausible_table_name(table) else ""
 
 
 def _model_to_table(

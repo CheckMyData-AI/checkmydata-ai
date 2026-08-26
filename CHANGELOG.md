@@ -6,6 +6,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the code↔DB map invented 33 of the 39 tables it named
+
+This is the product's core promise for a repository added to a dashboard: the agent goes
+to the code and knows how it uses the data. Measured against the one real customer project
+in production on 2026-08-26 — a Laravel repository against a 213-table MySQL database —
+the map named **39** tables, of which **six** exist.
+
+    real   catalog_phone_numbers  purchases  unlimit_wallets  sentry_samplers
+           coverage_rule_import_exceptions  partner_phone_number_tests
+    noise  the to if an a get one ever every group its ends cascade
+           current_timestamp 31 any ases whatever
+           bs ls ns os pts res rs ses sts us xts zes
+
+All three rows surfaced as `sync_status='mismatch'` — the headline signal, *your code says
+one thing and your database says another* — were noise: tables `any`, `ases`, `whatever`,
+columns `e` and `now`. A customer opening that screen was told their code used a table
+called `whatever`.
+
+**Two mechanisms, compounding.** `TABLE_REF_SQL` matches `FROM|JOIN|INTO|UPDATE|TABLE`
+followed by a word, and prose does that — "update **to** the latest", "insert **into if**
+needed", "from **every** angle" — as do keywords that legitimately follow those tokens
+(`ON DELETE CASCADE`). Six SQL keywords were the only filter. Then
+`_model_name_to_table` pluralised whatever it was handed: `z` → `zes`, `s` → `ses`,
+`pt` → `pts`, `re` → `res`. Every one of the twelve suffix fragments is that function
+applied to a one- or two-character token, and it was handed those because
+`_extract_model_names` takes **every** `class \w+` in a non-Python file while
+`ORM_PATTERNS["sqlalchemy"]` matches the bare word `Column` anywhere — so generated PHP
+reached the ORM branch and each of its classes became a "model".
+
+- `is_plausible_table_name()` now guards every site that records a table name. Four shape
+  rules: length ≥ 3, starts with a letter, not a keyword or common word, and not a bare
+  plural suffix on a fragment or keyword — `ases` is `as` pluralised, `ends` is `end`.
+  **Every reading is checked, not the first that matches**: `ends` parses as `en`+`ds` and
+  as `end`+`s`, and taking whichever ending matched first let it through.
+- Deliberately shape, not a blocklist. A list of the 33 words that appeared would pass
+  that repository and fail the next one.
+- `_model_name_to_table` returns **`""`** rather than a guess it cannot stand behind, and
+  the caller records the class without recording a table.
+- Measured on the production shapes: the SQL path keeps 4 of 10 candidates and they are
+  exactly the four real ones; the pluraliser invents **0** of the 14 it used to.
+
+### Added — a migration states its table, so stop guessing it
+
+`Schema::create('x')`, `create_table :x`, `op.create_table("x")`, `CREATE TABLE x`,
+`CreateModel(name="X")`, and Eloquent's `protected $table` are readings, not inferences.
+`tables_declared_in_migration()` reads all of them.
+
+- **The previous migration parser found nothing in a Laravel repository.** It was
+  `(?:create_table|CreateTable|CREATE TABLE)\s+['\"`]?(\w+)` — whitespace required before
+  the name — so it missed `Schema::create(` entirely, missed `op.create_table("x")` because
+  a paren is not whitespace, and missed `create_table :x` because `:` is not `\w`. The
+  code↔DB map fell back to inference for every table the app has.
+- **`eloquent` was absent from `ORM_PATTERNS`.** Laravel reached the ORM branch only by
+  accident, via the `sqlalchemy` pattern matching the word `Column`. It is a first-class
+  entry now, and `protected $table = '…'` outranks the pluralised class name for the same
+  reason `__tablename__` does.
+- A declaration carries more authority than a guess, which makes a false declaration
+  worse — so migration output passes the same shape test.
+- 36 tests across the two files, every fixture a real name from that repository rather
+  than an invented one.
+
 ### Added — the frontend reports to Sentry, and the DSN goes where it can reach the browser
 
 - `NEXT_PUBLIC_SENTRY_DSN` is a **build** argument, not a runtime config variable. Next.js
