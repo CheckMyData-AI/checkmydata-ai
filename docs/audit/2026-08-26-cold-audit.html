@@ -1,0 +1,314 @@
+<title>Cold Audit — checkmydata-ai</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --panel:#fff; --ink:#1a1a1c; --dim:#6b6b73; --line:#e6e3dd;
+    --hi:#b4341f; --mid:#a4741a; --lo:#4a6f3d; --info:#5a6a80; --ok:#2e6b45;
+    --code:#f4f2ee;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#141416; --panel:#1c1c1f; --ink:#e8e6e2; --dim:#9a9aa4; --line:#2e2e33;
+      --hi:#e8785e; --mid:#d6a44a; --lo:#8fb87c; --info:#93a6c0; --ok:#6dbd8c;
+      --code:#232326;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#141416; --panel:#1c1c1f; --ink:#e8e6e2; --dim:#9a9aa4; --line:#2e2e33;
+    --hi:#e8785e; --mid:#d6a44a; --lo:#8fb87c; --info:#93a6c0; --ok:#6dbd8c; --code:#232326;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);margin:0;
+    font:16px/1.62 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:60rem;margin:0 auto;padding:3rem 1.5rem 6rem}
+  h1{font-size:clamp(1.7rem,4vw,2.5rem);line-height:1.12;letter-spacing:-.02em;margin:0 0 .4rem}
+  .sub{color:var(--dim);font-size:.95rem;margin:0 0 2.5rem}
+  h2{font-size:1.28rem;letter-spacing:-.01em;margin:3rem 0 .2rem;
+    padding-bottom:.5rem;border-bottom:1px solid var(--line)}
+  h2 .n{color:var(--dim);font-weight:400;font-variant-numeric:tabular-nums;margin-right:.5rem}
+  .lede{color:var(--dim);margin:.7rem 0 1.5rem}
+  .f{background:var(--panel);border:1px solid var(--line);border-radius:.6rem;
+    padding:1.25rem 1.4rem;margin:1.1rem 0;border-left:3px solid var(--line)}
+  .f.hi{border-left-color:var(--hi)} .f.mid{border-left-color:var(--mid)}
+  .f.lo{border-left-color:var(--lo)} .f.info{border-left-color:var(--info)}
+  .f.ok{border-left-color:var(--ok)}
+  .f h3{margin:0 0 .15rem;font-size:1.05rem;letter-spacing:-.01em}
+  .tag{display:inline-block;font-size:.68rem;font-weight:700;letter-spacing:.09em;
+    text-transform:uppercase;padding:.16rem .5rem;border-radius:.3rem;margin-right:.5rem;
+    vertical-align:.1em}
+  .tag.hi{background:var(--hi);color:#fff} .tag.mid{background:var(--mid);color:#fff}
+  .tag.lo{background:var(--lo);color:#fff} .tag.info{background:var(--info);color:#fff}
+  .tag.ok{background:var(--ok);color:#fff}
+  .id{color:var(--dim);font-size:.8rem;font-variant-numeric:tabular-nums}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:.45rem;
+    padding:.85rem 1rem;overflow-x:auto;font-size:.83rem;line-height:1.5;margin:.9rem 0;
+    font-family:ui-monospace,"SF Mono",Menlo,monospace}
+  code{background:var(--code);padding:.1rem .32rem;border-radius:.25rem;font-size:.87em;
+    font-family:ui-monospace,"SF Mono",Menlo,monospace}
+  pre code{background:none;padding:0;font-size:1em}
+  .tw{overflow-x:auto;margin:1.1rem 0}
+  table{border-collapse:collapse;width:100%;font-size:.88rem;min-width:34rem}
+  th,td{text-align:left;padding:.5rem .7rem;border-bottom:1px solid var(--line);
+    vertical-align:top}
+  th{font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--dim);
+    font-weight:600}
+  td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .why{margin:.8rem 0 0;padding-left:.9rem;border-left:2px solid var(--line);
+    color:var(--dim);font-size:.92rem}
+  .rem{margin-top:.85rem;font-size:.92rem}
+  .rem b{font-weight:600}
+  ul{padding-left:1.15rem} li{margin:.3rem 0}
+  .kicker{font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);
+    margin:0 0 .35rem}
+  footer{margin-top:4rem;padding-top:1.2rem;border-top:1px solid var(--line);
+    color:var(--dim);font-size:.85rem}
+</style>
+
+<div class="wrap">
+
+<p class="kicker">Cold audit · read-only · nothing written</p>
+<h1>What is actually true of checkmydata-ai</h1>
+<p class="sub">2026-08-26 · after the 2026-08-25/26 remediation programme · production
+<code>checkmydata-api</code> v274, <code>checkmydata-web</code> v222, both healthy</p>
+
+<h2><span class="n">01</span>The headline</h2>
+<p class="lede">One finding is worth acting on today, and it is the same shape as a defect
+this programme fixed yesterday — which is why it is worth naming rather than filing.</p>
+
+<div class="f hi">
+  <span class="tag hi">High</span><span class="id">A-1</span>
+  <h3>A public, indexable page sells plans the deployment cannot charge for</h3>
+<pre><code>BILLING_ENABLED     = set          heroku config -a checkmydata-api
+STRIPE_SECRET_KEY   = &lt;UNSET&gt;      heroku config:get STRIPE_SECRET_KEY
+/pricing            → 200          &lt;meta name="robots" content="index, follow"&gt;
+/api/billing/plans  → 200          returns the real plan catalogue
+subscriptions       = 0 rows       stripe_events = 0 rows</code></pre>
+  <p>A signed-in visitor who clicks Upgrade reaches <code>POST /api/billing/checkout</code>,
+  which calls a Stripe API with no key. It <em>degrades honestly</em> —
+  <code>billing_service.py:45-46</code> raises <code>BillingError</code> and the route returns
+  <strong>400</strong>, not a crash — but the message the customer sees is
+  <code>"Stripe is not configured (STRIPE_SECRET_KEY missing)"</code>: an operator's
+  diagnostic, on the money path, on a page search engines are invited to index.</p>
+  <div class="why"><strong>Why this is not just a to-do.</strong> It is precisely the shape of
+  <code>RERANKER_ENABLED</code> — a flag advertising a capability the runtime does not carry —
+  which yesterday's <code>app/ops/capability_report.py</code> was built to catch at every boot.
+  The gate makes exactly three claims (<code>reranker_enabled</code>,
+  <code>chroma_embedding_model</code>, <code>chroma_server_url</code>) and this is not one of
+  them. A mechanism built for a class of defect that does not cover the class's clearest
+  member is the interesting part.</div>
+  <p class="rem"><b>Remedy, in order of cost.</b> Add the claim to <code>CLAIMS</code> —
+  <code>billing_enabled</code> asserted, <code>stripe_secret_key</code> provided — so every boot
+  says it. Then either unset <code>BILLING_ENABLED</code> until the keys exist, or give the
+  checkout route a customer-facing message. Whichever is chosen, the boot line is what stops
+  it being rediscovered.</p>
+</div>
+
+<h2><span class="n">02</span>What is written, enabled, and has never run</h2>
+<p class="lede">The 2026-08-23 report named six such subsystems. Counted from production's
+own empty tables, it is <strong>eleven</strong>. For all of them a green CI run is the only
+evidence there is, and the first real user is the first integration test.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Subsystem</th><th>Evidence (0 rows in production)</th><th>Reachable by a user?</th></tr></thead>
+<tbody>
+<tr><td>Billing</td><td><code>subscriptions</code>, <code>stripe_events</code></td><td><strong>Yes</strong> — see A-1</td></tr>
+<tr><td>GA4 analytics</td><td><code>analytics_imports</code>, all five <code>ga4_*</code>, <code>vendor_credentials</code></td><td>Yes — the <code>[1.16.0]</code> headline feature has never ingested a row</td></tr>
+<tr><td>Scheduled queries</td><td><code>scheduled_queries</code>, <code>schedule_runs</code></td><td>Yes</td></tr>
+<tr><td>Notifications</td><td><code>notifications</code></td><td>Yes</td></tr>
+<tr><td>Investigations</td><td><code>data_investigations</code></td><td>Auto-triggered — <code>orchestrator_auto_investigate_enabled</code> defaults on</td></tr>
+<tr><td>Learning votes</td><td><code>learning_votes</code></td><td>Yes</td></tr>
+<tr><td>Batch queries</td><td><code>batch_queries</code></td><td>Yes</td></tr>
+<tr><td>Semantic layer</td><td><code>metric_definitions</code>, <code>metric_relationships</code></td><td>Yes</td></tr>
+<tr><td>RAG feedback</td><td><code>rag_feedback</code></td><td>Yes</td></tr>
+<tr><td>Validation feedback</td><td><code>data_validation_feedback</code></td><td>Yes</td></tr>
+<tr><td>Project repositories</td><td><code>project_repositories</code></td><td>The table is unused entirely — its dead encrypted column was dropped yesterday (F-REPO-04)</td></tr>
+</tbody></table></div>
+
+<div class="f mid">
+  <span class="tag mid">Medium</span><span class="id">A-2</span>
+  <h3>A fix shipped yesterday changed a mechanism that has never been used</h3>
+  <p><code>learning_votes</code> is empty, and <code>a5f6888</code> (#216) corrected how a
+  <em>vote</em> is weighed against a re-derivation. The reasoning holds and the tests are
+  real, but no human has ever voted on a learning in this deployment.</p>
+  <div class="why">Not a defect — a calibration point. Effort spent on paths with zero
+  traffic is effort not spent on the chat path, which carries all 142 messages. Worth
+  knowing before the next priority call, not worth undoing.</div>
+  <p class="rem"><b>Remedy.</b> None in code. Record the exercised/unexercised split beside
+  the board so priority arguments start from it.</p>
+</div>
+
+<h2><span class="n">03</span>The mechanical pass found nothing, loudly</h2>
+
+<div class="f info">
+  <span class="tag info">Info</span><span class="id">A-3</span>
+  <h3>28 of 29 findings are false, and the scanner's own profile says why</h3>
+<pre><code>29 findings — 28 critical "private key committed", 1 medium
+profile: "languages": []  "managers": []  "telemetry": []  "version": null
+         "monorepo": true</code></pre>
+  <p>It detected a monorepo and then read manifests only at the root, which has none.
+  <code>backend/pyproject.toml</code> and <code>frontend/package.json</code> were never opened.
+  That single gap produced the empty language and manager lists, the <em>false</em> telemetry
+  finding — Sentry is in both manifests and live in production — and both declared-blind
+  probes.</p>
+  <div class="why"><strong>Three probes were blind silently.</strong> Two said <code>blind</code>
+  and gave a reason. <code>telemetry</code> returned a <em>finding</em> instead, and the two
+  empty profile fields returned nothing at all. A probe that cannot see and says so is a
+  question; a probe that cannot see and answers anyway is a wrong answer with a clean
+  verdict attached.</div>
+</div>
+
+<div class="f info">
+  <span class="tag info">Info</span><span class="id">A-4</span>
+  <h3>Zero real key material, in the tree or in history — verified, not assumed</h3>
+<pre><code>16 files matched -----BEGIN … PRIVATE KEY-----   (17 of 20 hits in tests/)
+3 hits in source: a &lt;textarea&gt; placeholder ×2 and a `secretHint` string
+strict PEM test (matching END, no code in the span, &gt;16 distinct chars):
+  tree     → 1 candidate    backend/tests/integration/test_security_rbac.py:302
+  history  → 0 candidates   across all 8 flagged commits
+ssh-keygen -y on that candidate → "invalid format"</code></pre>
+  <p>The one survivor is high-entropy filler shaped like a key, used by
+  <code>test_ssh_key_not_in_response</code> to prove the API never echoes a submitted key
+  back. It is not a key.</p>
+  <div class="why"><strong>My first measurement of this was also wrong,</strong> and the way it
+  was wrong is worth keeping. A lazy <code>(.*?)-----END</code> spanned several unrelated tests
+  and accumulated 836 characters of code as "base64", which read as a second real key. The
+  strict form — matching <code>END</code> of the same kind, rejecting spans containing code —
+  removed it. A scanner and a verifier can fail identically.</div>
+</div>
+
+<h2><span class="n">04</span>What yesterday's changes actually did in production</h2>
+<p class="lede">Each of these was a claim when it shipped. These are the measurements.</p>
+
+<div class="f ok">
+  <span class="tag ok">Verified</span><span class="id">N1 · heartbeat</span>
+  <h3>The daily sync completed end to end, and a 42-minute index survived</h3>
+<pre><code>08-26 00:00 UTC  index_repo    completed  (record_index)   00:00 → 00:02
+08-26 00:02      db_index      completed                   00:02 → 00:27
+08-26 00:27      code_db_sync  completed                   00:27 → 00:28
+08-26 00:00      daily_sync    completed                   00:00 → 00:28
+08-25 22:00      index_repo    completed                   22:00 → 22:42  (42 min)
+
+stale run reaped: 0    R14: 0    R15: 0</code></pre>
+  <p>Baseline from the 08-23 report: failing <em>every day</em> since 08-07, 64 of 70
+  failures with <code>error='stale run reaped'</code>. Before the fix any single step over
+  300 s was killed while working; a 42-minute run across many steps is the direct
+  counter-evidence.</p>
+  <div class="why"><strong>One reap did happen after the fix, and its cause is named.</strong>
+  A <code>db_index</code> started 00:42 CEST and was reaped at 00:51; Heroku released
+  <strong>v269 at 00:46 CEST</strong> — my own deploy restarted the worker mid-run. The process
+  was genuinely gone, so the reaper was correct. I can tell only because N3 recorded the
+  step.</div>
+</div>
+
+<div class="f ok">
+  <span class="tag ok">Verified</span><span class="id">N3 · error catalog</span>
+  <h3>The reaper's failures now reach the product's own log, with the step named</h3>
+<pre><code>run | db_index   | fatal | stale run reaped (step: fetch_samples) | 08-25 22:51
+run | daily_sync | fatal | stale run reaped (step: db_index)      | 08-25 22:51</code></pre>
+  <p>Before: 3 rows, newest 08-17, against 143 failed runs. The catalog now records what it
+  exists to record, and the step is what makes a concentration diagnosable.</p>
+</div>
+
+<div class="f ok">
+  <span class="tag ok">Verified</span><span class="id">N4 · N8 · capability gate</span>
+  <h3>Live, and its first act was to state a truth the audit had to dig for</h3>
+  <p>Three boots, three warnings: the configuration names a 768-d embedding model while
+  Chroma embeds at 384-d, and the vectors are not comparable. <code>reranker_enabled</code>
+  dropped out of the warnings because it is now unset. <code>make config-drift</code> → exit 0.
+  <code>npm audit --audit-level=high</code> → exit 0. Gate at 80% against a real 82%.</p>
+</div>
+
+<div class="f info">
+  <span class="tag info">Info</span><span class="id">A-5</span>
+  <h3>149 orphaned cluster rows — checked, and benign</h3>
+  <p>Disabling <code>CLUSTERING_ENABLED</code> left 149 <code>code_clusters</code> rows written
+  08-25 06:53. They are read by the SQL agent — but the read is behind the same flag
+  (<code>sql_agent.py:189-193</code>), so nothing consumes them, and a re-enable deletes before
+  inserting (<code>code_graph_service.py:404</code>). Dead bytes, not stale data that is
+  trusted.</p>
+  <div class="why">Raised because yesterday's change created the doubt and did not resolve it.
+  A side effect named as "clustering off" is not the same as one measured.</div>
+</div>
+
+<h2><span class="n">04b</span>Found while trying to merge this audit</h2>
+<p class="lede">Both of these surfaced because the audit's own pull request would not
+build. Neither was on any checklist.</p>
+
+<div class="f hi">
+  <span class="tag hi">High</span><span class="id">A-6</span>
+  <h3><code>main</code> is not protected, so yesterday's CI fix has no teeth</h3>
+<pre><code>GET /repos/CheckMyData-AI/checkmydata-ai/branches/main/protection
+  → 404  "Branch not protected"</code></pre>
+  <p>#223 made CI run on every pull request, including the stacked ones it used to skip.
+  That closed the blindness. It did not make the result <em>binding</em>: with no protection
+  rule, a pull request can be merged with failing checks, or with none at all — which is
+  how every merge in this programme happened, mine included.</p>
+  <div class="why">The finding is the pair. A gate that runs and cannot block is a gate an
+  operator believes in. #223's own lesson was that an unmeasured branch and a passing one
+  look identical on the page; an unenforced check and an enforced one look identical too.</div>
+  <p class="rem"><b>Remedy.</b> Require <code>backend-lint-test</code> and
+  <code>frontend-build</code> on <code>main</code>. It costs one setting and makes the eleven
+  ratchets this programme added actually load-bearing.</p>
+</div>
+
+<div class="f mid">
+  <span class="tag mid">Medium</span><span class="id">A-7</span>
+  <h3>GitHub has dispatched no workflow for 16 hours, and this PR gets none</h3>
+<pre><code>PR #233  →  0 check-runs on head 25ea94c6db3d, combined state "pending", 0 statuses
+triggers attempted: opened, reopened, synchronize   →  0 runs each
+actions/permissions  → enabled, allowed_actions: all
+workflow "CI"        → state: active
+last CI run anywhere → 2026-08-26T00:30:49Z   (now 16:46Z)</code></pre>
+  <p>The configuration is not the cause: <code>on.pull_request</code> parses to
+  <code>None</code>, which is the canonical "all pull requests", and the same file dispatched
+  correctly for <code>feat/frontend-sentry-dsn</code> hours earlier.</p>
+  <div class="why"><strong>Not diagnosed, and stopped deliberately.</strong> The one
+  hypothesis that fits "worked, then stopped" is an Actions minutes or spending limit on the
+  organisation, and reading that needs the <code>admin:org</code> scope this session does not
+  have. Five rounds were spent; a sixth would be guessing.</div>
+  <p class="rem"><b>Remedy.</b> Check the organisation's Actions billing. If it is not that,
+  the evidence above is what a support request needs.</p>
+</div>
+
+<h2><span class="n">05</span>Proposed board rows</h2>
+<p class="lede">Nothing was written. These are the rows this audit would file, with the
+evidence each already carries.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Id</th><th>Sev</th><th>Row</th></tr></thead>
+<tbody>
+<tr><td class="num">A-1</td><td>🟠 High</td><td><strong>A public indexable page sells plans the deployment cannot charge for.</strong> <code>BILLING_ENABLED</code> set, <code>STRIPE_SECRET_KEY</code> unset, <code>/pricing</code> 200 with <code>robots: index, follow</code>. Checkout degrades honestly to 400 but shows the customer <code>"Stripe is not configured (STRIPE_SECRET_KEY missing)"</code>. Same shape as <code>RERANKER_ENABLED</code>; <code>capability_report.py</code> makes three claims and this is not one. <em>Fix:</em> add the claim, then unset the flag or give the route a customer-facing message.</td></tr>
+<tr><td class="num">A-6</td><td>🟠 High</td><td><strong><code>main</code> is not protected.</strong> #223 made CI run on every PR; nothing makes the result binding, so a PR can merge with failing or absent checks — as every merge in this programme did. A gate that runs and cannot block is a gate an operator believes in. <em>Fix:</em> require <code>backend-lint-test</code> and <code>frontend-build</code> on <code>main</code>.</td></tr>
+<tr><td class="num">A-7</td><td>🟡 Medium</td><td><strong>No workflow dispatched for 16 hours.</strong> PR #233 gets 0 check-runs across <code>opened</code>, <code>reopened</code> and <code>synchronize</code>; Actions is enabled and the workflow active; the same file dispatched correctly hours earlier. Undiagnosed — the fitting hypothesis is an org Actions limit, which needs <code>admin:org</code> to read. <em>Fix:</em> check org Actions billing.</td></tr>
+<tr><td class="num">A-2</td><td>⚪ Info</td><td><strong>Eleven subsystems have never run on live data, not six.</strong> Counted from production's empty tables. For each, a green CI run is the only evidence, and the first real user is the first integration test. <em>Fix:</em> record the exercised/unexercised split so priority arguments start from it; nothing in code.</td></tr>
+<tr><td class="num">A-3</td><td>⚪ Info</td><td><strong>The mechanical audit is blind on this monorepo.</strong> <code>monorepo: true</code> yet manifests read only at the root → empty languages/managers/telemetry, a false telemetry finding, two blind probes. Three probes were blind <em>silently</em>. <em>Fix:</em> belongs upstream in the audit script, not here — recorded so the next run's numbers are not read as measurements.</td></tr>
+<tr><td class="num">A-5</td><td>⚪ Info</td><td><strong>149 orphaned <code>code_clusters</code> rows.</strong> Verified benign: the read is behind the same flag and a re-enable deletes before inserting. <em>Fix:</em> none required; delete on flag-off if tidiness is wanted.</td></tr>
+</tbody></table></div>
+
+<h2><span class="n">06</span>What this audit did not look at</h2>
+<p class="lede">Naming these is the point of the section; a report that lists only what it
+found reads as coverage it does not have.</p>
+<ul>
+<li><strong>Worker peak memory under a full graph rebuild.</strong> R14/R15 are 0 and the
+nightly sync completes, but the 1 143 MB peak came from rebuilding 25 421 symbols and no
+run since has done one — the index has been incremental. Quota is 1 024 MB. Open as
+<code>CB-OPS1</code>.</li>
+<li><strong>102 UX scenarios</strong> whose verification is older than 30 days. Ordered and
+computable (<code>--backlog</code>). Open as <code>CB-UX1</code>.</li>
+<li><strong>The 33 open <code>F-</code> rows</strong> on the existing board were not re-verified
+here. This audit probed production and the seams around yesterday's changes, not the
+standing backlog.</li>
+<li><strong>Frontend runtime behaviour.</strong> The bundle was checked for the Sentry DSN and
+the build for correctness; no page was driven in a browser.</li>
+<li><strong>Whether Sentry receives anything.</strong> Both projects show
+<code>firstEvent: none yet</code>. That is "nothing has failed", not "reporting works" — and
+only a real error or a planted test event separates the two.</li>
+</ul>
+
+<footer>
+Read-only. Findings verified against production and the working tree; every number above
+carries the command that produced it. The mechanical pass lives beside this file as
+<code>2026-08-26-audit.html</code> / <code>.json</code> — its 28 criticals are addressed in A-4.
+</footer>
+
+</div>

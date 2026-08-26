@@ -1,0 +1,195 @@
+<title>Аудит-сессия 2026-08-21 — отчёт</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --fg: #1a1a18; --muted: #6b6b64; --line: #e3e2dd;
+    --card: #ffffff; --ok: #2f7d4f; --warn: #a8690b; --bad: #a5352b; --accent: #2c5d8f;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151513; --fg:#eceae4; --muted:#a09d94; --line:#2f2e2a; --card:#1d1d1a;
+            --ok:#6bbd85; --warn:#d9a34a; --bad:#e0736a; --accent:#7fb0e0; }
+  }
+  :root[data-theme="dark"] {
+    --bg:#151513; --fg:#eceae4; --muted:#a09d94; --line:#2f2e2a; --card:#1d1d1a;
+    --ok:#6bbd85; --warn:#d9a34a; --bad:#e0736a; --accent:#7fb0e0;
+  }
+  :root[data-theme="light"] {
+    --bg:#fbfbfa; --fg:#1a1a18; --muted:#6b6b64; --line:#e3e2dd; --card:#ffffff;
+    --ok:#2f7d4f; --warn:#a8690b; --bad:#a5352b; --accent:#2c5d8f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.62 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 62rem; margin: 0 auto; padding: 3rem 1.5rem 6rem; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 1.75rem; margin-bottom: 2.5rem; }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 .5rem; letter-spacing: -.015em; }
+  .sub { color: var(--muted); font-size: .95rem; margin: 0; }
+  h2 {
+    font-size: 1.22rem; margin: 3rem 0 1rem; letter-spacing: -.01em;
+    padding-bottom: .45rem; border-bottom: 1px solid var(--line);
+  }
+  h3 { font-size: 1rem; margin: 1.9rem 0 .6rem; }
+  p { margin: 0 0 1rem; }
+  code, .mono { font-family: var(--mono); font-size: .88em; }
+  code { background: color-mix(in srgb, var(--fg) 7%, transparent); padding: .1em .35em; border-radius: 3px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: .8rem; margin: 1.5rem 0 2rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: .95rem 1.05rem; }
+  .card .n { font-size: 1.75rem; font-weight: 600; letter-spacing: -.02em; display: block; line-height: 1.1; }
+  .card .l { color: var(--muted); font-size: .78rem; margin-top: .3rem; display: block; }
+  .card.ok .n { color: var(--ok); } .card.warn .n { color: var(--warn); } .card.bad .n { color: var(--bad); }
+  .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 1rem 0 1.6rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; min-width: 34rem; }
+  th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num { font-family: var(--mono); white-space: nowrap; }
+  .pill { display: inline-block; font-size: .7rem; padding: .12em .5em; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+  blockquote {
+    margin: 1.2rem 0; padding: .1rem 0 .1rem 1.1rem;
+    border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); color: var(--fg);
+  }
+  ul, ol { margin: 0 0 1.1rem; padding-left: 1.3rem; }
+  li { margin-bottom: .45rem; }
+  .lede { font-size: 1.06rem; }
+  .note { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 0 8px 8px 0; padding: .9rem 1.1rem; margin: 1.3rem 0; }
+  .note strong:first-child { color: var(--warn); }
+  footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .84rem; }
+  a { color: var(--accent); }
+</style>
+
+<div class="wrap">
+<header>
+  <h1>Аудит-сессия: отчёт по остановке</h1>
+  <p class="sub">checkmydata-ai · 21 августа 2026 · цикл остановлен по запросу · ветка <code>feat/ledger-redesign</code> → 26 PR в <code>main</code></p>
+</header>
+
+<p class="lede">За сессию закрыто <strong>75 находок</strong> из аудита, смержено <strong>26 PR</strong>, два PR открыты и ждут мержа. Критических, высоких и средних находок на доске <strong>не осталось</strong>. Ниже — что сделано, что нет, и что выяснилось про сам аудит.</p>
+
+<div class="cards">
+  <div class="card ok"><span class="n">75</span><span class="l">находок закрыто</span></div>
+  <div class="card"><span class="n">39</span><span class="l">открыто в <code>main</code></span></div>
+  <div class="card ok"><span class="n">0</span><span class="l">Critical / High / Medium</span></div>
+  <div class="card"><span class="n">26</span><span class="l">PR смержено</span></div>
+  <div class="card warn"><span class="n">2</span><span class="l">PR ждут мержа</span></div>
+  <div class="card"><span class="n">6740</span><span class="l">тестов бэкенда</span></div>
+  <div class="card"><span class="n">709</span><span class="l">тестов фронта</span></div>
+</div>
+
+<h2>Главный результат — не количество, а то, что нашлось в самих находках</h2>
+
+<p>Из тринадцати разобранных подробно находок <strong>восемь оказались неверны как написаны</strong> — и не в мелочах, а инверсиями. Это не упрёк автору доски: так выглядит любой аудит, написанный по чтению кода, а не по его исполнению.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Строка</th><th>Что было написано</th><th>Что оказалось</th></tr></thead>
+<tbody>
+<tr><td class="num">F-PROJ-06</td><td>«partial-success 500s»</td><td>500 не бывает вовсе: <strong>200, скрывающая провал</strong> — письмо не ушло, ответ успешный</td></tr>
+<tr><td class="num">F-VIZ-01</td><td>«нет признака свежести»</td><td>Признак есть. Он <strong>не различает</strong> «никто не открывал» и «обещанное обновление сломано»</td></tr>
+<tr><td class="num">F-KNOW-07</td><td>«добавить метрику промаха»</td><td>Метрика была — и <strong>срабатывала на здоровом пути</strong>, поэтому не значила ничего</td></tr>
+<tr><td class="num">F-KNOW-12</td><td>«dense-only после рестарта»</td><td><strong>Всегда</strong>: писатель в воркере, читатель в веб-дино, разные диски</td></tr>
+<tr><td class="num">F-SSH-04</td><td>«<code>db_port</code> не экранирован»</td><td>Верно про код, но <strong>недостижимо</strong> — тип закрывает все пути</td></tr>
+<tr><td class="num">F-SSH-05</td><td>«гонка check-then-pin»</td><td><strong>Гонки нет</strong>: между проверкой и записью ноль <code>await</code></td></tr>
+<tr><td class="num">F-GIT-02</td><td>«наследует риск RCE»</td><td><strong>Не наследует</strong>: проверка стоит в вызываемом, её наследуют все</td></tr>
+<tr><td class="num">F-PROJ-07</td><td>«не валидирует строку роли»</td><td>Хуже: <strong>fail-open</strong> — опечатка в требуемой роли открывала эндпоинт всем</td></tr>
+</tbody>
+</table>
+</div>
+
+<blockquote>Каждый раз это выяснялось одним и тем же способом: <strong>тест, написанный чтобы упасть, проходил</strong>. Это дешевле любого чтения кода, и это единственная процедура из сессии, которую стоит закрепить как правило.</blockquote>
+
+<h2>Сквозная форма дефекта</h2>
+
+<p>Больше половины закрытых находок — один и тот же дефект в разных местах: <strong>сигнал, который не может сказать, какая из двух вещей произошла</strong>.</p>
+
+<div class="scroll">
+<table>
+<thead><tr><th>Находка</th><th>Сигнал существовал</th><th>Два состояния, которые он сливал</th></tr></thead>
+<tbody>
+<tr><td class="num">F-PROJ-06</td><td><code>_send</code> логировал сбой</td><td>«отправлено» против «залогировано и всё равно 200»</td></tr>
+<tr><td class="num">F-VIZ-01</td><td><code>timeAgo(last_executed_at)</code></td><td>«никто не открывал» против «обновление сломано»</td></tr>
+<tr><td class="num">F-KNOW-07</td><td><code>retrieval_degraded_total</code></td><td>«лексически не совпало» против «индекса нет на этой машине»</td></tr>
+<tr><td class="num">F-DG-08</td><td>кросс-стадийная проверка</td><td>«пропорции в норме» против «оба числа обрезаны»</td></tr>
+<tr><td class="num">F-SCHED-03</td><td>предикат жнеца</td><td>«свежая» против «возраст неизвестен»</td></tr>
+<tr><td class="num">F-PROJ-13</td><td>список участников</td><td>«вся команда» против «первые 500 из 5000»</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Опознаётся по двум приметам: метка причины с единственным значением, и булево там, где у явления три состояния.</p>
+
+<h2>Что осталось: 39 находок в <code>main</code></h2>
+
+<p>Ни одной Critical, High или Medium. Из 39: <strong>27 Low</strong> и <strong>12 Info</strong>. Две из них я завёл сам в этой сессии, намеренно не закрывая.</p>
+
+<h3>Заведено мной и оставлено открытым сознательно</h3>
+<ul>
+  <li><strong>F-KNOW-11</strong> (Low) — плотная нога поиска не может сказать, <em>почему</em> она пуста: отсутствующая коллекция Chroma и запрос без совпадений выглядят одинаково. BM25 получил канал причины в F-KNOW-07; это та же правка на второй ноге.</li>
+  <li><strong>F-REPO-04</strong> (Info) — <code>ProjectRepository.auth_token_encrypted</code>: зашифрованная колонка, которую никто не пишет и никто не читает. Либо недоделанная HTTPS-аутентификация, либо мёртвый вес. <strong>Это продуктовое решение, не техническое</strong> — доделать фичу или снять колонку миграцией.</li>
+</ul>
+
+<h3>Требуют проектного решения, а не правки</h3>
+<ul>
+  <li><strong>F-LEARN-04, F-LEARN-05</strong> — семантические противоречия уроков и дедуп перефразировок. Обе требуют эмбеддингов или LLM-вызова на пути, где сейчас нет ни того, ни другого. Это вопрос стоимости, и приклеивать его к правке значило бы стоимость спрятать.</li>
+  <li><strong>F-CHAT-05</strong> (Info) — «~51 молчаливый обработчик исключений». В сессии этим управляет рэтчет: он держит планку на 44 обработчиках, которые деградируют <em>без</em> лога уровня warning, и за сессию его ни разу не повышали. Один раз он поймал мой собственный новый обработчик.</li>
+</ul>
+
+<h3>Остальное — обычная работа в порядке приоритета</h3>
+<p>F-LLM-05 (мутация под правами viewer — <em>её независимо подтвердила развёртка по 143 точкам вызова</em>), F-BILL-08 (чарджбэк не отзывает доступ), F-CONN-07 (исчерпание удалённых соединений), F-CHAT-04 (устаревший конфиг в WS-сессии), F-CHAT-08 (fatal-стадия не отменяет соседние), F-SCHED-06 (нет минимального интервала расписаний), F-FE-03 (a11y и токены не проаудированы) и далее.</p>
+
+<h2>Два PR открыты</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>PR</th><th>Что</th><th>Состояние</th></tr></thead>
+<tbody>
+<tr><td class="num">#217</td><td>F-PROJ-07/08/11 — домен роли: <code>UnknownRoleError</code>, <code>AssignableRole</code>, защита upsert от гонки</td><td><span class="pill warn">перебазирован, ждёт CI</span></td></tr>
+<tr><td class="num">#218</td><td>F-PROJ-12/13 — выход из проекта, ограниченные списки с честной меткой обрезания</td><td><span class="pill warn">в стеке на #217</span></td></tr>
+</tbody>
+</table>
+</div>
+<p>#218 стоит на #217 осознанно: ему нужны <code>logger</code> и <code>VALID_ROLES</code> оттуда. Порядок мержа — сначала #217, затем #218 сам перенацелится на <code>main</code>.</p>
+
+<h2>Нерешённая проблема, которая не в коде</h2>
+
+<div class="note">
+<strong>Задача #12 — репо-индекс в проде не доходит до <code>pipeline_end</code>.</strong>
+<p style="margin:.6rem 0 0">Формулировка исправлена по измерению, а не по памяти: за реальное окно 3.5 часа <strong>0× <code>Error R15</code></strong> (фикс размера батча держится, никого не убивают), но <strong>204× R14</strong> и <code>pipeline_end</code> по-прежнему ноль. Стадия <code>code_symbol_embed</code> стартует на 25 270 символах и через 23 минуты воркер перезапускается посреди неё — без убийства и без ошибки. Все пять перезапусков в окне совпали с релизами v240–v244, каждый через 12–14 с после релиза.</p>
+<p style="margin:.6rem 0 0"><strong>Блокирует частота моих же деплоев, а не память.</strong> Прогону нужно больше времени, чем интервал между мержами, и цикл его не давал. Теперь цикл остановлен — окно появится само. Resize воркера (<code>heroku ps:resize worker=standard-2x</code>) остаётся правильным долгим решением, но гейтом он не является.</p>
+</div>
+
+<h2>Ловушки, которые стоит знать про эту машину и этот процесс</h2>
+<ul>
+  <li><strong><code>tail -1</code> — не вердикт.</strong> CI поймал <code>F841</code>, который я не увидел, потому что <code>ruff check</code> печатает подсказку <em>под</em> замечанием. Дальше все гейты читались по коду возврата. Тот же класс, что <code>| head</code>, обрезавший мою же развёртку раньше.</li>
+  <li><strong><code>timeout</code> на macOS нет.</strong> Обёрнутый в него <code>heroku logs</code> вернул пустой файл, и каждый <code>grep -c</code> честно сообщил ноль. <em>Ноль от команды, которая не запускалась, неотличим от измеренного нуля.</em></li>
+  <li><strong>Монитор выходит на вердикте того прогона, который видел.</strong> После force-push он сообщил «все чеки имеют вердикт» про прежний прогон. Не смержил только потому, что уже попадался на этом.</li>
+  <li><strong><code>.replace(x, y, 1)</code> бьёт в первое вхождение.</strong> Три подсадки выглядели непойманными, пока не выяснилось, что они правили не то место. Дважды это было <code>await refresh()</code>, один раз — <code>if role == "owner"</code> в другой функции.</li>
+  <li><strong>Заблокированный классификатором Bash-вызов выглядит выполненным.</strong> Правка не легла; проверил чтением файла, а не предположением.</li>
+  <li><strong>Фоновый прогон описывает то дерево, которое он видел.</strong> Один вердикт пришёл уже после смены ветки и к текущему состоянию отношения не имел.</li>
+</ul>
+
+<h2>Тесты, которые закрепляли дефект</h2>
+<p>Три раза существующий тест <em>защищал</em> находку, а не пропускал её:</p>
+<ul>
+  <li><code>test_behind_emits_pull_warning</code> утверждал наличие слова <code>"pull"</code> — и потому держал совет, который не мог помочь: клон потерял коммиты, а <code>pull</code> не возвращает перезаписанную историю.</li>
+  <li>Два теста дедупликации закрепляли плоский <code>+0.1</code> — ровно тот инкремент, который позволял накачать уверенность до 1.0 повторной отправкой одного урока.</li>
+</ul>
+<blockquote>Утверждать слово — не значит утверждать смысл. Утверждать значение — не значит утверждать, что значение верно.</blockquote>
+
+<h2>Проверяемость самого отчёта</h2>
+<ul>
+  <li>Доска: <code>docs/qa-audit/issues.md</code>. Все числа на ней выводятся из строк, а не набираются: за сессию оба случая расхождения были у чисел, набранных руками. Рэтчет <code>test_the_tally_matches_the_rows_it_summarises</code> держит это.</li>
+  <li>Каждая закрытая строка несёт вердикт и опору: путь с номером строки, имя теста, число подсадок.</li>
+  <li>Мета-уроки: <code>docs/audits/2026-08-19-full-stack-audit.md</code>, разделы 28–31.</li>
+  <li>История изменений: <code>CHANGELOG.md</code>, раздел <code>[Unreleased]</code>.</li>
+  <li>Сценарии: <code>docs/ux/scenarios.md</code> — добавлены SCN-126 (передача владения) и SCN-127 (выход из проекта).</li>
+</ul>
+
+<footer>
+Отчёт собран из фактов на момент остановки: <code>gh pr list</code>, <code>git show origin/main:docs/qa-audit/issues.md</code>, прогоны тестов и гейтов. Числа находок и PR измерены, а не восстановлены по памяти.
+</footer>
+</div>
