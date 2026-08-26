@@ -145,12 +145,23 @@ def init_sentry() -> bool:
         # A Sentry release is only useful when this string is IDENTICAL to the release
         # the commits were attached to. When they drift, issues land on a release with
         # no commits and suspect-commit attribution silently does nothing — which reads
-        # as "Sentry is not very good" rather than as a wiring bug. Heroku's slug commit
-        # is the one value both sides can agree on without anybody maintaining it.
+        # as "Sentry is not very good" rather than as a wiring bug.
         #
-        # ``None`` when the platform does not supply it. Inventing a release — a version
-        # string, a timestamp — produces one that nothing ever attached commits to,
-        # which is worse than none because it looks configured.
+        # ``HEROKU_SLUG_COMMIT`` first, because on a buildpack app it is the value both
+        # sides agree on with nobody maintaining it. **On the container stack it exists
+        # and is always EMPTY** — measured on this app at release v271, 2026-08-26 — so
+        # the fallback is not decoration: ``RELEASE`` is baked into the image at build
+        # time from the commit the workflow checked out (`Dockerfile.backend`,
+        # `deploy.yml`). An image-baked value cannot drift from the code inside the
+        # image the way a separately-set config variable can.
+        #
+        # The empty string is the trap worth naming: ``os.getenv`` returns ``""`` rather
+        # than ``None`` there, so an ``if ... is None`` check would have accepted it and
+        # produced a blank release. ``or`` is doing real work in this chain.
+        #
+        # ``None`` when nothing supplies it. Inventing a release — a version string, a
+        # timestamp — produces one that nothing ever attached commits to, which is worse
+        # than none because it looks configured.
         release=os.getenv("HEROKU_SLUG_COMMIT") or os.getenv("RELEASE") or None,
         send_default_pii=False,
         # H5: the SDK defaults this to True, which attaches repr()-ed frame

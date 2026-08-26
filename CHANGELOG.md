@@ -27,6 +27,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`sourcemaps.disable: !SENTRY_AUTH_TOKEN`), so today source maps are simply not
   uploaded. Turning that on is a decision about a real credential, and it belongs to the
   operator rather than to this change.
+### Fixed — the Sentry release was going to be blank on the container stack
+
+- `HEROKU_SLUG_COMMIT` is the value every Sentry guide names, and it is populated only
+  for **slug (buildpack)** deploys. This app runs on the **container** stack, where the
+  variable exists and is **always empty** — measured on release v271 after
+  `runtime-dyno-metadata` was enabled:
+
+  ```
+  HEROKU_APP_NAME = checkmydata-api
+  HEROKU_RELEASE_VERSION = v271
+  HEROKU_SLUG_COMMIT =            ← present, empty
+  ```
+
+- A release built from that is blank: issues attach to a release with no commits and
+  suspect-commit attribution silently does nothing, which reads as "Sentry is not very
+  good" rather than as a wiring bug. Enabling the labs feature was necessary and not
+  sufficient, and nothing would have said so.
+- The build already knows the commit — `deploy.yml` checks out
+  `workflow_run.head_sha`. It is now passed as `--build-arg GIT_SHA` to both the backend
+  and worker images and baked in as `ENV RELEASE`. An image-baked value cannot drift
+  from the code inside the image the way a separately-set config variable can.
+- **The empty string is the trap worth naming.** `os.getenv` returns `""` there, not
+  `None`, so an `if … is None` check would have accepted it and produced a blank
+  release. `or` is doing real work in that chain, and a test now says so: planting the
+  `is None` form turns it red with `assert '' == 'bakedsha123'`.
 
 ### Security — Sentry was reachable by two secrets neither scrubbing layer could see (N3)
 

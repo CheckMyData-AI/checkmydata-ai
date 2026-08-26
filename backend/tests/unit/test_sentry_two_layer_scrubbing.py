@@ -125,6 +125,27 @@ class TestTheReleaseNamesACommit:
                     init_sentry()
         assert fake_init.call_args.kwargs["release"] == "abc123def"
 
+    def test_an_empty_slug_commit_falls_through_to_the_baked_release(self) -> None:
+        """The container stack's actual behaviour, and the reason the fallback exists.
+
+        `HEROKU_SLUG_COMMIT` is populated only for slug (buildpack) deploys. On the
+        container stack the variable is present and **empty** — measured on this app at
+        release v271. `os.getenv` returns `""` there, not `None`, so an `is None` check
+        would have accepted it and produced a blank release: issues attaching to a
+        release with no commits, and attribution silently doing nothing.
+        """
+        env = {"HEROKU_SLUG_COMMIT": "", "RELEASE": "bakedsha123"}
+        with patch.dict(os.environ, env, clear=True):
+            with patch("sentry_sdk.init") as fake_init:
+                with patch("app.core.sentry.settings") as fake_settings:
+                    fake_settings.sentry_dsn = "https://k@o1.ingest.sentry.io/1"
+                    fake_settings.sentry_environment = "production"
+                    fake_settings.environment = "production"
+                    fake_settings.sentry_traces_sample_rate = 0.0
+                    fake_settings.sentry_profiles_sample_rate = 0.0
+                    init_sentry()
+        assert fake_init.call_args.kwargs["release"] == "bakedsha123"
+
     def test_no_platform_variable_means_no_release_rather_than_a_wrong_one(self) -> None:
         """`None` leaves the release unset. Inventing one — a version string, a
         timestamp — produces a release nothing ever attached commits to, which is worse

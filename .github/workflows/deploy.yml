@@ -38,9 +38,13 @@ jobs:
         run: echo "$HEROKU_API_KEY" | docker login -u _ --password-stdin registry.heroku.com
 
       - name: Build backend image
+        # GIT_SHA is what Sentry's `release` becomes. It has to be the commit the image
+        # was built from, and it has to match the release the commits are attached to —
+        # `workflow_run.head_sha` is the same value this job checked out above.
         run: |
           docker build \
             --platform linux/amd64 \
+            --build-arg GIT_SHA=${{ github.event.workflow_run.head_sha }} \
             -t registry.heroku.com/${{ env.BACKEND_APP }}/web \
             -f Dockerfile.backend .
 
@@ -49,6 +53,7 @@ jobs:
           docker build \
             --platform linux/amd64 \
             --build-arg BASE_IMAGE=registry.heroku.com/${{ env.BACKEND_APP }}/web \
+            --build-arg GIT_SHA=${{ github.event.workflow_run.head_sha }} \
             -t registry.heroku.com/${{ env.BACKEND_APP }}/worker \
             -f Dockerfile.worker .
 
