@@ -11,9 +11,21 @@ COPY frontend/ .
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_WS_URL
 ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+# Sentry's browser DSN. A BUILD arg, not a runtime config variable: Next.js inlines
+# every `NEXT_PUBLIC_*` value into the bundle at build time, so one set on the dyno
+# would leave the browser reporting nothing while looking configured. Same reason the
+# API and WS origins above are build args.
+#
+# Public by construction — it ships inside the JavaScript anyone can read. That is what
+# a DSN is: a write-only ingest address. `SENTRY_AUTH_TOKEN`, which `withSentryConfig`
+# uses to upload source maps, is the opposite and is deliberately NOT wired here.
+ARG NEXT_PUBLIC_SENTRY_DSN
+ARG NEXT_PUBLIC_SENTRY_ENVIRONMENT
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
+ENV NEXT_PUBLIC_SENTRY_ENVIRONMENT=$NEXT_PUBLIC_SENTRY_ENVIRONMENT
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN mkdir -p public && npm run build
