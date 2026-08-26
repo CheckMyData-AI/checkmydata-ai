@@ -262,6 +262,32 @@ User rules in `rules/` (or `CUSTOM_RULES_DIR`) are injected into orchestrator an
 
 Read-only Git operations on the project's local clone (`git_agent.py`, `GitInspector`): commits, diffs, blame, releases, file churn. Gated by `has_repo` probe; path-traversal guard, output/count caps, no hooks. Freshness warning when clone lags indexed HEAD; optional `git_agent_auto_pull`. Findings persist as `code_finding` insights. Roadmap: `docs/GIT_ACCESS_AUDIT_AND_ROADMAP.md`.
 
+### Code↔DB table names: a declaration outranks a guess
+
+The link between a repository and a database rests on knowing which tables the code uses.
+Two sources, and they are not equal:
+
+- **Declared.** `Schema::create('x')` (Laravel), `create_table :x` (Rails),
+  `op.create_table("x")` (Alembic), `CREATE TABLE x`, `CreateModel(name="X")` (Django),
+  `protected $table` / `__tablename__`. `tables_declared_in_migration()`
+  (`repo_analyzer.py`) reads all of them. The previous inline regex required whitespace
+  before the name and therefore found **nothing** in a Laravel repository — not
+  `Schema::create(`, not `op.create_table(`, not `create_table :x`.
+- **Inferred.** A class name pluralised — `class User` → `users`. Necessary, because
+  Laravel and Rails name most tables implicitly, and the source of every false table in
+  production: `_extract_model_names` takes every `class \w+` in a non-Python file, and
+  `ORM_PATTERNS["sqlalchemy"]` matches the bare word `Column` anywhere, so generated PHP
+  reached the ORM branch and each of its classes became a "model".
+
+Everything that records a table name now passes `is_plausible_table_name()` — four shape
+rules (length ≥ 3, starts with a letter, not a keyword or common word, not a bare plural
+suffix on a fragment or keyword). Shape, not a blocklist: a list of the 33 words that
+appeared would pass that repository and fail the next. `_model_name_to_table` returns
+`""` rather than a guess it cannot stand behind, and the caller skips it.
+
+`eloquent` is now in `ORM_PATTERNS`; it was absent, which is why Laravel only ever reached
+the ORM branch by accident.
+
 ### Data validation, investigations, insights
 
 - **DataGate** — intermediate stage quality (`data_gate.py`); hard checks block impossible percentages/dates when `data_gate_hard_checks_enabled=True`.
@@ -350,7 +376,7 @@ A timeout also gets **exactly one** LLM repair, prompted to narrow scope rather 
 
 **Intelligence remediation W4 landmarks** (schema-capture depth, DBIDX-D1–D18): MongoDB native introspection via aggregation pipelines (`distinct_values`/`approx_stats` overrides); ClickHouse sort-key (`is_sort_key`); PostgreSQL enum labels + CHECK constraints; VIEWs/MATERIALIZED VIEWs indexed with `object_kind`; column comments + indexes rendered in schema context (D8); approx_stats persisted to `DbIndex.column_stats_json` + `column_distinct_values_json` (D9); deterministic completeness gate (D10); schema-cache bust on re-index (D12); dead `SchemaIndexer` deleted (D13); `reltuples < 0` treated as unknown (D14); LLM table/column prompt caps (D15/D16); ClickHouse + Mongo freshness timestamps (D17/D18). New config keys: `mongo_schema_sample_size` (100), `db_index_stats_enabled` (on), `db_index_stats_max_columns` (20), `db_index_stats_sample_cap` (100 000), `db_index_max_tables_analyzed` (500), `db_index_max_prompt_columns` (100). **R9/D7 handoff**: `ColumnInfo.distinct_values/distinct_count/numeric_format/enum_labels` are populated and persisted; downstream waves read from the index.
 
-**Intelligence remediation W5 landmarks** (code↔DB trust signals, SYNC-L2/L3/L5/L6/L7/L8/L9 + low-batch L11–L14): `classify_freshness()` in `git_tracker.py` uses `iter_commits` for exact AHEAD/BEHIND/DIVERGED states (L3); `KnowledgeFreshnessService` maps each state to a distinct warning + severity (DIVERGED=critical); `EntityExtractor` attributes SQL column refs per-statement with noise-token stripping (L2); `_compute_column_drift()` produces deterministic sorted set-diff overriding LLM `sync_status` when both sides are known (L5); migration `c9b8a7f6e5d4` adds `CodeDbSync.column_mismatch_json`; sync loaders match on `(schema,table)` pair for schema-qualified ORM models (L6); bare-suffix keying normalised across all loaders (L7); empty-graph warning gated on `lineage_enabled OR clustering_enabled` (L8); op-kind uses word-boundary regex (L9); `_coerce_confidence` rounds floats before clamping (L11); `CallerRef.depth_estimated` sentinel replaces fabricated depth (L12); enum-table link uses word-boundary token matching (L13); DB-index TTL reads from `settings.db_index_ttl_hours` (L14). New config keys: `git_freshness_fetch_origin` (off — gates remote fetch for cross-machine accuracy; env `GIT_FRESHNESS_FETCH_ORIGIN`), `db_index_ttl_hours` (24; env `DB_INDEX_TTL_HOURS`).
+**Intelligence remediation W5 landmarks** (code↔DB trust signals, SYNC-L2/L3/L5/L6/L7/L8/L9 + low-batch L11–L14): `classify_freshness()` in `git_tracker.py` uses `iter_commits` for exact AHEAD/BEHIND/DIVERGED states (L3); `KnowledgeFreshnessService` maps each state to a distinct warning + severity (DIVERGED=critical); `EntityExtractor` attributes SQL column refs per-statement with noise-token stripping (L2) — **and that stripping was insufficient for table NAMES until 2026-08-27**: it blanked comments and string literals but left six SQL keywords as the only filter, so `TABLE_REF_SQL` (`FROM|JOIN|INTO|UPDATE|TABLE` + a word) also matched prose, and `_model_name_to_table` pluralised one- and two-character tokens into plausible names. Production's code↔DB map for the one real customer named 39 tables of which **six existed** — see `is_plausible_table_name` and `tables_declared_in_migration`; `_compute_column_drift()` produces deterministic sorted set-diff overriding LLM `sync_status` when both sides are known (L5); migration `c9b8a7f6e5d4` adds `CodeDbSync.column_mismatch_json`; sync loaders match on `(schema,table)` pair for schema-qualified ORM models (L6); bare-suffix keying normalised across all loaders (L7); empty-graph warning gated on `lineage_enabled OR clustering_enabled` (L8); op-kind uses word-boundary regex (L9); `_coerce_confidence` rounds floats before clamping (L11); `CallerRef.depth_estimated` sentinel replaces fabricated depth (L12); enum-table link uses word-boundary token matching (L13); DB-index TTL reads from `settings.db_index_ttl_hours` (L14). New config keys: `git_freshness_fetch_origin` (off — gates remote fetch for cross-machine accuracy; env `GIT_FRESHNESS_FETCH_ORIGIN`), `db_index_ttl_hours` (24; env `DB_INDEX_TTL_HOURS`).
 
 **Ingestion automation (all off by default):**
 

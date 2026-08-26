@@ -17,7 +17,75 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Laravel's Eloquent, which had no entry here at all. A PHP file reached the ORM branch
+#: only by accident — the ``sqlalchemy`` pattern below matches the bare word ``Column`` or
+#: ``ForeignKey`` anywhere in a file — and then every ``class \\w+`` in it became a model.
+ELOQUENT_MARKER = re.compile(
+    r"(?:extends\s+(?:Model|Authenticatable|Pivot)\b"
+    r"|Illuminate\\\\Database\\\\Eloquent"
+    r"|use\s+Illuminate\\\\Database\\\\Eloquent)",
+    re.MULTILINE,
+)
+
+#: ``protected $table = '…'`` — the one place an Eloquent model states its table name.
+#: It outranks the pluralised class name, and nothing read it before.
+ELOQUENT_TABLE_PROPERTY = re.compile(
+    r"protected\s+\$table\s*=\s*['\"](\w+)['\"]",
+)
+
+#: A migration NAMES its table. Every pattern here is anchored on a declaration keyword,
+#: because a loose one would make migrations a second source of noise — and a declaration
+#: carries more authority than the inference it replaces.
+MIGRATION_TABLE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Laravel: Schema::create('x', …) / Schema::table('x', …), optionally via
+    # Schema::connection('c')->create('x', …)
+    re.compile(r"Schema::(?:connection\s*\([^)]*\)\s*->)?(?:create|table)\s*\(\s*['\"](\w+)['\"]"),
+    # Rails: create_table :x  /  create_table "x"
+    re.compile(r"create_table\s+[:'\"](\w+)"),
+    # Alembic / SQLAlchemy: op.create_table("x", …)
+    re.compile(r"create_table\s*\(\s*['\"](\w+)['\"]"),
+    # Raw DDL, including the quoted and IF NOT EXISTS forms
+    re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(\w+)", re.IGNORECASE),
+    # Django: migrations.CreateModel(name="X") — a MODEL name, pluralised below
+    re.compile(r"CreateModel\s*\(\s*name\s*=\s*['\"](\w+)['\"]"),
+)
+
+#: Which of the patterns above yields a model name rather than a table name.
+_MIGRATION_PATTERN_IS_MODEL: frozenset[int] = frozenset({4})
+
+
+def tables_declared_in_migration(content: str) -> list[str]:
+    """Table names a migration states outright, in source order, deduplicated.
+
+    This is the half of the code↔DB map that needs no guessing. Laravel, Rails, Django
+    and Alembic all write the table name into the migration; the inference from a class
+    name exists for the models, not for these.
+
+    Implausible names are dropped here too. A declaration is authoritative, which makes
+    a false one worse than a false guess.
+    """
+    from app.knowledge.entity_extractor import (
+        _model_name_to_table,
+        is_plausible_table_name,
+    )
+
+    seen: dict[str, None] = {}
+    hits: list[tuple[int, str]] = []
+    for idx, pattern in enumerate(MIGRATION_TABLE_PATTERNS):
+        for m in pattern.finditer(content or ""):
+            name = m.group(1)
+            if idx in _MIGRATION_PATTERN_IS_MODEL:
+                name = _model_name_to_table(name)
+            if not name or not is_plausible_table_name(name):
+                continue
+            hits.append((m.start(), name))
+    for _, name in sorted(hits):
+        seen.setdefault(name, None)
+    return list(seen)
+
+
 ORM_PATTERNS = {
+    "eloquent": ELOQUENT_MARKER,
     "sqlalchemy": re.compile(
         r"(?:Column|mapped_column|relationship|ForeignKey)",
         re.MULTILINE,
@@ -616,11 +684,14 @@ class RepoAnalyzer:
             migration_dirs_to_check.update(profile.migration_dirs)
         is_migration = any(mdir in rel_path for mdir in migration_dirs_to_check)
         if is_migration:
-            tables = re.findall(
-                r"(?:create_table|CreateTable|CREATE TABLE)\s+['\"`]?(\w+)",
-                content,
-                re.IGNORECASE,
-            )
+            # Was `(?:create_table|CreateTable|CREATE TABLE)\\s+['"`]?(\\w+)`, which
+            # required whitespace before the name and so matched almost nothing that
+            # matters: not `Schema::create('x', …)` (Laravel), not `op.create_table("x")`
+            # (Alembic, no space before the paren), not `create_table :x` (Rails, `:` is
+            # not `\\w`). On the one real customer repository — Laravel — it found zero
+            # tables, and the code↔DB map fell back entirely to inference from class
+            # names. See `tables_declared_in_migration`.
+            tables = tables_declared_in_migration(content)
             results.append(
                 ExtractedSchema(
                     file_path=rel_path,
