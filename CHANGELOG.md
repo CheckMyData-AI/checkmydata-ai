@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a full re-index could not finish, and the ceiling was the symptom
+
+Three ceilings cut three runs off on 2026-08-27 — 1800.02 s inside `code_symbol_embed`,
+3600.00 s inside `generate_docs` at document 80 of 758, and a deploy — before the real
+obstacle was found. `_run_steps` reads the completed-step set once
+(`pipeline_runner.py:168`) and gated four steps on it. **`code_symbol_embed` wrote
+`complete_step` and nothing read it**, so every resume ran it again:
+
+    11:37:23 → 12:15:43   code_symbol_embed   2300 s
+    12:44:57 → 13:20:33   code_symbol_embed   2136 s   ← the same work, redone
+
+Attempt N+1 therefore reached no further than attempt N, and no ceiling could have
+fixed that. With the gate in place, measured live: enqueue → `generate_docs` in **96 s**
+against ~36 minutes before. `ast_parse` and `graph_build` stay ungated deliberately —
+the first rebuilds in-memory state nothing else supplies, the second merges into the
+stored graph — and a test fails if either joins the gated set. The pattern was already
+one step later in the same file: `generate_docs` resumes per document
+(`processed_doc_paths`), confirmed live at 80 → 300 → 758.
+
+**Two corrections to this release's own earlier entry.** It claimed the cron and the
+button run "the same work under two ceilings". They do not:
+`daily_knowledge_sync_service._run_repo_index` passes `force_full=False,
+chain_sync=False`, so the cron's 42.4-minute `completed` run was an *incremental*
+index with the chain off — never a full rebuild. And a test asserting `repo < daily`
+on the strength of that reading actively capped the manual path below what it needs;
+it is replaced by checks that each ceiling is sized against the work it actually
+carries, plus a guard that fails if the cron stops being incremental.
+
+A full rebuild of that repository — 9 981 files, 758 documents — measures **12 039 s
+(3.34 h)**, summed from the segments of the run that reached `pipeline_end` at
+15:51:39: `generate_docs` ~9 375 s at ~4.8 docs/min, `code_symbol_embed` ~2 300 s,
+everything else ~364 s. `repo_index_job_timeout_seconds` now defaults to **16200**,
+35 % over the measurement, and the number is argued in
+`tests/unit/services/test_repo_index_ceiling.py` rather than chosen.
+
+The chained code↔DB sync ran on its own at the end — `code_db_sync` 15:50:26 →
+15:51:39 — which is the first live confirmation of `auto_sync_after_index` defaulting
+on.
+
 ### Fixed — the nightly cron could rebuild a repository the "Re-index repository" button never could
 
 `run_repo_index_task` is the repo-index pipeline, and two ARQ jobs call it with two

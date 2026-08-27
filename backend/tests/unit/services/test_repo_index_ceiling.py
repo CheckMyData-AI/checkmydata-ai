@@ -1,42 +1,55 @@
-"""One pipeline must not have two ceilings depending on which door it came through.
+"""The manual re-index carries a full rebuild, and its ceiling has to cover one.
 
-`run_repo_index_task` is the repo-index pipeline. Two ARQ jobs call it, and each
-carries its own timeout:
+`run_repo_index_task` is the repo-index pipeline, and two ARQ jobs call it — but not
+with the same work, which is where the first version of this file went wrong:
 
-| Entry | ARQ job | Setting carrying the ceiling |
+| Entry | Arguments it passes | Ceiling |
 |---|---|---|
-| nightly cron | `run_daily_project_knowledge_sync` | `daily_knowledge_sync_job_timeout_seconds` |
-| the button, `POST .../index` | `run_repo_index` | `repo_index_job_timeout_seconds` |
+| nightly cron | `force_full=False, chain_sync=False` | 7200 s |
+| the button | `force_full=True`, chain on | `repo_index_job_timeout_seconds` |
 
-Measured on the one real customer repository in production, `indexing_runs` for
-`kind='index_repo'`:
+The cron's job is `run_daily_project_knowledge_sync`; the button's, reached through
+`POST /api/projects/{id}/index`, is `run_repo_index`.
 
-    08-25 22:00  completed  42.4 min   <- nightly, ceiling 7200 s
-    08-27 09:30  TimeoutError 30.0 min <- manual,  ceiling 1800 s
+**Correction, 2026-08-27.** This file first read the cron's 42.4-minute `completed`
+run as a full rebuild and concluded that "the same work fits under one ceiling and
+not the other", so 3600 s would do. Both halves were wrong.
+`daily_knowledge_sync_service._run_repo_index` passes `force_full=False` and
+`chain_sync=False` — an *incremental* index with the code↔DB chain off, because the
+cron runs that sync itself as a separate step. So 42.4 min was never a full
+rebuild, and `repo < daily` was never an invariant; asserting it capped the manual
+path below what a full rebuild needs.
 
-    1800.02s ! 33f44e65d24b48bd9795717bc21b0285:run_repo_index failed, TimeoutError
-      pipeline_runner.py:1468 in _run_code_symbol_embed
+What a full rebuild actually costs, from the tracker on the 11:34 run — the two
+dominant steps, both scaling with repository size rather than with a wall clock:
 
-The same 2 544 s of work fits under one ceiling and cannot fit under the other, so
-the repository rebuilds unattended at 3 a.m. and never rebuilds when a person asks
-for it. That is the worse half: the manual button is what an operator reaches for
-after a fix, and it is the path that cannot finish.
+    11:37:23  code_symbol_embed: started
+    12:15:43  code_symbol_embed: completed      2 300 s  (38.3 min)
+    12:18:07  generate_docs: started
+    12:34:52  killed at the 3600 s ceiling, at document ~80 of 758
+    15:51:39  pipeline_end, after two more attempts — 12 039 s of work in total
 
-**This was diagnosed once already.** AUD-0819-20 gave the job its own knob on
-2026-08-19 precisely because "production hit the hardcoded 1800 s with
-`code_symbol_embed` still running after 29 minutes" — and left the default at the
-value that had just been measured as too small, with a note that a repository
-needing longer "can now say so without a code edit". Nobody said so; neither
-`REPO_INDEX_JOB_TIMEOUT_SECONDS` nor its sibling is set in production. A knob whose
-default is the known-bad value relocates the defect, it does not fix it.
+`generate_docs` is LLM-bound at roughly 4.8 documents a minute (80 documents in
+16.75 minutes, measured twice), so 758 of them is about 2.6 hours on their own.
+That is why the cron's path finishes and the button's does not: incrementally,
+`generate_docs` regenerates only what changed — three minutes on 2026-08-26
+against ~158 for the full set.
 
-The same day's memory fix made it worse and the connection was not drawn:
-`EMBEDDING_UPSERT_BATCH_SIZE` was cut from 200 to 8, trading ~17 % wall clock for
-~552 MiB. That 17 % is spent inside the step the ceiling now cuts off.
+Measured twice before the number below was trusted:
 
-Two orderings are asserted below, and each fails differently. Losing the first
-means the manual path cannot finish work the automatic path can. Losing the second
-means the containing job would be cut off before the step it contains.
+    09:30  1800.02 s  TimeoutError    inside `_run_code_symbol_embed`
+    11:34  3600.00 s  interrupted     inside `generate_docs`, doc ~80/758
+
+**Why the knob existed and still did not help.** AUD-0819-20 added it on
+2026-08-19 for exactly this failure and left the default at 1800 — the value just
+measured as too small — noting that a repository needing longer could "say so
+without a code edit". Nothing in production said so. A knob defaulting to the
+known-bad value relocates a defect; and the registration test pinning
+`{"timeout": 1800}` as a literal made that default look deliberate.
+
+The same day's memory fix is inside the 2 300 s above and the link was never drawn:
+`EMBEDDING_UPSERT_BATCH_SIZE` went 200 → 8, buying ~552 MiB with ~17 % more wall
+clock — spent in the step that dominates the budget.
 """
 
 from __future__ import annotations
@@ -48,11 +61,22 @@ from app.config import Settings
 
 BACKEND = Path(__file__).resolve().parents[3]
 
-#: Longest full rebuild that ever *completed*, in seconds — `indexing_runs`, 42.4 min.
-#: Runs longer than this on record all end `stale run reaped`, meaning their
-#: heartbeat had stopped (the N1 defect, fixed 2026-08-25); their wall clock is
-#: not evidence of work taking that long.
-MEASURED_FULL_REBUILD_SECONDS = 2544
+#: A full rebuild of the one real customer repository — 9 981 files, 758 documents —
+#: summed from measured segments of the run that reached `pipeline_end` at 15:51:39
+#: on 2026-08-27. Summed rather than one wall clock because the run was interrupted
+#: twice by deploys, and a wall clock spanning an idle gap would overstate the work:
+#:
+#:      151 s  setup + ast_parse + graph_build
+#:     2300 s  code_symbol_embed
+#:      144 s  analyze_files + cross_file_analysis + graph_db_bridge
+#:     9375 s  generate_docs, 758 documents at ~4.8/min across three segments
+#:       69 s  embed_and_store + bm25 + the chained code↔DB sync
+#:    ------
+#:    12039 s  = 3.34 h
+#:
+#: NOT the cron's 42.4-minute run, which is an incremental index with the chain off
+#: and was the mis-reading this file exists to correct.
+MEASURED_FULL_REBUILD_SECONDS = 12039
 
 _DEFAULTS = Settings.model_fields
 
@@ -61,19 +85,18 @@ def _default(name: str) -> int:
     return int(_DEFAULTS[name].default)
 
 
-class TestTheManualPathCanFinishWhatTheNightlyPathCan:
-    def test_the_repo_index_ceiling_clears_the_measured_rebuild(self) -> None:
+class TestTheCeilingClearsAFullRebuild:
+    def test_it_clears_the_measurement(self) -> None:
         ceiling = _default("repo_index_job_timeout_seconds")
         assert ceiling > MEASURED_FULL_REBUILD_SECONDS, (
-            f"a full rebuild of the one real customer repository took "
-            f"{MEASURED_FULL_REBUILD_SECONDS} s and the manual ceiling is {ceiling} s — "
-            "the button cannot finish work the cron finishes"
+            f"a full rebuild measures {MEASURED_FULL_REBUILD_SECONDS} s and the manual "
+            f"ceiling is {ceiling} s — the button cannot finish a rebuild at all"
         )
 
     def test_it_clears_it_with_headroom(self) -> None:
-        """A ceiling set to the last measurement is a ceiling that fails on the next
-        commit. The rebuild grows with the repository, and the memory fix already
-        spends ~17 % of it."""
+        """A ceiling set to the last measurement fails on the next commit. Both
+        dominant steps scale with repository size: `code_symbol_embed` with the symbol
+        count, `generate_docs` with the document count."""
         ceiling = _default("repo_index_job_timeout_seconds")
         measured = MEASURED_FULL_REBUILD_SECONDS
         assert ceiling >= measured * 1.25, (
@@ -81,25 +104,45 @@ class TestTheManualPathCanFinishWhatTheNightlyPathCan:
         )
 
 
-class TestTheContainingJobOutlivesWhatItContains:
-    """The daily sync runs the repo index, then the DB index, then the code↔DB sync,
-    in one job. Its ceiling must therefore be strictly the larger one — if it were
-    not, the cron would be cut off inside a step that was still within its own
-    budget, and the failure would be attributed to the step."""
+class TestTheTwoCeilingsCoverDifferentWork:
+    """The first version of this file asserted `repo < daily` on the grounds that the
+    daily sync *contains* a repo index. It does not contain this one.
 
-    def test_daily_sync_gets_the_larger_budget(self) -> None:
-        repo = _default("repo_index_job_timeout_seconds")
-        daily = _default("daily_knowledge_sync_job_timeout_seconds")
-        assert daily > repo, f"daily sync {daily} s must exceed the repo index {repo} s it contains"
+    `daily_knowledge_sync_service._run_repo_index` calls
+    ``run_repo_index_task(project_id, force_full=False, chain_sync=False, wf_id=...)``
+    — incremental, and with the code↔DB chain off because the daily sync runs that
+    sync itself as a separate step. So the cron's budget covers
+    *incremental* repo index + DB index + sync, while the manual button's budget
+    covers a *full* rebuild plus the chained sync. Different workloads; the ordering
+    was not an invariant, and asserting it capped the manual path below what a full
+    rebuild needs.
 
-    def test_the_daily_sync_really_does_contain_it(self) -> None:
-        """Asserted rather than assumed: the ordering above is only an invariant while
-        one job calls the other. If the call goes away, this test says so instead of
-        the ordering quietly becoming arbitrary."""
+    What replaces it is the fact the ordering was standing in for: each ceiling is
+    checked against the workload it actually carries.
+    """
+
+    def test_the_cron_runs_it_incrementally_and_without_the_chain(self) -> None:
         service = (BACKEND / "app" / "services" / "daily_knowledge_sync_service.py").read_text(
             encoding="utf-8"
         )
-        assert "run_repo_index_task" in service
+        call = service[service.index("await run_repo_index_task(") :][:200]
+        assert "force_full=False" in call, (
+            "the cron's index is no longer incremental — the two ceilings may now carry "
+            "comparable work and this file's reasoning needs redoing"
+        )
+        assert "chain_sync=False" in call, (
+            "the cron now chains the code↔DB sync, so its budget contains work the "
+            "manual path's does too — re-derive both ceilings"
+        )
+
+    def test_the_manual_ceiling_covers_a_full_rebuild_plus_the_chain(self) -> None:
+        """The manual path is the only one that runs `force_full=True` **and** chains
+        the sync, so its ceiling is the one that must clear the whole thing."""
+        ceiling = _default("repo_index_job_timeout_seconds")
+        assert ceiling >= MEASURED_FULL_REBUILD_SECONDS, (
+            f"a full rebuild measures {MEASURED_FULL_REBUILD_SECONDS} s and the manual "
+            f"ceiling is {ceiling} s"
+        )
 
 
 class TestEveryLongJobHasAKnobAndNoneIsHardcoded:
