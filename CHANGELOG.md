@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — `matched` was an opinion, and eleven tables that do not exist got it
+
+`sync_status` is the word a customer reads on the code↔DB screen. `matched` says *your
+code and your database agree about this table*. Measured in production on 2026-08-27:
+
+    db_index rows for  bs  ls  os  zes  active  unlimit  esim
+                       clones  interfaces  price  contract      →  0
+    code_db_sync status for those same eleven                   →  matched, all of them
+
+**Eleven tables that are not in the database were reported as agreeing with it.**
+
+The mechanism, not a guess. `_match_tables` builds the code-only tail with
+`_make_matched(nm, "", …)` — `db_context` empty, because there is no DB side. That struct
+goes to the LLM, which returns a `sync_status`. The deterministic SYNC-L5 override only
+fires when **both** column sets are non-empty, which a table with no DB side can never
+satisfy — so `effective_status = analysis.sync_status` stood and the model's answer became
+the customer's fact.
+
+`resolve_sync_status()` now decides in this order:
+
+1. **Structure.** No DB side → `code_only`. No code side → `db_only`. A missing side is a
+   fact; no model can overturn it and none should be asked to.
+2. **SYNC-L5**, where the column sets settle `matched` versus `mismatch`.
+3. **The model**, in the one case left — both sides present, columns unknown on one of
+   them. That is where its reading is the only reading available.
+
+The fix removes judgement from where it does not belong and leaves it where it does: a
+genuine pair with a code-only column still resolves to `mismatch`, and a clean pair still
+resolves to `matched`, both without asking.
+
+23 tests, the eleven names among them verbatim. It never raises — it runs inside the sync
+pipeline, and losing a table's row to an exception is worse than an uncertain status.
+
 ### Fixed — the table-name guard did not apply on the way in, so the store never cleaned
 
 Deploying the guard was not enough, and measuring after the deploy is how that was found.
