@@ -96,9 +96,25 @@ def test_the_ten_that_were_found_are_reported_as_drift(drift) -> None:
         "RERANKER_ENABLED": "true",
     }
     drifted, recorded, unparseable = drift.compare(found_in_prod, drift.code_defaults())
-    assert sorted(k for k, _, _ in drifted) == sorted(found_in_prod)
+
+    # `AUTO_SYNC_AFTER_INDEX` left the set on 2026-08-27, and the reason is the point of
+    # keeping this fixture historical rather than editing it: the flag was not drifting,
+    # it was mis-grouped. It sat under the ingestion-automation rule ("nothing calls out
+    # on a schedule unasked") while the sync it gates calls out to nothing — zero
+    # references to `adapter`, `connector`, `execute_query`, `introspect`, `httpx` or
+    # `aiohttp` in `code_db_sync_pipeline.py`. Unsetting it made a full re-index leave its
+    # own code↔DB map carrying the previous night's timestamp, so the default is now on
+    # and `true` in production is agreement, not divergence.
+    #
+    # The other nine were genuine drift and still are.
+    was_misgrouped = {"AUTO_SYNC_AFTER_INDEX"}
+    assert sorted(k for k, _, _ in drifted) == sorted(set(found_in_prod) - was_misgrouped)
     assert recorded == []
     assert unparseable == []
+    assert drift.code_defaults()["AUTO_SYNC_AFTER_INDEX"] is True, (
+        "if this default goes back to False, the flag is drift again and this test "
+        "should be the thing that says so"
+    )
 
 
 def test_a_recorded_divergence_is_not_drift(drift) -> None:

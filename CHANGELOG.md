@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the table-name guard did not apply on the way in, so the store never cleaned
+
+Deploying the guard was not enough, and measuring after the deploy is how that was found.
+A full re-index ran in production **with the guard live** — 9 981 files detected, 8 644
+parsed, graph rebuilt to 25 491 symbols — and `project_cache.knowledge_json`, written at
+01:00:16, still held **48** implausible names:
+
+    CASCADE  CURRENT_TIMESTAMP  GET  IF  Our  SI  0  200  1328  ases  bs  …
+
+The casing and the bare integers gave it away: the guard rejects all of those on write, so
+they were not produced. They were **loaded**. `ProjectKnowledge.from_json` restored
+`table_usage` with no filter, and `_incremental_update` carried the cache forward the same
+way — so a name recorded before the guard existed came back on every run, was re-saved,
+and outlived any number of clean extractions. Clearing it would have needed a manual purge
+nobody schedules.
+
+The guard now applies on both boundaries. One run cleans the store. Verified: loading 13
+names — 10 noise, 3 real — yields exactly the three real ones, and a real name survives a
+full round trip with its readers intact.
+
+### Changed — the code↔DB map is part of a repo index, not an ingestion automation
+
+`auto_sync_after_index` **defaults ON** and has left the ingestion-automation family.
+
+The family's rule is *nothing calls out on a schedule unasked*, and the flag never
+qualified. Measured against `code_db_sync_pipeline.py`: zero references to `adapter`,
+`connector`, `execute_query`, `introspect`, `httpx` or `aiohttp`. The sync opens no
+connection to anything — its inputs are the stored `DbIndex` and the code knowledge, both
+already local, and its output is the code↔DB map, which is what a repo index *produces*.
+
+The mis-grouping had a consequence, and it appeared the moment it was tested: unset in
+production on 2026-08-25 alongside eight genuine ingestion flags, it meant the full
+re-index above rebuilt the graph while the map kept the previous night's `updated_at`.
+"The index ran and the map did not" is the wrong default for a product whose value is that
+map's freshness.
+
+**The flag stays, for the reason the old grouping never named.** The sync runs an LLM
+(`CodeDbSyncAnalyzer`), so it costs tokens per run. Turning it off now switches off a cost
+rather than a phantom outward call — and one of the new tests fails if the sync ever grows
+an outward call, because that would make the classification wrong again.
+
+Production has the flag unset, so the new default applies there without a config change,
+and `make config-drift` stays clean. The `config_drift` fixture that listed it among the
+ten 2026-08-23 divergences now records *why* it left rather than being edited silently.
+
 ### Fixed — the code↔DB map invented 33 of the 39 tables it named
 
 This is the product's core promise for a repository added to a dashboard: the agent goes

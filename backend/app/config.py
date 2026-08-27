@@ -459,9 +459,27 @@ class Settings(BaseSettings):
     git_poll_enabled: bool = False
     git_poll_interval_minutes: int = 15
 
-    # Auto-chain code↔DB sync after a successful repo index completes (closes the
-    # index→sync gap so lineage never silently lags the freshly indexed code).
-    auto_sync_after_index: bool = False
+    # Auto-chain code↔DB sync after a successful repo index completes.
+    #
+    # DEFAULT ON, and moved out of the ingestion-automation group above (2026-08-27).
+    # It sat there under the house rule "nothing calls out on a schedule unasked", and
+    # that rule has no claim on it: measured against `code_db_sync_pipeline.py`, the sync
+    # has zero references to `adapter`, `connector`, `execute_query`, `introspect`,
+    # `httpx` or `aiohttp`. It opens no connection to anything. Its inputs are the stored
+    # `DbIndex` and the code knowledge — both already local — and its output is the
+    # code↔DB map, which is *what a repo index produces*, not a separate ingestion.
+    #
+    # The grouping had a consequence. Unset in production on 2026-08-25 with eight
+    # genuine ingestion flags, it meant a full re-index on 2026-08-27 rebuilt the graph
+    # (25 491 symbols, 2 134 edges) and left the map carrying the previous night's
+    # `updated_at`. For a product whose value is that map's freshness, "the index ran and
+    # the map did not" is the wrong default.
+    #
+    # The flag stays, because a switch does earn its place — for a reason the old grouping
+    # never named. The sync runs an LLM (`CodeDbSyncAnalyzer.analyze_table`,
+    # `analyze_table_batch`, `generate_summary`), so it costs TOKENS per run. An operator
+    # who wants that off now turns off a cost, not a phantom outward call.
+    auto_sync_after_index: bool = True
 
     # FreshnessReconciler: when stale knowledge crosses the staleness threshold,
     # enqueue a background re-index instead of waiting for a user. Runs inside the
