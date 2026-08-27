@@ -594,7 +594,22 @@ class IndexingPipelineRunner:
             # on) because that flag governs the broader "enhanced retrieval"
             # path; parsed_files is non-empty only when code_graph_enabled is
             # True, so this step is implicitly gated on both flags.
-            if settings.hybrid_retrieval_enabled and state.parsed_files:
+            #
+            # ...and on the checkpoint, since 2026-08-27. This step wrote
+            # `complete_step` and nothing read it, so every resume ran it again:
+            # measured at 2 300 s (38.3 min) on a 9 981-file repository, the most
+            # expensive step in the pipeline and expensive on purpose —
+            # EMBEDDING_UPSERT_BATCH_SIZE is 8 to hold the worker inside its memory
+            # quota. A full rebuild there needs ~2 h and the job's ceiling cut it off
+            # inside `generate_docs`; resuming re-entered this step and spent the 38
+            # minutes over, so attempt N+1 reached no further than attempt N and no
+            # number of attempts could finish. Raising the ceiling alone only moves
+            # where that loop stalls.
+            if (
+                settings.hybrid_retrieval_enabled
+                and state.parsed_files
+                and "code_symbol_embed" not in done
+            ):
                 symbol_count = sum(len(pf.symbols) for pf in state.parsed_files.values())
                 async with tracker.step(
                     wf_id,
