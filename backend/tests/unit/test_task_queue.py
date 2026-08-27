@@ -274,8 +274,15 @@ def test_repo_index_registered_with_its_own_configurable_timeout(monkeypatch):
     `analytics_collect_job_timeout_seconds`. Production hit that hardcoded ceiling
     on 2026-08-19: `1800.09s ! run_repo_index failed, TimeoutError` with
     `code_symbol_embed` still running after 29 minutes on a repo of 8,552 files.
-    The default stays 1800 — a knob, not a silent behaviour change — but a repo
-    that genuinely needs longer can now say so without a code edit.
+    This test used to pin the literal 1800, which is how a default measured as too
+    small came to look deliberate: the knob landed, the value did not move, and a
+    green test asserted the bad number. It hit production again on 2026-08-27 —
+    `1800.02s ! run_repo_index failed, TimeoutError` — while the nightly cron
+    rebuilt the same repository in 42.4 min under its own 7200 s ceiling. The
+    default is now 3600 and the assertion below compares the registration against
+    the setting, which is the wiring this test is named for; the value itself is
+    argued in `tests/unit/services/test_repo_index_ceiling.py`, where the
+    measurement lives.
     """
     import types
 
@@ -294,7 +301,9 @@ def test_repo_index_registered_with_its_own_configurable_timeout(monkeypatch):
         "run_repo_index must be registered with an explicit timeout, not left on the "
         "class-level job_timeout"
     )
-    assert names["run_repo_index"] == {"timeout": 1800}
+    from app.config import settings
+
+    assert names["run_repo_index"] == {"timeout": settings.repo_index_job_timeout_seconds}
     # The raw coroutine must no longer be registered bare beside the wrapped one.
     bare = [f for f in w.WorkerSettings.functions if getattr(f, "__name__", "") == "run_repo_index"]
     assert bare == []
