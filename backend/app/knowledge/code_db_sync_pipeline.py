@@ -347,28 +347,26 @@ class CodeDbSyncPipeline:
                             # are known (non-empty column sets), so we never flip
                             # "code_only" or "db_only" tables to "mismatch" when
                             # one side has no column information.
-                            effective_status = analysis.sync_status
-                            try:
-                                drift = json.loads(mt.column_mismatch_json)
-                                has_code_cols = bool(drift.get("code_only") or drift.get("matched"))
-                                has_db_cols = bool(drift.get("db_only") or drift.get("matched"))
-                                if has_code_cols and has_db_cols:
-                                    if drift["code_only"] or drift["db_only"]:
-                                        effective_status = "mismatch"
-                                    else:
-                                        effective_status = "matched"
-                                    if effective_status != analysis.sync_status:
-                                        logger.debug(
-                                            "SYNC-L5 override: %s LLM=%s → det=%s "
-                                            "(code_only=%s db_only=%s)",
-                                            analysis.table_name,
-                                            analysis.sync_status,
-                                            effective_status,
-                                            drift["code_only"],
-                                            drift["db_only"],
-                                        )
-                            except (json.JSONDecodeError, KeyError, TypeError):
-                                pass  # leave LLM opinion intact on parse error
+                            # Structure decides before the model does: a table with no
+                            # DB side cannot be `matched`, whatever was said about it.
+                            # See `resolve_sync_status` — SYNC-L5's column arithmetic
+                            # lives in there too, so this call is the whole decision.
+                            effective_status = resolve_sync_status(
+                                llm_status=analysis.sync_status,
+                                db_context=mt.db_context,
+                                has_code_info=mt.has_code_info,
+                                column_mismatch_json=mt.column_mismatch_json,
+                            )
+                            if effective_status != analysis.sync_status:
+                                logger.debug(
+                                    "sync_status override: %s LLM=%s → %s "
+                                    "(db_side=%s code_side=%s)",
+                                    analysis.table_name,
+                                    analysis.sync_status,
+                                    effective_status,
+                                    bool((mt.db_context or "").strip()),
+                                    mt.has_code_info,
+                                )
 
                             sync_data = {
                                 "table_name": analysis.table_name,
@@ -966,6 +964,54 @@ class CodeDbSyncPipeline:
         if knowledge.dead_tables:
             parts.append(f"Dead/unused tables: {', '.join(knowledge.dead_tables[:10])}")
         return "\n".join(parts)
+
+
+def resolve_sync_status(
+    *,
+    llm_status: str,
+    db_context: str,
+    has_code_info: bool,
+    column_mismatch_json: str,
+) -> str:
+    """The status a customer reads, decided structurally before it is decided by a model.
+
+    ``matched`` says *your code and your database agree about this table*. That claim has
+    a precondition — both sides must exist — and the precondition is a fact, not a
+    judgement. Measured in production on 2026-08-27: eleven tables with **no `db_index`
+    row at all** were stored as ``matched``, among them `bs`, `zes`, `esim` and
+    `interfaces`. `_match_tables` builds the code-only tail with an empty ``db_context``
+    (see the ``_make_matched(nm, "", …)`` call), the SYNC-L5 override needs *both* column
+    sets to fire and so never does for such a table, and the model's answer stood.
+
+    The order here is deliberate:
+
+    1. **Structure first.** No DB side → ``code_only``. No code side → ``db_only``. No
+       model can overturn a missing side, and no model should be asked to.
+    2. **Then SYNC-L5**, where the column sets settle ``matched`` versus ``mismatch``.
+    3. **Then the model**, in the one case left: both sides present, columns unknown on
+       one of them. That is where its reading is the only reading available.
+
+    Never raises. It runs inside the sync pipeline, and losing a table's row to an
+    exception is worse than keeping a status that is merely uncertain.
+    """
+    has_db_side = bool((db_context or "").strip())
+    if not has_db_side:
+        return "code_only" if has_code_info else "db_only"
+    if not has_code_info:
+        return "db_only"
+
+    try:
+        drift = json.loads(column_mismatch_json)
+        code_only = drift["code_only"]
+        db_only = drift["db_only"]
+        matched = drift["matched"]
+        has_code_cols = bool(code_only or matched)
+        has_db_cols = bool(db_only or matched)
+        if has_code_cols and has_db_cols:
+            return "mismatch" if (code_only or db_only) else "matched"
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass  # the columns cannot settle it; the model's reading stands
+    return llm_status
 
 
 class _MatchedTable:

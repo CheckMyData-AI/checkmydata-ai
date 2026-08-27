@@ -262,6 +262,19 @@ User rules in `rules/` (or `CUSTOM_RULES_DIR`) are injected into orchestrator an
 
 Read-only Git operations on the project's local clone (`git_agent.py`, `GitInspector`): commits, diffs, blame, releases, file churn. Gated by `has_repo` probe; path-traversal guard, output/count caps, no hooks. Freshness warning when clone lags indexed HEAD; optional `git_agent_auto_pull`. Findings persist as `code_finding` insights. Roadmap: `docs/GIT_ACCESS_AUDIT_AND_ROADMAP.md`.
 
+### Code↔DB `sync_status`: structure outranks the model
+
+`matched` claims both sides exist, so that precondition is checked before anything is
+asked. `resolve_sync_status()` (`code_db_sync_pipeline.py`) decides in order: no DB side →
+`code_only`, no code side → `db_only`; then SYNC-L5's column arithmetic settles `matched`
+versus `mismatch`; then — and only when both sides exist with columns unknown on one — the
+LLM's reading stands.
+
+Before 2026-08-27 the model decided by default. `_match_tables` builds the code-only tail
+with an empty `db_context`, SYNC-L5 needs both column sets and so never fired for those
+rows, and eleven tables with **no `db_index` row at all** were stored as `matched` in
+production — `bs`, `zes`, `esim`, `interfaces` among them.
+
 ### Code↔DB table names: a declaration outranks a guess
 
 The link between a repository and a database rests on knowing which tables the code uses.
