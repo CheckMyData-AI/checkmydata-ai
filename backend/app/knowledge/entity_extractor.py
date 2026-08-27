@@ -156,6 +156,18 @@ class ProjectKnowledge:
             cols = [ColumnInfo(**c) for c in edata.pop("columns", [])]
             knowledge.entities[name] = EntityInfo(**edata, columns=cols)
         for tbl, udata in data.get("table_usage", {}).items():
+            # The guard belongs on the READ side too, and that is not symmetry for its
+            # own sake. Table usage is persisted in `project_cache.knowledge_json` and
+            # restored on every run, so a name recorded before the guard existed comes
+            # back, gets re-saved, and outlives any number of clean extractions.
+            #
+            # Measured 2026-08-27: a full re-index ran WITH the guard deployed and the
+            # cache still held 48 implausible names — `CASCADE`, `CURRENT_TIMESTAMP`,
+            # `GET`, `IF`, `0`, `200`, `1328`, `ases`, `bs` — because they were loaded
+            # rather than produced. Filtering on load is what lets one run clean the
+            # store instead of needing a manual purge.
+            if not is_plausible_table_name(tbl):
+                continue
             knowledge.table_usage[tbl] = TableUsage(**udata)
         for edef in data.get("enums", []):
             knowledge.enums.append(EnumDefinition(**edef))
@@ -487,6 +499,10 @@ def _incremental_update(
     stale_set = set(changed_files) | set(deleted_files or [])
 
     for tbl, usage in cached.table_usage.items():
+        # Same reason as `from_json`: an incremental run carries the cache forward, so
+        # without this the guard only ever applies to files that happened to change.
+        if not is_plausible_table_name(tbl):
+            continue
         new_usage = knowledge.table_usage.setdefault(
             tbl,
             TableUsage(table_name=tbl),

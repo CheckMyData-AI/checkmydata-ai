@@ -165,3 +165,70 @@ class TestTheSqlPatternStillFindsRealReferences:
         sql = "SELECT e.name FROM employees e WHERE e.id = 1"
         found = [t for t in TABLE_REF_SQL.findall(sql) if is_plausible_table_name(t)]
         assert found == ["employees"], found
+
+
+class TestTheGuardAppliesOnTheWayInToo:
+    """A guard on production does not clean a store.
+
+    `table_usage` is persisted in `project_cache.knowledge_json` and restored on every
+    run. Measured 2026-08-27: a full re-index ran with the production-side guard deployed
+    — 9 981 files detected, 8 644 parsed, graph rebuilt — and the cache still held **48**
+    implausible names afterwards. They were not produced; they were *loaded*, then
+    re-saved. Without a filter on `from_json` the noise outlives any number of clean
+    extractions, and clearing it needs a manual purge nobody schedules.
+    """
+
+    #: Verbatim from `project_cache.knowledge_json`, 2026-08-27 01:00:16, after the
+    #: rebuild. Note the casing and the bare integers: both are shapes the guard already
+    #: rejects, which is how it is known these were loaded rather than extracted.
+    LOADED_NOISE = [
+        "0",
+        "1328",
+        "2",
+        "200",
+        "3",
+        "31",
+        "CASCADE",
+        "CURRENT_TIMESTAMP",
+        "GET",
+        "IF",
+        "Our",
+        "SI",
+        "a",
+        "an",
+        "and",
+        "any",
+        "ases",
+        "bs",
+    ]
+
+    def test_deserialising_drops_them(self) -> None:
+        import json
+
+        from app.knowledge.entity_extractor import ProjectKnowledge
+
+        payload = {
+            "table_usage": {
+                name: {"table_name": name, "readers": [], "writers": [], "orm_refs": []}
+                for name in [*self.LOADED_NOISE, *REAL]
+            }
+        }
+        loaded = ProjectKnowledge.from_json(json.dumps(payload))
+        assert sorted(loaded.table_usage) == sorted(REAL), sorted(loaded.table_usage)
+
+    def test_the_real_names_survive_the_round_trip(self) -> None:
+        """Filtering on load is only safe if it is the same rule as on write."""
+        import json
+
+        from app.knowledge.entity_extractor import ProjectKnowledge
+
+        payload = {
+            "table_usage": {
+                n: {"table_name": n, "readers": ["a.php"], "writers": [], "orm_refs": []}
+                for n in REAL
+            }
+        }
+        loaded = ProjectKnowledge.from_json(json.dumps(payload))
+        again = ProjectKnowledge.from_json(loaded.to_json())
+        assert sorted(again.table_usage) == sorted(REAL)
+        assert again.table_usage[REAL[0]].readers == ["a.php"], "payload must survive"
