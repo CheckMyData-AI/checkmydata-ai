@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the nightly cron could rebuild a repository the "Re-index repository" button never could
+
+`run_repo_index_task` is the repo-index pipeline, and two ARQ jobs call it with two
+different ceilings:
+
+| Entry | ARQ job | Ceiling |
+|---|---|---|
+| nightly cron | `run_daily_project_knowledge_sync` | 7200 s |
+| "Re-index repository", `POST /api/projects/{id}/index` | `run_repo_index` | **1800 s** |
+
+Both numbers measured against the same repository, from `indexing_runs`:
+
+    08-25 22:00   completed      42.4 min    nightly
+    08-27 09:30   TimeoutError   30.0 min    manual
+
+    1800.02s ! run_repo_index failed, TimeoutError
+      pipeline_runner.py:1468 in _run_code_symbol_embed
+
+2 544 s of work fits under one ceiling and can never fit under the other. The repository
+rebuilt itself unattended at 3 a.m. and failed every time a person asked — which is the
+worse half, because the button is what an operator presses after shipping a fix.
+
+**It had been diagnosed once already.** AUD-0819-20 gave the job its own knob on
+2026-08-19 for exactly this failure, then left the default at 1800 — the value just
+measured as too small — with a note that a repository needing longer could "say so
+without a code edit". Nothing in production said so. A knob whose default is the
+known-bad value moves the defect, it does not close it.
+
+The same day's memory fix had made it worse and the connection was never drawn:
+`EMBEDDING_UPSERT_BATCH_SIZE` went 200 → 8, buying ~552 MiB with ~17 % more wall clock,
+spent inside the step the ceiling was cutting off. The old caution — that raising the
+ceiling helps only a worker that is not swapping — was correct and its precondition is
+now met and measured: Standard-2X, a full rebuild with zero R14 and zero R15 (CB-OPS1).
+
+`repo_index_job_timeout_seconds` now defaults to **3600**, and the invariant is a test
+rather than a comment: it must clear the measured rebuild with 25 % headroom, and it must
+stay below the daily sync's ceiling, which contains it plus a DB index plus a code↔DB
+sync. A third test fails if any long job is ever registered without its own knob again —
+the shape that produced AUD-0819-20.
+
+Not affected, checked rather than assumed: the checkpoint recorded all five completed
+steps for the killed run (`indexing_checkpoint_step`), so a resume skips them. The empty
+`completed_steps` column on the row is legacy and no longer written
+(`checkpoint_service.py:10-15`).
+
+
 ### Fixed — `matched` was an opinion, and eleven tables that do not exist got it
 
 `sync_status` is the word a customer reads on the code↔DB screen. `matched` says *your

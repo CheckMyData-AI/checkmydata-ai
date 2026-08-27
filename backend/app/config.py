@@ -517,10 +517,33 @@ class Settings(BaseSettings):
     # `job_timeout = 1800` while its two newer siblings read their own settings.
     # Production hit exactly that on 2026-08-19: `1800.09s ! run_repo_index failed,
     # TimeoutError` with `code_symbol_embed` still running after 29 minutes over
-    # 8,552 files. The default is unchanged; a repo that genuinely needs longer can
-    # now say so without a code edit. Note that raising this is only a fix when the
-    # worker is not swapping — on an over-quota dyno it buys a longer crawl.
-    repo_index_job_timeout_seconds: int = 1800
+    # 8,552 files. It got a knob and the default was left at 1800 — the value that
+    # had just been measured as too small.
+    #
+    # Raised to 3600 on 2026-08-27, because leaving it produced the same failure
+    # eight days later and the reason to withhold the raise had gone. Two
+    # measurements, both from `indexing_runs` on the one real customer repository:
+    #
+    #     08-25 22:00  completed      42.4 min   nightly cron, ceiling 7200 s
+    #     08-27 09:30  TimeoutError   30.0 min   manual re-index, ceiling 1800 s
+    #
+    # The same pipeline, the same 2 544 s of work, two ceilings — because the cron
+    # runs it *inside* `run_daily_project_knowledge_sync`, which carries
+    # `daily_knowledge_sync_job_timeout_seconds`. So the repository rebuilt
+    # unattended at 3 a.m. and could never rebuild when a person pressed
+    # "Re-index repository", which is the path an operator reaches for after a fix.
+    #
+    # The old note said raising this only helps when the worker is not swapping.
+    # That precondition is now met and measured: the dyno is Standard-2X and a full
+    # rebuild logged zero R14 and zero R15 (CB-OPS1, 2026-08-27). What is left of
+    # that caution is the opposite lesson — the same day's memory fix cut
+    # `EMBEDDING_UPSERT_BATCH_SIZE` from 200 to 8 and bought ~552 MiB with ~17 % more
+    # wall clock, spent inside the very step this ceiling was cutting off.
+    #
+    # Invariant, asserted in `tests/unit/services/test_repo_index_ceiling.py`: this
+    # stays below `daily_knowledge_sync_job_timeout_seconds`, which contains it plus
+    # a DB index plus a code↔DB sync.
+    repo_index_job_timeout_seconds: int = 3600
 
     # F-SCHED-07: how long a `running` batch may sit before another attempt may take
     # its claim. `run_batch` inherits ARQ's class-level `job_timeout` (1800 s), so past

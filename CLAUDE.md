@@ -215,7 +215,7 @@ Worker functions (`backend/app/worker.py`):
 
 - `run_db_index` — schema indexing for a connection
 - `run_code_db_sync` — code↔DB cross-reference
-- `run_repo_index` — Git repo knowledge pipeline
+- `run_repo_index` — Git repo knowledge pipeline (per-function timeout `repo_index_job_timeout_seconds`, **3600 s since 2026-08-27**). The same pipeline also runs *inside* `run_daily_project_knowledge_sync`, which carries its own 7200 s ceiling — so until the raise, the nightly cron rebuilt a 9 981-file repository in 42.4 min while every press of "Re-index repository" died at exactly 1800 s inside `code_symbol_embed`. Keep this knob **below** `daily_knowledge_sync_job_timeout_seconds`, which contains it plus a DB index plus a code↔DB sync; the ordering is asserted in `tests/unit/services/test_repo_index_ceiling.py`, not just commented.
 - `run_batch` — batch query execution
 - `run_analytics_collect` — collect one analytics connection's reports into its fact tables (per-function timeout `analytics_collect_job_timeout_seconds`)
 
