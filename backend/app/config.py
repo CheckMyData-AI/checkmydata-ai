@@ -520,18 +520,36 @@ class Settings(BaseSettings):
     # 8,552 files. It got a knob and the default was left at 1800 — the value that
     # had just been measured as too small.
     #
-    # Raised to 3600 on 2026-08-27, because leaving it produced the same failure
-    # eight days later and the reason to withhold the raise had gone. Two
-    # measurements, both from `indexing_runs` on the one real customer repository:
+    # Raised to 3600 on 2026-08-27 and that was still too small; corrected to 16200
+    # the same day, after a full rebuild was measured to the end for the first time.
     #
-    #     08-25 22:00  completed      42.4 min   nightly cron, ceiling 7200 s
-    #     08-27 09:30  TimeoutError   30.0 min   manual re-index, ceiling 1800 s
+    # The first raise rested on a mis-reading worth recording, because it is easy to
+    # repeat: the cron's 42.4-minute `completed` run was read as a full rebuild. It
+    # is not. `daily_knowledge_sync_service._run_repo_index` passes
+    # `force_full=False, chain_sync=False` — an incremental index with the code↔DB
+    # chain off, because the cron runs that sync itself as a separate step. The two
+    # ceilings therefore cover different work, and "the same work under two
+    # ceilings" was wrong.
     #
-    # The same pipeline, the same 2 544 s of work, two ceilings — because the cron
-    # runs it *inside* `run_daily_project_knowledge_sync`, which carries
-    # `daily_knowledge_sync_job_timeout_seconds`. So the repository rebuilt
-    # unattended at 3 a.m. and could never rebuild when a person pressed
-    # "Re-index repository", which is the path an operator reaches for after a fix.
+    # What a full rebuild costs, summed from measured segments of the run that
+    # reached `pipeline_end` at 15:51:39 (9 981 files, 758 documents):
+    #
+    #       151 s  setup + ast_parse + graph_build
+    #      2300 s  code_symbol_embed
+    #       144 s  analyze_files + cross_file_analysis + graph_db_bridge
+    #      9375 s  generate_docs, 758 docs at ~4.8/min
+    #        69 s  embed_and_store + bm25 + the chained sync
+    #     12039 s  = 3.34 h
+    #
+    # 16200 s leaves 35 % over that. Both dominant steps scale with repository size
+    # rather than with a clock, so the headroom is not decoration.
+    #
+    # It cut off three runs before it was sized: 1800.02 s inside `code_symbol_embed`,
+    # 3600.00 s inside `generate_docs` at document 80 of 758, and once more at a
+    # deploy. Raising the ceiling was never the whole fix — until 2026-08-27 a resume
+    # re-ran `code_symbol_embed` (38 min) because nothing read its recorded
+    # completion, so attempt N+1 reached no further than attempt N. That gate is in
+    # `pipeline_runner.py`; this number only decides whether one attempt suffices.
     #
     # The old note said raising this only helps when the worker is not swapping.
     # That precondition is now met and measured: the dyno is Standard-2X and a full
@@ -543,7 +561,7 @@ class Settings(BaseSettings):
     # Invariant, asserted in `tests/unit/services/test_repo_index_ceiling.py`: this
     # stays below `daily_knowledge_sync_job_timeout_seconds`, which contains it plus
     # a DB index plus a code↔DB sync.
-    repo_index_job_timeout_seconds: int = 3600
+    repo_index_job_timeout_seconds: int = 16200
 
     # F-SCHED-07: how long a `running` batch may sit before another attempt may take
     # its claim. `run_batch` inherits ARQ's class-level `job_timeout` (1800 s), so past
