@@ -38,8 +38,17 @@ from app.knowledge.code_db_sync_pipeline import resolve_sync_status
 #: The eleven names, verbatim from production. None had a `db_index` row; all were
 #: `matched`.
 CODE_ONLY_IN_PRODUCTION = [
-    "bs", "ls", "os", "zes", "active", "unlimit",
-    "esim", "clones", "interfaces", "price", "contract",
+    "bs",
+    "ls",
+    "os",
+    "zes",
+    "active",
+    "unlimit",
+    "esim",
+    "clones",
+    "interfaces",
+    "price",
+    "contract",
 ]
 
 BOTH_SIDES = json.dumps({"code_only": ["a"], "db_only": [], "matched": ["b"]})
