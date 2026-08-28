@@ -55,8 +55,8 @@ CEILINGS: dict[str, int] = {
     # 2026-08-28, both raised by one: `PgVectorStore.close()` swallows a pool-close
     # failure (the store is being torn down; raising there would mask whatever was
     # actually being shut down), and `app/models/__init__.py` gained
-    # `DocEmbedding  # noqa: F401` — the re-export convention every one of the other
-    # forty imports in that file already follows, not new debt.
+    # a `DocEmbedding` re-export carrying the same unused-import suppression every one
+    # of the other forty imports in that file already carries — convention, not debt.
     "except Exception": 614,
     "except ...: pass": 53,
     "# type: ignore": 49,

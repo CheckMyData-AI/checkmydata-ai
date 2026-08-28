@@ -52,17 +52,19 @@ def test_it_reads_every_bool_setting_config_py_declares(drift) -> None:
     `auth_cookie_secure`. A setting the checker cannot see is reported as no drift,
     which is the failure mode this whole script exists to remove.
     """
-    declared = len(
-        re.findall(r"^\s+\w+\s*:\s*bool\s*=", drift.CONFIG_PY.read_text(encoding="utf-8"), re.M)
-    )
+    text = drift.CONFIG_PY.read_text(encoding="utf-8")
+    declared = len(re.findall(r"^\s+\w+\s*:\s*bool\s*=", text, re.M))
     parsed = drift.code_defaults()
-    assert len(parsed) == declared, (
-        f"config.py declares {declared} bool settings, the checker sees {len(parsed)}"
+    seen_bools = {k for k, v in parsed.items() if v in ("true", "false")}
+    assert len(seen_bools) == declared, (
+        f"config.py declares {declared} bool settings, the checker sees {len(seen_bools)}"
     )
-    # Three whose default is load-bearing enough to be worth pinning by name.
-    assert parsed["CROSS_CONNECTION_LEARNINGS_ENABLED"] is False
-    assert parsed["RERANKER_ENABLED"] is False
-    assert parsed["CODE_GRAPH_ENABLED"] is True, "declared with a trailing comment"
+    # Values are normalised to strings since 2026-08-28, when the checker was widened
+    # past booleans — one comparison path for bool, str and int. Three whose default is
+    # load-bearing enough to be worth pinning by name.
+    assert parsed["CROSS_CONNECTION_LEARNINGS_ENABLED"] == "false"
+    assert parsed["RERANKER_ENABLED"] == "false"
+    assert parsed["CODE_GRAPH_ENABLED"] == "true", "declared with a trailing comment"
 
 
 def test_every_recorded_divergence_names_a_setting_that_still_exists(drift) -> None:
@@ -111,7 +113,7 @@ def test_the_ten_that_were_found_are_reported_as_drift(drift) -> None:
     assert sorted(k for k, _, _ in drifted) == sorted(set(found_in_prod) - was_misgrouped)
     assert recorded == []
     assert unparseable == []
-    assert drift.code_defaults()["AUTO_SYNC_AFTER_INDEX"] is True, (
+    assert drift.code_defaults()["AUTO_SYNC_AFTER_INDEX"] == "true", (
         "if this default goes back to False, the flag is drift again and this test "
         "should be the thing that says so"
     )
@@ -141,3 +143,100 @@ def test_settings_absent_from_config_py_are_ignored(drift) -> None:
         {"DATABASE_URL": "postgres://…", "PORT": "8000"}, drift.code_defaults()
     )
     assert (drifted, recorded, unparseable) == ([], [], [])
+
+
+# --------------------------------------------------------------------------------------
+# 2026-08-28: the checker was boolean-shaped, and the risk never was.
+#
+# `VECTOR_STORE_BACKEND` decides whether the entire knowledge layer reads from Postgres
+# or from a dyno's local disk. It is a `str`. It was set in production against a code
+# default of "chroma", and this script printed "No drift" — because it only ever read
+# `name: bool = X`. The tool was written after ten *boolean* divergences were found and
+# inherited the shape of its first evidence as an assumption about the whole problem.
+#
+# Widening it immediately printed `MASTER_ENCRYPTION_KEY`, `OPENROUTER_API_KEY` and the
+# Redis password to stdout, which is where CI logs live. Both fixes are asserted here:
+# a setting with no code default is not drift (that is how every credential is
+# declared), and any value whose NAME looks like a credential is never printed at all.
+# --------------------------------------------------------------------------------------
+
+
+def test_it_reads_string_and_int_settings_too(drift) -> None:
+    """The one that would have caught `VECTOR_STORE_BACKEND` the day it was set."""
+    defaults = drift.code_defaults()
+    assert defaults.get("VECTOR_STORE_BACKEND") == "chroma"
+    assert defaults.get("DEFAULT_LLM_PROVIDER") == "openai"
+    assert defaults.get("EMBEDDING_UPSERT_BATCH_SIZE") == "8"
+
+
+def test_booleans_still_compare_case_and_spelling_insensitively(drift) -> None:
+    """Widening must not lose what the narrow version did: `1`, `on` and `TRUE` all
+    mean the same thing to pydantic and must mean it here."""
+    key = "DATA_GATE_HARD_CHECKS_ENABLED"
+    assert key not in drift.DELIBERATE, (
+        "pick a key with no recorded reason, or this test measures the wrong thing"
+    )
+    for raw in ("true", "TRUE", "1", "on", "yes"):
+        drifted, _, _ = drift.compare({key: raw}, {key: "false"})
+        assert drifted, raw
+
+
+def test_a_setting_with_no_code_default_is_not_drift(drift) -> None:
+    """An empty default is not a default — it is "the environment supplies this", which
+    is how every credential in config.py is declared. Comparing a deployed secret
+    against "" reports all of them AND prints their values."""
+    drifted, recorded, unparseable = drift.compare(
+        {"OPENROUTER_API_KEY": "sk-or-v1-something"}, {"OPENROUTER_API_KEY": ""}
+    )
+    assert not drifted and not recorded and not unparseable
+
+
+def test_environment_shaped_settings_are_not_decisions(drift) -> None:
+    """A container path differs from a relative dev path by construction and always
+    will. Reporting that as a decision needing a written reason is how a tool teaches
+    people to skim it."""
+    drifted, _, _ = drift.compare(
+        {"REPO_CLONE_BASE_DIR": "/app/data/repos"}, {"REPO_CLONE_BASE_DIR": "./data/repos"}
+    )
+    assert not drifted
+    assert "REPO_CLONE_BASE_DIR" in drift.ENVIRONMENT_SHAPED
+
+
+def test_a_behaviour_setting_is_still_a_decision(drift) -> None:
+    """The other side of that line: which vendor answers a question is a choice, and it
+    must still demand a recorded reason."""
+    assert "DEFAULT_LLM_PROVIDER" not in drift.ENVIRONMENT_SHAPED
+    # It IS recorded in DELIBERATE — so it lands in `recorded`, not `drifted`. What is
+    # asserted is that it lands in one of them at all, which a location-shaped setting
+    # does not.
+    drifted, recorded, _ = drift.compare(
+        {"DEFAULT_LLM_PROVIDER": "anthropic"}, {"DEFAULT_LLM_PROVIDER": "openai"}
+    )
+    assert drifted or recorded
+
+
+class TestNoValueThatLooksLikeACredentialIsEverPrinted:
+    """The check is on the NAME, because the value is exactly what must not be examined
+    to make the decision."""
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "MASTER_ENCRYPTION_KEY",
+            "OPENROUTER_API_KEY",
+            "REDIS_URL",
+            "JWT_SECRET",
+            "SENTRY_DSN",
+            "RESEND_API_KEY",
+            "STRIPE_SECRET_KEY",
+        ],
+    )
+    def test_it_is_masked(self, drift, key: str) -> None:
+        out = drift.mask(key, "hunter2-the-real-value")
+        assert "hunter2" not in out
+        assert "hidden" in out
+
+    def test_an_ordinary_setting_is_shown(self, drift) -> None:
+        """Masking everything would make the report useless — the point is to read it."""
+        assert drift.mask("VECTOR_STORE_BACKEND", "pgvector") == "pgvector"
+        assert drift.mask("DEFAULT_LLM_PROVIDER", "openrouter") == "openrouter"
