@@ -156,6 +156,43 @@ class TestTheBackendSwitch:
             make_vector_store()
 
 
+class TestTheTwoBatchSizesAreSeparate:
+    """They pull in opposite directions and shared one number only because ChromaDB's
+    write was local and free.
+
+    Embedding is memory-bound — the ONNX model pads every document to 256 tokens, so
+    activations are sized by the batch: 967 MiB at 200 against 415 MiB at 8, and an
+    unbounded batch is what SIGKILLed the worker. Writing is round-trip-bound: measured
+    against production with the embedder stubbed, 800 rows took 16.67 s at batch 8 and
+    2.31 s at 100 — a fixed ~167 ms per statement, paid 3 196 times over a full rebuild
+    while the two were tied. That is why `code_symbol_embed` went 38 min to 65 min when
+    the store moved to Postgres.
+
+    HNSW maintenance was the first suspect and is not the cause: server-side, 8 000 rows
+    cost 1 376 ms with no index against 12 348 ms with one — 9x, but only ~44 s across
+    the whole corpus. Worth recording, because it is the plausible answer and it is the
+    wrong one.
+    """
+
+    def test_the_write_batch_has_its_own_setting(self) -> None:
+        from app.config import Settings
+
+        assert "pgvector_write_batch_size" in Settings.model_fields
+        assert Settings.model_fields["pgvector_write_batch_size"].default == 100
+
+    def test_the_write_batch_is_never_smaller_than_the_embed_batch(self) -> None:
+        """A write smaller than an embed would flush mid-chunk for no gain — and the
+        floor is what makes an operator lowering the write batch harmless rather than
+        a silent slowdown."""
+        source = inspect.getsource(pgv.PgVectorStore.add_documents)
+        assert "max(embed_step, settings.pgvector_write_batch_size)" in source
+
+    def test_both_caps_are_read_at_the_call(self) -> None:
+        source = inspect.getsource(pgv.PgVectorStore.add_documents)
+        assert "embedding_upsert_batch_size" in source
+        assert "pgvector_write_batch_size" in source
+
+
 def test_the_batch_cap_still_governs_the_embed_call() -> None:
     """`EMBEDDING_UPSERT_BATCH_SIZE` was cut 200 -> 8 because the ONNX model pads every
     document to 256 tokens and its activations are sized by the batch: 967 MiB for 200

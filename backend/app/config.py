@@ -111,6 +111,15 @@ class Settings(BaseSettings):
     # Default is still "chroma" so the switch is a deliberate flip on a verified
     # deployment rather than a side effect of deploying this change.
     vector_store_backend: str = "chroma"
+    # How many embedded rows go to Postgres in one statement. Separate from
+    # `embedding_upsert_batch_size` because the two pull in opposite directions and
+    # only shared a number while ChromaDB's write was local and free: embedding is
+    # memory-bound (967 MiB at 200 against 415 MiB at 8), writing is round-trip-bound.
+    # Measured against production with the embedder stubbed, 800 rows: 16.67 s at 8,
+    # 2.31 s at 100, 1.92 s at 400 — a fixed ~167 ms per statement, paid 3 196 times
+    # over a full rebuild when the two were tied. 100 takes most of the win; beyond it
+    # the curve is flat and the buffer only grows.
+    pgvector_write_batch_size: int = 100
     chroma_persist_dir: str = "./data/chroma"
     chroma_server_url: str = ""
     chroma_embedding_model: str = Field(
@@ -558,7 +567,13 @@ class Settings(BaseSettings):
     #        69 s  embed_and_store + bm25 + the chained sync
     #     12039 s  = 3.34 h
     #
-    # 16200 s leaves 35 % over that. Both dominant steps scale with repository size
+    # 2026-08-28: the store moved to pgvector and that number moved with it. The same
+    # rebuild measured 15 051 s end to end (15:52 -> 20:02, chained sync included),
+    # because `code_symbol_embed` went 38 min -> 65 min — the write batch was tied to
+    # the embed batch, paying a fixed ~167 ms per statement 3 196 times. Fixed via
+    # `pgvector_write_batch_size` (4.7x on the database path, measured), but not yet
+    # re-measured end to end, so this is sized from the number that WAS measured:
+    # 21600 s leaves 43 % over 15 051. Both dominant steps scale with repository size
     # rather than with a clock, so the headroom is not decoration.
     #
     # It cut off three runs before it was sized: 1800.02 s inside `code_symbol_embed`,
@@ -578,7 +593,7 @@ class Settings(BaseSettings):
     # Invariant, asserted in `tests/unit/services/test_repo_index_ceiling.py`: this
     # stays below `daily_knowledge_sync_job_timeout_seconds`, which contains it plus
     # a DB index plus a code↔DB sync.
-    repo_index_job_timeout_seconds: int = 16200
+    repo_index_job_timeout_seconds: int = 21600
 
     # F-SCHED-07: how long a `running` batch may sit before another attempt may take
     # its claim. `run_batch` inherits ARQ's class-level `job_timeout` (1800 s), so past

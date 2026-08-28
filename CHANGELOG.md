@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the write batch was tied to the embed batch, and they want opposite things
+
+Moving the vector store to Postgres made `code_symbol_embed` go **38 min → 65 min** on
+a full rebuild. One number governed both the embedding and the write, which cost
+nothing while ChromaDB's write was a local file and cost a great deal once it was a
+statement over a network.
+
+The two constraints are opposed. Embedding is memory-bound: the ONNX model pads every
+document to 256 tokens, so activations are sized by the batch — 967 MiB at 200 against
+415 MiB at 8, and an unbounded batch is what SIGKILLed the worker. Writing is
+round-trip-bound. Measured against the production database with the embedder stubbed
+out, 800 rows:
+
+    batch=  8   16.67 s   (100 round-trips, ~167 ms each)
+    batch=100    2.31 s   (  8 round-trips)
+    batch=400    1.92 s   (  2 round-trips)
+
+A fixed ~167 ms per statement, paid **3 196 times** over a full rebuild. `PGVECTOR_WRITE_BATCH_SIZE`
+now defaults to 100 and the embed batch stays at 8; measured end to end on the same
+800 rows, 13.89 s → 2.96 s, with ranking unchanged to four decimal places
+(0.2234 / 0.7867 / 1.0161).
+
+**HNSW maintenance was the first suspect and is not the cause** — worth recording,
+because it is the plausible answer. Measured server-side, 8 000 rows of 384 dimensions
+cost 1 376 ms with no index against 12 348 ms with one: 9× per row, but only ~44 s
+across the whole corpus, nowhere near the tens of minutes observed. Batching the write
+would have been the wrong fix if the index had been the cause, and the right one only
+because it was not.
+
+`repo_index_job_timeout_seconds` follows the measurement to **21600**: the pgvector
+rebuild measured 15 051 s end to end (15:52 → 20:02 on 2026-08-28, chained code↔DB
+sync included), against 12 039 s on ChromaDB. The write fix should bring that down and
+has not yet been re-measured end to end, so the ceiling is sized from the number that
+was measured rather than the one expected.
+
+### Verified — the store survives the event that used to empty it
+
+    before restart   34 038 vectors, visible to a fresh one-off dyno
+    restart both dynos
+    after restart    34 038 vectors — handle.count() = 34 038, force_full would not fire
+
+Both halves matter. Surviving the restart is the fix; being visible to a *different*
+dyno is the half ChromaDB could never do, because `web` and `worker` hold separate
+filesystems. The full rebuild reached `pipeline_end`, the checkpoint was deleted (which
+only happens on success), and the chained sync ran on its own — `code_db_sync`
+20:01:51 → 20:02:51. Map after: 136 matched / 97 db_only / 23 code_only / **0 mismatch**.
+
+
 ### Fixed — the vector store lived on a disk that is wiped on every restart
 
 `CHROMA_PERSIST_DIR` is `/app/data/chroma`: the Heroku container filesystem. It does
