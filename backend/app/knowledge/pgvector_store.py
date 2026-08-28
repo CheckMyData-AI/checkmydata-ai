@@ -142,46 +142,80 @@ class PgVectorStore:
     ) -> None:
         if not doc_ids:
             return
-        # AUD-0819-01 carried over: the batch handed to one embed call decides peak
-        # memory, because the ONNX model pads every document to 256 tokens and its
-        # activations are sized by the batch and nothing else. Measured at 967 MiB
-        # for 200 and 415 MiB for 8; an unbounded batch is what SIGKILLed the worker.
-        step = max(1, settings.embedding_upsert_batch_size)
+        # TWO batch sizes, because embedding and writing pull in opposite directions
+        # and used to share one number only because ChromaDB's write was local and free.
+        #
+        # Embedding is memory-bound: the ONNX model pads every document to 256 tokens,
+        # so the transformer's activations are sized by the batch and nothing else —
+        # 967 MiB at 200 against 415 MiB at 8, and an unbounded batch is what SIGKILLed
+        # the worker (AUD-0819-01). That number must stay small.
+        #
+        # Writing is round-trip-bound. Measured against the production database with
+        # the embedder stubbed out, 800 rows:
+        #
+        #     batch=  8   16.67 s   (100 round-trips, ~167 ms each)
+        #     batch=100    2.31 s   (  8 round-trips)
+        #     batch=400    1.92 s   (  2 round-trips)
+        #
+        # A fixed ~167 ms per statement dominates completely, and tying the write to
+        # the embed batch paid it 3 196 times over a full rebuild. HNSW maintenance was
+        # the first suspect and is not the cause: measured server-side, 8 000 rows cost
+        # 1 376 ms with no index and 12 348 ms with one — 9x, but only ~44 s across the
+        # whole corpus, not the tens of minutes observed.
+        embed_step = max(1, settings.embedding_upsert_batch_size)
+        write_step = max(embed_step, settings.pgvector_write_batch_size)
+
+        buf_ids: list[str] = []
+        buf_docs: list[str] = []
+        buf_meta: list[str] = []
+        buf_vecs: list[str] = []
+
+        def _flush(conn: Any) -> None:
+            if not buf_ids:
+                return
+            conn.execute(
+                """
+                INSERT INTO doc_embeddings
+                    (project_id, id, document, metadata, embedding, updated_at)
+                SELECT %s, u.id, u.document, u.metadata::jsonb, u.embedding, now()
+                FROM unnest(%s::text[], %s::text[], %s::text[], %s::vector[])
+                     AS u(id, document, metadata, embedding)
+                ON CONFLICT (project_id, id) DO UPDATE
+                   SET document   = EXCLUDED.document,
+                       metadata   = EXCLUDED.metadata,
+                       embedding  = EXCLUDED.embedding,
+                       updated_at = now()
+                """,
+                (project_id, buf_ids, buf_docs, buf_meta, buf_vecs),
+            )
+            buf_ids.clear()
+            buf_docs.clear()
+            buf_meta.clear()
+            buf_vecs.clear()
+
         with self._pool.connection() as conn:
-            for start in range(0, len(doc_ids), step):
-                end = start + step
+            for start in range(0, len(doc_ids), embed_step):
+                end = start + embed_step
                 chunk_docs = documents[start:end]
                 chunk_ids = doc_ids[start:end]
                 chunk_meta = (
                     metadatas[start:end] if metadatas is not None else [{}] * len(chunk_ids)
                 )
                 vectors = self._embed(chunk_docs)
-                conn.execute(
-                    """
-                    INSERT INTO doc_embeddings
-                        (project_id, id, document, metadata, embedding, updated_at)
-                    SELECT %s, u.id, u.document, u.metadata::jsonb, u.embedding, now()
-                    FROM unnest(%s::text[], %s::text[], %s::text[], %s::vector[])
-                         AS u(id, document, metadata, embedding)
-                    ON CONFLICT (project_id, id) DO UPDATE
-                       SET document   = EXCLUDED.document,
-                           metadata   = EXCLUDED.metadata,
-                           embedding  = EXCLUDED.embedding,
-                           updated_at = now()
-                    """,
-                    (
-                        project_id,
-                        chunk_ids,
-                        chunk_docs,
-                        [json.dumps(m or {}) for m in chunk_meta],
-                        [str(v) for v in vectors],
-                    ),
-                )
+                buf_ids.extend(chunk_ids)
+                buf_docs.extend(chunk_docs)
+                buf_meta.extend(json.dumps(m or {}) for m in chunk_meta)
+                buf_vecs.extend(str(v) for v in vectors)
+                if len(buf_ids) >= write_step:
+                    _flush(conn)
+            _flush(conn)
+
         logger.debug(
-            "PgVectorStore: upserted %d documents for project %s in batches of %d",
+            "PgVectorStore: upserted %d documents for project %s (embed %d, write %d)",
             len(doc_ids),
             project_id,
-            step,
+            embed_step,
+            write_step,
         )
 
     def query(

@@ -76,7 +76,15 @@ BACKEND = Path(__file__).resolve().parents[3]
 #:
 #: NOT the cron's 42.4-minute run, which is an incremental index with the chain off
 #: and was the mis-reading this file exists to correct.
-MEASURED_FULL_REBUILD_SECONDS = 12039
+MEASURED_FULL_REBUILD_SECONDS = 15051
+#
+# 2026-08-28: 12 039 s was the ChromaDB path, which is no longer the path production
+# runs. On pgvector the same rebuild measured **15 051 s** end to end (15:52 -> 20:02,
+# chained code↔DB sync included), because `code_symbol_embed` went 38 min -> 65 min:
+# the write batch was tied to the embed batch, so a fixed ~167 ms per statement was
+# paid 3 196 times. That is fixed (`pgvector_write_batch_size`, measured 4.7x on the
+# database path), but the fixed number has not yet been re-measured end to end — so
+# the ceiling is set from what IS measured, not from what the fix should achieve.
 
 _DEFAULTS = Settings.model_fields
 

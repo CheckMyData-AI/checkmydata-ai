@@ -52,11 +52,17 @@ CEILINGS: dict[str, int] = {
     # this red. That friction is the point — every one of those raises is a sentence
     # somebody had to write — but a burst of five parallel PRs makes it feel like noise
     # rather than a decision, and it should be read as the latter.
-    # 2026-08-28, both raised by one: `PgVectorStore.close()` swallows a pool-close
-    # failure (the store is being torn down; raising there would mask whatever was
-    # actually being shut down), and `app/models/__init__.py` gained
-    # a `DocEmbedding` re-export carrying the same unused-import suppression every one
-    # of the other forty imports in that file already carries — convention, not debt.
+    # 2026-08-28: `except Exception` raised by one for `PgVectorStore.close()`, which
+    # swallows a pool-close failure — the store is being torn down, and raising there
+    # would mask whatever was actually being shut down.
+    #
+    # `# noqa` 128 -> 129: `app/models/__init__.py` gained a `DocEmbedding` re-export
+    # carrying the same unused-import suppression the other forty-two imports in that
+    # file already carry. Convention, not debt.
+    #
+    # A SECOND one was added and then deleted — a suppression on an inner function's
+    # untyped argument, where annotating it cost one word. That is the answer this
+    # ratchet exists to provoke, and it is why the raise here is one rather than two.
     "except Exception": 614,
     "except ...: pass": 53,
     "# type: ignore": 49,
