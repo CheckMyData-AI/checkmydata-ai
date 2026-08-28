@@ -24,7 +24,7 @@ from app.knowledge.git_tracker import GitTracker
 from app.knowledge.pipeline_runner import IndexingPipelineRunner
 from app.knowledge.repo_analyzer import RepoAnalyzer
 from app.knowledge.repo_url import validate_git_ref, validate_repo_url
-from app.knowledge.vector_store import VectorStore
+from app.knowledge.vector_store import make_vector_store
 from app.models.base import async_session_factory
 from app.services.checkpoint_service import CheckpointService
 from app.services.connection_service import ConnectionService
@@ -43,7 +43,7 @@ _git_tracker = GitTracker()
 _repo_analyzer = RepoAnalyzer(settings.repo_clone_base_dir)
 _doc_store = DocStore()
 _doc_generator = DocGenerator()
-_vector_store = VectorStore()
+_vector_store = make_vector_store()
 _cache_svc = ProjectCacheService()
 _checkpoint_svc = CheckpointService()
 

@@ -44,7 +44,7 @@ from app.core.types import RAGSource
 from app.core.validation_loop import ValidationLoop
 from app.knowledge.custom_rules import CustomRulesEngine
 from app.knowledge.entity_extractor import ProjectKnowledge
-from app.knowledge.vector_store import VectorStore
+from app.knowledge.vector_store import VectorStore, make_vector_store
 from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.retry import llm_call_with_retry
 from app.llm.router import LLMRouter
@@ -125,7 +125,7 @@ class SQLAgent(BaseAgent):
         rules_engine: CustomRulesEngine | None = None,
     ) -> None:
         self._llm = llm_router or LLMRouter()
-        self._vector_store = vector_store or VectorStore()
+        self._vector_store = vector_store or make_vector_store()
         self._rules_engine = rules_engine or CustomRulesEngine()
         self._cache_svc = ProjectCacheService()
 

@@ -109,9 +109,9 @@ def cleanup_project_artifacts(project_id: str) -> None:
     # 2. Chroma collection (best-effort — VectorStore is a singleton and we
     # don't want to pin its lifecycle to this delete path).
     try:
-        from app.knowledge.vector_store import VectorStore
+        from app.knowledge.vector_store import make_vector_store
 
-        VectorStore().delete_collection(project_id)
+        make_vector_store().delete_collection(project_id)
     except Exception:
         logger.debug(
             "indexing_artifacts: Chroma cleanup failed for project %s",

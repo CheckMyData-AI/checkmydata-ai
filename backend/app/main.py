@@ -1471,9 +1471,9 @@ async def module_health(
 
     # Vector store (ChromaDB)
     try:
-        from app.knowledge.vector_store import VectorStore
+        from app.knowledge.vector_store import make_vector_store
 
-        vs = VectorStore()
+        vs = make_vector_store()
         vs._client.heartbeat()
         results["vector_store"] = {"status": "ok"}
     except Exception:

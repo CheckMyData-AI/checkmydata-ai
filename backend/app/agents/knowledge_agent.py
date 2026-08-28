@@ -23,7 +23,7 @@ from app.knowledge.bm25_index import BM25Index
 from app.knowledge.entity_extractor import ProjectKnowledge
 from app.knowledge.hybrid_retriever import HybridRetriever
 from app.knowledge.reranker import build_reranker
-from app.knowledge.vector_store import VectorStore
+from app.knowledge.vector_store import VectorStore, make_vector_store
 from app.llm.base import LLMResponse, Message, ToolCall
 from app.services.project_cache_service import ProjectCacheService
 
@@ -47,7 +47,7 @@ class KnowledgeAgent(BaseAgent):
         vector_store: VectorStore | None = None,
         hybrid_retriever: HybridRetriever | None = None,
     ) -> None:
-        self._vector_store = vector_store or VectorStore()
+        self._vector_store = vector_store or make_vector_store()
         # The hybrid retriever (M3) is constructed lazily so that disabling the
         # feature flag carries zero startup cost. When the flag flips on, a
         # single instance is shared across requests.

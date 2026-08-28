@@ -135,9 +135,9 @@ async def get_project_knowledge(principal: Principal, project_id: str) -> str:
         except ResourceAccessDeniedError as exc:
             _denied(exc)
     try:
-        from app.knowledge.vector_store import VectorStore
+        from app.knowledge.vector_store import make_vector_store
 
-        vs = VectorStore()
+        vs = make_vector_store()
         collection = vs.get_or_create_collection(project_id)
         count = collection.count()
         return json.dumps(

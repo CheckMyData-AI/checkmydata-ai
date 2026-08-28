@@ -37,7 +37,7 @@ async def test_reconcile_drives_real_reindex_path(session_factory, monkeypatch):
     # Real queue_embedding_reindex runs; only its external deps are stubbed.
     enqueue_spy = AsyncMock(return_value="job-1")
     monkeypatch.setattr(reindex_mod, "enqueue", enqueue_spy)
-    monkeypatch.setattr(reindex_mod, "VectorStore", _DummyVectorStore)
+    monkeypatch.setattr(reindex_mod, "make_vector_store", _DummyVectorStore)
     async with session_factory() as s:
         s.add(DeployState(key="embedding_fingerprint", value="all-MiniLM-L6-v2|256"))
         s.add(Project(name="p0"))

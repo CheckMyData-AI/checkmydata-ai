@@ -158,7 +158,7 @@ class TestQueueEmbeddingReindex:
         mock_enqueue = AsyncMock(return_value="job-123")
 
         with (
-            patch("app.services.embedding_reindex.VectorStore", return_value=mock_vs),
+            patch("app.services.embedding_reindex.make_vector_store", return_value=mock_vs),
             patch("app.services.embedding_reindex.enqueue", mock_enqueue),
         ):
             results = await queue_embedding_reindex(project_ids)
@@ -187,7 +187,7 @@ class TestQueueEmbeddingReindex:
         mock_enqueue = AsyncMock()
 
         with (
-            patch("app.services.embedding_reindex.VectorStore", return_value=mock_vs),
+            patch("app.services.embedding_reindex.make_vector_store", return_value=mock_vs),
             patch("app.services.embedding_reindex.enqueue", mock_enqueue),
         ):
             results = await queue_embedding_reindex([])
@@ -210,7 +210,7 @@ class TestQueueEmbeddingReindex:
         mock_enqueue = AsyncMock(return_value="job-id")
 
         with (
-            patch("app.services.embedding_reindex.VectorStore", return_value=mock_vs),
+            patch("app.services.embedding_reindex.make_vector_store", return_value=mock_vs),
             patch("app.services.embedding_reindex.enqueue", mock_enqueue),
         ):
             results = await queue_embedding_reindex(project_ids)
@@ -231,7 +231,7 @@ class TestQueueEmbeddingReindex:
             return f"job-{job_counter[0]}"
 
         with (
-            patch("app.services.embedding_reindex.VectorStore", return_value=mock_vs),
+            patch("app.services.embedding_reindex.make_vector_store", return_value=mock_vs),
             patch("app.services.embedding_reindex.enqueue", side_effect=_fake_enqueue),
         ):
             results = await queue_embedding_reindex(project_ids)

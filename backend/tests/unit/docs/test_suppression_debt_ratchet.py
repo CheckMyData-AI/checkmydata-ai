@@ -52,10 +52,15 @@ CEILINGS: dict[str, int] = {
     # this red. That friction is the point — every one of those raises is a sentence
     # somebody had to write — but a burst of five parallel PRs makes it feel like noise
     # rather than a decision, and it should be read as the latter.
-    "except Exception": 613,
+    # 2026-08-28, both raised by one: `PgVectorStore.close()` swallows a pool-close
+    # failure (the store is being torn down; raising there would mask whatever was
+    # actually being shut down), and `app/models/__init__.py` gained
+    # `DocEmbedding  # noqa: F401` — the re-export convention every one of the other
+    # forty imports in that file already follows, not new debt.
+    "except Exception": 614,
     "except ...: pass": 53,
     "# type: ignore": 49,
-    "# noqa": 128,
+    "# noqa": 129,
 }
 
 PATTERNS: dict[str, re.Pattern[str]] = {

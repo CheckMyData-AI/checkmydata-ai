@@ -76,6 +76,10 @@ class TestMCPPipelineIndex:
             ),
             "app.knowledge.vector_store": _mock_module(
                 VectorStore=MagicMock(return_value=mock_vs),
+                # The production code constructs through the factory since the
+                # backend became selectable; a stub module that offers only the class
+                # leaves the import unresolved.
+                make_vector_store=MagicMock(return_value=mock_vs),
             ),
         }
 
@@ -182,6 +186,10 @@ class TestMCPPipelineGetStatus:
             ),
             "app.knowledge.vector_store": _mock_module(
                 VectorStore=MagicMock(return_value=mock_vs),
+                # The production code constructs through the factory since the
+                # backend became selectable; a stub module that offers only the class
+                # leaves the import unresolved.
+                make_vector_store=MagicMock(return_value=mock_vs),
             ),
         }
 
@@ -212,6 +220,10 @@ class TestMCPPipelineGetStatus:
             ),
             "app.knowledge.vector_store": _mock_module(
                 VectorStore=MagicMock(return_value=mock_vs),
+                # The production code constructs through the factory since the
+                # backend became selectable; a stub module that offers only the class
+                # leaves the import unresolved.
+                make_vector_store=MagicMock(return_value=mock_vs),
             ),
         }
 

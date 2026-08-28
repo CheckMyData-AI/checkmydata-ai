@@ -94,6 +94,23 @@ class Settings(BaseSettings):
     #: new key; once its pending count reaches zero the old key can be dropped.
     master_encryption_keys_old: str = ""
 
+    # F-KNOW-13: which backend holds the vectors.
+    #
+    # "chroma" writes to `chroma_persist_dir`, which on Heroku is the container
+    # filesystem — wiped on every dyno restart, and NOT shared between the `web` and
+    # `worker` process types. Measured 2026-08-27: the worker found the store empty
+    # five hours after a deploy, so the pipeline set `force_full`; a full rebuild of
+    # the one real customer repository costs 12 039 s against the nightly ceiling of
+    # 7 200 s; the run was reaped and the store was empty again the next night.
+    # 16 of 94 repo-index runs have ever completed.
+    #
+    # "pgvector" puts them in Postgres, which every dyno shares and a restart does
+    # not touch. Requires Postgres — development and the test suite run on SQLite,
+    # where the migration is a no-op and this must stay "chroma".
+    #
+    # Default is still "chroma" so the switch is a deliberate flip on a verified
+    # deployment rather than a side effect of deploying this change.
+    vector_store_backend: str = "chroma"
     chroma_persist_dir: str = "./data/chroma"
     chroma_server_url: str = ""
     chroma_embedding_model: str = Field(

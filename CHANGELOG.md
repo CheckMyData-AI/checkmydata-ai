@@ -6,6 +6,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the vector store lived on a disk that is wiped on every restart
+
+`CHROMA_PERSIST_DIR` is `/app/data/chroma`: the Heroku container filesystem. It does
+not survive a dyno restart, and `web` and `worker` are separate process types with
+separate copies of it. Production, 2026-08-27, five hours after a deploy:
+
+    22:00:44  repair_embeddings  "Vector store empty but 758 docs in DB.
+                                  Forcing a full re-index."
+    22:01:21  code_symbol_embed  started   (all 8 646 files — force_full)
+    22:39:09  code_symbol_embed  completed (38 min)
+    23:59:50  heartbeat stops — the 7 200 s ceiling, at 380 of 758 documents
+    00:04     stale run reaped
+
+A full rebuild costs 12 039 s and the nightly budget is 7 200 s, so the store was
+empty again the next night, and the night after. **`index_repo` has completed 16
+times in 94 runs; `daily_sync` 13 in 91.** The self-repair (C3, v1.13.0) was not
+wrong — the repair cost more than the budget allowed, which no ceiling could fix.
+
+`PgVectorStore` puts the vectors in Postgres instead: one store, shared by every
+dyno, untouched by a restart. It is a drop-in — same six methods, same shapes, same
+cosine distance, and the collection handle still answers `count()`, because that is
+what `pipeline_runner.py:415` reads to decide whether a full re-index is owed.
+
+**Embeddings do not change.** ChromaDB computed them internally with its bundled ONNX
+`all-MiniLM-L6-v2`; this calls the same class directly. Identical vectors, identical
+384 dimensions, and `vector_cosine_ops` because the collections it replaces were
+created with `{"hnsw:space": "cosine"}` — so a query returns the neighbours it
+returned before. Verified end to end against the production database: the same four
+documents, the same ranking, distances 0.2234 / 0.7867 / 1.0161.
+
+HNSW rather than IVFFlat: it needs no training pass, so it is correct from an empty
+table — IVFFlat built on an empty table returns nothing until rebuilt, which is the
+exact failure this change exists to remove. Measured on the schema with 30 000 rows
+of 384 dimensions: build 20 s, and a top-5 filtered by `project_id` goes from
+4 738 ms with no vector index to 0.92 ms with one. `hnsw.iterative_scan` was measured
+too and makes no difference at this selectivity — the 65 ms it appeared to save was a
+cold cache.
+
+`VECTOR_STORE_BACKEND` selects the backend and still defaults to `chroma`, so the
+flip is a decision taken on a verified deployment rather than a side effect of this
+merge. psycopg sits beside asyncpg deliberately: the interface is called
+synchronously from ten sites including the agent's hot path, and converting those to
+async is a larger, riskier change than carrying a second driver.
+
+pgvector is available on **both** deployments — 0.8.1 on Heroku Postgres, 0.8.2 on
+Supabase — so this fix does not have to wait for a database move.
+
+### Added — a migration graph that says when it is broken
+
+`b1c2d3e4f5a6` was already taken. Alembic does not say so: it reports
+`CycleDetected` naming four unrelated revisions, and only when something walks the
+graph — so a migration with a duplicate id can be committed and merged first. Revision
+ids here are hand-picked rather than generated, which is what puts that within reach.
+Three checks now read the graph with `ast` (a first attempt used a regex and reported
+seven heads where alembic reports one, because merge migrations name their parents as
+a tuple), plus a fourth that fails if the tuple form ever stops being understood.
+
+
 ### Fixed — a full re-index could not finish, and the ceiling was the symptom
 
 Three ceilings cut three runs off on 2026-08-27 — 1800.02 s inside `code_symbol_embed`,

@@ -89,9 +89,9 @@ class MCPPipeline(DataSourcePipeline):
                 tool_docs.append(doc)
 
             try:
-                from app.knowledge.vector_store import VectorStore
+                from app.knowledge.vector_store import make_vector_store
 
-                vs = VectorStore()
+                vs = make_vector_store()
                 collection = vs.get_or_create_collection(context.project_id)
                 ids = [f"mcp-tool-{source_id}-{s['name']}" for s in schemas]
                 metadatas = [
@@ -131,7 +131,7 @@ class MCPPipeline(DataSourcePipeline):
     async def get_status(self, source_id: str) -> PipelineStatus:
         """Check if MCP tool schemas have been indexed."""
         try:
-            from app.knowledge.vector_store import VectorStore
+            from app.knowledge.vector_store import make_vector_store
             from app.models.base import async_session_factory
             from app.services.connection_service import ConnectionService
 
@@ -141,7 +141,7 @@ class MCPPipeline(DataSourcePipeline):
                 if not conn or conn.source_type != "mcp":
                     return PipelineStatus()
 
-            vs = VectorStore()
+            vs = make_vector_store()
             collection = vs.get_or_create_collection(conn.project_id)
 
             results = collection.get(
