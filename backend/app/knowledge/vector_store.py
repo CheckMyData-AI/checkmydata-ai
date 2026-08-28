@@ -2,6 +2,7 @@ import importlib.util
 import logging
 import threading
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import chromadb
@@ -300,3 +301,35 @@ class VectorStore:
         elif hasattr(self._client, "close"):
             self._client.close()
         logger.info("VectorStore closed")
+
+
+def make_vector_store() -> "VectorStore | Any":
+    """Return the configured vector store.
+
+    Both backends expose the same six methods and the same shapes, so nothing
+    downstream branches on which one it got. The switch exists because the change is
+    a storage move under a live product: `chroma` is what production has always run,
+    `pgvector` is what fixes it, and one flag lets the flip be a decision on a
+    verified deployment rather than a side effect of a deploy.
+
+    `pgvector` needs Postgres. Development and the test suite run on SQLite, where
+    the migration that creates `doc_embeddings` is deliberately a no-op — so asking
+    for it there is a configuration error, and it says so instead of failing later on
+    a missing table.
+    """
+    backend = (settings.vector_store_backend or "chroma").strip().lower()
+    if backend == "chroma":
+        return VectorStore()
+    if backend == "pgvector":
+        if settings.database_url.startswith("sqlite"):
+            raise ValueError(
+                "VECTOR_STORE_BACKEND=pgvector requires a PostgreSQL DATABASE_URL; "
+                "on SQLite the doc_embeddings migration is a no-op and the table "
+                "does not exist"
+            )
+        from app.knowledge.pgvector_store import PgVectorStore
+
+        return PgVectorStore()
+    raise ValueError(
+        f"VECTOR_STORE_BACKEND={backend!r} is not a backend; expected 'chroma' or 'pgvector'"
+    )

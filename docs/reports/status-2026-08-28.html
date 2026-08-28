@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CheckMyData.ai — статус, 28 августа 2026</title>
+<style>
+:root{
+  --bg:#fbfaf8; --panel:#fff; --ink:#1a1a1a; --dim:#5c5c5c; --line:#e3e0da;
+  --red:#b3261e; --amber:#8a6100; --green:#1c6b3f; --blue:#1f4e79;
+  --redbg:#fdeceb; --amberbg:#fdf4e3; --greenbg:#eaf5ee; --bluebg:#eaf1f8;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#131313; --panel:#1b1b1b; --ink:#ececec; --dim:#a0a0a0; --line:#2f2f2f;
+  --red:#ff8a80; --amber:#e8b64c; --green:#7fd6a0; --blue:#8ab6e0;
+  --redbg:#2c1a19; --amberbg:#2a2317; --greenbg:#16281e; --bluebg:#182430;
+}}
+:root[data-theme="dark"]{
+  --bg:#131313; --panel:#1b1b1b; --ink:#ececec; --dim:#a0a0a0; --line:#2f2f2f;
+  --red:#ff8a80; --amber:#e8b64c; --green:#7fd6a0; --blue:#8ab6e0;
+  --redbg:#2c1a19; --amberbg:#2a2317; --greenbg:#16281e; --bluebg:#182430;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:16px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+ -webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:56px 22px 96px}
+h1{font-size:30px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+.sub{color:var(--dim);font-size:14px;margin-bottom:38px}
+h2{font-size:21px;margin:52px 0 6px;letter-spacing:-.01em;padding-top:20px;border-top:1px solid var(--line)}
+h2 .n{color:var(--dim);font-weight:400;font-size:15px;margin-right:8px}
+h3{font-size:16px;margin:26px 0 8px}
+p{margin:10px 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--bluebg);padding:1px 5px;border-radius:4px}
+pre{font-family:var(--mono);font-size:12.5px;line-height:1.55;background:var(--panel);
+ border:1px solid var(--line);border-radius:8px;padding:13px 15px;overflow-x:auto;margin:12px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:16px 0}
+.card.red{border-left:4px solid var(--red)}
+.card.amber{border-left:4px solid var(--amber)}
+.card.green{border-left:4px solid var(--green)}
+.tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+ padding:3px 9px;border-radius:20px;vertical-align:2px;margin-right:9px}
+.t-red{background:var(--redbg);color:var(--red)}
+.t-amber{background:var(--amberbg);color:var(--amber)}
+.t-green{background:var(--greenbg);color:var(--green)}
+.t-blue{background:var(--bluebg);color:var(--blue)}
+.scroll{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);font-weight:600}
+td.num{font-family:var(--mono);white-space:nowrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin:18px 0}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.kpi .v{font-family:var(--mono);font-size:26px;font-weight:600;letter-spacing:-.02em}
+.kpi .l{font-size:12px;color:var(--dim);margin-top:3px;line-height:1.4}
+.kpi.bad .v{color:var(--red)} .kpi.warn .v{color:var(--amber)} .kpi.ok .v{color:var(--green)}
+.lede{font-size:17px;line-height:1.6}
+ul{margin:10px 0;padding-left:22px} li{margin:6px 0}
+.foot{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim);font-size:13px}
+.ev{color:var(--dim);font-size:13px;font-family:var(--mono)}
+</style></head><body><div class="wrap">
+
+<h1>CheckMyData.ai — где проект на самом деле</h1>
+<div class="sub">28 августа 2026 · измерено на проде <code>checkmydata-api</code> v283 · каждое число получено запросом, а не оценкой</div>
+
+<p class="lede">Продукт живой, задеплоен и отвечает. Но три структурных дефекта делают ровно то,
+за что клиент платит, ненадёжным: <b>знание о репозитории не переживает перезапуск дино</b>,
+<b>расход токенов записывается нулём</b>, и <b>валидатор этапа убивает работающие запросы</b>.
+Ни один не виден в коде — все три нашлись только на проде.</p>
+
+<div class="grid">
+  <div class="kpi bad"><div class="v">25%</div><div class="l">запросов пользователя завершились отказом<br>56 из 222</div></div>
+  <div class="kpi bad"><div class="v">17%</div><div class="l">успешных индексаций репозитория<br>16 из 94</div></div>
+  <div class="kpi bad"><div class="v">0</div><div class="l">учтённых токенов<br>при 57.4 млн сожжённых</div></div>
+  <div class="kpi warn"><div class="v">0</div><div class="l">строк данных GA4<br>релиз 1.16.0 никогда не работал</div></div>
+  <div class="kpi ok"><div class="v">6962</div><div class="l">тестов бэкенда + 709 фронта<br>все зелёные</div></div>
+  <div class="kpi ok"><div class="v">200</div><div class="l">лендинг, API, /pricing<br>все отвечают</div></div>
+</div>
+
+<h2><span class="n">1.</span> Стадия проекта</h2>
+<p>Это <b>работающий ранний продукт с одним реальным клиентом</b>, а не прототип и не зрелый сервис.
+Инженерная база сильная — 6962 теста, 82% покрытия, чистый дрейф конфигурации, CI на каждый PR.
+Продуктовая часть за этой базой проверена мало: масштаб прода — 9 пользователей, 3 проекта,
+3 подключения, 131 сообщение в чате за всё время.</p>
+
+<div class="scroll"><table>
+<tr><th>Что</th><th>Сколько</th><th>Читается как</th></tr>
+<tr><td>Пользователи / проекты / подключения</td><td class="num">9 / 3 / 3</td><td>один настоящий клиент + два демо</td></tr>
+<tr><td>Сессии чата / сообщения</td><td class="num">25 / 131</td><td>продукт трогали, но не эксплуатировали</td></tr>
+<tr><td>Трассы запросов / спаны</td><td class="num">222 / 9 844</td><td>наблюдаемость работает и пишет подробно</td></tr>
+<tr><td>Подписки Stripe</td><td class="num">0</td><td>биллинг включён, денег через него не прошло</td></tr>
+<tr><td>Символы кода / рёбра графа</td><td class="num">25 496 / 2 134</td><td>0.08 ребра на символ — граф почти без связей</td></tr>
+<tr><td>Документы знания</td><td class="num">758</td><td>полный набор по репозиторию клиента</td></tr>
+<tr><td>Выученные уроки / инсайты</td><td class="num">81 / 134</td><td>память агента наполняется</td></tr>
+<tr><td>Релизов за неделю</td><td class="num">13</td><td>темп высокий</td></tr>
+</table></div>
+
+<h2><span class="n">2.</span> Три структурных дефекта</h2>
+
+<div class="card red">
+<h3><span class="tag t-red">блокирующий</span>Знание о репозитории не переживает перезапуск дино</h3>
+<p>ChromaDB пишет в <code>CHROMA_PERSIST_DIR=/app/data/chroma</code> — файловую систему контейнера Heroku,
+которая стирается при каждом рестарте. <code>CHROMA_SERVER_URL</code> пуст, общего хранилища нет.
+Вдобавок <code>web</code> и <code>worker</code> — разные дино с разными дисками, то есть даже успешно
+построенное хранилище на воркере недоступно чату на вебе.</p>
+<p><b>Из этого получается замкнутая петля, из которой система не выходит сама:</b></p>
+<pre>рестарт дино  →  /app/data/chroma пусто
+              →  пайплайн видит col_count == 0 и ставит force_full = True
+                 ("Vector store empty but 758 docs in DB. Forcing a full re-index")
+              →  полный ребилд стоит 12 039 с (3.34 ч)
+              →  бюджет ночной задачи 7 200 с  →  обрыв на 120-й минуте
+              →  хранилище снова пусто  →  повтор следующей ночью</pre>
+<p class="ev">Замерено: событие <code>repair_embeddings</code> 08-27 22:00:44; <code>code_symbol_embed</code>
+22:01:21→22:39:09 (38 мин на всех 8 646 файлов); прогон реапнут на 124.9 мин.
+За всю историю: <code>index_repo</code> 16 успехов из 94, <code>daily_sync</code> 13 из 91.</p>
+<p>Механизм самолечения <code>repair_embeddings</code> (C3, v1.13.0) написан правильно — но лечение
+дороже бюджета, поэтому он не лечит, а гарантирует ежедневный отказ. Это тот же класс дефекта,
+что уже чинили для BM25 (F-KNOW-12, восстановление из Postgres при старте): у ChromaDB такой
+починки нет, и восстановление у него на порядок дороже.</p>
+</div>
+
+<div class="card red">
+<h3><span class="tag t-red">деньги</span>Расход токенов записывается нулём</h3>
+<p>Все три адаптера LLM кладут в <code>usage</code> только <code>prompt_tokens</code> и
+<code>completion_tokens</code>, но <b>не</b> <code>total_tokens</code>
+(<code>openrouter_adapter.py:213</code>, <code>openai_adapter.py:209</code>,
+<code>anthropic_adapter.py:226</code>). Роутер читает его как
+<code>usage.get("total_tokens", 0)</code> — получает <b>0, а не None</b>, поэтому запасной путь
+<code>if total_tokens is None: total_tokens = prompt + completion</code>
+(<code>usage_service.py:40</code>) не срабатывает никогда.</p>
+<pre>sum(prompt_tokens)      53 089 902
+sum(completion_tokens)   4 315 660
+sum(total_tokens)                0     ← колонка, по которой считается бюджет
+строк в token_usage          6 479</pre>
+<p><code>check_token_budget</code> суммирует именно <code>TokenUsage.total_tokens</code>
+(<code>usage_service.py:78, :84</code>). Сумма всегда ноль, значит:
+<b>ни дневной, ни месячный лимит, ни планная квота не могут сработать в принципе</b> —
+включая пост-вызовный гейт, который должен останавливать разогнавшийся агент.
+При этом <code>BILLING_ENABLED=True</code> в проде.</p>
+<p>Сырые числа записаны (6 464 строки из 6 479 имеют ненулевой <code>prompt_tokens</code>),
+поэтому <b>историю можно пересчитать</b>, а исправление — одна строка на адаптер либо одна в роутере.
+<code>estimated_cost_usd</code> пуст везде: <code>usage_sink.py:137</code> передаёт <code>None</code>.</p>
+</div>
+
+<div class="card amber">
+<h3><span class="tag t-amber">качество</span>Валидатор этапа убивает работающие запросы</h3>
+<p>Все семь отказов <code>stage_validation</code> в истории — одна причина: <b>«Missing expected columns»</b>.
+Планировщик заранее объявляет имена колонок, SQL-агент пишет запрос, который отвечает на вопрос,
+и валидатор его отклоняет за несовпадение с догадкой плана.</p>
+<pre>stage_result      success   SELECT `user_id`, COUNT(*) AS cnt FROM `purchases` WHERE …
+stage_validation  failed    Missing expected columns: ['id']</pre>
+<p>Другие: <code>['cohort_size']</code>, <code>['data_revenue']</code>,
+<code>['activity_month','amount','user_id']</code>,
+<code>['purchase_count','purchase_date','revenue_usd',…]</code>.
+Цена одного такого отказа — до 10 LLM-вызовов и 4–5 минут ожидания
+(замерено: 269 с, 296 с, 358 с на реальных вопросах).</p>
+<p class="ev">Это крупнейшая категория отказов спанов: 7 из 17. Следом
+<code>orchestrator:llm_call</code> — 5, <code>orchestrator:viz</code> — 3.</p>
+</div>
+
+<h2><span class="n">3.</span> Наблюдаемость врёт в трёх местах</h2>
+<p>Приборы есть, но три из них показывают неправду — а это хуже отсутствующего прибора,
+потому что по ним принимают решения.</p>
+<div class="scroll"><table>
+<tr><th>Что заявлено</th><th>Что измерено</th></tr>
+<tr><td><code>CLAUDE.md</code>: «ORCH-A03: complexity больше не <code>unknown</code>, метрики маршрутизации всегда заполнены»</td>
+    <td><code>route='unknown'</code> и <code>complexity='unknown'</code> на <b>222 трассах из 222</b>, включая вчерашние 16:20</td></tr>
+<tr><td>Колонка <code>failure_kind</code> — классификация отказов (веха W0)</td>
+    <td>пуста на <b>всех 222</b>, включая 56 отказавших</td></tr>
+<tr><td>Учёт токенов на запрос</td>
+    <td><code>total_tokens=0</code> на всех трассах кроме одной</td></tr>
+<tr><td>Связывание кода с БД (M5, lineage)</td>
+    <td><code>graph_db_bridge</code>: «Attached <b>0 caller refs</b> across 179 entities»</td></tr>
+</table></div>
+
+<h2><span class="n">4.</span> Что готово, а что только написано</h2>
+<div class="scroll"><table>
+<tr><th>Область</th><th>Статус</th><th>Доказательство</th></tr>
+<tr><td>Чат, SSE, сессии, трассировка</td><td><span class="tag t-green">работает</span></td><td>222 трассы, 9 844 спана, подробные шаги</td></tr>
+<tr><td>SQL-агент: простые вопросы</td><td><span class="tag t-green">работает</span></td><td>62 ответа <code>sql_result</code>, 93 <code>text</code></td></tr>
+<tr><td>SQL-агент: сложная аналитика</td><td><span class="tag t-red">ненадёжно</span></td><td>таймауты на «динамика выручки по когортам», 25% отказов</td></tr>
+<tr><td>Индексация репозитория</td><td><span class="tag t-red">сломано</span></td><td>17% успеха; петля с пустым векторным хранилищем</td></tr>
+<tr><td>Индексация схемы БД</td><td><span class="tag t-green">работает</span></td><td>41 успех из 48 (85%)</td></tr>
+<tr><td>Карта код↔БД</td><td><span class="tag t-green">починена вчера</span></td><td>137 matched / 96 db_only / 23 code_only / <b>0 mismatch</b></td></tr>
+<tr><td>Граф кода (M2)</td><td><span class="tag t-amber">частично</span></td><td>25 496 символов, но 2 134 ребра и 0 caller refs</td></tr>
+<tr><td>Учёт расхода и бюджеты</td><td><span class="tag t-red">не работает</span></td><td>57.4 млн токенов, посчитан 0</td></tr>
+<tr><td>Биллинг Stripe</td><td><span class="tag t-amber">включён, не проверен</span></td><td>0 подписок, 0 событий; ключи не заданы</td></tr>
+<tr><td>GA4 как источник данных (1.16.0)</td><td><span class="tag t-amber">не запускался</span></td><td>0 строк фактов, 0 импортов, 0 учёток вендора</td></tr>
+<tr><td>Дашборды / расписания / расследования</td><td><span class="tag t-amber">пусто</span></td><td>1 дашборд, 0 расписаний, 0 расследований</td></tr>
+<tr><td>Правила / заметки / память агента</td><td><span class="tag t-green">используется</span></td><td>18 правил, 81 урок, 134 инсайта</td></tr>
+<tr><td>Публичные поверхности</td><td><span class="tag t-green">живы</span></td><td>лендинг, API, /pricing — все 200</td></tr>
+</table></div>
+
+<h2><span class="n">5.</span> Инженерная гигиена — здесь хорошо</h2>
+<div class="grid">
+  <div class="kpi ok"><div class="v">6962</div><div class="l">тестов бэкенда, все зелёные</div></div>
+  <div class="kpi ok"><div class="v">709</div><div class="l">тестов фронта, все зелёные</div></div>
+  <div class="kpi ok"><div class="v">82%</div><div class="l">покрытие, гейт 80%</div></div>
+  <div class="kpi ok"><div class="v">0</div><div class="l">незаписанных расхождений конфига</div></div>
+  <div class="kpi warn"><div class="v">41</div><div class="l">открытых строк на доске<br>33 F- + 8 CB-</div></div>
+  <div class="kpi warn"><div class="v">105</div><div class="l">из 127 UX-сценариев не проверялись &gt;30 дней</div></div>
+</div>
+<p><code>make config-drift</code> чист: пять расхождений прода с кодом записаны как решения с причинами.
+За сутки прошли шесть PR, все с зелёным CI. <b>Но <code>main</code> не защищён</b> — обязательных
+проверок нет, всё уехало в центральный шов на честном слове.</p>
+
+<h2><span class="n">6.</span> Что делать, по порядку</h2>
+<div class="card">
+<p><b>1. Вынести векторное хранилище с эфемерного диска.</b> Пока оно там, индексация будет падать
+каждую ночь, а чат отвечать без кодового контекста. Варианты: внешний Chroma
+(осторожно — GHSA-f4j7-r4q5-qw2c в установленной версии), pgvector в уже имеющемся Postgres,
+или управляемый векторный сервис. Это единственный дефект, который чинит сам себя ежедневно и не может.</p>
+<p><b>2. Починить учёт токенов.</b> Одна строка на адаптер либо вывод суммы в роутере.
+Историю пересчитать из <code>prompt_tokens + completion_tokens</code> — данные целы.
+До этого любой разговор о лимитах и биллинге беспредметен.</p>
+<p><b>3. Снять жёсткость <code>stage_validation</code>.</b> Ожидаемые колонки — догадка планировщика,
+а не контракт. Сверять смысл, а не имена, либо давать агенту переименовать, а не отклонять.
+Это самая дешёвая правка с самым заметным эффектом на 25% отказов.</p>
+<p><b>4. Заполнить <code>route</code>, <code>complexity</code>, <code>failure_kind</code>.</b>
+Три прибора, которые показывают неправду, и один из них документирован как починенный.</p>
+<p><b>5. Защитить <code>main</code>.</b> Решение ваше, но за сутки девять PR ушли в центральный шов
+без единой обязательной проверки.</p>
+<p><b>6. Определиться с GA4 и биллингом.</b> Оба зарелизены и ни разу не работали в проде.
+Либо довести до первого настоящего использования, либо честно пометить как непроверенные.</p>
+</div>
+
+<div class="foot">
+Все числа получены запросами к проду 28.08.2026: <code>request_traces</code>, <code>indexing_runs</code>,
+<code>indexing_run_events</code>, <code>trace_spans</code>, <code>token_usage</code>, <code>error_log</code>,
+<code>code_db_sync</code>, логи воркера, <code>heroku config</code>, <code>make config-drift</code>,
+<code>pytest</code>, <code>vitest</code>. Ссылки на файл и строку указывают на текущий <code>main</code> (58b5c04).
+</div>
+</div></body></html>

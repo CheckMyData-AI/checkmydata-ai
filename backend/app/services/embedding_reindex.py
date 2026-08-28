@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 
 from app.core.task_queue import enqueue
-from app.knowledge.vector_store import VectorStore
+from app.knowledge.vector_store import make_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ async def queue_embedding_reindex(project_ids: list[str]) -> list[str | None]:
         len(project_ids),
     )
 
-    vs = VectorStore()
+    vs = make_vector_store()
     results: list[str | None] = []
 
     for pid in project_ids:

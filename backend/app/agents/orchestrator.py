@@ -69,7 +69,7 @@ from app.core.workflow_tracker import WorkflowTracker
 from app.core.workflow_tracker import tracker as default_tracker
 from app.knowledge.custom_rules import CustomRulesEngine
 from app.knowledge.repo_analyzer import RepoAnalyzer
-from app.knowledge.vector_store import VectorStore
+from app.knowledge.vector_store import VectorStore, make_vector_store
 from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.errors import (
     RETRYABLE_LLM_ERRORS,
@@ -362,7 +362,7 @@ class OrchestratorAgent(BaseAgent):
         mcp_source_agent: MCPSourceAgent | None = None,
     ) -> None:
         self._llm = llm_router or LLMRouter()
-        self._vector_store = vector_store or VectorStore()
+        self._vector_store = vector_store or make_vector_store()
         self._custom_rules = custom_rules or CustomRulesEngine()
         self._tracker = workflow_tracker or default_tracker
         self._validator = AgentResultValidator()

@@ -23,6 +23,7 @@ from app.models.dashboard import Dashboard  # noqa: F401
 from app.models.data_validation import DataInvestigation, DataValidationFeedback  # noqa: F401
 from app.models.db_index import DbIndex  # noqa: F401
 from app.models.deploy_state import DeployState  # noqa: F401
+from app.models.doc_embedding import DocEmbedding  # noqa: F401
 from app.models.error_log import ErrorLog  # noqa: F401
 from app.models.indexing_checkpoint import IndexingCheckpoint  # noqa: F401
 from app.models.indexing_run import IndexingRun, IndexingRunEvent  # noqa: F401

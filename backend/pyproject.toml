@@ -15,6 +15,14 @@ dependencies = [
     "alembic>=1.14.0",
     "asyncssh>=2.18.0",
     "asyncpg>=0.30.0",
+    # F-KNOW-13: the vector store moved off ChromaDB's on-disk collections and
+    # into Postgres. psycopg sits beside asyncpg deliberately — `VectorStore` is
+    # called synchronously from ten sites including the agent hot path
+    # (`context_loader.py:213,421`, `knowledge_catalog_service.py:480,539`), and
+    # converting those to async is a larger, riskier change than carrying a second
+    # driver. Revisit if those call sites ever become async for another reason.
+    "psycopg[binary,pool]>=3.2.0",
+    "pgvector>=0.3.6",
     "aiomysql>=0.2.0",
     "motor>=3.6.0",
     "clickhouse-connect>=0.8.0",
