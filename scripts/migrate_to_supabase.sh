@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Copy the application database from Heroku Postgres to Supabase.
 #
-# The schema is already there — 65 tables, 200 indexes, 91 foreign keys, applied and
-# compared column-for-column on 2026-08-28. So is the hardening this migration needs,
-# and that part is not optional: read "Why the hardening comes first" below before
-# changing anything about it.
+# RUN ON 2026-08-29. Production now runs on Supabase; this script is kept because it
+# is the record of how, and because it is the thing to run again for a second
+# environment. Every check below still holds and it is safe to re-run: it refuses to
+# copy into a target whose hardening has come undone, and it diffs row counts rather
+# than trusting the copy.
 #
-# What is left is the data, and that is what this script does.
+# The schema is applied and compared column-for-column; so is the hardening, and that
+# part is not optional — read "Why the hardening comes first" before changing it.
 #
 #   ./scripts/migrate_to_supabase.sh                 # dry run: check, measure, report
 #   ./scripts/migrate_to_supabase.sh --apply         # copy the data
@@ -68,9 +70,21 @@ die() { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 DUMP_VERSION="$("$PG_BIN/pg_dump" --version | grep -oE '[0-9]+' | head -1)"
 [ "$DUMP_VERSION" -ge 17 ] || die "pg_dump is $DUMP_VERSION; Heroku Postgres is 17.x and pg_dump refuses to read a newer server"
 
-SOURCE_URL="$(heroku config:get DATABASE_URL -a "$APP")"
-[ -n "$SOURCE_URL" ] || die "could not read DATABASE_URL from $APP"
+# The source is NOT DATABASE_URL. Since the switch on 2026-08-29 that variable points
+# at the target, and reading it here would copy Supabase into Supabase while every
+# check in this script passed — schema matches itself, row counts match themselves.
+# It reads the old database's own attachment instead, and refuses if the two ends turn
+# out to be the same host.
+SOURCE_URL="${MIGRATION_SOURCE_URL:-$(heroku config:get HEROKU_PG_ROLLBACK_URL -a "$APP")}"
+[ -n "$SOURCE_URL" ] || die \
+  "no source database. Set MIGRATION_SOURCE_URL, or attach the source as
+   HEROKU_PG_ROLLBACK. DATABASE_URL is deliberately not used: it is the TARGET."
 TARGET_URL="postgresql://postgres.${REF}:${SUPABASE_DB_PASSWORD}@${POOLER_HOST}:5432/postgres"
+
+src_host() { printf '%s' "$1" | sed -E 's#.*@([^/?]+).*#\1#'; }
+[ "$(src_host "$SOURCE_URL")" != "$(src_host "$TARGET_URL")" ] || die \
+  "source and target are the same host — this would copy a database onto itself and
+   every check below would pass while doing it."
 
 say "1. Both ends answer"
 "$PG_BIN/psql" "$SOURCE_URL" -tAc "select 'source ' || version()" | cut -c1-60
@@ -104,11 +118,23 @@ if [ "$APPLY" != "--apply" ]; then
 fi
 
 say "4. Copying data (schema already present, so data only)"
-# --disable-triggers keeps foreign keys from ordering the restore for us; the schema is
-# already there and identical, so the constraint set is re-validated at the end anyway.
-"$PG_BIN/pg_dump" --data-only --no-owner --no-privileges --disable-triggers \
-  --schema=public "$SOURCE_URL" \
-  | "$PG_BIN/psql" "$TARGET_URL" -v ON_ERROR_STOP=1 --single-transaction -q
+# `trace_spans.parent_span_id` references `trace_spans`, so no ordering of the tables
+# can satisfy the foreign key while rows are still arriving. pg_dump's answer is
+# `--disable-triggers`, and it does not work here: it emits
+# `ALTER TABLE ... DISABLE TRIGGER ALL`, which needs superuser, and Supabase's
+# `postgres` role is not one (`rolsuper=false`; only `supabase_admin` is). Measured —
+# the first attempt failed with
+#   ERROR: permission denied: "RI_ConstraintTrigger_a_18816" is a system trigger
+# and rolled back cleanly, because of --single-transaction below.
+#
+# `session_replication_role = replica` defers the same checks and IS available to
+# `postgres` here (verified). Set inside the same transaction as the copy, so it cannot
+# outlive a failure and leave the session quietly not enforcing constraints.
+{
+  echo "SET session_replication_role = 'replica';"
+  "$PG_BIN/pg_dump" --data-only --no-owner --no-privileges --schema=public "$SOURCE_URL"
+  echo "SET session_replication_role = 'origin';"
+} | "$PG_BIN/psql" "$TARGET_URL" -v ON_ERROR_STOP=1 --single-transaction -q
 
 say "5. Row counts, table by table"
 COUNTS="select table_name, (xpath('/row/c/text()',
