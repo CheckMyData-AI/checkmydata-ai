@@ -44,6 +44,26 @@ _CONF_GLOBAL_UNIQUE = 0.7
 _CONF_AMBIGUOUS = 0.4
 _CONF_NAME_ONLY = 0.3
 
+#: Beyond this many same-named candidates, a name match is not a resolution — it is a
+#: list. Emitting one edge per candidate is what made `graph_build` go from 22 seconds
+#: to over 40 minutes without finishing, the moment PHP calls became extractable
+#: (#245): the fan-out had always been unbounded, and was harmless only because there
+#: were almost no PHP calls to resolve.
+#:
+#: The number comes from the distribution, not from taste. Measured on the one real
+#: customer repository, 25 496 symbols across 12 433 distinct names:
+#:
+#:     unique (1 symbol)   10 700   86 %   resolve exactly, untouched by this cap
+#:     2-8                  1 603   13 %   small fan-out, still informative
+#:     9-50                   113
+#:     >50                     17   __construct x4361, execute x1117, up x513
+#:
+#: A single `new Foo()` would otherwise emit 4 361 edges at confidence 0.3. Eight keeps
+#: 99 % of names fully resolvable and cuts exactly the 130 that cannot be resolved by
+#: name at all. Past it we emit NOTHING: an edge is read downstream as a signal, and
+#: 4 361 of them saying "it might be any of these" is worse than one honest silence.
+_MAX_AMBIGUOUS_TARGETS = 8
+
 # Tokens that should never resolve to a code symbol (built-ins, control flow).
 _CALL_BLOCKLIST: frozenset[str] = frozenset(
     {
@@ -467,6 +487,8 @@ class CodeGraphBuilder:
         if len(locals_) == 1:
             return [(locals_[0].uid, _CONF_EXACT_LOCAL)]
         if len(locals_) > 1:
+            if len(locals_) > _MAX_AMBIGUOUS_TARGETS:
+                return []
             return [(s.uid, _CONF_AMBIGUOUS) for s in locals_]
 
         # Imported: only useful if the caller's file imported the callee.
@@ -495,6 +517,9 @@ class CodeGraphBuilder:
         if len(globals_) == 1:
             return [(globals_[0].uid, _CONF_GLOBAL_UNIQUE)]
         if len(globals_) > 1:
+            if len(globals_) > _MAX_AMBIGUOUS_TARGETS:
+                # Unresolvable by name. See _MAX_AMBIGUOUS_TARGETS for the measurement.
+                return []
             return [(s.uid, _CONF_NAME_ONLY) for s in globals_]
         return results
 
