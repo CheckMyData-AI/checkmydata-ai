@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — PHP calls were invisible to the code graph, and three bugs said so at once
+
+Production, the one real customer repository (Laravel, 9 981 files):
+
+    symbols                        25 496
+    edges                           2 134   (EXTENDS 1 110, CALLS 1 024, IMPORTS 0)
+    symbols with any outgoing edge  1 161  =  4.6 %
+
+    php   25 244 symbols → 1 103 with an edge   (4.4 %)
+    js       252 symbols →    58 with an edge   (23 %)
+
+The language the resolver was written for got a graph five times denser, on a
+repository that is 99 % PHP. A four-call sample file produced `call_sites: []`, and
+that emptiness is indistinguishable from a file with no calls in it.
+
+**Three defects, stacked, each sufficient on its own:**
+
+1. `method_call_expression` was declared in the PHP grammar and **does not exist** in
+   tree-sitter-php. A node name that matches nothing is silent — the parse succeeds,
+   nothing errors, the graph is simply thinner. The real name is
+   `member_call_expression`.
+2. `scoped_call_expression` — `Model::method()`, which is most of a Laravel codebase —
+   was **never declared**. An omission, which no spell-check of names can find.
+3. Deeper than both: `_extract_call_site` looked for the callee under a `function`
+   field. PHP has none — `scoped_call_expression` carries `scope` + `name`,
+   `member_call_expression` carries `object` + `name`, and the name sits **directly on
+   the call node**. So `fn` stayed `None` and the function returned before any
+   resolution ran, even when handed the right node type.
+
+The same check found `ruby` with an **empty** `call_nodes`, so a Ruby repository has
+always produced symbols and an empty call graph.
+
+`tests/unit/knowledge/test_grammar_table_matches_reality.py` validates every declared
+node name against the installed grammar, and separately asserts the call forms each
+language actually uses — because the wrong-name check cannot see an omission, and the
+omission was the larger half.
+
+### Known, measured, and deliberately not fixed here
+
+28 033 parsed imports still produce **0** `IMPORTS` edges. A PHP `use App\Models\X;`
+parses to `source_module='use App\Models\X;'` — the whole statement — with
+`imported_names=()`, and `_resolve_imports` emits nothing for an empty name list; and
+`_candidate_module_paths` knows Python dotted modules and relative JS paths only, so
+PSR-4 maps to no candidate. Recorded as `CB-KNOW3`. Fixing it in this change would
+have made neither repair attributable.
+
+
 ### Fixed — the write batch was tied to the embed batch, and they want opposite things
 
 Moving the vector store to Postgres made `code_symbol_embed` go **38 min → 65 min** on
