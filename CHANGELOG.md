@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — 57 million tokens were burned and 0 were counted, so no limit could fire
+
+Measured over the whole `token_usage` table on 2026-08-28:
+
+    rows                    6 479
+    sum(prompt_tokens)     53 089 902
+    sum(completion_tokens)  4 315 660
+    sum(total_tokens)               0
+
+Three links, each innocent alone:
+
+1. **No adapter reports `total_tokens`** — all three build `usage` from `prompt_tokens`
+   and `completion_tokens` only (`openrouter_adapter.py:213`, `openai_adapter.py:209`,
+   `anthropic_adapter.py:226`). Not an OpenRouter quirk; every provider.
+2. **The router read the missing key with a `0` default**, passing a number rather than
+   an absence.
+3. **`record_usage` derives the total only from `None`** (`usage_service.py:40`), and
+   `0` is not `None` — so the fallback never ran and a zero was stored.
+
+`check_budget` sums exactly that column (`usage_service.py:78, :84`), so
+`USER_DAILY_TOKEN_LIMIT`, `USER_MONTHLY_TOKEN_LIMIT` and every plan-derived entitlement
+compared a real limit against a permanent zero — with `BILLING_ENABLED` on. The
+post-call gate meant to stop a runaway agent run could not fire either.
+
+Fixed in the **router**, not in the three adapters: it is the single funnel every
+provider passes through, including the next one added. A provider that reports its own
+total keeps it — prompt caching makes the billed total differ from the sum, and the
+provider is the authority on what it charged. A test fails if any adapter stops
+reporting the parts, since the derivation would silently return to zero.
+
+**The history is restored rather than restarted.** The parts were never lost, only the
+sum was never written. Verified against production inside a transaction and rolled
+back:
+
+    before  rows=6771  total=0           prompt=53 746 977  completion=4 467 961
+    after   rows=6771  total=58 214 938   still zero=15
+    a second run would touch 0 rows
+
+The 15 that stay zero are genuinely empty usage rows — a failed call, an unsinked
+stream — and are left alone rather than invented. Starting the count from deploy day
+would have granted every user a silent amnesty for the current month.
+
+`estimated_cost_usd` was `null` on all 6 479 rows: the sink passed `None` while the
+estimator already existed, wired only into the four `chat.py` call sites that cover a
+request but not the per-LLM-call sink, which fires far more often. Now wired, and
+deliberately unguarded — `observe` already wraps its body in a broad handler and the
+router wraps the `observe` call in another, so a third would be a suppression that
+suppresses nothing. The silent-degradation ratchet caught that attempt and was right to.
+
+
 ### Fixed — nothing calls a class, so the code↔DB lineage walked an empty set
 
 `graph_db_bridge` answers "who uses this model" by walking CALLS edges backwards from

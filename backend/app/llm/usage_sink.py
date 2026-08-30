@@ -30,6 +30,18 @@ from app.services.usage_service import UsageService
 logger = logging.getLogger(__name__)
 
 
+def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
+    """Cost for this call, or None when the model is not in the price table.
+
+    Deliberately UNGUARDED. `observe` already wraps its whole body in a broad handler,
+    and the router wraps the `observe` call in another — a third would be a suppression
+    that suppresses nothing, and the silent-degradation ratchet is right to count it.
+    """
+    from app.services.cost_estimation_service import estimate_cost
+
+    return estimate_cost(model, prompt_tokens, completion_tokens)
+
+
 @runtime_checkable
 class UsageSink(Protocol):
     """Protocol observed by :class:`app.llm.router.LLMRouter` after each call."""
@@ -134,7 +146,12 @@ class DbUsageSink:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     total_tokens=total_tokens,
-                    estimated_cost_usd=None,
+                    # Was None, so `estimated_cost_usd` was null on every one of the
+                    # 6 479 rows and `/api/usage` could report tokens but never money.
+                    # The estimator already existed and was only wired into the four
+                    # `chat.py` call sites, which cover the request but not the
+                    # per-LLM-call sink that fires far more often.
+                    estimated_cost_usd=_estimate_cost(model, prompt_tokens, completion_tokens),
                 )
                 reason = await svc.check_token_budget(session, self._user_id)
                 if reason:
