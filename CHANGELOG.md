@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — nothing calls a class, so the code↔DB lineage walked an empty set
+
+`graph_db_bridge` answers "who uses this model" by walking CALLS edges backwards from
+the entity's symbol. It resolved that symbol by `(entity.name, entity.file_path)`,
+which for `class CatalogPhoneNumber` finds the **class** — and a call resolves to the
+METHOD being called, never to the class that owns it.
+
+Measured in production on 2026-08-30, after call extraction was repaired:
+
+    CALLS edges pointing at a class symbol       0
+    CALLS edges pointing at a method/function   45 832
+    model classes 26, with any inbound edge      0
+
+    graph_db_bridge: "Attached 0 caller refs across 179 entities"
+
+**The thin call graph was the obvious suspect, was fixed first, and was not the cause.**
+`code_graph_edges` went 2 134 → 50 379, PHP coverage 4.4 % → 42.1 %, and `caller_refs`
+stayed at exactly 0. That is what proved the two unrelated — the zero would have
+survived a perfect call graph, and only a run could tell the difference.
+
+The class's methods now join the anchor set, through the graph's own `members_of`
+rather than a hand-rolled scan. Widening is by `parent_uid`, not by file: two classes
+can share a file, and attributing one's callers to the other is a wrong answer rather
+than a gap.
+
+Also corrected here, plainly: the entity list was briefly read as garbage on the
+strength of its first five rows — `b`, `l`, `n`, `o`, `r`, extracted from a minified
+vendor bundle. Single-character names sort first. **161 of the 179 entities are real
+Laravel models**; 18 come from vendored JavaScript and are a separate, smaller issue.
+
+
 ### Fixed — a name that matches everything resolved nothing, and said so 4 361 times
 
 Making PHP calls extractable (previous entry) took `graph_build` from **22 seconds to

@@ -383,7 +383,26 @@ class GraphDBBridge:
             candidates.extend(code_graph.query_by_name(entity.name))
 
         # Keep only class/function-ish symbols (skip imports, variables).
-        return [s for s in candidates if s.kind in {"class", "function", "method"}]
+        anchors = [s for s in candidates if s.kind in {"class", "function", "method"}]
+
+        # A class is never the destination of a CALLS edge — a call resolves to the
+        # METHOD being called, and the class merely owns it. Anchoring on the class
+        # alone therefore walks an empty set, and did: measured in production on
+        # 2026-08-30, with 49 268 CALLS edges in the graph,
+        #
+        #     CALLS edges pointing at a class symbol     0
+        #     CALLS edges pointing at a method/function  45 832
+        #     model classes 26, with any inbound edge     0
+        #
+        # so `graph_db_bridge` reported "Attached 0 caller refs across 179 entities"
+        # and would have reported it against a perfect call graph too. "Who uses this
+        # model" means who calls any of its methods, so the class's members join the
+        # anchor set.
+        for class_uid in [s.uid for s in anchors if s.kind == "class"]:
+            anchors.extend(
+                m for m in code_graph.members_of(class_uid) if m.kind in {"method", "function"}
+            )
+        return anchors
 
     def _walk_callers(
         self,
