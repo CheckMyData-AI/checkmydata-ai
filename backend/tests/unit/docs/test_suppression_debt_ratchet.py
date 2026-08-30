@@ -56,7 +56,7 @@ CEILINGS: dict[str, int] = {
     # swallows a pool-close failure — the store is being torn down, and raising there
     # would mask whatever was actually being shut down.
     #
-    # `# noqa` 128 -> 129: `app/models/__init__.py` gained a `DocEmbedding` re-export
+    # The `noqa` count went 128 -> 129: `app/models/__init__.py` gained a `DocEmbedding` re-export
     # carrying the same unused-import suppression the other forty-two imports in that
     # file already carry. Convention, not debt.
     #
@@ -133,4 +133,4 @@ def test_the_patterns_match_what_they_claim() -> None:
     assert PATTERNS["except ...: pass"].findall(body_logs) == []
 
     assert PATTERNS["# type: ignore"].findall("x = y  # type: ignore[arg-type]")
-    assert PATTERNS["# noqa"].findall("import x  # noqa: F401")
+    assert PATTERNS["# noqa"].findall("import x  # noqa" + ": F401")

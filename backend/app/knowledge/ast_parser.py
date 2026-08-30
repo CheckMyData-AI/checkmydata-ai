@@ -295,6 +295,10 @@ LANGUAGE_GRAMMARS: tuple[LanguageGrammar, ...] = (
         method_nodes=("method", "singleton_method"),
         class_nodes=("class",),
         import_nodes=("call",),  # Ruby uses `require X` as a method call
+        # Ruby had NO call_nodes, so a Ruby repository produced symbols and an empty
+        # call graph — which reads as "few calls in that codebase" rather than as a
+        # gap. `call` is the same node the import extractor already relies on.
+        call_nodes=("call",),
     ),
     LanguageGrammar(
         slug="php",
@@ -305,7 +309,19 @@ LANGUAGE_GRAMMARS: tuple[LanguageGrammar, ...] = (
         interface_nodes=("interface_declaration",),
         enum_nodes=("enum_declaration",),
         import_nodes=("namespace_use_declaration",),
-        call_nodes=("function_call_expression", "method_call_expression"),
+        # `method_call_expression` was declared here and DOES NOT EXIST in
+        # tree-sitter-php — a name that matches nothing, silently. `scoped_call_expression`
+        # was never declared at all, and it is `Model::method()`, which is most of a
+        # Laravel codebase. Measured 2026-08-30 on the one real customer repository:
+        # 25 244 PHP symbols, 1 103 with any outgoing edge — 4.4 %, against 23 % for the
+        # 252 JavaScript symbols in the same repo. A four-call sample file produced
+        # `call_sites: []`.
+        call_nodes=(
+            "function_call_expression",  # foo()
+            "member_call_expression",  # $obj->method()   (was: method_call_expression)
+            "nullsafe_member_call_expression",  # $obj?->method()
+            "scoped_call_expression",  # Model::method(), Facade::make()
+        ),
     ),
     LanguageGrammar(
         slug="csharp",
@@ -628,7 +644,31 @@ def _extract_call_site(node, source: bytes, caller_uid: str) -> CallSite | None:
     """
     fn = node.child_by_field_name("function")
     if fn is None:
-        # Some grammars expose the callee as the first child instead of a
+        # Some grammars put the callee directly ON the call node as `name`, with the
+        # receiver in `scope` or `object`, instead of nesting it under `function`.
+        # PHP is the case that surfaced this: `scoped_call_expression`
+        # (`Model::method()`) carries scope+name, `member_call_expression`
+        # (`$obj->method()`) carries object+name, and NEITHER has a `function` field —
+        # so every PHP call fell through to `return None` below. Measured on the one
+        # real customer repository, a Laravel codebase: 25 244 PHP symbols and 1 103
+        # with any outgoing edge, 4.4 %, against 23 % for the 252 JavaScript symbols
+        # beside them. A four-call sample file produced `call_sites: []`.
+        direct_name = node.child_by_field_name("name")
+        if direct_name is not None and direct_name.text:
+            callee = direct_name.text.decode("utf-8", "replace")
+            if not callee:
+                return None
+            recv = node.child_by_field_name("scope") or node.child_by_field_name("object")
+            target = None
+            if recv is not None and recv.text:
+                target = recv.text.decode("utf-8", "replace")[:64]
+            return CallSite(
+                caller_uid=caller_uid,
+                callee_name=callee,
+                attr_target=target,
+                line=node.start_point[0] + 1,
+            )
+        # Otherwise: some grammars expose the callee as the first child instead of a
         # named field. Try a few common types.
         for child in node.children:
             if child.type in ("identifier", "attribute", "member_expression", "field_access"):
