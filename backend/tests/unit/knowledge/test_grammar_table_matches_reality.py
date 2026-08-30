@@ -183,3 +183,51 @@ class OrderService extends BaseService
     assert {"findForUser", "audit", "create", "write"} <= callees, (
         f"expected the four calls, got {sorted(callees)}"
     )
+
+
+class TestTheSameCallShapeReadsTheSameInEveryLanguage:
+    """One sample per language, one assertion: `obj.method(1)` yields callee `method`
+    with target `obj`, and `plain(2)` yields callee `plain` with no target.
+
+    This exists because enabling Ruby's call nodes without checking the extraction
+    shape made it report the RECEIVER as the callee — `obj.method(1)` came back as
+    callee `"obj"`. A wrong edge is worse than a missing one: a missing edge is a gap
+    somebody eventually measures, and a wrong edge is an answer nothing re-checks.
+
+    Ruby spells the field `method` where PHP spells it `name`; PHP spells a bare callee
+    `name` where everyone else says `identifier`, which is why `p(3)` was dropped even
+    after the node types were corrected. Neither is visible from a single-language test,
+    and both were found by putting the languages side by side.
+    """
+
+    SAMPLES: dict[str, tuple[str, str]] = {
+        "python": ("t.py", "def f():\n    obj.method(1)\n    plain(2)\n"),
+        "javascript": ("t.js", "function f(){ obj.method(1); plain(2); }\n"),
+        "typescript": ("t.ts", "function f(){ obj.method(1); plain(2); }\n"),
+        "go": ("t.go", "package m\nfunc F(){ obj.Method(1); Plain(2) }\n"),
+        "java": ("t.java", "class C { void f(){ obj.method(1); plain(2); } }\n"),
+        "ruby": ("t.rb", "def f\n  obj.method(1)\n  plain(2)\nend\n"),
+    }
+
+    @pytest.mark.parametrize("slug", sorted(SAMPLES))
+    def test_receiver_and_callee_are_not_swapped(self, slug: str, tmp_path) -> None:
+        filename, src = self.SAMPLES[slug]
+        (tmp_path / filename).write_text(src, encoding="utf-8")
+        parsed = ap.ASTParser().parse_file(tmp_path, filename)
+        if parsed is None:
+            pytest.skip(f"{slug} did not parse — grammar absent")
+        got = {(c.callee_name.lower(), (c.attr_target or "").lower()) for c in parsed.call_sites}
+        assert ("method", "obj") in got, f"{slug}: receiver/callee swapped or missing — {got}"
+        assert ("plain", "") in got, f"{slug}: plain call missing — {got}"
+
+    def test_php_yields_all_three_of_its_call_forms(self, tmp_path) -> None:
+        """PHP is the one with three distinct shapes, and each was broken differently:
+        `$o->m()` by a node name that does not exist, `N::s()` by not being declared at
+        all, and `p()` by the callee being spelled `name` rather than `identifier`."""
+        (tmp_path / "t.php").write_text(
+            "<?php\nclass C { function f(){ $o->m(1); N::s(2); p(3); } }\n", encoding="utf-8"
+        )
+        parsed = ap.ASTParser().parse_file(tmp_path, "t.php")
+        assert parsed is not None
+        got = {(c.callee_name, c.attr_target) for c in parsed.call_sites}
+        assert got == {("m", "$o"), ("s", "N"), ("p", None)}, got

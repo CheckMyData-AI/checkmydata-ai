@@ -653,12 +653,20 @@ def _extract_call_site(node, source: bytes, caller_uid: str) -> CallSite | None:
         # real customer repository, a Laravel codebase: 25 244 PHP symbols and 1 103
         # with any outgoing edge, 4.4 %, against 23 % for the 252 JavaScript symbols
         # beside them. A four-call sample file produced `call_sites: []`.
-        direct_name = node.child_by_field_name("name")
+        # `name` in PHP, `method` in Ruby. Ruby is why this is a list rather than one
+        # field: enabling its call nodes without checking the shape made it report the
+        # RECEIVER as the callee (`obj.method(1)` -> callee "obj"), and a wrong edge is
+        # worse than a missing one because nothing downstream re-checks it.
+        direct_name = node.child_by_field_name("name") or node.child_by_field_name("method")
         if direct_name is not None and direct_name.text:
             callee = direct_name.text.decode("utf-8", "replace")
             if not callee:
                 return None
-            recv = node.child_by_field_name("scope") or node.child_by_field_name("object")
+            recv = (
+                node.child_by_field_name("scope")
+                or node.child_by_field_name("object")
+                or node.child_by_field_name("receiver")
+            )
             target = None
             if recv is not None and recv.text:
                 target = recv.text.decode("utf-8", "replace")[:64]
@@ -677,7 +685,10 @@ def _extract_call_site(node, source: bytes, caller_uid: str) -> CallSite | None:
     if fn is None:
         return None
     line = node.start_point[0] + 1
-    if fn.type == "identifier":
+    # PHP spells a bare callee `name`, not `identifier` — so `p(3)` fell through the
+    # attribute branch below, found no sub-fields, and was dropped. The others are the
+    # same shape under different grammar spellings.
+    if fn.type in ("identifier", "name", "constant", "simple_identifier"):
         name = fn.text.decode("utf-8", "replace") if fn.text else ""
         if not name:
             return None
