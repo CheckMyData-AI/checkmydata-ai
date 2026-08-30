@@ -19,6 +19,47 @@ from app.llm.usage_sink import NullUsageSink, UsageSink
 
 logger = logging.getLogger(__name__)
 
+
+def _as_int(value: object) -> int:
+    """Whatever the provider sent, as a non-negative int. Never raises.
+
+    Usage accounting must not be the thing that loses an answer: this runs after a
+    successful LLM call, and an exception here would discard a response the user has
+    already paid for.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return 0
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _usage_total(usage: dict) -> int:
+    """The call's total token count, derived when the provider did not report one.
+
+    NO adapter reports `total_tokens` — all three build `usage` from `prompt_tokens`
+    and `completion_tokens` alone (`openrouter_adapter.py:213`, `openai_adapter.py:209`,
+    `anthropic_adapter.py:226`). Read here with a `0` default, that produced a number
+    rather than an absence, so `UsageService.record_usage`'s `if total_tokens is None`
+    fallback never ran and a zero was stored.
+
+    Measured over the whole table on 2026-08-28: 53 089 902 prompt tokens,
+    4 315 660 completion tokens, and `sum(total_tokens) = 0` across 6 479 rows. Since
+    `check_budget` sums exactly that column, every daily, monthly and plan-derived
+    limit was comparing itself against a permanent zero — with `BILLING_ENABLED` on.
+
+    A provider that DOES report its own total keeps it: prompt caching makes the billed
+    total differ from the sum, and the provider is the authority on what it charged.
+    Fixed here rather than in the three adapters because this is the single funnel every
+    provider passes through, including the next one somebody adds.
+    """
+    reported = _as_int(usage.get("total_tokens"))
+    if reported:
+        return reported
+    return _as_int(usage.get("prompt_tokens")) + _as_int(usage.get("completion_tokens"))
+
+
 PROVIDER_REGISTRY: dict[str, type[BaseLLMProvider]] = {
     "openai": OpenAIAdapter,
     "anthropic": AnthropicAdapter,
@@ -303,9 +344,9 @@ class LLMRouter:
                 try:
                     usage = response.usage or {}
                     await sink.observe(
-                        prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
-                        completion_tokens=int(usage.get("completion_tokens", 0) or 0),
-                        total_tokens=int(usage.get("total_tokens", 0) or 0),
+                        prompt_tokens=_as_int(usage.get("prompt_tokens")),
+                        completion_tokens=_as_int(usage.get("completion_tokens")),
+                        total_tokens=_usage_total(usage),
                         provider=response.provider or provider_name,
                         model=response.model or (model or ""),
                     )
