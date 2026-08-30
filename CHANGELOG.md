@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a name that matches everything resolved nothing, and said so 4 361 times
+
+Making PHP calls extractable (previous entry) took `graph_build` from **22 seconds to
+over 40 minutes without finishing**, writing no edges at all. The fix was correct; it
+uncovered an unbounded fan-out underneath that had been harmless only because there
+were almost no PHP calls to resolve.
+
+`_resolve_call` fell back to a global name match and emitted **one edge per candidate**,
+with no bound. The distribution explains the rest — measured on the one real customer
+repository, 25 496 symbols across 12 433 distinct names:
+
+    unique (1 symbol)   10 700   86 %
+    2-8                  1 603   13 %
+    9-50                   113
+    >50                     17
+
+    __construct x4361   execute x1117   up x513   down x506   handle x438
+
+A single `new Foo()` emitted 4 361 edges at confidence 0.3, and a Laravel codebase has
+thousands of such call sites.
+
+`_MAX_AMBIGUOUS_TARGETS = 8`, applied at **both** fan-out sites — the local-scope branch
+returns before the global one is reached, so capping only the global branch would have
+left it open. Eight is taken from that table rather than chosen: it leaves 99 % of names
+fully resolvable and cuts exactly the 130 that cannot be resolved by name at all.
+
+Past the cap the resolver returns **nothing**. An edge is read downstream as a signal,
+and 4 361 of them saying "it might be any of these" is worse than one honest silence —
+`graph_db_bridge` walks these edges to attach callers to ORM entities, and would have
+attached every constructor in the repository to every entity.
+
+Worth recording plainly: had this shipped without the run that exposed it, the nightly
+index would have stalled indefinitely while a "graph fix" sat deployed and green.
+
+
 ### Fixed — PHP calls were invisible to the code graph, and three bugs said so at once
 
 Production, the one real customer repository (Laravel, 9 981 files):
