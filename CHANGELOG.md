@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the caller list padded itself to the cap with matches from another application
+
+After #247 the bridge attaches caller refs where it attached none, and the head of each
+list is right — `Coupon` gets `ensureCusDevCouponAvailable` and `isCouponAlreadyApplied`
+from `CouponRepository.php`. The tail was not: `handle` from
+`sendmail/app/Services/Workspaces/AddWorkspaceMember.php` reached a `Coupon` entity living
+under `api/app/…`, matched on a method name generic enough to appear in any codebase.
+
+Every ref carries `confidence: 0.3` (`_CONF_NAME_ONLY`), so the sort key
+`(confidence, -depth)` collapsed to depth alone and `_max_callers=10` filled the remainder
+with whatever the name matched. Production: 377 refs across 54 entities, **29 of them at
+exactly 10** — truncated, so the noise displaced nothing and nothing displaced the noise.
+
+Proximity — leading path segments shared with the entity's own file — now joins the sort
+key between confidence and depth. Confidence still leads: a resolver that proved an edge
+outranks one that matched a name, however close it sits.
+
+And a ref that is **both** name-only **and** in a different top-level directory is dropped
+rather than demoted. Demotion does not help when the cap is the problem: with ten slots
+and four genuine callers, a demoted ref still occupies slot five. In a repository holding
+several applications the first path segment is what separates them, so a name-only match
+across that boundary carries no evidence at all — while a *resolved* edge across it is a
+real dependency and survives.
+
+With no anchor files there is no proximity signal, and nothing is dropped: a missing input
+must not become a missing answer.
+
 ### Fixed — code-symbol vectors were dropped in batches of 200, silently
 
 Production, 2026-08-31, during the first full rebuild after the PHP extraction fix:
