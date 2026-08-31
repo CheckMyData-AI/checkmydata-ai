@@ -162,6 +162,60 @@ _HTTP_WRITE_METHODS = re.compile(r"\b(?:post|put|patch|delete)\b", re.IGNORECASE
 _HTTP_READ_METHODS = re.compile(r"\b(?:get|list)\b", re.IGNORECASE)
 
 
+#: A caller matched on nothing but a method name — the weakest tier `_resolve_call`
+#: emits. On its own that is thin evidence; across an application boundary it is none.
+_CONF_NAME_ONLY_MAX = 0.3
+
+
+def _path_proximity(caller_file: str, anchor_files: list[str] | tuple[str, ...]) -> int:
+    """How many leading path segments the caller shares with the nearest anchor.
+
+    The first segment is what separates applications in a repository that holds several
+    (`api/…` beside `sendmail/…`), so a score of 0 means "different application" — which
+    is exactly the shape of the noise this ranking exists to remove.
+    """
+    if not anchor_files:
+        return 0
+    caller_parts = [p for p in caller_file.split("/") if p]
+    best = 0
+    for anchor in anchor_files:
+        anchor_parts = [p for p in anchor.split("/") if p]
+        shared = 0
+        for a, b in zip(caller_parts, anchor_parts, strict=False):
+            if a != b:
+                break
+            shared += 1
+        best = max(best, shared)
+    return best
+
+
+def rank_callers(
+    callers: list[CallerRef],
+    anchor_files: list[str] | tuple[str, ...],
+    *,
+    max_callers: int,
+) -> list[CallerRef]:
+    """Order callers by evidence, then by nearness, and drop the ones that are neither.
+
+    Confidence leads, because a resolver that proved an edge outranks one that matched a
+    name however close it sat. Proximity breaks the tie — and it decides nearly every
+    tie, since name-only resolution gives every ref the same 0.3.
+
+    A ref that is BOTH name-only AND in a different top-level directory is dropped rather
+    than demoted. Demotion does not help: with ten slots and four genuine callers, a
+    demoted ref still occupies slot five, which is how 29 of 54 entities ended up padded
+    to exactly the cap. With no anchor files there is no proximity signal at all, so
+    nothing is dropped — a missing input must not become a missing answer.
+    """
+    if not callers:
+        return []
+    scored = [(c, _path_proximity(c.caller_file, anchor_files)) for c in callers]
+    if anchor_files:
+        scored = [(c, prox) for c, prox in scored if prox > 0 or c.confidence > _CONF_NAME_ONLY_MAX]
+    scored.sort(key=lambda cp: (cp[0].confidence, cp[1], -cp[0].depth), reverse=True)
+    return [c for c, _ in scored[:max_callers]]
+
+
 @dataclass
 class CallerRef:
     """One caller of an entity, ranked by transitive call confidence."""
@@ -342,11 +396,10 @@ class GraphDBBridge:
             if not collected:
                 continue
 
-            ranked = sorted(
-                collected.values(),
-                key=lambda c: (c.confidence, -c.depth),
-                reverse=True,
-            )[: self._max_callers]
+            anchor_files = [a.file_path for a in anchors if getattr(a, "file_path", None)]
+            ranked = rank_callers(
+                list(collected.values()), anchor_files, max_callers=self._max_callers
+            )
             entity.graph_callers = [c.to_dict() for c in ranked]
             total_attached += len(ranked)
 
