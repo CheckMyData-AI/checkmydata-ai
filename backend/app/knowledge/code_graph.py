@@ -707,11 +707,21 @@ def _build_path_suffix_index(file_paths: Iterable[str]) -> dict[str, list[str]]:
     someone else's composer.json. The repository already knows where its files are.
     """
     index: dict[str, list[str]] = {}
+    skipped = 0
     for file_path in file_paths:
+        if not isinstance(file_path, str):
+            # `Symbol.file_path` is typed `str` and the parser always fills it, so this
+            # should not happen — but `build()` is a step measured in tens of minutes,
+            # and one malformed path must not cost the whole graph. Counted rather than
+            # swallowed: silence here would read as "this repository has no files".
+            skipped += 1
+            continue
         stem = re.sub(r"\.[A-Za-z0-9]+$", "", file_path).lower()
         parts = [p for p in stem.split("/") if p]
         for i in range(len(parts)):
             index.setdefault("/".join(parts[i:]), []).append(file_path)
+    if skipped:
+        logger.warning("code_graph: %d file paths were not strings and were skipped", skipped)
     return index
 
 

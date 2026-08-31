@@ -91,7 +91,17 @@ async def test_build_exception_returns_false_and_is_not_checkpointed():
     checkpointed as done."""
     runner = _runner()
     state = _PipelineState()
-    state.parsed_files = {"a.py": MagicMock(symbols=[MagicMock()], imports=[], call_sites=[])}
+    # `file_path` is a real string because a real Symbol's is: a bare MagicMock()
+    # made `per_file_index` keyed by a mock, which every dict lookup tolerated and
+    # the path-suffix index did not. A double that cannot be told from the thing it
+    # imitates is the only kind worth having.
+    state.parsed_files = {
+        "a.py": MagicMock(
+            symbols=[MagicMock(file_path="a.py", uid="python:a.py:class:A", name="A")],
+            imports=[],
+            call_sites=[],
+        )
+    }
     state.changed_files = ["a.py"]
 
     with (

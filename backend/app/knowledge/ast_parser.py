@@ -409,6 +409,29 @@ def _looks_minified(content: bytes) -> bool:
 #:     collided and every UID-keyed consumer lost one of them (AUD-0819-02).
 SYMBOL_UID_SCHEMA = 2
 
+#: Version of what the extractors READ out of a file — call sites, imports, and how
+#: either resolves to a symbol. Separate from :data:`SYMBOL_UID_SCHEMA`, which names the
+#: shape of a UID: a symbol can keep its identity while the edges around it change
+#: completely, and conflating the two would mean bumping a constant that lies about what
+#: moved.
+#:
+#: A bump matters for the same reason the UID one does, by a different route.
+#: `save_incremental` merges by FILE, so an incremental run only re-reads files that
+#: changed — every untouched file keeps whatever the previous extractor found, including
+#: nothing. An extractor that starts seeing PHP calls, or starts resolving a PHP `use`
+#: statement, therefore reaches only the files someone happens to edit, and the graph
+#: stays wrong everywhere else indefinitely.
+#:
+#: It rides `app.ops.embedding_reconcile.embedding_fingerprint`, so the deploy enqueues
+#: one idempotent `force_full` rebuild by itself. Both extractor fixes before this bump
+#: were re-indexed by hand; that is the manual step this retires.
+#:
+#: 1 — through 2026-08-30
+#: 2 — PHP call sites (`scoped_call_expression`, `member_call_expression`) and Ruby
+#:     `call`; PHP/Ruby import statements parsed rather than stored whole; module paths
+#:     resolved by path suffix, so PHP namespaces and Ruby requires reach a file at all.
+GRAPH_EXTRACTION_SCHEMA = 2
+
 
 def _make_uid(
     language: str,

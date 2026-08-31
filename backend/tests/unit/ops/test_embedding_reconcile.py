@@ -49,15 +49,17 @@ async def _add_projects(sf, n):
 
 
 def test_fingerprint_format():
-    # The shape, asserted where it belongs: the model, the token window, and the
-    # symbol-UID schema — each one a reason a stored index needs rebuilding.
+    # The shape, asserted where it belongs: the model, the token window, the symbol-UID
+    # schema, and the graph-extraction schema — each one a reason a stored index needs
+    # rebuilding, and each bumpable without lying about which one moved.
     fp = recon.embedding_fingerprint()
     assert fp == (
         f"{settings.chroma_embedding_model}"
         f"|{settings.embedder_max_tokens}"
         f"|uid{recon.SYMBOL_UID_SCHEMA}"
+        f"|gx{recon.GRAPH_EXTRACTION_SCHEMA}"
     )
-    assert fp.count("|") == 2
+    assert fp.count("|") == 3
 
 
 async def test_unchanged_no_reindex(session_factory, monkeypatch):
