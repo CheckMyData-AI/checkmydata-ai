@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — three background routers spent tokens that reached no table
+
+A rebuild makes hundreds of LLM calls (`generate_docs` alone ~758), and none of them were
+recorded. The customer's usage screen understated what their account actually spent, and
+the number it showed was the chat path alone.
+
+The reason they were skipped is the interesting half: `DbUsageSink` did two jobs at once —
+**record this call** and **refuse the next one** — and only the first is wanted here.
+Wiring the existing sink in would have fixed the count and started halting rebuilds for an
+account merely over its allowance, trading a wrong number for a stopped product. So `gate`
+became a flag on the one sink rather than a second class: two objects with identical
+recording drift apart at the recording, which is the half that must not.
+
+`build_metering_sink()` records and never refuses. It is bound **per run**, not per object:
+`DocGenerator` is a module-level singleton and the owner differs by project, so mutating
+its router in place would attribute one project's rebuild to whoever started last —
+`with_router()` returns a copy instead. `CodeDbSyncPipeline` is constructed fresh at all
+four call sites, so it mutates safely; the difference is why one needed a clone and the
+other did not.
+
+Where the owner cannot be resolved the run continues **unmetered and says so at WARNING**.
+Bookkeeping does not get to decide whether an index runs.
+
+### Fixed — switching off budget enforcement also switched off the counting
+
+`code_db_sync_pipeline` built its usage sink inside `if settings.sync_budget_enforcement_enabled`.
+That flag answers one question — may this sync be refused for an owner over budget — and it
+was silently answering a second.
+
+The outer check was also redundant: `preflight_owner_budget` reads the flag itself and
+returns the owner either way, so it added nothing to the refusal and held only the defect.
+The refusal stays under the flag; the sink no longer does, and takes the metering variant
+when enforcement is off — a gating sink under a flag that says *do not refuse* would still
+halt the run mid-way, which is the refusal the flag just declined.
+
+The claim underneath is asserted rather than read: `budget_exceeded()` can only become
+non-null inside `if self._gate:`, so the refusal cannot reappear a level deeper at the
+pre-summary check. The test is paired — the gating sink **must** report the breach — because
+`observe` swallows its own exceptions and a mock that never arrived would leave the metering
+half looking correct for the wrong reason.
+
+
 ### Added — buying LLM credit, which had a webhook but no way to start
 
 `_credit_top_up` handled the completed payment; nothing created it. Half a path with no

@@ -102,9 +102,22 @@ class AccumUsageSink:
 
 
 class DbUsageSink:
-    """Persists usage per call via :class:`UsageService`, then re-checks the
+    """Persists usage per call via :class:`UsageService`, and optionally re-checks the
     user's budget. The reason is sticky so the orchestrator can hard-stop at
     the next safe boundary (F-BILL-05).
+
+    **`gate` separates two jobs that are not the same.** Counting a call and refusing the
+    next one belong together for a chat request — the person is waiting, and the next call
+    is theirs to authorise. For background indexing they do not: `generate_docs` makes
+    roughly 758 LLM calls per rebuild, and halting a rebuild because an account is over its
+    monthly allowance is a worse product than one whose usage figure is short.
+
+    Under per-account OpenRouter keys the money is right either way: OpenRouter counts and
+    the key's own ceiling stops the spend. What a non-gating sink protects is the display,
+    which was understating what customers spent because those routers recorded nothing.
+
+    A flag rather than a second class, because two objects doing this recording would
+    drift and the recording is the half that must not.
     """
 
     def __init__(
@@ -115,12 +128,14 @@ class DbUsageSink:
         session_id: str | None = None,
         message_id: str | None = None,
         accum: AccumUsageSink | None = None,
+        gate: bool = True,
     ) -> None:
         self._user_id = user_id
         self._project_id = project_id
         self._session_id = session_id
         self._message_id = message_id
         self._accum = accum
+        self._gate = gate
         self._budget_reason: str | None = None
 
     async def observe(
@@ -153,9 +168,12 @@ class DbUsageSink:
                     # per-LLM-call sink that fires far more often.
                     estimated_cost_usd=_estimate_cost(model, prompt_tokens, completion_tokens),
                 )
-                reason = await svc.check_token_budget(session, self._user_id)
-                if reason:
-                    self._budget_reason = reason
+                if self._gate:
+                    # Skipped entirely, not merely ignored: this runs once per LLM call and
+                    # `check_token_budget` sums a month of `token_usage` each time.
+                    reason = await svc.check_token_budget(session, self._user_id)
+                    if reason:
+                        self._budget_reason = reason
         except Exception:
             # Telemetry failures must never abort the agent run.
             logger.warning(

@@ -76,25 +76,41 @@ class CodeDbSyncPipeline:
                 # H5: owner budget pre-flight + per-run usage sink.
                 # Must run INSIDE the heartbeat CM so crashes here don't break the
                 # heartbeat contract.
-                from app.services.sync_budget import build_sink, preflight_owner_budget
+                from app.services.sync_budget import (
+                    build_metering_sink,
+                    build_sink,
+                    preflight_owner_budget,
+                )
 
-                if settings.sync_budget_enforcement_enabled:
+                # The pre-flight reads `sync_budget_enforcement_enabled` itself and returns
+                # the owner either way, so this must NOT be wrapped in a second copy of that
+                # check: the flag decides whether an over-budget owner is REFUSED, and the
+                # sink below decides whether the spend is RECORDED. They were one branch,
+                # which meant switching enforcement off also stopped the counting.
+                async with async_session_factory() as s:
+                    ok, reason, owner_id = await preflight_owner_budget(s, project_id)
+                if not ok:
                     async with async_session_factory() as s:
-                        ok, reason, owner_id = await preflight_owner_budget(s, project_id)
-                    if not ok:
-                        async with async_session_factory() as s:
-                            await self._sync_svc.set_sync_status(s, connection_id, "failed")
-                            await s.commit()
-                        await self._tracker.end(wf_id, "code_db_sync", "failed", reason or "budget")
-                        return {
-                            "status": "failed",
-                            "error": reason,
-                            "budget_blocked": True,
-                            "workflow_id": wf_id,
-                        }
-                    if owner_id:
-                        self._llm = LLMRouter(usage_sink=build_sink(owner_id, project_id))
-                        self._analyzer = CodeDbSyncAnalyzer(self._llm)
+                        await self._sync_svc.set_sync_status(s, connection_id, "failed")
+                        await s.commit()
+                    await self._tracker.end(wf_id, "code_db_sync", "failed", reason or "budget")
+                    return {
+                        "status": "failed",
+                        "error": reason,
+                        "budget_blocked": True,
+                        "workflow_id": wf_id,
+                    }
+                if owner_id:
+                    # Gating only where a refusal is wanted; elsewhere record and continue.
+                    # A gating sink under a flag that says "do not refuse" would still halt
+                    # the run mid-way, which is the refusal the flag just declined.
+                    usage_sink = (
+                        build_sink(owner_id, project_id)
+                        if settings.sync_budget_enforcement_enabled
+                        else build_metering_sink(owner_id, project_id)
+                    )
+                    self._llm = LLMRouter(usage_sink=usage_sink)
+                    self._analyzer = CodeDbSyncAnalyzer(self._llm)
 
                 # H6: per-connection opt-out + global scrub flag.
                 # Must run INSIDE the heartbeat CM so conn-load errors don't crash before

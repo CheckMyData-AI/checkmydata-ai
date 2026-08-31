@@ -110,7 +110,15 @@ CEILINGS: dict[str, int] = {
     #                       would retry, the idempotency claim would refuse it, and the
     #                       renewal would be lost rather than merely late; the
     #                       reconciliation sweep is what catches it.
-    "except Exception": 623,
+    #
+    # 623 -> 625 on 2026-09-01, both the same shape in the two indexing pipelines: the
+    # step that binds a per-run metering sink cannot resolve the project's owner. The
+    # question a raise has to answer is "what is the alternative", and here it is
+    # "refuse to index" -- trading a working rebuild for a correct usage number, when
+    # the money is already bounded by the account's own OpenRouter ceiling. So both log
+    # WARNING with the project id and continue unmetered, which understates one
+    # customer's spend on one run and is visible in the log rather than silent.
+    "except Exception": 625,
     "except ...: pass": 53,
     "# type: ignore": 49,
     # 129 → 130 on 2026-08-31. One, in `BillingService.reconcile`: BLE001 on a per-row

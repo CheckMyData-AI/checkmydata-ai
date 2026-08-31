@@ -299,6 +299,30 @@ class DbIndexPipeline:
         self._svc = DbIndexService()
         self._rules_engine = CustomRulesEngine()
 
+    async def _bind_metering(self, project_id: str) -> None:
+        """Point the validator at a router that records, for this run's owner.
+
+        Degrades to unmetered rather than to unindexed: an owner we cannot resolve is a
+        usage figure that is short, while raising here would stop a schema index for a
+        bookkeeping problem.
+        """
+        try:
+            from app.models.base import async_session_factory
+            from app.services.sync_budget import build_metering_sink, resolve_owner_user_id
+
+            async with async_session_factory() as owner_db:
+                owner_id = await resolve_owner_user_id(owner_db, project_id)
+            if owner_id:
+                self._validator = DbIndexValidator(
+                    LLMRouter(usage_sink=build_metering_sink(owner_id, project_id))
+                )
+        except Exception:
+            logger.warning(
+                "db_index: could not attribute LLM usage for project %s — unmetered",
+                project_id[:8],
+                exc_info=True,
+            )
+
     async def run(
         self,
         connection_id: str,
@@ -310,6 +334,20 @@ class DbIndexPipeline:
         wf_id: str | None = None,
     ) -> dict:
         """Run the full database indexing pipeline. Returns status dict."""
+        # Attribute this run's LLM spend to the project's owner. `validate_tables` is this
+        # pipeline's LLM step and recorded nothing at all until now, so a customer's own
+        # usage display understated what they had spent.
+        #
+        # A metering sink, not a gating one: a schema index that refuses to run because an
+        # account is over its monthly allowance trades a wrong number for a stopped
+        # product, and under per-account OpenRouter keys the spend is already bounded by
+        # the key's own ceiling.
+        #
+        # Bound per RUN rather than in `__init__`, which is synchronous and has no
+        # `project_id` — the first version of this change went there and could neither
+        # await nor see the project.
+        await self._bind_metering(project_id)
+
         wf_id = wf_id or await self._tracker.begin(
             "db_index",
             {

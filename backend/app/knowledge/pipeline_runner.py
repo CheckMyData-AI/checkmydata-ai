@@ -960,6 +960,38 @@ class IndexingPipelineRunner:
 
         _llm_sem = asyncio.Semaphore(3)
 
+        # Attribute this run's LLM spend to the project's owner. `generate_docs` is the
+        # largest consumer in the product — hundreds of calls per rebuild — and until now
+        # it ran on a bare router whose usage reached no table at all, so the customer's
+        # own spend display understated what they had used.
+        #
+        # A metering sink, not a gating one: halting a rebuild because an account is over
+        # its monthly allowance trades a wrong number for a stopped product, and under
+        # per-account OpenRouter keys the spend is already bounded by the key itself.
+        #
+        # Per run, not per object: `_doc_generator` is a module-level singleton and the
+        # owner differs by project, so a concurrent rebuild would otherwise be attributed
+        # to whoever started last.
+        doc_generator = self._doc_generator
+        try:
+            from app.llm.router import LLMRouter
+            from app.models.base import async_session_factory
+            from app.services.sync_budget import build_metering_sink, resolve_owner_user_id
+
+            async with async_session_factory() as _owner_db:
+                _owner_id = await resolve_owner_user_id(_owner_db, project_id)
+            if _owner_id:
+                doc_generator = self._doc_generator.with_router(
+                    LLMRouter(usage_sink=build_metering_sink(_owner_id, project_id))
+                )
+        except Exception:
+            logger.warning(
+                "generate_docs: could not attribute LLM usage for project %s — the run "
+                "proceeds unmetered rather than not at all",
+                project_id[:8],
+                exc_info=True,
+            )
+
         async def _generate_one_doc(
             edoc: EnrichedDoc,
             existing_doc_content: str | None,
@@ -967,7 +999,7 @@ class IndexingPipelineRunner:
         ) -> str:
             """Run the LLM call under a concurrency limiter."""
             async with _llm_sem:
-                return await self._doc_generator.generate(
+                return await doc_generator.generate(
                     file_path=edoc.file_path,
                     content=edoc.content,
                     doc_type=edoc.doc_type,
