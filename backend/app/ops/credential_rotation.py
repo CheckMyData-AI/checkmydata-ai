@@ -26,22 +26,40 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.base import async_session_factory
 from app.models.connection import Connection
+from app.models.llm_credit import LlmCredit
 from app.models.ssh_key import SshKey
 from app.models.vendor_credential import VendorCredential
 from app.services.encryption import is_on_primary_key, rotate_token
 
 logger = logging.getLogger(__name__)
 
+
 #: (model, encrypted column names). Held to the full declared set by a test.
 #: Typed ``Any`` for the model slot on purpose: ``Base`` does not declare ``id``, and
 #: the sweep needs it for stable pagination. All four models here have one, and the
 #: derived-coverage test is what actually constrains this list.
+def _pk(model: Any) -> Any:
+    """The model's primary-key column, asked of the mapper rather than assumed to be `id`.
+
+    Every model this sweep covered until 2026-08-31 happened to have one called `id`, so
+    `model.id` read as a property of models rather than of those six. `LlmCredit` is keyed
+    on `user_id` — one row per account — and the assumption failed at
+    `AttributeError: type object 'LlmCredit' has no attribute 'id'`, which is the good
+    outcome: the alternative was a sweep that skipped a spending credential.
+    """
+    return next(iter(model.__mapper__.primary_key))
+
+
 ENCRYPTED_COLUMNS: list[tuple[Any, tuple[str, ...]]] = [
     (
         Connection,
         ("db_password_encrypted", "connection_string_encrypted", "mcp_env_encrypted"),
     ),
     (SshKey, ("private_key_encrypted", "passphrase_encrypted")),
+    # The account's OpenRouter key. A spending instrument: left un-rotated it becomes
+    # unreadable the moment the old key is dropped, and the account loses the ability
+    # to make any LLM call at all.
+    (LlmCredit, ("key_encrypted",)),
     (VendorCredential, ("secret_encrypted",)),
 ]
 
@@ -98,7 +116,7 @@ async def rotate_credentials(
                         await session.scalars(
                             select(model)
                             .where(or_(*[getattr(model, c).is_not(None) for c in columns]))
-                            .order_by(model.id)
+                            .order_by(_pk(model))
                             .offset(offset)
                             .limit(_BATCH)
                         )
@@ -119,14 +137,16 @@ async def rotate_credentials(
                             result.rotated += 1
                         except Exception:
                             result.failed += 1
-                            result.unreadable.append(f"{model.__name__}.{col}#{row.id}")
+                            result.unreadable.append(
+                                f"{model.__name__}.{col}#{getattr(row, _pk(model).name)}"
+                            )
                             logger.error(
                                 "credential_rotation: %s.%s on row %s is readable by no "
                                 "configured key — the retired key cannot be dropped while "
                                 "this row exists",
                                 model.__name__,
                                 col,
-                                row.id,
+                                getattr(row, _pk(model).name),
                                 exc_info=True,
                             )
                 await session.commit()

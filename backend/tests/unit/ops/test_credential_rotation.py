@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 
 import app.models.connection  # noqa: F401
 import app.models.deploy_state  # noqa: F401
+import app.models.llm_credit  # noqa: F401
 import app.models.project  # noqa: F401
 import app.models.repository  # noqa: F401
 import app.models.ssh_key  # noqa: F401
@@ -24,6 +25,7 @@ import app.models.vendor_credential  # noqa: F401
 import app.services.encryption as enc
 from app.models.base import Base
 from app.models.connection import Connection
+from app.models.llm_credit import LlmCredit
 from app.models.project import Project
 from app.models.ssh_key import SshKey
 from app.models.user import User
@@ -91,6 +93,16 @@ async def _seed_every_encrypted_column(factory) -> None:
                 db_password_encrypted=enc.encrypt("pw"),
                 connection_string_encrypted=enc.encrypt("postgres://x"),
                 mcp_env_encrypted=enc.encrypt('{"A":"1"}'),
+            )
+        )
+        s.add(
+            LlmCredit(
+                user_id=u.id,
+                key_hash="hash-1",
+                # A spending instrument, and the reason the derived-coverage assertion
+                # above matters: left out of the sweep, this becomes unreadable the moment
+                # the old key is dropped and the account can make no LLM call at all.
+                key_encrypted=enc.encrypt("sk-or-v1-secret"),
             )
         )
         s.add(

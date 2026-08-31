@@ -292,9 +292,9 @@ class MembershipService:
                 ),
             )
 
-        from app.services.entitlement_service import EntitlementService
+        from app.entitlements import get_entitlements
 
-        await EntitlementService().enforce_project_quota(db, new_owner_user_id)
+        await get_entitlements().enforce_project_quota(db, new_owner_user_id)
 
         target.role = "owner"
         if current_owner is not None:

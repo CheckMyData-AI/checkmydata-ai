@@ -112,6 +112,8 @@ async def lifespan(app: FastAPI):
     from app.ops.capability_report import report_capabilities
 
     report_capabilities()
+    # Before anything can ask a quota question, decide who answers it.
+    _register_entitlements()
     await _check_alembic_head()
     await _cleanup_stale_checkpoints()
     from app.core.reaper_loop import run_reaper_sweep
@@ -614,6 +616,53 @@ async def _backfill_default_rules() -> None:
                 logger.info("Startup: created default rules for %d projects", created)
     except Exception:
         logger.warning("Failed to backfill default rules at startup", exc_info=True)
+
+
+def _register_entitlements() -> None:
+    """Install the commercial entitlement provider, if this build has one.
+
+    The open-source build has none and keeps the permissive default, so a clone runs with
+    no Stripe key and no plan table. This is the whole of the split at run time: one
+    registration, and the four quota call sites never learn which provider answered.
+    """
+    if not settings.billing_enabled:
+        return
+    try:
+        from app.entitlements import set_entitlements
+        from app.services.entitlement_service import EntitlementService
+
+        set_entitlements(EntitlementService())
+        logger.info("entitlements: commercial provider registered")
+    except Exception:
+        # Degrade to permissive rather than to broken. A cloud image that cannot load its
+        # billing layer should still serve the product; the alternative is an outage
+        # caused by the thing that was supposed to collect money for uptime.
+        logger.warning(
+            "entitlements: commercial provider failed to load; quotas are unrestricted",
+            exc_info=True,
+        )
+
+
+async def _reconcile_billing() -> None:
+    """Re-read Stripe and repair what the webhooks did not deliver.
+
+    Webhooks are best-effort. A delivery that never arrives leaves a paying customer
+    without access and writes nothing anywhere that says so, which is why this runs on a
+    clock rather than only when something looks wrong.
+
+    Off unless billing is on, so the open-source and self-hosted builds never reach for a
+    Stripe key. Never raises: a maintenance sweep that can abort the loop takes the other
+    five jobs with it.
+    """
+    if not settings.billing_enabled or not settings.stripe_secret_key:
+        return
+    try:
+        from app.services.billing_service import BillingService
+
+        async with async_session_factory() as db:
+            await BillingService().reconcile(db)
+    except Exception:
+        logger.warning("maintenance: billing reconcile failed", exc_info=True)
 
 
 async def _periodic_insight_maintenance() -> None:
@@ -1318,6 +1367,7 @@ async def _maintenance_loop() -> None:
                 await _freshness_reconcile()
                 await _sweep_telemetry_retention()
                 await _prune_analytics_journal()
+                await _reconcile_billing()
         except asyncio.CancelledError:
             break
         except Exception:

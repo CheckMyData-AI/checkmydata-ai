@@ -39,6 +39,22 @@ APP = Path(__file__).resolve().parents[4] / "backend" / "app"
 #: Counts measured 2026-08-25 over `backend/app/`. Lower them as suppressions go; raise
 #: one only in the same commit as the suppression it admits, so the increase is reviewed.
 CEILINGS: dict[str, int] = {
+    # 618 → 621 on 2026-08-31. Three, all on the Stripe seam, and all three swallow a
+    # failure whose propagation would cost more than the thing it was reporting:
+    #
+    #   `BillingService.reconcile`   — per subscription. One row Stripe cannot answer for
+    #                                  must not end the sweep over the others; the whole
+    #                                  point of reconciliation is the rows nobody noticed.
+    #   `_reconcile_billing`         — the maintenance loop runs six jobs. A billing sweep
+    #                                  that can abort it takes learning decay, insight
+    #                                  expiry and the analytics prune with it.
+    #   `_register_entitlements`     — a cloud image that cannot load its billing layer
+    #                                  degrades to permissive rather than to broken. The
+    #                                  alternative is an outage caused by the component
+    #                                  whose job is collecting money for uptime.
+    #
+    # Each logs at WARNING or ERROR with the id it was working on, and none returns a
+    # value that reads as success — the shape this ratchet exists to catch.
     # 614 → 618 on 2026-08-31. Four, all in the recovery path, and each one swallows a
     # failure whose propagation would destroy the thing it was reporting on:
     #
@@ -83,10 +99,28 @@ CEILINGS: dict[str, int] = {
     # A SECOND one was added and then deleted — a suppression on an inner function's
     # untyped argument, where annotating it cost one word. That is the answer this
     # ratchet exists to provoke, and it is why the raise here is one rather than two.
-    "except Exception": 618,
+    # 621 → 623 on 2026-08-31, both on the credit path, and both swallow a failure that
+    # would cost more than the thing it reports:
+    #
+    #   `_credit_top_up`  — the charge has ALREADY succeeded. Raising makes Stripe retry
+    #                       a payment that cannot be un-taken, so the honest outcome is
+    #                       an ERROR line carrying the amount and session id for a human
+    #                       to finish: "PAID BUT NOT CREDITED".
+    #   `_renew_credit`   — a failed ceiling update must not fail the webhook. Stripe
+    #                       would retry, the idempotency claim would refuse it, and the
+    #                       renewal would be lost rather than merely late; the
+    #                       reconciliation sweep is what catches it.
+    "except Exception": 623,
     "except ...: pass": 53,
     "# type: ignore": 49,
-    "# noqa": 129,
+    # 129 → 130 on 2026-08-31. One, in `BillingService.reconcile`: BLE001 on a per-row
+    # handler, because a subscription Stripe cannot answer for must not end the sweep
+    # over the rest — reconciliation exists precisely for the rows nobody noticed.
+    #
+    # It was three. Two came from `global _provider` in the entitlement registry and
+    # this ratchet is why they are gone: asked whether they were worth recording, the
+    # answer was to hold the provider in a one-slot dict and need no suppression at all.
+    "# noqa": 130,
 }
 
 PATTERNS: dict[str, re.Pattern[str]] = {
