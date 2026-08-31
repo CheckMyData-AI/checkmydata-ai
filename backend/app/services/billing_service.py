@@ -319,6 +319,55 @@ class BillingService:
             "status": row.status,
         }
 
+    async def create_topup_session(self, db: AsyncSession, user: User) -> str:
+        """Start a one-time Checkout for LLM credit. Returns its URL.
+
+        `mode="payment"`, not `subscription`: credit is bought outright and does not renew.
+        That word is also what the webhook reads to tell a top-up from a plan purchase.
+
+        The amount is **not** sent. The price carries `custom_unit_amount`, so Stripe's page
+        asks the customer for the figure — which is how "we take no margin on API tokens"
+        stays literally true instead of being true of a pack size we picked.
+
+        Requires an existing key: crediting a balance that has no key to spend from would
+        take the money and grant nothing, and provisioning happens with the subscription.
+        """
+        price_id = settings.stripe_price_credit_topup
+        if not price_id:
+            raise BillingError("Credit top-up is not configured (STRIPE_PRICE_CREDIT_TOPUP)")
+
+        from app.models.llm_credit import LlmCredit
+
+        credit = (
+            await db.execute(select(LlmCredit).where(LlmCredit.user_id == user.id))
+        ).scalar_one_or_none()
+        if credit is None or not credit.key_hash:
+            raise BillingError(
+                "No LLM key to credit yet — start a subscription before buying credit."
+            )
+
+        customer_id = await self._ensure_customer(db, user)
+        stripe = _stripe()
+        base = settings.app_url.rstrip("/")
+        metadata = {"user_id": user.id, "kind": "credit_topup"}
+        session = await asyncio.to_thread(
+            stripe.checkout.Session.create,
+            customer=customer_id,
+            mode="payment",
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url=f"{base}{settings.billing_success_path}"
+            f"{'&' if '?' in settings.billing_success_path else '?'}"
+            "session_id={CHECKOUT_SESSION_ID}",
+            cancel_url=f"{base}{settings.billing_cancel_path}",
+            client_reference_id=user.id,
+            metadata=metadata,
+            # `payment_intent_data.metadata` for the same reason `subscription_data` carries
+            # it on the recurring path: the session is gone by the time a refund or a
+            # dispute arrives, and the PaymentIntent is what those events carry.
+            payment_intent_data={"metadata": metadata},
+        )
+        return session["url"]
+
     async def create_portal_session(self, db: AsyncSession, user: User) -> str:
         """Create a Stripe Customer Portal session and return its URL."""
         sub = (

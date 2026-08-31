@@ -135,6 +135,27 @@ async def create_portal(
     return {"url": url}
 
 
+@router.post("/topup")
+@limiter.limit("10/minute")
+async def create_topup(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Start a one-time Checkout for LLM credit; the customer names the amount on Stripe."""
+    _require_billing_enabled()
+    db_user = (
+        await db.execute(select(User).where(User.id == user["user_id"]))
+    ).scalar_one_or_none()
+    if db_user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    try:
+        url = await _billing.create_topup_session(db, db_user)
+    except BillingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"url": url}
+
+
 @router.post("/verify")
 @limiter.limit("20/minute")
 async def verify_checkout(

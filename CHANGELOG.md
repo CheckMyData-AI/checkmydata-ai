@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — buying LLM credit, which had a webhook but no way to start
+
+`_credit_top_up` handled the completed payment; nothing created it. Half a path with no
+other half, and it would have stayed invisible until someone tried to buy credit.
+
+`POST /api/billing/topup` opens a one-time Checkout. Three things it does deliberately:
+
+- **`mode="payment"`**, not `subscription`. Sent as a subscription a $50 credit purchase
+  becomes a recurring charge — and `mode` is also what the webhook reads to tell a top-up
+  from a plan.
+- **No amount is sent.** The price carries `custom_unit_amount`, so Stripe's page asks the
+  customer for the figure. That is what makes "we take no margin on API tokens" literally
+  true rather than true of a pack size we chose, and it is why the webhook credits
+  `amount_total` instead of anything we requested.
+- **Metadata goes on the PaymentIntent too.** A refund or dispute arrives long after the
+  session is gone, and those events carry the intent.
+
+It refuses with 400 until the account has a provisioned key: crediting a balance with
+nothing to spend from takes the money and grants nothing.
+
+Config gained `stripe_price_base`, `stripe_price_scale` and `stripe_price_credit_topup` —
+it knew only the retired `pro` and `team`. Live/test separation lives in the env because one
+column cannot hold both, and a mode mismatch surfaces as `resource_missing`, which reads as
+"product deleted" rather than as the configuration error it is.
+
+Live-mode products and prices now exist: `base_monthly` $199, `scale_monthly` $599,
+`credit_topup` $10–$2 000. The Scale figure is still the placeholder standing in for
+"500 or 600" and is two commands to change while no sale has happened.
+
+### Fixed — an entitlement provider could leak from one test into every test after it
+
+One integration test failed in a full run and passed alone. The reading that costs nothing
+is "flaky"; the truth was that `app.entitlements` holds one provider per process — correct
+in production, where it is installed once at start-up — with a hand-written reset in three
+test files. A forgotten one leaves every later test facing a 402 it never asked for, and it
+surfaces anywhere except where the mistake is.
+
+The reset moved into `conftest.py` as an `autouse` fixture, where forgetting it is not
+possible.
+
+The pair that guards that fixture lives in its own file, and that is the point: the first
+version sat in `test_entitlements_seam.py`, which has a local `autouse` reset of its own, so
+it passed with the conftest fixture deleted and guarded nothing. Verified by deleting the
+fixture and watching the second test go red.
+
 ### Added — a verify endpoint, so the redirect stops being a dead end
 
 Stripe redirects the moment the card clears; the webhook lands when it lands. In between the
