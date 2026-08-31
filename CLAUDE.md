@@ -302,6 +302,37 @@ appeared would pass that repository and fail the next. `_model_name_to_table` re
 `eloquent` is now in `ORM_PATTERNS`; it was absent, which is why Laravel only ever reached
 the ORM branch by accident.
 
+### Required filters: the predicate is prose, and the reader must expect that
+
+`code_db_sync.required_filters_json` is written by an LLM, and the tool description that
+asks for it gave this example verbatim: `{"status": "= 1 (processed only)"}`. The guard
+took everything after `=` — commentary included — and escaped it into the pattern, so
+`was_handled = 1 (processed only)` was what SQL had to contain. Whatever failed to parse
+fell back to a bare `\bcol\b` presence check, which a mention in the SELECT list
+satisfies.
+
+Measured 2026-08-31 against production: **159 predicates configured, 1 enforced
+correctly** — 59 unsatisfiable across 57 tables, 98 vacuous. Both halves were invisible
+because the guard's own tests used clean predicates (`= 1`, `IS NULL`), a shape the
+writer never produces. It cost ~23 s of unsatisfiable LLM repair per query: 190 s of one
+269 s failure, whose database work totalled **one second**.
+
+The rules now, in `required_filter_guard.py`:
+
+- **Parse from the left** — operator, then operand; a tail is accepted only when empty or
+  wholly parenthesised. `= 'pending' or 'completed'` is not enforced rather than
+  half-enforced.
+- **A bound is satisfied by any narrowing** of that column. `created_at >= '2023-01-01'`
+  says which rows are valid, so a six-month window satisfies it. Demanding the literal
+  date false-blocks nearly every question, because most ask about a recent period.
+- **An unenforceable requirement is not claimed as checked** — skipped, counted in
+  `required_filter_unenforceable_total`, still passed to the model as context. The old
+  presence-check fallback reported a pass it had never performed.
+
+The degrade-on-final-attempt rule (SYNC-L1) stays, but it is no longer load-bearing: it
+existed to survive a guard nothing could satisfy, and its warning — "the answer is
+returned WITHOUT them" — was false every time it fired on a correct query.
+
 ### Data validation, investigations, insights
 
 - **DataGate** — intermediate stage quality (`data_gate.py`); hard checks block impossible percentages/dates when `data_gate_hard_checks_enabled=True`.

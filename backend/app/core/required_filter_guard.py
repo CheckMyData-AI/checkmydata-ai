@@ -1,15 +1,35 @@
 """Enforce code-DB / index required filters before executing SQL.
 
-SYNC-L1 (prod incident #1): the guard is now DATA-DRIVEN and SATISFIABLE.
+SYNC-L1 (prod incident #1): the guard is DATA-DRIVEN and SATISFIABLE.
 
-Data-driven: predicates are parsed from ``required_filters_json`` entries
-(``col = val`` / ``col IS NULL`` / ``col IS NOT NULL``).  Unknown / unparseable
-conditions fall back to a bare column-presence check (advisory, not hard-block).
+**The predicate is prose, and the parser must expect that (2026-08-31).** These
+predicates are written by an LLM, and the tool description that asks for them gives
+this example verbatim::
 
-Satisfiable / degrade-not-die: on the *final* attempt an unsatisfied filter
-DEGRADES to a user-facing warning (``ValidationResult.warning``) and the answer
-proceeds.  The guard hard-fails on earlier attempts so the repair loop has a
-chance to add the missing predicates.
+    {"status": "= 1 (processed only)", "deleted_at": "IS NULL (exclude soft-deleted)"}
+
+The old parser took everything after ``=`` — commentary included — and escaped it into
+the pattern, yielding ``was_handled\\s*=\\s*1\\ \\(processed\\ only\\)\\b``, which no SQL
+can satisfy. Anything it could not parse fell back to a bare ``\\bcol\\b`` presence check,
+which a mention in the SELECT list satisfies. Measured against production: **159
+predicates configured, 1 satisfiable** — 59 unsatisfiable across 57 tables, 98 vacuous.
+
+Three rules now hold, and the third is the one that was missing:
+
+1. Parse from the LEFT — operator, then operand. A tail is accepted only when it is
+   empty or wholly parenthesised commentary. ``= 'pending' or 'completed'`` is a
+   disjunction this cannot express, so it is not enforced rather than half-enforced.
+2. A **bound** is satisfied by a tighter bound. ``created_at >= '2023-01-01'`` means
+   "exclude pre-2023"; a six-month window satisfies it. Demanding the literal date
+   would false-block nearly every question, since most ask about a recent period.
+3. **An unenforceable requirement is not claimed as checked.** ``"must filter by
+   specific type"`` compiles to nothing; it is skipped and counted, never converted into
+   a presence check that reports a pass it did not perform. It still reaches the model
+   as prompt context, which is where an instruction of that shape belongs.
+
+Satisfiable / degrade-not-die: on the *final* attempt an unsatisfied filter DEGRADES to
+a user-facing warning and the answer proceeds. Earlier attempts hard-fail so the repair
+loop can add the missing predicate — which it now can, because the predicate is real.
 """
 
 from __future__ import annotations
@@ -28,37 +48,121 @@ if TYPE_CHECKING:
 # Predicate compilation
 # ---------------------------------------------------------------------------
 
+# A column reference as SQL actually spells it: optionally alias-qualified
+# (``o.was_handled``) and optionally quoted (``\`was_handled\``, ``"was_handled"``).
+# The lookbehind rejects a longer identifier ending in the same word, so a required
+# ``was_handled`` is not satisfied by ``prev_was_handled``.
+_Q_OPEN = r"[`\"\[]?"
+_Q_CLOSE = r"[`\"\]]?"
 
-def _predicate_to_regex(col: str, predicate: str) -> str:
-    """Build a regex fragment for a required predicate string.
+# Operand as it appears in a stored predicate: quoted string, or a bare token wide
+# enough for numbers and unquoted dates (``>= 2023-01-01`` occurs in production).
+_OPERAND = r"'[^']*'|\"[^\"]*\"|[\w.:+-]+"
 
-    Supports:
-    - ``'col = val'``          →  col\\s*=\\s*val\\b
-    - ``'col IS NULL'``        →  col\\s+IS\\s+NULL\\b
-    - ``'col IS NOT NULL'``    →  col\\s+IS\\s+NOT\\s+NULL\\b
+# A range requirement ("created_at >= '2023-01-01'", "status BETWEEN 1 AND 5") states
+# which rows are VALID, so any narrowing of that column satisfies it: `= 2` is inside
+# `BETWEEN 1 AND 5`, and a six-month window is inside "not before 2023". What it cannot
+# tolerate is the column going unconstrained. `IS NULL` is deliberately absent — it
+# filters, but it does not bound a range.
+_ANY_COMPARISON = r"\s*(?:!=|<>|>=|<=|=|>|<|(?:NOT\s+)?IN\b|BETWEEN\b)"
 
-    Anything else falls back to a bare ``\\bcol\\b`` presence check (advisory —
-    we still fail on non-final attempts to drive repair, but we can't verify the
-    exact predicate shape, so we avoid a false-positive block).
+
+def _col_atom(col: str) -> str:
+    return rf"(?<!\w){_Q_OPEN}{re.escape(col)}{_Q_CLOSE}"
+
+
+def _tail_is_commentary(tail: str) -> bool:
+    """A predicate may carry a trailing note; it may not carry more predicate.
+
+    Empty or wholly parenthesised is commentary. Anything else — ``or 'completed'``,
+    ``AND status != 'x'`` — is a condition this parser cannot express, and pretending
+    otherwise is how a half-read predicate becomes a false block.
     """
-    c = re.escape(col)
-    p = predicate.strip().upper()
-    if p in ("IS NULL", "= NULL"):
-        return rf"{c}\s+IS\s+NULL\b"
-    if p in ("IS NOT NULL", "!= NULL", "<> NULL"):
-        return rf"{c}\s+IS\s+NOT\s+NULL\b"
-    m = re.match(r"^=\s*(.+)$", predicate.strip())
-    if m:
-        val = re.escape(m.group(1).strip())
-        return rf"{c}\s*=\s*{val}\b"
-    # Unparseable: bare column presence (advisory, not hard-block)
-    return rf"\b{c}\b"
+    t = tail.strip()
+    return not t or bool(re.fullmatch(r"\(.*\)", t, re.DOTALL))
 
 
-def compile_filter_check(col: str, predicate: str) -> re.Pattern[str]:
-    """Compile a required predicate (e.g. ``'was_handled = 1'``, ``'deleted_at IS NULL'``)
-    into a regex that must appear in the query when the table is referenced."""
-    return re.compile(_predicate_to_regex(col, predicate), re.IGNORECASE)
+def _value_alternatives(raw: str) -> str:
+    """Match one stored operand against the forms SQL writes it in.
+
+    Quote style varies by dialect and by whoever wrote the query; ``1`` and ``TRUE``
+    are the same value to MySQL and the model uses both.
+    """
+    v = raw.strip()
+    quoted = re.fullmatch(r"(['\"])(.*)\1", v, re.DOTALL)
+    if quoted:
+        inner = re.escape(quoted.group(2))
+        alts = [f"'{inner}'", f'"{inner}"']
+    else:
+        esc = re.escape(v)
+        alts = [esc, f"'{esc}'", f'"{esc}"']
+        if v == "1":
+            alts.append("TRUE")
+        elif v == "0":
+            alts.append("FALSE")
+    return "(?:" + "|".join(alts) + ")"
+
+
+def parse_predicate(col: str, predicate: str) -> str | None:
+    """Compile a stored predicate into a regex fragment, or ``None`` if it is not a
+    predicate at all.
+
+    ``None`` means *unenforceable*, which is different from *unsatisfied*: the caller
+    must skip it rather than fail it, and must not report it as checked.
+    """
+    p = (predicate or "").strip()
+    if not p:
+        return None
+
+    # Some writers repeat the column ("deleted_at IS NULL"); drop it and read the rest.
+    lead = re.match(rf"^{_Q_OPEN}{re.escape(col)}{_Q_CLOSE}\s+", p, re.IGNORECASE)
+    if lead:
+        p = p[lead.end() :].strip()
+
+    c = _col_atom(col)
+
+    m = re.match(r"^IS\s+NOT\s+NULL(?P<tail>.*)$", p, re.IGNORECASE | re.DOTALL)
+    if m and _tail_is_commentary(m.group("tail")):
+        return rf"{c}\s+IS\s+NOT\s+NULL(?!\w)"
+
+    m = re.match(r"^(?:IS\s+NULL|=\s*NULL)(?P<tail>.*)$", p, re.IGNORECASE | re.DOTALL)
+    if m and _tail_is_commentary(m.group("tail")):
+        return rf"{c}\s+IS\s+NULL(?!\w)"
+
+    m = re.match(r"^(?:NOT\s+)?IN\s*\([^)]*\)(?P<tail>.*)$", p, re.IGNORECASE | re.DOTALL)
+    if m and _tail_is_commentary(m.group("tail")):
+        return rf"{c}\s+(?:NOT\s+)?IN\s*\("
+
+    if re.match(r"^BETWEEN\b", p, re.IGNORECASE):
+        return rf"{c}{_ANY_COMPARISON}"
+
+    m = re.match(
+        rf"^(?P<op>>=|<=|<>|!=|==|=|>|<)\s*(?P<val>{_OPERAND})(?P<tail>.*)$",
+        p,
+        re.DOTALL,
+    )
+    if m and _tail_is_commentary(m.group("tail")):
+        op = m.group("op")
+        if op in (">", ">=", "<", "<="):
+            # This is what makes "revenue for the last 6 months" legal under a
+            # ">= 2023-01-01" rule, while `SELECT created_at FROM t` stays illegal.
+            return rf"{c}{_ANY_COMPARISON}"
+        value = _value_alternatives(m.group("val"))
+        operator = r"=" if op in ("=", "==") else r"(?:!=|<>)"
+        return rf"{c}\s*{operator}\s*{value}(?!\w)"
+
+    return None
+
+
+def compile_filter_check(col: str, predicate: str) -> re.Pattern[str] | None:
+    """Compile a required predicate into a pattern that must appear in the query.
+
+    Returns ``None`` when the stored text is not a predicate (an instruction such as
+    "must filter by specific type"). Callers must skip those: the previous behaviour —
+    a bare column-presence check — reported a pass it had not performed.
+    """
+    fragment = parse_predicate(col, predicate)
+    return re.compile(fragment, re.IGNORECASE) if fragment else None
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +184,7 @@ def _normalize_required(
     (data-driven).
 
     Legacy set form falls back to the built-in predicate for the 2 known columns
-    and a bare-presence check otherwise, so nothing regresses.
+    and an empty predicate otherwise, which the guard treats as unenforceable.
     """
     out: dict[str, dict[str, str]] = {}
     for table, cols in required_by_table.items():
@@ -120,8 +224,8 @@ def merge_required_filters(
     are preserved end-to-end and not reduced to bare column names.
 
     Columns sourced only from index hints receive their legacy predicate via
-    ``_LEGACY_PREDICATES`` (or an empty string for unknown columns, which falls
-    back to a bare presence check in the guard).
+    ``_LEGACY_PREDICATES`` (or an empty string for unknown columns, which the guard
+    treats as unenforceable rather than inventing a check for it).
     """
     merged: dict[str, dict[str, str]] = {}
     for table, filters in sync_filters.items():
@@ -142,6 +246,18 @@ def merge_required_filters(
     return merged
 
 
+def _inc(metric: str, **labels: str) -> None:
+    """Metrics must never break the guard."""
+    try:
+        from app.core.metrics import get_metrics_collector
+
+        # `amount` is positional: forwarding **labels alone lets a label named
+        # `amount` bind to it, which mypy catches and a runtime never would.
+        get_metrics_collector().inc(metric, 1, **labels)
+    except Exception:  # pragma: no cover
+        pass
+
+
 def check_required_filters(
     query: str,
     db_type: str,
@@ -152,10 +268,11 @@ def check_required_filters(
 ) -> ValidationResult:
     """Data-driven, satisfiable guard (SYNC-L1, C-F).
 
-    Fails when a referenced table is missing a configured required filter.
-    On the *final* attempt an unsatisfied required filter DEGRADES to a valid
-    result carrying a user-facing warning (never a hard-fail), and increments
-    ``filter_guard_degrade_total``.
+    Fails when a referenced table is missing a configured required filter that could
+    be compiled. A requirement that is not a predicate is skipped and counted, never
+    reported as satisfied. On the *final* attempt an unsatisfied required filter
+    DEGRADES to a valid result carrying a user-facing warning (never a hard-fail), and
+    increments ``filter_guard_degrade_total``.
     """
     if db_type.lower() in {"mongodb", "mongo"} or not required_by_table:
         return ValidationResult(is_valid=True)
@@ -172,6 +289,12 @@ def check_required_filters(
             continue
         for col, predicate in sorted(preds.items()):
             pattern = compile_filter_check(col, predicate or "")
+            if pattern is None:
+                # Not a predicate — an instruction, a disjunction, or empty. It reaches
+                # the model as prompt context; it is not a check, and is not counted as
+                # one in either direction.
+                _inc("required_filter_unenforceable_total", db_type=db_type.lower())
+                continue
             if not pattern.search(query):
                 missing.append(f"{table}.{col}")
 
@@ -183,12 +306,7 @@ def check_required_filters(
     # Satisfiability: after the final attempt, degrade to a warning instead of a
     # hard fail so we never block a legitimate query to death (prod incident #1).
     if attempt >= max_attempts:
-        try:
-            from app.core.metrics import get_metrics_collector
-
-            get_metrics_collector().inc("filter_guard_degrade_total", db_type=db_type.lower())
-        except Exception:  # pragma: no cover — metrics must never break the guard
-            pass
+        _inc("filter_guard_degrade_total", db_type=db_type.lower())
         return ValidationResult(
             is_valid=True,
             warning=(
