@@ -7,7 +7,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.config import settings
-from app.knowledge.ast_parser import SYMBOL_UID_SCHEMA
+from app.knowledge.ast_parser import GRAPH_EXTRACTION_SCHEMA, SYMBOL_UID_SCHEMA
 from app.models.base import async_session_factory
 from app.models.deploy_state import DeployState
 from app.models.project import Project
@@ -38,7 +38,8 @@ def embedding_fingerprint() -> str:
     across dynos, `force_full=True` — instead of being owed to an operator.
     """
     return (
-        f"{settings.chroma_embedding_model}|{settings.embedder_max_tokens}|uid{SYMBOL_UID_SCHEMA}"
+        f"{settings.chroma_embedding_model}|{settings.embedder_max_tokens}"
+        f"|uid{SYMBOL_UID_SCHEMA}|gx{GRAPH_EXTRACTION_SCHEMA}"
     )
 
 

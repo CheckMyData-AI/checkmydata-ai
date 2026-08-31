@@ -24,6 +24,7 @@ Design notes:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -407,6 +408,29 @@ def _looks_minified(content: bytes) -> bool:
 #:     because without it two classes declaring the same method in one file
 #:     collided and every UID-keyed consumer lost one of them (AUD-0819-02).
 SYMBOL_UID_SCHEMA = 2
+
+#: Version of what the extractors READ out of a file — call sites, imports, and how
+#: either resolves to a symbol. Separate from :data:`SYMBOL_UID_SCHEMA`, which names the
+#: shape of a UID: a symbol can keep its identity while the edges around it change
+#: completely, and conflating the two would mean bumping a constant that lies about what
+#: moved.
+#:
+#: A bump matters for the same reason the UID one does, by a different route.
+#: `save_incremental` merges by FILE, so an incremental run only re-reads files that
+#: changed — every untouched file keeps whatever the previous extractor found, including
+#: nothing. An extractor that starts seeing PHP calls, or starts resolving a PHP `use`
+#: statement, therefore reaches only the files someone happens to edit, and the graph
+#: stays wrong everywhere else indefinitely.
+#:
+#: It rides `app.ops.embedding_reconcile.embedding_fingerprint`, so the deploy enqueues
+#: one idempotent `force_full` rebuild by itself. Both extractor fixes before this bump
+#: were re-indexed by hand; that is the manual step this retires.
+#:
+#: 1 — through 2026-08-30
+#: 2 — PHP call sites (`scoped_call_expression`, `member_call_expression`) and Ruby
+#:     `call`; PHP/Ruby import statements parsed rather than stored whole; module paths
+#:     resolved by path suffix, so PHP namespaces and Ruby requires reach a file at all.
+GRAPH_EXTRACTION_SCHEMA = 2
 
 
 def _make_uid(
@@ -826,8 +850,67 @@ def _parse_import(node, grammar: LanguageGrammar, source: bytes) -> ImportRef | 
         return _parse_java_import(text, line)
     if grammar.slug == "go":
         return _parse_go_import(text, line)
+    if grammar.slug == "php":
+        return _parse_php_import(text, line)
+    if grammar.slug == "ruby":
+        return _parse_ruby_import(text, line)
     # Best-effort generic: store the whole statement as a single module.
     return ImportRef(source_module=text, line=line)
+
+
+def _parse_php_import(text: str, line: int) -> ImportRef | None:
+    """``use App\\Models\\User;`` -> module ``App\\Models\\User``, name ``User``.
+
+    Before this existed the generic fallback stored the WHOLE statement — the `use`
+    keyword and the semicolon included — as the module, and left `imported_names`
+    empty. `_resolve_imports` only emits an edge when a name is present, so PHP
+    produced no IMPORTS edges at all no matter how the path resolved.
+    """
+    body = text.strip().rstrip(";").strip()
+    for kw in ("use function ", "use const ", "use "):
+        if body.lower().startswith(kw):
+            body = body[len(kw) :].strip()
+            break
+    if not body:
+        return None
+
+    alias = None
+    m = re.search(r"\s+as\s+(\w+)$", body, re.IGNORECASE)
+    if m:
+        alias = m.group(1)
+        body = body[: m.start()].strip()
+
+    # Group syntax: use App\Models\{User, Purchase};
+    group = re.match(r"^(?P<prefix>[\w\\]+)\\\{(?P<names>[^}]*)\}$", body)
+    if group:
+        prefix = group.group("prefix")
+        names = tuple(
+            n.strip().split("\\")[-1] for n in group.group("names").split(",") if n.strip()
+        )
+        return ImportRef(source_module=prefix, imported_names=names, alias=alias, line=line)
+
+    leaf = body.split("\\")[-1].strip()
+    names = (leaf,) if leaf else ()
+    return ImportRef(source_module=body, imported_names=names, alias=alias, line=line)
+
+
+def _parse_ruby_import(text: str, line: int) -> ImportRef | None:
+    """``require 'foo/bar'`` / ``require_relative 'x'`` -> module, no names.
+
+    Ruby's grammar reports `require` as a `call`, so every method call reaches here;
+    anything that is not a require is not an import and must return None rather than
+    become a module named after itself.
+    """
+    m = re.match(
+        r"^(?:require_relative|require|load|autoload)\s*\(?\s*['\"]([^'\"]+)['\"]",
+        text.strip(),
+    )
+    if not m:
+        return None
+    module = m.group(1).strip()
+    if text.strip().startswith("require_relative") and not module.startswith("."):
+        module = "./" + module
+    return ImportRef(source_module=module, line=line)
 
 
 def _parse_python_import(text: str, line: int) -> ImportRef | None:

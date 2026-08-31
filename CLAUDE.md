@@ -263,6 +263,40 @@ User rules in `rules/` (or `CUSTOM_RULES_DIR`) are injected into orchestrator an
 
 Read-only Git operations on the project's local clone (`git_agent.py`, `GitInspector`): commits, diffs, blame, releases, file churn. Gated by `has_repo` probe; path-traversal guard, output/count caps, no hooks. Freshness warning when clone lags indexed HEAD; optional `git_agent_auto_pull`. Findings persist as `code_finding` insights. Roadmap: `docs/GIT_ACCESS_AUDIT_AND_ROADMAP.md`.
 
+### IMPORTS edges: a language the parser does not know produces silence, not an error
+
+Production recorded **28 033 imports and 0 IMPORTS edges** (measured 2026-08-31), and the
+count came from a log line, so nothing contradicted it — the parser found the imports and
+the resolver could not turn one into a path.
+
+Two independent failures, either sufficient alone. `_parse_import` had no branch for PHP
+or Ruby, so both fell to the generic fallback, which stores **the whole statement** as the
+module (`use App\Models\User;`, keyword and semicolon included) and leaves
+`imported_names` empty — and `_resolve_imports` emitted nothing without a name. Separately,
+`_candidate_module_paths` knew only a Python dotted module, a relative JS/TS path, and a
+slash path tried against `.ts/.tsx/.js/.jsx/.py`; a PHP namespace has neither a dot nor a
+slash, so it took the Python branch and produced `App\Models\User.py`.
+
+Resolution is now by **path suffix** against the repository's own file list, not by
+convention: "`App\` means `app/`" is PSR-4, a claim about someone else's composer.json,
+and `Illuminate\Support\Facades\DB` lives under `vendor/laravel/framework/src/…`, which
+no convention predicts. Ambiguity resolves to nothing, with the importing file's extension
+as tie-break; a nameless `require` is capped at `_MAX_IMPORT_FANOUT`.
+
+**An extractor change now rebuilds the graph by itself.** `GRAPH_EXTRACTION_SCHEMA`
+(`ast_parser.py`) rides `embedding_fingerprint()` beside `SYMBOL_UID_SCHEMA`, so the
+deploy enqueues one idempotent `force_full` rebuild. It has to: `save_incremental` merges
+by FILE, so an incremental run re-reads only what changed and an extractor that starts
+seeing something new reaches only the files somebody happens to edit. Separate from the
+UID constant on purpose — a symbol keeps its identity while every edge around it changes.
+**Bump it whenever `ast_parser` or `code_graph` changes what is extracted or how it
+resolves**, not when a UID moves.
+
+The general shape, worth carrying to the next grammar added: **a language the extractor
+does not know does not fail — it returns an empty or nonsense result that reads exactly
+like "this repository has no imports."** Adding a grammar to `GRAMMARS` is not the same as
+supporting it end to end; check that each stage downstream has a branch for it.
+
 ### Code↔DB `sync_status`: structure outranks the model
 
 `matched` claims both sides exist, so that precondition is checked before anything is
