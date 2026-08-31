@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a repo index enqueued directly had no run row, so nothing could see it
+
+`run_repo_index_task`, the ARQ entrypoint, called `tracker.begin()` and nothing else when
+no `wf_id` was handed in. The manual HTTP route mints an `IndexingRun` through
+`RunCoordinator` before enqueueing and the daily sync mints its own, so both are visible;
+the direct enqueue path was not — and that is the path `reconcile_embeddings` uses, so
+every deploy-triggered `force_full` rebuild ran with no row behind it.
+
+Measured in production on 2026-08-31: a 12 091-second rebuild ran to completion —
+`graph_build` alone took 799 s and produced 67 527 edges — while
+`status IN ('running','queued')` returned zero rows throughout.
+
+Four mechanisms need that row and all four were blind: `StaleRunReaper` scans it for
+stalled work (and, as of this release, re-enqueues from it), `RunCoordinator.step` writes
+`heartbeat_at` onto it, `/api/projects/{id}/sync-history` lists it, and
+`RunAlreadyActiveError` deduplicates on it. The re-enqueue fix shipped in this same
+release therefore did not cover the case that motivated it.
+
+The path now mints the run with `trigger="queue"`, returns rather than starting a second
+rebuild when one is already active, and — if the row cannot be written — falls back to the
+bare workflow it used before, because the row is bookkeeping and the index is the work.
+
+### Fixed — a reaped repo index was destroyed and never put back
+
+`StaleRunReaper` flips a stalled `running` row to `failed` and catalogs it, and nothing
+re-enqueued the work. For most kinds that survives — the nightly cron re-runs them within
+24 hours. For `index_repo` it does not, because two mechanisms built separately meet at a
+seam.
+
+`reconcile_embeddings` advances the `embedding_fingerprint` marker **immediately after
+enqueueing**, not after the rebuild finishes. So a deploy that restarts the worker twelve
+minutes into a 3.5-hour `force_full` rebuild leaves a marker asserting the rebuild
+happened. Nothing re-enqueues it afterwards: not the reconcile, whose fingerprint now
+matches, and not the nightly cron, which runs `force_full=False` and therefore cannot
+rebuild what only a clean run rebuilds. The loss is silent and permanent.
+
+That seam became load-bearing in this same release, when `GRAPH_EXTRACTION_SCHEMA` joined
+the fingerprint: an extractor fix now depends on exactly the rebuild a deploy can swallow.
+
+The reaper now re-enqueues an `index_repo` it kills, inheriting `force_full` from the
+run's own `meta_json` so a rebuild comes back as a rebuild rather than as an incremental
+run that would look like recovery and fix nothing. Bounded by
+`REAPER_REQUEUE_MAX_ATTEMPTS` (2) inside `REAPER_REQUEUE_WINDOW_HOURS` (6), counted from
+runs actually carrying the reap marker — a run failing on its own merits is a different
+fact and must not spend that budget. An unreadable count returns the bound rather than
+zero, so a failure to count cannot uncap the retry.
+
+Scope is deliberately narrow: `db_index` and `code_db_sync` are short and covered by the
+nightly sync, and re-enqueueing everything would multiply LLM cost on the
+memory-constrained worker. `REAPER_REQUEUE_ENABLED` switches off a real cost, not a
+phantom one — `run_repo_index` runs `generate_docs` through an LLM.
+
+The re-enqueue never raises. The reap IS the recovery, and one that aborted partway would
+leave `running` rows unreaped and the UI spinning — the state the reaper exists to end.
+
 ### Added — an extractor change now rebuilds the graph by itself
 
 `GRAPH_EXTRACTION_SCHEMA` (`app/knowledge/ast_parser.py`) joins the embedding

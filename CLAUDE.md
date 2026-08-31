@@ -498,6 +498,27 @@ Per-connection, **not** a global flag: `collection_enabled` (default **on**) and
 **A reaped run now reaches `error_log` (N3, 2026-08-25).** `RunCoordinator` catalogs failures only on terminal-event paths (`run_coordinator.py:317`, `:450`, `:485`); the reaper flips rows with a bulk `UPDATE` and emits no terminal event, so 143 failed runs produced 3 catalog rows. `StaleRunReaper` reads the doomed rows before killing them and catalogs each — message carries the step (`stale run reaped (step: graph_build)`), so the concentration that identifies a cause is visible in `/api/logs` rather than only in ad-hoc SQL. The run's `error` column stays exactly `REAP_ERROR`, because `run_coordinator.py:393` compares it verbatim to reconcile a run that turns out to be alive.
 **The beat runs *inside* a step, not only at its edges (N1, 2026-08-25).** `RunCoordinator.step` wrote `heartbeat_at` on entry and on success and nothing between, so any single step longer than `stale_running_heartbeat_timeout_seconds` (300) was reaped **while it was still working**. Production: 64 of 70 repo-index failures, all `current_step='graph_build'`, `error='stale run reaped'`, every day from 2026-08-07. It was invisible for thirteen days because a heartbeat *did* exist — `_run_index_background` (`repos.py:556-563`) ticks `IndexingCheckpoint`, and the reaper's `stale run reaped` marker lands on `IndexingRun`, a different row. The fix is in `step` because all four repo-index entry points (ARQ task, manual route, retry route, daily sync) reach the pipeline through it, and because `IndexingRun` is created and finished there. The writer uses **its own session** — the step's `db` driven from two tasks is a race, not a heartbeat — and a targeted `UPDATE` rather than an ORM load, so it cannot carry a stale `version` or overwrite columns it does not own.
 
+**A directly-enqueued repo index now mints its run row (2026-08-31).**
+`run_repo_index_task` began a bare workflow and no `IndexingRun`, so the path
+`reconcile_embeddings` uses — every deploy-triggered `force_full` rebuild — was invisible
+to the reaper, to `heartbeat_at`, to `/api/projects/{id}/sync-history` and to the duplicate
+guard. Measured: a 12 091 s rebuild ran to completion with zero rows in `running`. The
+manual route and the daily sync always minted theirs, which is why the gap was invisible.
+It falls back to the bare workflow if the row cannot be written — the row is bookkeeping,
+the index is the work.
+
+**A reaped `index_repo` is now put back (2026-08-31).** The reaper destroyed the run and
+re-enqueued nothing, which most kinds survive — the nightly cron re-runs them. `index_repo`
+does not: `reconcile_embeddings` advances the `embedding_fingerprint` marker on **enqueue**,
+so a deploy restarting the worker mid-rebuild leaves a marker asserting the rebuild
+happened, and the nightly cron is `force_full=False` and cannot redo what only a clean run
+does. `StaleRunReaper._requeue` re-enqueues it, inheriting `force_full` from the run's
+`meta_json`, bounded at `reaper_requeue_max_attempts` (2) per `reaper_requeue_window_hours`
+(6) and counted from rows carrying `REAP_ERROR` — a run failing on its own merits does not
+spend the budget, and an unreadable count returns the bound rather than zero. Only that
+kind, because `run_repo_index` runs `generate_docs` through an LLM and the worker is the
+memory-constrained process.
+
 Stuck `running` DB-index / sync / repo-index rows self-heal: a crashed worker stops touching `heartbeat_at`, and the reaper flips the row to `failed` on the next sweep so the UI surfaces the failure instead of spinning indefinitely. New endpoint `GET /api/projects/{id}/sync-history` (see `API.md`) returns the last N daily-sync audit rows with per-project outcome details.
 
 ## Conventions
