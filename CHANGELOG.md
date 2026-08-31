@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-08-31 - Intelligence, ingestion and observability: what the measurements found
+
+**Release summary.** No new product surface. Every entry below is a defect found by
+measuring production rather than by reading code, and the range is unusually wide because
+`[Unreleased]` was never drained when `[1.16.0]` was cut — entries here date from
+2026-06-25 onward, and `v1.16.0` carries no tag at all. That is stated rather than tidied
+away: this release is the first tagged point since `v1.15.1`, 192 commits back.
+
+The load-bearing ones, each with the number that found it:
+
+- **The required-filter guard enforced 1 predicate out of 159.** 59 were unsatisfiable
+  across 57 tables and 98 were vacuous, because the predicate is LLM prose and the parser
+  expected bare SQL. Replayed over 865 real production queries: 392 passed before, 712
+  after.
+- **IMPORTS edges were structurally impossible for PHP and Ruby** — 28 033 parsed imports,
+  0 edges. Now 17 148, measured in production.
+- **Code-symbol vectors were dropped in batches of 200**, silently, because three ids out
+  of 25 538 exceeded a `varchar(512)` column and the batch write is one statement.
+- **57 million tokens were burned and 0 were counted**, so no budget could ever fire.
+  Fixing it surfaced a live block, recorded on the board rather than worked around.
+- **A repo index enqueued directly had no run row**, so a 12 091-second rebuild was
+  invisible to the reaper, the heartbeat, the history and the duplicate guard.
+- **The progress bar went backwards and then sat at 100% for two and a half hours.**
+
+Migrations: `1d72054cd637` (doc_embeddings/pgvector), `7a8925ee9104` (token backfill),
+`451d6ca545f5` (id length). Head `451d6ca545f5`.
 ### Fixed — the progress bar went backwards, then sat at 100% for two and a half hours
 
 Read from the journal of a live rebuild (run `3a0fdd16`, 2026-08-31), which is what an
