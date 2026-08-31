@@ -997,8 +997,20 @@ class Settings(BaseSettings):
     stripe_publishable_key: str = ""
     # Map of plan slug -> Stripe price id; set via env, e.g.
     # STRIPE_PRICE_PRO=price_xxx, STRIPE_PRICE_TEAM=price_yyy
+    #: Per-plan Stripe price ids, read by `_price_id_for` when the `plans` row carries
+    #: none. The env is what separates live from test: one column cannot hold both, and
+    #: `resource_missing` from a mode mismatch reads as "product deleted" rather than as
+    #: the configuration error it is.
+    stripe_price_base: str = ""
+    stripe_price_scale: str = ""
+    #: Retired 2026-08-31 with the free/pro/team catalogue. Kept because a subscription
+    #: sold under one still resolves its price through here.
     stripe_price_pro: str = ""
     stripe_price_team: str = ""
+    #: The one-time price for a credit top-up. `custom_unit_amount` on the Stripe side, so
+    #: the customer names the sum — which is what makes "no markup on tokens" literally
+    #: true rather than true of a pack size we chose.
+    stripe_price_credit_topup: str = ""
     # Where Stripe redirects after Checkout / Portal (frontend URLs).
     billing_success_path: str = "/dashboard?billing=success"
     billing_cancel_path: str = "/pricing?billing=canceled"

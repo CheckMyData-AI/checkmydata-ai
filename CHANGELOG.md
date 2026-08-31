@@ -6,6 +6,135 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — three background routers spent tokens that reached no table
+
+A rebuild makes hundreds of LLM calls (`generate_docs` alone ~758), and none of them were
+recorded. The customer's usage screen understated what their account actually spent, and
+the number it showed was the chat path alone.
+
+The reason they were skipped is the interesting half: `DbUsageSink` did two jobs at once —
+**record this call** and **refuse the next one** — and only the first is wanted here.
+Wiring the existing sink in would have fixed the count and started halting rebuilds for an
+account merely over its allowance, trading a wrong number for a stopped product. So `gate`
+became a flag on the one sink rather than a second class: two objects with identical
+recording drift apart at the recording, which is the half that must not.
+
+`build_metering_sink()` records and never refuses. It is bound **per run**, not per object:
+`DocGenerator` is a module-level singleton and the owner differs by project, so mutating
+its router in place would attribute one project's rebuild to whoever started last —
+`with_router()` returns a copy instead. `CodeDbSyncPipeline` is constructed fresh at all
+four call sites, so it mutates safely; the difference is why one needed a clone and the
+other did not.
+
+Where the owner cannot be resolved the run continues **unmetered and says so at WARNING**.
+Bookkeeping does not get to decide whether an index runs.
+
+### Fixed — switching off budget enforcement also switched off the counting
+
+`code_db_sync_pipeline` built its usage sink inside `if settings.sync_budget_enforcement_enabled`.
+That flag answers one question — may this sync be refused for an owner over budget — and it
+was silently answering a second.
+
+The outer check was also redundant: `preflight_owner_budget` reads the flag itself and
+returns the owner either way, so it added nothing to the refusal and held only the defect.
+The refusal stays under the flag; the sink no longer does, and takes the metering variant
+when enforcement is off — a gating sink under a flag that says *do not refuse* would still
+halt the run mid-way, which is the refusal the flag just declined.
+
+The claim underneath is asserted rather than read: `budget_exceeded()` can only become
+non-null inside `if self._gate:`, so the refusal cannot reappear a level deeper at the
+pre-summary check. The test is paired — the gating sink **must** report the breach — because
+`observe` swallows its own exceptions and a mock that never arrived would leave the metering
+half looking correct for the wrong reason.
+
+
+### Added — buying LLM credit, which had a webhook but no way to start
+
+`_credit_top_up` handled the completed payment; nothing created it. Half a path with no
+other half, and it would have stayed invisible until someone tried to buy credit.
+
+`POST /api/billing/topup` opens a one-time Checkout. Three things it does deliberately:
+
+- **`mode="payment"`**, not `subscription`. Sent as a subscription a $50 credit purchase
+  becomes a recurring charge — and `mode` is also what the webhook reads to tell a top-up
+  from a plan.
+- **No amount is sent.** The price carries `custom_unit_amount`, so Stripe's page asks the
+  customer for the figure. That is what makes "we take no margin on API tokens" literally
+  true rather than true of a pack size we chose, and it is why the webhook credits
+  `amount_total` instead of anything we requested.
+- **Metadata goes on the PaymentIntent too.** A refund or dispute arrives long after the
+  session is gone, and those events carry the intent.
+
+It refuses with 400 until the account has a provisioned key: crediting a balance with
+nothing to spend from takes the money and grants nothing.
+
+Config gained `stripe_price_base`, `stripe_price_scale` and `stripe_price_credit_topup` —
+it knew only the retired `pro` and `team`. Live/test separation lives in the env because one
+column cannot hold both, and a mode mismatch surfaces as `resource_missing`, which reads as
+"product deleted" rather than as the configuration error it is.
+
+Live-mode products and prices now exist: `base_monthly` $199, `scale_monthly` $599,
+`credit_topup` $10–$2 000. The Scale figure is still the placeholder standing in for
+"500 or 600" and is two commands to change while no sale has happened.
+
+### Fixed — an entitlement provider could leak from one test into every test after it
+
+One integration test failed in a full run and passed alone. The reading that costs nothing
+is "flaky"; the truth was that `app.entitlements` holds one provider per process — correct
+in production, where it is installed once at start-up — with a hand-written reset in three
+test files. A forgotten one leaves every later test facing a 402 it never asked for, and it
+surfaces anywhere except where the mistake is.
+
+The reset moved into `conftest.py` as an `autouse` fixture, where forgetting it is not
+possible.
+
+The pair that guards that fixture lives in its own file, and that is the point: the first
+version sat in `test_entitlements_seam.py`, which has a local `autouse` reset of its own, so
+it passed with the conftest fixture deleted and guarded nothing. Verified by deleting the
+fixture and watching the second test go red.
+
+### Added — a verify endpoint, so the redirect stops being a dead end
+
+Stripe redirects the moment the card clears; the webhook lands when it lands. In between the
+customer is on a success page and the database knows nothing about their payment.
+`POST /api/billing/verify` performs exactly the writes the webhook would and lets the
+idempotency ledger arbitrate.
+
+A safety net, never the primary path — a customer who closes the tab is served by the
+webhook alone, and code that grants on the redirect is the failure this design exists to
+avoid. The docstring says so, and a test asserts the docstring says so, because the next
+reader's temptation is to drop the webhook once this exists.
+
+Ownership is the load-bearing check: without it any authenticated user who learns a `cs_…`
+id claims someone else's purchase. A wrong-owner session and a missing session answer
+identically, so the response is not an oracle for which ids exist — asserted by comparing
+the two messages rather than by reading them.
+
+The Stripe exception is **imported** rather than read off the configured client. Reaching
+through `_stripe()` for it coupled the handler to whatever that returns, and made it
+uncatchable the moment a test substituted a double: `TypeError: catching classes that do not
+inherit from BaseException`. The class does not depend on the api_key.
+
+### Fixed — the pricing page would have advertised a checkout that cannot complete
+
+Found by asking what the tier migration does on deploy rather than by reading the diff.
+Activating `base` and `scale` makes `/api/billing/plans` return $199 and $599 while their
+`stripe_price_id` is null until live-mode prices exist — so the public, indexable pricing
+page would show both numbers next to a button answering
+`400 Plan 'base' has no Stripe price configured`. Not merely reachable: advertised.
+
+`list_plans` now returns only what can be bought. `is_active` was never sufficient; a free
+plan is exempt, because there is nothing to charge and therefore no price to have.
+
+And the other half, which is the same rule from the other side: `PricingTable.tsx` carried
+`FALLBACK_PLANS` quoting $0/$49/$199 for the three tiers retired the same day. Nothing
+would have failed — the page would simply have lied. The fallback no longer quotes a price
+at all: a self-hosted install has no tier to sell, so it describes the build instead.
+
+While fixing it: `seats: 0` rendered as "0 seats", which reads as a plan nobody can use. `0`
+means unlimited here as it does for every other limit in this codebase, and the
+self-hosted entry is precisely the one carrying it.
+
 ### Added — per-account OpenRouter credit: two pockets over one counter
 
 The billing model gives every account $30 of LLM credit at cost ($90 on Scale), tops it up

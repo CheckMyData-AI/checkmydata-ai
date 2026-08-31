@@ -44,3 +44,24 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(pytest.mark.unit)
         elif "integration" in parts:
             item.add_marker(pytest.mark.integration)
+
+
+@pytest.fixture(autouse=True)
+def _entitlements_are_process_global():
+    """Reset the entitlement provider around every test.
+
+    `app.entitlements` holds one provider for the process, which is right in production —
+    it is installed once at start-up — and a hazard in a suite, where a test that installs
+    a refusing provider and does not reset leaves every later test facing a 402 it never
+    asked for.
+
+    Added after exactly that: one integration test failed in a full run and passed alone,
+    and the tempting reading was "flaky". A global with a hand-written reset in three
+    files is not flaky, it is unfinished — so the reset moved here, where forgetting it is
+    not possible.
+    """
+    from app.entitlements import reset_entitlements
+
+    reset_entitlements()
+    yield
+    reset_entitlements()

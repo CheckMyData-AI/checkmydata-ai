@@ -34,8 +34,20 @@ async def resolve_owner_user_id(session: AsyncSession, project_id: str) -> str |
 
 
 def build_sink(owner_user_id: str, project_id: str) -> DbUsageSink:
-    """Build a usage sink attributed to the owner."""
+    """Build a usage sink attributed to the owner. Gates: the caller pre-flights a budget
+    and expects the run to stop when it is spent."""
     return DbUsageSink(user_id=owner_user_id, project_id=project_id)
+
+
+def build_metering_sink(owner_user_id: str, project_id: str) -> DbUsageSink:
+    """A sink for background work: records every call, refuses none of them.
+
+    Used by the indexing routers, which made hundreds of LLM calls that reached no table at
+    all. Wiring the gating sink instead would have fixed the count and started halting
+    rebuilds for an account merely over its allowance — trading a wrong number for a
+    stopped product.
+    """
+    return DbUsageSink(user_id=owner_user_id, project_id=project_id, gate=False)
 
 
 async def preflight_owner_budget(

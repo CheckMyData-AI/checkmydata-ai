@@ -1,5 +1,7 @@
 """LLM-powered documentation generator for extracted source code."""
 
+from __future__ import annotations
+
 import logging
 import string
 
@@ -82,6 +84,16 @@ class DocGenerator:
 
     def __init__(self, llm_router: LLMRouter | None = None):
         self._llm = llm_router or LLMRouter()
+
+    def with_router(self, llm_router: LLMRouter) -> DocGenerator:
+        """A copy bound to a different router, for one run.
+
+        This object is a module-level singleton (`repos.py:45`) while the usage sink it
+        needs is per-run: the owner differs by project. Mutating `self._llm` would give a
+        concurrent rebuild of another project the wrong attribution, so a run takes a copy
+        instead. Cheap — the generator holds no state beyond the router.
+        """
+        return DocGenerator(llm_router)
 
     async def generate(
         self,
