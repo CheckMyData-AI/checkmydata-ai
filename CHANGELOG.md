@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — an extractor change now rebuilds the graph by itself
+
+`GRAPH_EXTRACTION_SCHEMA` (`app/knowledge/ast_parser.py`) joins the embedding
+fingerprint beside `SYMBOL_UID_SCHEMA`, so a deploy that changes what the extractors
+READ enqueues one idempotent, advisory-locked `force_full` rebuild at startup.
+
+It is needed because `save_incremental` merges by FILE: an incremental run re-reads
+only what changed, so an extractor that starts seeing PHP call sites or resolving a PHP
+`use` statement reaches only the files somebody happens to edit. Everywhere else keeps
+the previous extractor's result — which for those languages was nothing — and no signal
+distinguishes an absent edge from an edge that was never possible.
+
+Deliberately separate from `SYMBOL_UID_SCHEMA`: a symbol keeps its identity while every
+edge around it changes, and bumping the UID constant to force a rebuild would leave the
+next reader hunting a UID change that never happened. Both extractor fixes before this
+were re-indexed by hand; that is the step it retires.
+
 ### Fixed — IMPORTS edges were structurally impossible for PHP and Ruby
 
 Production recorded **28 033 imports and 0 IMPORTS edges**. The count came from a log

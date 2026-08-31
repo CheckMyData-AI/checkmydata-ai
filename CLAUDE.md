@@ -283,6 +283,15 @@ and `Illuminate\Support\Facades\DB` lives under `vendor/laravel/framework/src/�
 no convention predicts. Ambiguity resolves to nothing, with the importing file's extension
 as tie-break; a nameless `require` is capped at `_MAX_IMPORT_FANOUT`.
 
+**An extractor change now rebuilds the graph by itself.** `GRAPH_EXTRACTION_SCHEMA`
+(`ast_parser.py`) rides `embedding_fingerprint()` beside `SYMBOL_UID_SCHEMA`, so the
+deploy enqueues one idempotent `force_full` rebuild. It has to: `save_incremental` merges
+by FILE, so an incremental run re-reads only what changed and an extractor that starts
+seeing something new reaches only the files somebody happens to edit. Separate from the
+UID constant on purpose — a symbol keeps its identity while every edge around it changes.
+**Bump it whenever `ast_parser` or `code_graph` changes what is extracted or how it
+resolves**, not when a UID moves.
+
 The general shape, worth carrying to the next grammar added: **a language the extractor
 does not know does not fail — it returns an empty or nonsense result that reads exactly
 like "this repository has no imports."** Adding a grammar to `GRAMMARS` is not the same as
