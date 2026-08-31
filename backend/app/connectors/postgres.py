@@ -167,7 +167,7 @@ class PostgresConnector(BaseConnector):
 
         pool = self._pool
 
-        async def _run() -> list:
+        async def _run() -> tuple[list, list[str]]:
             conn = await pool.acquire()
             try:
                 if _is_row_returning(numbered_query):
@@ -177,10 +177,20 @@ class PostgresConnector(BaseConnector):
                     # millions-of-rows) result set in memory. asyncpg requires
                     # non-scrollable cursors to live inside a transaction.
                     async with conn.transaction():
-                        cur = await conn.cursor(numbered_query, *values)
-                        return await cur.fetch(MAX_RESULT_ROWS + 1)
-                # Non-row-returning statements (DDL/DML) can't use a cursor.
-                return await conn.fetch(numbered_query, *values)
+                        # Prepared first, so the column names are known BEFORE any row
+                        # is fetched. Deriving them from `rows[0]` meant an empty
+                        # result carried no columns at all, and `StageValidator` read
+                        # that as every expected column being missing — a correct
+                        # query matching zero rows failed with "Missing expected
+                        # columns", naming aliases it had SELECTed. Same defect as
+                        # `mysql.py`; SQLite and ClickHouse never had it.
+                        stmt = await conn.prepare(numbered_query)
+                        described = [a.name for a in stmt.get_attributes()]
+                        cur = await stmt.cursor(*values)
+                        return await cur.fetch(MAX_RESULT_ROWS + 1), described
+                # Non-row-returning statements (DDL/DML) can't use a cursor, and have
+                # no columns to describe.
+                return await conn.fetch(numbered_query, *values), []
             except (asyncio.CancelledError, TimeoutError):
                 # Re-audit fix: ``asyncio.wait_for`` below cancels this coroutine
                 # mid-cursor / mid-transaction on timeout. A connection
@@ -207,13 +217,13 @@ class PostgresConnector(BaseConnector):
             # explicit wait_for, matching the mysql/clickhouse connectors.
             # asyncpg's pool ``command_timeout`` only covers a single command,
             # not a hung pool acquire or multi-step cursor read.
-            rows = await asyncio.wait_for(_run(), timeout=timeout_s)
+            rows, described = await asyncio.wait_for(_run(), timeout=timeout_s)
 
             elapsed = (time.monotonic() - start) * 1000
             if not rows:
-                return QueryResult(row_count=0, execution_time_ms=elapsed)
+                return QueryResult(columns=described, row_count=0, execution_time_ms=elapsed)
 
-            columns = list(rows[0].keys())
+            columns = list(rows[0].keys()) or described
             truncated = len(rows) > MAX_RESULT_ROWS
             capped = rows[:MAX_RESULT_ROWS] if truncated else rows
             data = [list(r.values()) for r in capped]
