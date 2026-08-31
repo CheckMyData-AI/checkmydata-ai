@@ -24,8 +24,8 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 | Scenarios | **127** |
 | Status | implemented × 127 |
 | Last verdict | PARTIAL × 2, PASS × 125 |
-| Verified when | 2026-07-19 × 100, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 5 |
-| **Verified >30 days ago** | **100 of 127** (oldest 43 days) |
+| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10 |
+| **Verified >30 days ago** | **95 of 127** (oldest 43 days) |
 | Never verified (no date) | 0 |
 | Referenced from code or tests | **21 of 127** |
 
@@ -42,12 +42,12 @@ it is what moves it.
 
 | ID | Title | Feature | Persona | Status | Last audit |
 |----|-------|---------|---------|--------|------------|
-| SCN-001 | First-run onboarding wizard — happy path | onboarding | new-user | implemented | 2026-07-19 PASS |
+| SCN-001 | First-run onboarding wizard — happy path | onboarding | new-user | implemented | 2026-08-31 PASS |
 | SCN-002 | Onboarding — connection test fails, retry/edit | onboarding | new-user | implemented | 2026-07-19 PASS |
 | SCN-003 | Onboarding — skip setup / try demo | onboarding | new-user | implemented | 2026-08-20 PASS (seeded, read-only, deduped) |
 | SCN-004 | Request project access (non-approved user) | onboarding | new-user | implemented | 2026-07-19 PASS |
-| SCN-005 | Register with email + password | auth | new-user | implemented | 2026-07-19 PASS |
-| SCN-006 | Log in with email + password | auth | analyst | implemented | 2026-07-19 PASS |
+| SCN-005 | Register with email + password | auth | new-user | implemented | 2026-08-31 PASS |
+| SCN-006 | Log in with email + password | auth | analyst | implemented | 2026-08-31 PASS |
 | SCN-007 | Sign in with Google | auth | analyst | implemented | 2026-07-19 PASS |
 | SCN-008 | Log out | auth | analyst | implemented | 2026-08-25 PASS |
 | SCN-009 | Change password | auth | analyst | implemented | 2026-07-19 PASS |
@@ -131,7 +131,7 @@ it is what moves it.
 | SCN-087 | Run a batch of queries | batch | analyst | implemented | 2026-07-19 PASS |
 | SCN-088 | Build a batch from saved notes | batch | analyst | implemented | 2026-07-19 PASS |
 | SCN-089 | View batch results | batch | analyst | implemented | 2026-08-31 PASS |
-| SCN-090 | Create a scheduled query + alerts | schedules | owner | implemented | 2026-07-19 PASS |
+| SCN-090 | Create a scheduled query + alerts | schedules | owner | implemented | 2026-08-31 PASS |
 | SCN-091 | Edit / pause / run-now a schedule | schedules | owner | implemented | 2026-07-19 PASS |
 | SCN-092 | Delete a schedule | schedules | owner | implemented | 2026-07-19 PASS |
 | SCN-093 | View schedule run history | schedules | owner | implemented | 2026-07-19 PASS |
@@ -147,7 +147,7 @@ it is what moves it.
 | SCN-103 | Mint & copy an MCP token | mcp-tokens | api-consumer | implemented | 2026-07-19 PASS |
 | SCN-104 | Revoke an MCP token | mcp-tokens | api-consumer | implemented | 2026-07-19 PASS |
 | SCN-105 | Background tasks — view/cancel/retry/dismiss | tasks | analyst | implemented | 2026-07-19 PASS |
-| SCN-106 | Request history & trace detail | logs | owner | implemented | 2026-07-19 PASS |
+| SCN-106 | Request history & trace detail | logs | owner | implemented | 2026-08-31 PASS |
 | SCN-107 | Runs & Errors log tabs | logs | owner | implemented | 2026-08-16 PASS |
 | SCN-108 | Live activity log stream | logs | analyst | implemented | 2026-07-19 PASS |
 | SCN-109 | Landing page → Get Started | marketing | visitor | implemented | 2026-07-19 PASS |
@@ -217,7 +217,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** connection created, DB indexed, onboarding dismissed; user lands in chat with the first question queued
 - **UI elements:** step progress dots, DB-type toggles, host/port/db/user/password inputs, "SSH Tunnel (Advanced)" toggle, Test spinner, "Start indexing" button, repo URL input, first-question textarea, Back / Continue / "Finish setup" / "Skip setup entirely" buttons
 - **States covered:** loading, success, error
-- **Errors & recovery:** create fails → toast "Failed to create connection"; index timeout → inline "Indexing had issues, but you can still use the app" + toast + Continue; complete fails → toast "Failed to complete onboarding" (`OnboardingWizard.tsx:159,209,236`)
+- **Errors & recovery:** create fails → toast "Failed to create connection"; index timeout → inline "Indexing had issues, but you can still use the app" + toast + Continue; complete fails → toast "Failed to complete onboarding" (`OnboardingWizard.tsx:160` create, `:584-591` the indexing warning and its Continue, `:237` complete)
 - **Status:** implemented
 - **Coverage:** components/onboarding/OnboardingWizard.tsx:13,173,286-292,498-660; app/app/page.tsx:121-122,174
 
@@ -283,9 +283,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** account created, session established, redirect to `/app`
 - **UI elements:** mode-switch button, display name input, email input, password input, "Create Account" button, inline validation messages
 - **States covered:** loading, error, success
-- **Errors & recovery:** invalid email → inline "Please enter a valid email address"; password <8 → inline "Password must be at least 8 characters"; register fails → inline error block + toast "Registration failed" (`login/page.tsx:133-135,224-227`; `auth-store.ts:118-122`)
+- **Errors & recovery:** invalid email → inline "Please enter a valid email address"; password <8 → inline "Password must be at least 8 characters"; register fails → inline error block + toast "Registration failed" (`login/page.tsx:162` sets the email message and `:240` renders it, `:262-266` the password rule; `auth-store.ts:115-123`)
 - **Status:** implemented
-- **Coverage:** app/login/page.tsx:34,166-254; stores/auth-store.ts:111-123
+- **Coverage:** app/login/page.tsx:159-190 (submit), :208-272 (register fields), :284-291 (error block); stores/auth-store.ts:115-123
 
 ### SCN-006: Log in with email + password
 - **Persona:** analyst
@@ -298,9 +298,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** session cookie set, redirect to `/app`
 - **UI elements:** email input, password input, "Sign In" button (shows "Signing in..."), inline error block
 - **States covered:** loading, error, success
-- **Errors & recovery:** invalid email → inline message; login fails → inline error + toast "Login failed" (`auth-store.ts:105-109`)
+- **Errors & recovery:** invalid email → inline message; login fails → inline error + toast "Login failed" (`auth-store.ts:102-110`, rendered `login/page.tsx:284-291`)
 - **Status:** implemented
-- **Coverage:** app/login/page.tsx:242-254,116-122; stores/auth-store.ts:98-110
+- **Coverage:** app/login/page.tsx:159-190 (submit), :294-300 ("Signing in…"), :284-291 (error block); stores/auth-store.ts:102-110
 
 ### SCN-007: Sign in with Google
 - **Persona:** analyst
@@ -1626,7 +1626,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** toast "Schedule created"; schedule appears in the list
 - **UI elements:** title/SQL inputs, connection select, cron preset/custom toggle, alert-condition rows, Create
 - **States covered:** loading, error, success
-- **Errors & recovery:** validation toasts (title/SQL/cron/connection); save fails → toast "Failed to save" (`ScheduleManager.tsx:181-243`); list load fails → inline error + Retry in place of the empty state (shared `ListError`, audit M5; `ScheduleManager.tsx:103-122,344-350`)
+- **Errors & recovery:** validation toasts (title/SQL/cron/connection); save fails → toast "Failed to save" (`ScheduleManager.tsx:251`; success toast `:246`); list load fails → inline error + Retry in place of the empty state (shared `ListError`, audit M5; `ScheduleManager.tsx:346-350`)
 - **Status:** implemented
 - **Coverage:** components/schedules/ScheduleManager.tsx:444-612; components/ui/ListError.tsx; tests frontend/src/__tests__/components/ScheduleManager.test.tsx
 
@@ -1874,7 +1874,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** requests listed; trace spans with input/output/token detail
 - **UI elements:** date filter, tabs, request list + status filter + pagination, LogsTraceDetail span tree
 - **States covered:** loading, empty, error, success
-- **Errors & recovery:** queries load fails → banner "Failed to load logs" + Retry, visible on all three tabs (not only Queries — audit L6; `LogsScreen.tsx:76,147-154`); trace fails → inline "Failed to load trace" (`LogsTraceDetail.tsx:63-69`)
+- **Errors & recovery:** queries load fails → banner "Failed to load logs" + Retry, visible on all three tabs (not only Queries — audit L6; `LogsScreen.tsx:76,147-154`); trace fails → inline "Failed to load trace" (set `LogsTraceDetail.tsx:45`, rendered `:63-66`)
 - **Status:** implemented
 - **Coverage:** components/logs/LogsScreen.tsx:104-216; components/logs/LogsTraceDetail.tsx:44-141; tests frontend/src/__tests__/components/LogsScreenTabs.test.tsx
 
