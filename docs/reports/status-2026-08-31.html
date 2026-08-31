@@ -38,14 +38,14 @@ footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--line);color:v
 </style></head><body><div class="wrap">
 
 <h1>checkmydata-ai — статус, аудит работы, план</h1>
-<div class="sub">2026-08-31 · всё ниже измерено, источник указан рядом с числом</div>
+<div class="sub">2026-08-31 · всё ниже измерено, источник указан рядом с числом · <b>обновлено после нарезки 1.17.0</b></div>
 
 <h2>1. Где проект сейчас</h2>
 <div class="grid">
-  <div class="card"><div class="n ok">v299</div><div class="l">прод = <code>main</code> (a7ca1de)</div></div>
-  <div class="card"><div class="n">4</div><div class="l">PR открыто, все зелёные</div></div>
-  <div class="card"><div class="n bad">82</div><div class="l">записи в <code>[Unreleased]</code></div></div>
-  <div class="card"><div class="n warn">17</div><div class="l">не-зелёных строк доски из 44</div></div>
+  <div class="card"><div class="n ok">v301</div><div class="l">прод, все правки выкачены</div></div>
+  <div class="card"><div class="n ok">0</div><div class="l">PR открыто (кроме релизного)</div></div>
+  <div class="card"><div class="n ok">0</div><div class="l">в <code>[Unreleased]</code> — 84 ушли в 1.17.0</div></div>
+  <div class="card"><div class="n warn">15</div><div class="l">не-зелёных строк доски из 45</div></div>
   <div class="card"><div class="n">67 527</div><div class="l">рёбер графа · IMPORTS 17 148</div></div>
   <div class="card"><div class="n bad">0</div><div class="l">запросов за 24 часа</div></div>
   <div class="card"><div class="n ok">7140</div><div class="l">тестов бэкенда зелёных</div></div>
@@ -166,6 +166,55 @@ sink, поэтому 758 вызовов на пересборку не учит�
 При нуле запросов за сутки следующий по ценности шаг — не двенадцатый дефект, а один живой сценарий
 до конца: подключить Stripe либо выключить биллинг, задать вопрос от реального аккаунта и посмотреть
 трассу. Это решение продуктовое, поэтому предлагаю, а не делаю.</p>
+
+
+<h2>6. Что изменилось после первой версии этого отчёта</h2>
+
+<h3>Всё слито и выкачено</h3>
+<p>#256–#259 в <code>main</code>, прод на <b>v301</b>. Починка индикатора проверена
+<b>на живом дино с боевыми флагами</b>, без пересборки:</p>
+<pre>resolve_ssh_key 3% → … → code_symbol_embed 43% → … → generate_docs 90% → record_index 100%
+monotonic: True | ends at 100</pre>
+
+<h3>Пересборка завершилась и закрыла ещё одну строку</h3>
+<p><code>pipeline_end: completed (Indexed 10004 files, 718 schemas)</code> — <b>12 329 с</b>,
+<code>trigger=queue status=completed step=record_index</code>. Это ровно то доказательство,
+которого требовал <b>CB-OPS2</b>: «вычёркивать по завершённой ручной переиндексации, а не по
+слиянию».</p>
+
+<h3>Закрытие CB-OPS2 вскрыло два неверных числа</h3>
+<table>
+<tr><th>Где</th><th>Говорило</th><th>На самом деле</th></tr>
+<tr><td>строка доски</td><td>«по умолчанию 3600 на ветке»</td><td><code>21600</code> в <code>config.py:596</code></td></tr>
+<tr><td><code>CLAUDE.md</code></td><td>«16200 с с 2026-08-27»</td><td><code>21600</code></td></tr>
+</table>
+<p>Молча уехало потому, что тест утверждает лишь <code>ceiling ≥ измеренное × 1.25</code>
+(12 039 × 1.25 = 15 049) — под это подходят оба. <b>Проверка, допускающая диапазон, не ловит
+дрейф внутри диапазона.</b> Обе цифры исправлены; измерение полной пересборки стало диапазоном:
+12 039 с и 12 329 с, два независимых отсчёта.</p>
+<p><b>CB-UX1 отставал на партию</b>: #258 опустил потолок до 95, строка осталась на 100.
+Доска протухает так же, как сценарии, которые она отслеживает.</p>
+
+<h3>#257 проверен на боевых данных без пересборки</h3>
+<pre>refs            377 → 346   (31 отброшено)
+lists at cap 10  29 → 21
+
+Coupon                 ← handle    @ sendmail/app/Services/Workspaces/RemoveUserFromWorkspace.php
+PaymentRoutingOverride ← boot      @ partner/app/Providers/AuthServiceProvider.php</pre>
+<p>Сущность из <code>api/</code> связывалась с обработчиком в <b>другом приложении</b>, а
+<code>boot</code> — метод фреймворка, который есть в каждом провайдере Laravel.
+<b>Оговорка:</b> это прогон ранжирования по сохранённым ссылкам, а не живая пересборка — доказана
+отбраковка, но не пересортировка выживших.</p>
+
+<h3>Трёхчасовая пересборка для проверки не нужна</h3>
+<p><code>graph_db_bridge</code> гейтится только на <code>lineage_enabled</code> и наличие графа,
+не на список завершённых шагов. В проде <code>DAILY_KNOWLEDGE_SYNC_ENABLED=true</code>, значит
+ночной прогон в 3:00 Europe/Berlin перезапустит мост сам. Проверю числами завтра, а не объявлю
+сейчас.</p>
+
+<h3>Здоровье прода, точно</h3>
+<p>За шесть часов <b>два отказа, оба один и тот же</b> — <code>code_db_sync</code>, заблокированный
+бюджетом. Больше не сломано ничего.</p>
 
 <footer>
 Собрано из: <code>gh pr list</code>, <code>heroku releases/logs</code>, Supabase
