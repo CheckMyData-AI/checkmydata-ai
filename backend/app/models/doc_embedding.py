@@ -27,7 +27,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, Text, func, text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -48,7 +48,12 @@ class DocEmbedding(Base):
         ForeignKey("projects.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    id: Mapped[str] = mapped_column(String(512), primary_key=True)
+    # Text, not String(512). The id embeds the symbol UID, which already begins with
+    # the file path the id also prefixes — so a deep PHP module path counts twice, and
+    # production dropped code-symbol chunks in batches of 200 with
+    # StringDataRightTruncation. Measured there: uids reach 316 chars and the longest
+    # id that fit was 497, which is how the cap looked survivable until it was not.
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
     document: Mapped[str] = mapped_column(Text, nullable=False)
     # Both columns carry a SQLite variant, and neither is decoration. Development
     # and the whole test suite run on SQLite and call `create_all` over every model;

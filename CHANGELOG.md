@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — code-symbol vectors were dropped in batches of 200, silently
+
+Production, 2026-08-31, during the first full rebuild after the PHP extraction fix:
+
+    code_symbol_chunker: failed to upsert 200 chunks for project 38856e63
+    psycopg.errors.StringDataRightTruncation: value too long for character varying(512)
+
+`doc_embeddings.id` was `String(512)`. The id is
+`f"sym:{rel_path}:{symbol.uid}{suffix}:{chunk_idx}"`, and `symbol.uid` already opens with
+that same path (`{lang}:{path}:{kind}:{scope.}{name}` since SYMBOL_UID_SCHEMA 2) — so the
+path is counted twice.
+
+Measured against the real repository: 25 538 symbols, of which exactly **three** produce
+an id over 512, the longest 518. Three is not the damage. The flush is one
+`INSERT … SELECT unnest(…)` per batch, so a single oversized id fails the whole statement
+— which is what `failed to upsert 200 chunks` means, and 199 innocent vectors went with
+each one. The chunker catches the failure and logs a WARNING, so `code_symbol_embed`
+reported success throughout.
+
+Widened to `Text` rather than de-duplicating the path: changing the id would leave the
+old rows as unreachable duplicates until a clean rebuild, because an incremental run
+merges by id — trading a loud failure for a quiet one. Text carries no storage or lookup
+penalty over varchar in Postgres, and the only real bound is the btree entry limit
+(~2 704 bytes), far above anything a path produces.
+
+The batch remaining atomic is deliberate, not an oversight: a per-row write measured
+167 ms of fixed cost each, which is why the write batch exists at all.
 ### Fixed — a repo index enqueued directly had no run row, so nothing could see it
 
 `run_repo_index_task`, the ARQ entrypoint, called `tracker.begin()` and nothing else when
