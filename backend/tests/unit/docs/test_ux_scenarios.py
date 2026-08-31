@@ -268,7 +268,17 @@ def test_legacy_coverage_paths_do_not_regress() -> None:
 # The pattern across both batches: behaviour survives, coordinates rot. A `file:line`
 # reference is a claim with a short half-life, and the ones that decay silently are
 # worse than none — they read as evidence while pointing at unrelated code.
-STALE_VERIFICATION_CEILING = 100
+# 100 → 95 on 2026-08-31, the third batch off the same backlog: SCN-090, SCN-106,
+# SCN-001, SCN-005, SCN-006. All five held behaviourally and eight references did not.
+# The worst was SCN-001's `OnboardingWizard.tsx:209` for the indexing-failure notice,
+# which now lives at :584 — a 375-line drift in an 819-line file. The login page had
+# moved wholesale: every one of SCN-005's and SCN-006's coordinates pointed at unrelated
+# code in a file that had grown to 392 lines.
+#
+# Three batches in, the ratio is stable and worth stating: 15 scenarios re-audited, 15
+# behaviourally correct, 22 stale references. The document's *claims* are holding; its
+# *citations* are not, and only the citations decay silently.
+STALE_VERIFICATION_CEILING = 95
 
 
 def _status_module():
