@@ -18,17 +18,6 @@ class Step:
 
 
 _BASE: dict[str, list[Step]] = {
-    "index_repo": [
-        Step("resolve_ssh_key", "SSH Key"),
-        Step("clone_or_pull", "Git Clone/Pull", weight=2),
-        Step("detect_changes", "Detect Changes"),
-        Step("cleanup_deleted", "Cleanup Deleted"),
-        Step("analyze_files", "Analyze Files", weight=3),
-        Step("project_profile", "Project Profile"),
-        Step("cross_file_analysis", "Cross-File Analysis", weight=2),
-        Step("generate_docs", "Generate Docs", weight=3),
-        Step("record_index", "Record Index"),
-    ],
     "db_index": [
         Step("introspect_schema", "Introspect Schema"),
         Step("fetch_samples", "Fetch Samples"),
@@ -54,25 +43,54 @@ _BASE: dict[str, list[Step]] = {
     ],
 }
 
-# Flag-gated steps appended to index_repo when the corresponding flag is on.
-_INDEX_REPO_FLAG_STEPS: list[tuple[str, Step]] = [
+#: `index_repo`, in the order the pipeline actually runs it, each step carrying the flag
+#: that gates it (``None`` = always).
+#:
+#: Order matters because `progress_for` weighs the manifest PREFIX up to the completed
+#: step's position. Flag-gated steps used to be appended after the unconditional ones, so
+#: the list bore no relation to execution and the bar moved accordingly. Read from the
+#: journal of a live rebuild on 2026-08-31 (run `3a0fdd16`), which reported:
+#:
+#:     resolve_ssh_key 5 → clone_or_pull 14 → detect_changes 18 → project_profile 41
+#:     → ast_parse 77 → graph_build 86 → code_symbol_embed 86 (absent, so no move)
+#:     → analyze_files 36  ← backwards, from 86
+#:     → cross_file_analysis 50 → graph_db_bridge 100
+#:     → generate_docs 100  ← and it stayed there for the 2.6 h that stage takes
+#:
+#: The order below is that journal's, not the source file's: several steps are emitted
+#: from helpers defined far from where they are called, so reading line numbers gives a
+#: different and wrong answer.
+_INDEX_REPO_STEPS: list[tuple[str | None, Step]] = [
+    (None, Step("resolve_ssh_key", "SSH Key")),
+    (None, Step("clone_or_pull", "Git Clone/Pull", weight=2)),
+    (None, Step("detect_changes", "Detect Changes")),
+    (None, Step("cleanup_deleted", "Cleanup Deleted")),
+    (None, Step("project_profile", "Project Profile")),
     ("code_graph_enabled", Step("ast_parse", "AST Parse", weight=2)),
     ("code_graph_enabled", Step("graph_build", "Build Code Graph", weight=2)),
-    ("hybrid_retrieval_enabled", Step("bm25_build", "Build BM25")),
-    ("schema_retrieval_enabled", Step("schema_embed", "Embed Schema")),
+    # 2 300 s measured on the 9 981-file repository, 26.5 min on the 2026-08-31 rebuild —
+    # the second-longest step, and it was in no manifest at all, so `_record` journalled
+    # it without touching `current_step` and the bar stood still throughout.
+    ("hybrid_retrieval_enabled", Step("code_symbol_embed", "Embed Code Symbols", weight=3)),
+    (None, Step("analyze_files", "Analyze Files", weight=3)),
+    (None, Step("cross_file_analysis", "Cross-File Analysis", weight=2)),
     ("lineage_enabled", Step("graph_db_bridge", "Code→DB Lineage")),
     ("clustering_enabled", Step("graph_clustering", "Cluster Communities")),
+    # The longest step in the pipeline: ~9 375 s at ~4.8 docs/min over 758 documents.
+    (None, Step("generate_docs", "Generate Docs", weight=8)),
+    ("hybrid_retrieval_enabled", Step("bm25_build", "Build BM25")),
+    ("schema_retrieval_enabled", Step("schema_embed", "Embed Schema")),
+    (None, Step("record_index", "Record Index")),
 ]
 
 
 def resolve_manifest(kind: str, *, flags: dict[str, bool] | None = None) -> list[Step]:
-    if kind not in _BASE:
-        raise KeyError(f"unknown run kind: {kind}")
-    steps = list(_BASE[kind])
     if kind == "index_repo":
         flags = flags or {}
-        steps += [step for flag, step in _INDEX_REPO_FLAG_STEPS if flags.get(flag)]
-    return steps
+        return [step for flag, step in _INDEX_REPO_STEPS if flag is None or flags.get(flag)]
+    if kind not in _BASE:
+        raise KeyError(f"unknown run kind: {kind}")
+    return list(_BASE[kind])
 
 
 def total_steps(manifest: list[Step]) -> int:

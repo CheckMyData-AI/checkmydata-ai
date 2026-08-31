@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>checkmydata-ai — статус, аудит, план · 2026-08-31</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--tx:#e6edf3;--dim:#8b949e;
+--ok:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#58a6ff;--mono:ui-monospace,"SF Mono",Menlo,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);
+font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:40px 24px 80px}
+h1{font-size:26px;margin:0 0 6px;letter-spacing:-.02em}
+.sub{color:var(--dim);font-size:14px;margin-bottom:34px}
+h2{font-size:19px;margin:42px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+h3{font-size:15px;margin:26px 0 8px;color:var(--acc)}
+p{margin:10px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px;margin:18px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.card .n{font:600 25px/1.2 var(--mono);letter-spacing:-.02em}
+.card .l{color:var(--dim);font-size:12px;margin-top:5px}
+.ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)} .dim{color:var(--dim)}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:8px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+code,pre{font-family:var(--mono);font-size:12.5px}
+code{background:#1f2428;padding:1px 5px;border-radius:4px}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+padding:13px 15px;overflow-x:auto;margin:12px 0;line-height:1.55}
+.q{border-left:3px solid var(--acc);padding:2px 0 2px 15px;margin:16px 0;color:var(--dim)}
+.q.bad{border-color:var(--bad)}
+ul{margin:9px 0;padding-left:21px} li{margin:5px 0}
+.pill{display:inline-block;font:600 10.5px/1 var(--mono);padding:3px 7px;border-radius:4px;
+border:1px solid var(--line);color:var(--dim);vertical-align:1px}
+.pill.ok{border-color:#1f6f36;background:#0f2a17;color:var(--ok)}
+.pill.bad{border-color:#7d2926;background:#2b100f;color:var(--bad)}
+.pill.warn{border-color:#7a5c12;background:#2a2008;color:var(--warn)}
+footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim);font-size:12.5px}
+</style></head><body><div class="wrap">
+
+<h1>checkmydata-ai — статус, аудит работы, план</h1>
+<div class="sub">2026-08-31 · всё ниже измерено, источник указан рядом с числом</div>
+
+<h2>1. Где проект сейчас</h2>
+<div class="grid">
+  <div class="card"><div class="n ok">v299</div><div class="l">прод = <code>main</code> (a7ca1de)</div></div>
+  <div class="card"><div class="n">4</div><div class="l">PR открыто, все зелёные</div></div>
+  <div class="card"><div class="n bad">82</div><div class="l">записи в <code>[Unreleased]</code></div></div>
+  <div class="card"><div class="n warn">17</div><div class="l">не-зелёных строк доски из 44</div></div>
+  <div class="card"><div class="n">67 527</div><div class="l">рёбер графа · IMPORTS 17 148</div></div>
+  <div class="card"><div class="n bad">0</div><div class="l">запросов за 24 часа</div></div>
+  <div class="card"><div class="n ok">7140</div><div class="l">тестов бэкенда зелёных</div></div>
+</div>
+
+<h3>Факт, который переопределяет остальное</h3>
+<p>Трафика практически нет: <b>12 запросов в августе</b>, 18 в июле, 56 в июне, и <b>ноль за
+последние сутки</b>. Всё, что я чинил, — это подготовка, а не реакция на инцидент. Проценты отказов,
+считанные по двенадцати наблюдениям, — слабое свидетельство, и я обязан это сказать прежде, чем
+предлагать план.</p>
+
+<h2>2. Что закрыто и чем доказано</h2>
+<table>
+<tr><th>Дефект</th><th>Доказательство</th><th>Тип</th></tr>
+<tr><td>IMPORTS-рёбер не существовало для PHP и Ruby</td>
+    <td><code>built 25612 symbols, 67527 edges (…17148 IMPORTS…)</code> — лог прода</td>
+    <td><span class="pill ok">прод</span></td></tr>
+<tr><td>Векторы кодовых символов гибли пачками по 200</td>
+    <td><code>ids&gt;512 = 4</code> — строки, невозможные до миграции; 0 ошибок усечения за полную стадию</td>
+    <td><span class="pill ok">прод</span></td></tr>
+<tr><td>Прогон из очереди не создавал строку <code>IndexingRun</code></td>
+    <td><code>kind=index_repo trigger=queue heartbeat=09:08:48</code> в живом прогоне</td>
+    <td><span class="pill ok">прод</span></td></tr>
+<tr><td>Гвард обязательных фильтров: работал 1 предикат из 159</td>
+    <td>На дино: корректный запрос проходит с первой попытки. Воспроизведение 865 реальных запросов: 392 → 712</td>
+    <td><span class="pill warn">дино + реплей</span></td></tr>
+<tr><td>Пустой результат обвинялся в пропаже колонок</td>
+    <td>Тесты + деплой v296</td><td><span class="pill warn">тесты</span></td></tr>
+<tr><td>Учёт токенов считал ноль</td>
+    <td>0 → 58 млн в <code>token_usage</code></td><td><span class="pill ok">прод</span></td></tr>
+</table>
+
+<h2>3. Аудит моей работы — где я был неточен</h2>
+<p>Это часть отчёта, а не приложение к нему. Каждый пункт прошёл бы незамеченным.</p>
+
+<h3>Три ошибки в собственном коде, пойманные тестами</h3>
+<ul>
+<li><b>Замена текста срезала <code>@staticmethod</code></b> у соседнего метода. Все юнит-тесты прошли;
+поймал сквозной тест графа, написанный именно на этот случай.</li>
+<li><b>Мой тест делал <code>reload</code> внутри патча</b>, оставляя подменённую константу следующим
+тестам — загрязнение, зависящее от порядка.</li>
+<li><b>Регексп сканера подписей <code>[a-z_]+</code></b> молча терял <code>bm25_build</code> из-за
+цифр. Проверка ключей, теряющая ключи, рапортует об успехе, которого не совершала.</li>
+</ul>
+
+<h3>Три утверждения, которые я поправил сам</h3>
+<ul>
+<li><b>«<code>stage_validation</code> — четверть отказов»</b> — неверно. Он был крупнейшей категорией
+среди отказов <i>спанов</i>, а не <i>запросов</i>, и я расширил вывод за пределы измерения.</li>
+<li><b>«58 млн учтённых токенов»</b> — недосчёт. <code>doc_generator.py:84</code>,
+<code>code_db_sync_analyzer.py:211</code>, <code>db_index_validator.py:150</code> строят роутер без
+sink, поэтому 758 вызовов на пересборку не учитываются вовсе.</li>
+<li><b>Фикстур длины идентификатора построен на глаз</b> — вышло 442 символа при пороге 512 и не
+доказывал ничего. Пересчитал по измеренным длинам: нужно 524.</li>
+</ul>
+
+<h3>Одна процедурная ошибка</h3>
+<p>Переключил ветку <b>посреди работающего pytest</b> — файлы сменились под ним, два теста упали не
+по своей вине. Потерянный прогон, а не потерянные данные, но это ровно то, чего я сам избегал
+пятью шагами раньше.</p>
+
+<h3>Чего я НЕ проверил</h3>
+<ul>
+<li><b>Правка гварда не видела живого трафика</b> — с момента выкатки не было ни одного запроса.
+Подтверждена воспроизведением и прямым исполнением, но не пользователем.</li>
+<li><b>Ранжирование ссылок на вызывающих (#257) и починка прогресса</b> — не проверены в проде вовсе:
+обе требуют пересборки после слияния.</li>
+<li><b>CB-OPS1 остаётся открытым</b>: 38 × R14, 0 × R15, пик 1137 МБ (110,6 %). Два независимых окна
+показали одно и то же — за квотой, свопит, не гибнет.</li>
+</ul>
+
+<h2>4. Красное: биллинг останавливает продукт</h2>
+<div class="q bad"><code>Monthly token budget exceeded (8,802,534 / 1,000,000)</code> —
+<code>run_code_db_sync</code>, 07:05 UTC</div>
+<p>9 пользователей, <b>0 подписок</b>, все откатываются на план Free (1 млн/мес). Основной аккаунт
+израсходовал 8,8 млн. <code>BILLING_ENABLED=true</code> при незаданном <code>STRIPE_SECRET_KEY</code>:
+лимиты планов применяются в продукте, где план купить негде. Гейт стоит на всех трёх входах чата
+(<code>chat.py:247, 613, 1663</code>), значит это видно пользователю, а не только фону.</p>
+<p>Это стало видно только потому, что я починил учёт: раньше гейт мерил ноль и не срабатывал никогда.
+<b>И 8,8 млн — недосчёт</b> (см. выше), так что реальный расход выше.</p>
+
+<h2>5. План</h2>
+
+<h3>Сегодня, автономно — после того как закончится пересборка (~2 часа)</h3>
+<ol>
+<li>Слить <b>#256</b> (доска), <b>#257</b> (ранжирование вызывающих), <b>#258</b> (UX-партия 3) и
+запушить четвёртую ветку — <b>честный прогресс</b> (манифест не совпадал с порядком исполнения:
+индикатор шёл <code>86 % → 36 % → 100 %</code> и заканчивал на 60 %).</li>
+<li>Один деплой на все четыре, затем одна пересборка — она проверит #257 и прогресс разом.</li>
+<li><b>Срезать релиз 1.17.0.</b> 82 записи в <code>[Unreleased]</code>, последний тег
+<code>v1.15.1</code>, а заголовок <code>[1.16.0]</code> тега не имеет. Это не косметика: без
+релизов нет точки отката и нечего назвать в Sentry.</li>
+</ol>
+
+<h3>Дальше, по убыванию ценности</h3>
+<table>
+<tr><th>Что</th><th>Почему именно это</th><th>Чьё</th></tr>
+<tr><td><b>Решение по биллингу</b></td>
+    <td>Продукт закрыт для основного аккаунта. Быстрое честное восстановление —
+    <code>BILLING_ENABLED=false</code> до подключения Stripe</td><td>ваше</td></tr>
+<tr><td><b>Режим «считать, не блокируя»</b></td>
+    <td>Три роутера без sink. Подключить как есть нельзя: sink записывает <i>и</i> проверяет, и
+    включение закроет индексацию тому же аккаунту</td><td>после решения выше</td></tr>
+<tr><td><b>Защита <code>main</code></b></td>
+    <td>За сессию влилось 15 PR без обязательных проверок. Все были зелёные — но это удача, а не
+    гарантия</td><td>ваше</td></tr>
+<tr><td>CB-OPS1: размер дино</td>
+    <td>Числа есть, решение — про деньги: следующий размер либо меньше состояния в
+    <code>generate_docs</code></td><td>ваше</td></tr>
+<tr><td>UX-долг: 95 из 127</td>
+    <td>Три партии дали устойчивую картину: <b>15 сценариев верны поведенчески, 22 ссылки протухли</b>.
+    Ценность падает — правятся координаты, а не поведение</td><td>моё, низкий приоритет</td></tr>
+</table>
+
+<h3>Что я предлагаю не делать</h3>
+<p>Продолжать искать дефекты в том же темпе. За сессию закрыто одиннадцать, и последние из них —
+индикатор прогресса и подписи шагов — уже про <b>наблюдаемость для пользователя, которого нет</b>.
+При нуле запросов за сутки следующий по ценности шаг — не двенадцатый дефект, а один живой сценарий
+до конца: подключить Stripe либо выключить биллинг, задать вопрос от реального аккаунта и посмотреть
+трассу. Это решение продуктовое, поэтому предлагаю, а не делаю.</p>
+
+<footer>
+Собрано из: <code>gh pr list</code>, <code>heroku releases/logs</code>, Supabase
+(<code>request_traces</code>, <code>indexing_runs</code>, <code>indexing_run_events</code>,
+<code>code_graph_edges</code>, <code>doc_embeddings</code>, <code>token_usage</code>, <code>plans</code>),
+<code>docs/qa-audit/issues.md</code>, <code>CHANGELOG.md</code>.
+Пересборка на момент отчёта: <code>generate_docs 127/758</code>, запущена 08:32. Полный прогон бэкенда: <b>7140 passed</b>. Единственное падение — <code>test_login_latency</code> под нагрузкой (машина параллельно гоняла vitest и tsc); на свободной машине проходит за 4,3 с. Порог у него жёсткий, так что на общем раннере CI он потенциально плавающий — записано, не чинилось.
+</footer>
+</div></body></html>

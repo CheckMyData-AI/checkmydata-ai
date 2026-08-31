@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the progress bar went backwards, then sat at 100% for two and a half hours
+
+Read from the journal of a live rebuild (run `3a0fdd16`, 2026-08-31), which is what an
+operator watching it would have seen:
+
+    graph_build          86%
+    code_symbol_embed    86%   ← 26 minutes, no movement: the step was in no manifest
+    analyze_files        36%   ← backwards, from 86
+    cross_file_analysis  50%
+    graph_db_bridge     100%   ← 100%, with 2.6 hours of `generate_docs` still to come
+
+Two causes. `code_symbol_embed` — 2 300 s measured on the 9 981-file repository — appeared
+in no manifest, and `RunCoordinator._record` journals an unknown step without touching
+`current_step`. And the manifest's ORDER bore no relation to execution: flag-gated steps
+were appended after the unconditional ones, while `progress_for` weighs the manifest
+prefix up to the completed step's position.
+
+`index_repo` is now one ordered list whose entries carry their own gate, in the order the
+journal shows the pipeline running them. Progress is monotonic and ends at 100%:
+3 → 10 → 13 → 17 → 20 → 27 → 33 → 43 → 53 → 60 → 63 → 90 → 93 → 97 → 100.
+
+The order comes from the journal, not from the source file: several steps are emitted from
+helpers defined far from where they are called, so reading line numbers gives a different
+and wrong answer.
+
+Separately, the frontend had a label for none of the flag-gated steps, so a run spent 12
+minutes in `graph_build` and 26 in `code_symbol_embed` displaying the raw key — the
+fallback is `|| task.currentStep`, which never looks broken enough to report.
+
+Both are held by tests rather than by lists: every emitted step must be in a manifest or on
+an explicit journal-only list with its reason, progress must never decrease and must end at
+100, and every manifest step must have a label. The label scan's first regex was
+`[a-z_]+`, which silently dropped `bm25_build` — a key scan that loses keys reports a pass
+it never performed.
 ### Fixed — the caller list padded itself to the cap with matches from another application
 
 After #247 the bridge attaches caller refs where it attached none, and the head of each
