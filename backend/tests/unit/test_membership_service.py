@@ -332,11 +332,17 @@ class TestTransferOwnership:
         assert exc.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_the_new_owner_s_project_quota_is_enforced(self, db, monkeypatch):
-        """Project quotas count by `owner_id` (`entitlement_service.py:216`), so a
-        transfer that skips the check is a plan-limit bypass wearing a feature's name.
+    async def test_the_new_owner_s_project_quota_is_enforced(self, db):
+        """Project quotas count by `owner_id` (`entitlement_service.py`), so a transfer
+        that skips the check is a plan-limit bypass wearing a feature's name.
+
+        Registered through the entitlement seam rather than monkeypatched onto
+        `EntitlementService`: the call site moved to `get_entitlements()` when billing was
+        made separable, and patching the class stopped intercepting anything. The default
+        provider is permissive — correct for the open-source build — so a test that only
+        asserted "no error" would now pass while checking nothing.
         """
-        from app.services.entitlement_service import QuotaExceededError
+        from app.entitlements import QuotaExceededError, reset_entitlements, set_entitlements
 
         old = await _make_user(db)
         new = await _make_user(db)
@@ -347,25 +353,30 @@ class TestTransferOwnership:
 
         called: list[str] = []
 
-        async def _full(_self, _db, user_id):  # patched on the class: `self` arrives too
-            called.append(user_id)
-            raise QuotaExceededError("full", resource="projects", limit=1, current=1)
+        class _Full:
+            async def enforce_project_quota(self, _db, user_id):
+                called.append(user_id)
+                raise QuotaExceededError("full", resource="projects", limit=1, current=1)
 
-        monkeypatch.setattr(
-            "app.services.entitlement_service.EntitlementService.enforce_project_quota",
-            _full,
-        )
+            async def enforce_connection_quota(self, _db, user_id):
+                return None
 
-        with pytest.raises(QuotaExceededError):
-            await svc.transfer_ownership(
-                db, proj.id, new_owner_user_id=new.id, actor_user_id=old.id
-            )
+            async def effective_token_limits(self, _db, user_id):
+                return (0, 0)
+
+        set_entitlements(_Full())
+        try:
+            with pytest.raises(QuotaExceededError):
+                await svc.transfer_ownership(
+                    db, proj.id, new_owner_user_id=new.id, actor_user_id=old.id
+                )
+        finally:
+            reset_entitlements()
 
         assert called == [new.id], "the quota checked must be the RECEIVING owner's"
         fresh = await db.get(Project, proj.id)
-        assert fresh.owner_id == old.id, "a refused transfer must change nothing"
+        assert fresh.owner_id == old.id, "a refused transfer must not move ownership"
 
-    @pytest.mark.asyncio
     async def test_the_members_list_shows_the_new_owner_as_owner(self, db):
         """`get_role` cannot see this, and that is the point.
 

@@ -103,41 +103,79 @@ async def test_calling_it_twice_reuses_the_same_demo(auth_client, db_session: As
     assert len(demos) == 1
 
 
+class _RefusingEntitlements:
+    """An entitlement provider that refuses exactly one quota and permits the rest.
+
+    Refusing both would not prove which check the route reached — and the demo route
+    calls the project quota first, so a provider that refused everything would let the
+    connection test pass on the project check.
+    """
+
+    def __init__(self, refuse: str, error: Exception) -> None:
+        self._refuse = refuse
+        self._error = error
+
+    async def enforce_project_quota(self, db, user_id):
+        if self._refuse == "project":
+            raise self._error
+
+    async def enforce_connection_quota(self, db, user_id):
+        if self._refuse == "connection":
+            raise self._error
+
+    async def effective_token_limits(self, db, user_id):
+        return (0, 0)
+
+
 @pytest.mark.asyncio
-async def test_a_project_quota_breach_answers_402(auth_client, monkeypatch):
+async def test_a_project_quota_breach_answers_402(auth_client):
     """F-BILL-07. The paywall the ordinary routes enforce applies here too, or it is
-    optional for anyone who finds this route."""
-    from app.api.routes import demo as demo_route
+    optional for anyone who finds this route.
 
-    async def _refuse(*_args, **_kwargs):
-        raise QuotaExceededError(
-            "Project limit reached on the Free plan",
-            resource="project",
-            limit=1,
-            current=1,
+    Driven through the entitlement registry rather than by patching a module attribute:
+    the route moved onto `get_entitlements()` when billing was made separable, and the
+    old `demo_route._entitlements` no longer exists. Patching the seam is also the more
+    faithful test — it exercises the path the cloud build actually takes.
+    """
+    from app.entitlements import reset_entitlements, set_entitlements
+
+    set_entitlements(
+        _RefusingEntitlements(
+            "project",
+            QuotaExceededError(
+                "Project limit reached on the Free plan",
+                resource="project",
+                limit=1,
+                current=1,
+            ),
         )
-
-    monkeypatch.setattr(demo_route._entitlements, "enforce_project_quota", _refuse)
-
-    resp = await auth_client.post("/api/demo/setup")
+    )
+    try:
+        resp = await auth_client.post("/api/demo/setup")
+    finally:
+        reset_entitlements()
     assert resp.status_code == 402
 
 
 @pytest.mark.asyncio
-async def test_a_connection_quota_breach_answers_402(auth_client, monkeypatch):
-    from app.api.routes import demo as demo_route
+async def test_a_connection_quota_breach_answers_402(auth_client):
+    from app.entitlements import reset_entitlements, set_entitlements
 
-    async def _refuse(*_args, **_kwargs):
-        raise QuotaExceededError(
-            "Connection limit reached on the Free plan",
-            resource="connection",
-            limit=1,
-            current=1,
+    set_entitlements(
+        _RefusingEntitlements(
+            "connection",
+            QuotaExceededError(
+                "Connection limit reached on the Free plan",
+                resource="connection",
+                limit=1,
+                current=1,
+            ),
         )
-
-    monkeypatch.setattr(demo_route._entitlements, "enforce_connection_quota", _refuse)
-
-    resp = await auth_client.post("/api/demo/setup")
+    )
+    try:
+        resp = await auth_client.post("/api/demo/setup")
+    finally:
+        reset_entitlements()
     assert resp.status_code == 402
 
 

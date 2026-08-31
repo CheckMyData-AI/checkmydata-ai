@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.entitlements.base import QuotaExceededError as _QuotaExceededError
 from app.models.billing import Plan, Subscription
 from app.models.connection import Connection
 from app.models.project import Project
@@ -21,24 +22,10 @@ from app.models.user import User
 logger = logging.getLogger(__name__)
 
 
-class QuotaExceededError(Exception):
-    """A plan quota (connections / projects) was reached (T-BILL-2 paywall)."""
-
-    def __init__(self, message: str, *, resource: str, limit: int, current: int):
-        super().__init__(message)
-        self.resource = resource
-        self.limit = limit
-        self.current = current
-
-    def as_payload(self) -> dict:
-        return {
-            "error": "plan_limit_reached",
-            "resource": self.resource,
-            "limit": self.limit,
-            "current": self.current,
-            "message": str(self),
-            "upgrade_url": "/pricing",
-        }
+# Re-exported, not redefined. The routes catch the one in `app.entitlements`, and a
+# second class with the same name would sail straight past their `except` — which is
+# exactly what happened for the length of one commit while the seam was being built.
+QuotaExceededError = _QuotaExceededError
 
 
 # Subscription statuses that grant paid-plan entitlements.

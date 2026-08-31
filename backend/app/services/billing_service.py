@@ -23,6 +23,16 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
+#: Pinned deliberately. Unpinned, the account's default governs and Stripe moves response
+#: shapes on its schedule rather than ours — which is not hypothetical here: the
+#: subscription period moved onto the subscription ITEM in `2025-07-30.basil`, and code
+#: reading the old top-level fields gets nothing and stores NULL without an error.
+#:
+#: `2025-09-30.clover` or later also makes `flexible` the default `billing_mode`; we set
+#: that explicitly below rather than inherit it, because the choice cannot be reversed.
+#: Upgrading this is a task with its own test run, never a deploy-day surprise.
+STRIPE_API_VERSION = "2025-09-30.clover"
+
 # Events we act on; everything else is recorded and ignored.
 _HANDLED_EVENTS = {
     "checkout.session.completed",
@@ -45,6 +55,7 @@ def _stripe():
     if not settings.stripe_secret_key:
         raise BillingError("Stripe is not configured (STRIPE_SECRET_KEY missing)")
     _s.api_key = settings.stripe_secret_key
+    _s.api_version = STRIPE_API_VERSION
     return _s
 
 
@@ -56,6 +67,27 @@ def _price_id_for(plan: Plan) -> str:
     if env_price:
         return env_price
     raise BillingError(f"Plan {plan.id!r} has no Stripe price configured")
+
+
+def _period_from(obj: dict) -> tuple[int | None, int | None]:
+    """(start, end) of the current period, from the subscription ITEM.
+
+    They lived on the subscription until `2025-07-30.basil` and moved to the item, so a
+    subscription can now carry items on different cadences and there is no single period
+    at the top level to read. We take the first item's, which is right for our
+    one-item-per-subscription model and would need revisiting the day it stops being one.
+
+    Falls back to the old top-level fields so a subscription created under an older
+    version still syncs, and answers `(None, None)` rather than raising when a payload has
+    no items at all — losing a period is survivable, losing the webhook is not.
+    """
+    items = (obj.get("items") or {}).get("data") or []
+    if items:
+        first = items[0] or {}
+        start, end = first.get("current_period_start"), first.get("current_period_end")
+        if start or end:
+            return start, end
+    return obj.get("current_period_start"), obj.get("current_period_end")
 
 
 def _ts_to_dt(ts: int | None) -> datetime | None:
@@ -109,9 +141,35 @@ class BillingService:
         if plan is None or plan.price_usd_month <= 0:
             raise BillingError(f"Unknown or non-purchasable plan: {plan_id!r}")
 
+        # Guard the duplicate BEFORE the money moves. A second active subscription for one
+        # account is a refund conversation, and by the time the webhook could notice it
+        # the card has already been charged.
+        existing = await self._active_subscription_id(db, user.id)
+        if existing:
+            raise BillingError(
+                f"This account already has an active subscription ({existing}). "
+                "Change the plan from the billing portal instead of buying a second one."
+            )
+
         price_id = _price_id_for(plan)
         customer_id = await self._ensure_customer(db, user)
         stripe = _stripe()
+
+        # Written TWICE, deliberately. Session metadata does not propagate to the
+        # subscription: a year from now the session is gone and every renewal invoice and
+        # `customer.subscription.*` event carries only what went into `subscription_data`.
+        # `_find_by_customer` is the fallback, not the design.
+        metadata = {"user_id": user.id, "plan_id": plan.id}
+        subscription_data: dict = {
+            "metadata": metadata,
+            # Irreversible, and chosen rather than inherited from whatever API version the
+            # account happens to sit on. Flexible is what Stripe recommends for new
+            # subscriptions and what the pinned version defaults to; saying it out loud
+            # means an account-level change cannot silently move it.
+            "billing_mode": {"type": "flexible"},
+        }
+        if plan.trial_days:
+            subscription_data["trial_period_days"] = plan.trial_days
 
         base = settings.app_url.rstrip("/")
         session = await asyncio.to_thread(
@@ -119,14 +177,34 @@ class BillingService:
             customer=customer_id,
             mode="subscription",
             line_items=[{"price": price_id, "quantity": 1}],
-            subscription_data=({"trial_period_days": plan.trial_days} if plan.trial_days else {}),
-            success_url=f"{base}{settings.billing_success_path}",
+            subscription_data=subscription_data,
+            # Stripe substitutes the id. Without it the success page has nothing to verify
+            # against, and the window between the redirect and the webhook cannot be
+            # closed at all.
+            success_url=f"{base}{settings.billing_success_path}"
+            f"{'&' if '?' in settings.billing_success_path else '?'}"
+            "session_id={CHECKOUT_SESSION_ID}",
             cancel_url=f"{base}{settings.billing_cancel_path}",
             client_reference_id=user.id,
-            metadata={"user_id": user.id, "plan_id": plan.id},
+            metadata=metadata,
             allow_promotion_codes=True,
         )
         return session["url"]
+
+    async def _active_subscription_id(self, db: AsyncSession, user_id: str) -> str | None:
+        """The account's live Stripe subscription id, or None.
+
+        `trialing` counts as live: a trial is a subscription that will bill, and selling a
+        second one during it produces two.
+        """
+        sub = (
+            await db.execute(select(Subscription).where(Subscription.user_id == user_id))
+        ).scalar_one_or_none()
+        if sub is None or not sub.stripe_subscription_id:
+            return None
+        return (
+            sub.stripe_subscription_id if sub.status in ("active", "trialing", "past_due") else None
+        )
 
     async def create_portal_session(self, db: AsyncSession, user: User) -> str:
         """Create a Stripe Customer Portal session and return its URL."""
@@ -187,6 +265,78 @@ class BillingService:
         await db.commit()
         return True
 
+    async def reconcile(self, db: AsyncSession, *, limit: int = 100) -> dict:
+        """Re-read Stripe and repair rows the webhooks did not.
+
+        Webhooks are best-effort and outages are not hypothetical: a delivery that never
+        arrives leaves a paying customer without access, and nothing in the logs says so.
+        This is the only path that finds that.
+
+        The guard that matters is the last one. Rows with no `stripe_subscription_id` were
+        never Stripe's — comped accounts, manual grants, the free tier — and cancelling
+        them because Stripe has never heard of them would be a self-inflicted outage. They
+        are skipped, not reconciled.
+        """
+        stripe = _stripe()
+        rows = list(
+            (
+                await db.execute(
+                    select(Subscription)
+                    .where(Subscription.stripe_subscription_id.is_not(None))
+                    .limit(limit)
+                )
+            ).scalars()
+        )
+        checked = repaired = orphaned = 0
+        for sub in rows:
+            checked += 1
+            try:
+                remote = await asyncio.to_thread(
+                    stripe.Subscription.retrieve, sub.stripe_subscription_id
+                )
+            except Exception as exc:  # noqa: BLE001 - one bad row must not stop the sweep
+                if "resource_missing" in str(exc):
+                    # Stripe has no such subscription. It carried a Stripe id, so it was
+                    # ours to cancel — unlike the rows filtered out above.
+                    sub.status = "canceled"
+                    orphaned += 1
+                    logger.warning(
+                        "billing: reconcile found no Stripe subscription %s; marked canceled",
+                        sub.stripe_subscription_id,
+                    )
+                else:
+                    logger.warning(
+                        "billing: reconcile could not read %s",
+                        sub.stripe_subscription_id,
+                        exc_info=True,
+                    )
+                continue
+
+            period_start, period_end = _period_from(dict(remote))
+            changed = False
+            for attr, value in (
+                ("status", remote.get("status")),
+                ("cancel_at_period_end", bool(remote.get("cancel_at_period_end"))),
+                ("current_period_start", _ts_to_dt(period_start)),
+                ("current_period_end", _ts_to_dt(period_end)),
+                ("trial_end", _ts_to_dt(remote.get("trial_end"))),
+            ):
+                if value is not None and getattr(sub, attr) != value:
+                    setattr(sub, attr, value)
+                    changed = True
+            plan_id = await self._resolve_plan_id(db, dict(remote))
+            if plan_id and sub.plan_id != plan_id:
+                sub.plan_id = plan_id
+                changed = True
+            if changed:
+                repaired += 1
+                logger.info("billing: reconcile repaired subscription %s", sub.id)
+
+        await db.commit()
+        result = {"checked": checked, "repaired": repaired, "orphaned": orphaned}
+        logger.info("billing: reconcile %s", result)
+        return result
+
     async def _apply_event(self, db: AsyncSession, event_type: str, obj: dict) -> None:
         if event_type == "checkout.session.completed":
             # Subscription state arrives via customer.subscription.* events;
@@ -232,8 +382,9 @@ class BillingService:
         sub.stripe_subscription_id = obj.get("id")
         sub.status = obj.get("status") or sub.status
         sub.cancel_at_period_end = bool(obj.get("cancel_at_period_end"))
-        sub.current_period_start = _ts_to_dt(obj.get("current_period_start"))
-        sub.current_period_end = _ts_to_dt(obj.get("current_period_end"))
+        period_start, period_end = _period_from(obj)
+        sub.current_period_start = _ts_to_dt(period_start)
+        sub.current_period_end = _ts_to_dt(period_end)
         sub.trial_end = _ts_to_dt(obj.get("trial_end"))
 
         plan_id = await self._resolve_plan_id(db, obj)

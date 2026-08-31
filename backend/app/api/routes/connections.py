@@ -619,10 +619,10 @@ async def create_connection(
 ):
     await _membership_svc.require_role(db, body.project_id, user["user_id"], "owner")
     # T-BILL-2: plan-based paywall on connection count (402 + upgrade payload).
-    from app.services.entitlement_service import EntitlementService, QuotaExceededError
+    from app.entitlements import QuotaExceededError, get_entitlements
 
     try:
-        await EntitlementService().enforce_connection_quota(db, user["user_id"])
+        await get_entitlements().enforce_connection_quota(db, user["user_id"])
     except QuotaExceededError as exc:
         raise HTTPException(status_code=402, detail=exc.as_payload()) from exc
 

@@ -6,6 +6,78 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — eight seams in a Stripe integration that had never executed
+
+`STRIPE_SECRET_KEY` has never been set, so none of the billing code has ever run. Every
+defect below is latent: it would have appeared for the first time on a real payment.
+Reviewed against `sheleg-dev:stripe-billing` and Stripe's own documentation.
+
+- **The API version was not pinned.** `_stripe()` set only `api_key`, so the account's
+  default governed and response shapes moved on Stripe's schedule. Now
+  `STRIPE_API_VERSION = "2025-09-30.clover"`.
+- **The subscription period was read from the wrong object.** It moved onto the
+  subscription ITEM in `2025-07-30.basil`; the old top-level fields return nothing and
+  `_ts_to_dt(None)` stores NULL without an error. `_period_from()` reads the item, falls
+  back to the top level for subscriptions created under older versions, and answers
+  `(None, None)` rather than raising when a payload has no items.
+- **`billing_mode` was inherited rather than chosen.** The choice cannot be reversed and
+  was being made by whichever API version the account happened to sit on. Now
+  `flexible`, explicitly.
+- **Metadata was written once.** `subscription_data` carried only `trial_period_days`, so
+  the subscription knew no `user_id` — and session metadata does not propagate. Every
+  renewal invoice a year from now would arrive with `_find_by_customer` as the only link.
+- **Nothing stopped a second subscription.** `_active_subscription_id` now guards before
+  the money moves; `trialing` counts as live, because a trial is a subscription that will
+  bill.
+- **`success_url` carried no session id**, so the window between the redirect and the
+  webhook could not be closed at all. `{CHECKOUT_SESSION_ID}` is appended.
+- **A signature failure answered 500**, which tells Stripe to retry forever. A wrong
+  signing secret is a deploy that is broken now: it answers **400** and logs which setting
+  to look at, without echoing the detail into an oracle.
+- **There was no reconciliation.** `BillingService.reconcile()` re-reads Stripe and repairs
+  drift, wired into the 24-hour maintenance loop. Its load-bearing guard: rows with no
+  `stripe_subscription_id` were never Stripe's — comped plans, manual grants, the free
+  tier — and cancelling them because Stripe has never heard of them would be a
+  self-inflicted outage.
+
+Three things the code already got right are now pinned by tests so a refactor cannot lose
+them: the idempotency claim is taken before the work and released on failure; the
+signature is verified against the raw body; and `invoice.paid` does not grant product,
+which makes the `billing_reason` trap — four months of product for four proration
+invoices — structurally impossible here.
+
+### Added — an entitlement seam, so billing can leave the open-source build
+
+The repository is public and MIT-licensed. The commercial layer is meant to live outside
+it while the product keeps working for anyone who clones it.
+
+Measured before designing: **four call sites** ask an entitlement question, and they ask
+two things — may I create another project, may I create another connection — plus
+`usage_service`, which asks what the token ceiling is. Three methods is the whole surface,
+which is why this is a seam rather than a rewrite.
+
+`app/entitlements` defines that protocol and a permissive default. A build with no
+commercial layer answers yes to every quota and `0 = unlimited` to every ceiling, because
+a product that fails closed on a missing billing package is one nobody can clone and run.
+The cloud image registers its provider at start-up and degrades to permissive if that
+fails — an outage caused by the component whose job is collecting money for uptime is a
+bad trade.
+
+**Metering deliberately stays.** `usage_service`, `token_usage` and `usage_sink` are
+imported by eight modules including the LLM router and the chat path; knowing what you are
+spending is not a commercial feature. A test fails if that ever changes.
+
+`QuotaExceededError` moved to the protocol module **verbatim**. The first version of this
+change invented a narrower signature and left the original class in place — two classes of
+the same name, with the routes catching one and the service raising the other, which
+surfaces as a 500 instead of a 402 the first time a paying customer hits a limit. mypy
+found four call sites passing the fields the invented version had dropped.
+
+`# noqa` ceiling 129 → **130**, not 132: two of the three additions came from
+`global _provider` in the registry, and the suppression ratchet asking whether they were
+worth recording was the right prompt — the provider is held in a one-slot dict and needs
+no suppression at all. `except Exception` 618 → 621, each named individually.
+
 ## [1.17.0] - 2026-08-31 - Intelligence, ingestion and observability: what the measurements found
 
 **Release summary.** No new product surface. Every entry below is a defect found by

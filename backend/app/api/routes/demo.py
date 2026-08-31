@@ -20,11 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.core.rate_limit import limiter
+from app.entitlements import QuotaExceededError, get_entitlements
 from app.models.connection import Connection
 from app.models.project import Project
 from app.services.connection_service import ConnectionService
 from app.services.demo_data import DEMO_PROJECT_NAME, demo_db_path, seed_demo_db
-from app.services.entitlement_service import EntitlementService, QuotaExceededError
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
 from app.services.rule_service import RuleService
@@ -36,7 +36,6 @@ _project_svc = ProjectService()
 _conn_svc = ConnectionService()
 _membership_svc = MembershipService()
 _rule_svc = RuleService()
-_entitlements = EntitlementService()
 
 
 @router.post("/setup")
@@ -81,8 +80,8 @@ async def demo_setup(
     # same plan. Bypassing the gate here made the paywall optional for anyone who found
     # this route.
     try:
-        await _entitlements.enforce_project_quota(db, user_id)
-        await _entitlements.enforce_connection_quota(db, user_id)
+        await get_entitlements().enforce_project_quota(db, user_id)
+        await get_entitlements().enforce_connection_quota(db, user_id)
     except QuotaExceededError as exc:
         raise HTTPException(status_code=402, detail=exc.as_payload()) from exc
 

@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>checkmydata-ai — аудит затрат и проект биллинга</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--tx:#e6edf3;--dim:#8b949e;
+--ok:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#58a6ff;--vio:#bc8cff;
+--mono:ui-monospace,"SF Mono",Menlo,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);
+font:15px/1.68 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:40px 24px 90px}
+h1{font-size:27px;margin:0 0 6px;letter-spacing:-.02em}
+.sub{color:var(--dim);font-size:14px;margin-bottom:32px}
+h2{font-size:20px;margin:46px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+h3{font-size:15.5px;margin:28px 0 8px;color:var(--acc)}
+h4{font-size:14px;margin:20px 0 6px;color:var(--vio)}
+p{margin:10px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:18px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.card .n{font:600 24px/1.2 var(--mono);letter-spacing:-.02em}
+.card .l{color:var(--dim);font-size:12px;margin-top:5px}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.dim{color:var(--dim)}.vio{color:var(--vio)}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:8px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+code,pre{font-family:var(--mono);font-size:12.5px}
+code{background:#1f2428;padding:1px 5px;border-radius:4px}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+padding:13px 15px;overflow-x:auto;margin:12px 0;line-height:1.55}
+.q{border-left:3px solid var(--acc);padding:2px 0 2px 15px;margin:16px 0;color:var(--dim)}
+.q.bad{border-color:var(--bad)}.q.ok{border-color:var(--ok)}
+ul,ol{margin:9px 0;padding-left:22px}li{margin:6px 0}
+.pill{display:inline-block;font:600 10.5px/1 var(--mono);padding:3px 7px;border-radius:4px;
+border:1px solid var(--line);color:var(--dim)}
+.pill.bad{border-color:#7d2926;background:#2b100f;color:var(--bad)}
+.pill.ok{border-color:#1f6f36;background:#0f2a17;color:var(--ok)}
+.pill.warn{border-color:#7a5c12;background:#2a2008;color:var(--warn)}
+footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim);font-size:12.5px}
+</style></head><body><div class="wrap">
+
+<h1>Аудит затрат и проект биллинга</h1>
+<div class="sub">checkmydata-ai · 2026-08-31 · всё измерено на проде; где оценка — сказано «оценка»</div>
+
+<h2>Один вывод, если читать только его</h2>
+<div class="q bad"><b>Планы продаются дешевле собственной себестоимости, и увидеть это было нельзя:</b>
+оценщик стоимости LLM-вызовов не работал ни разу за 6 771 запись. Тарифицируются токены и счётчики
+проектов, а деньги уходят на <b>хранилище и вычисления на проиндексированный репозиторий</b>, за
+которые не платит никто.</div>
+
+<div class="grid">
+  <div class="card"><div class="n bad">$0.00</div><div class="l">записанная стоимость LLM за всё время (6 771 вызов)</div></div>
+  <div class="card"><div class="n">295 МБ</div><div class="l">из 333 МБ базы — индекс <b>одного</b> репозитория</div></div>
+  <div class="card"><div class="n">91,7 ч</div><div class="l">воркера в августе на один проект</div></div>
+  <div class="card"><div class="n bad">−$107</div><div class="l">маржа Team на полном лимите, только по LLM</div></div>
+</div>
+
+<h2>1. Аудит: где на самом деле деньги</h2>
+
+<h3>Четыре оси затрат, измеренные</h3>
+<table>
+<tr><th>Ось</th><th>Замер (август, один проект)</th><th>Стоимость</th><th>Меряется?</th></tr>
+<tr><td><b>Хранилище</b></td>
+    <td><code>doc_embeddings</code> 178 МБ + <code>code_graph_edges</code> 74 МБ +
+        <code>code_graph_symbols</code> 43 МБ = <b>295 МБ</b> на репозиторий в 9 981 файл</td>
+    <td>67 % бесплатного тарифа Supabase; <b>второй такой проект его ломает</b></td>
+    <td><span class="pill bad">нет</span></td></tr>
+<tr><td><b>Вычисления</b></td>
+    <td><b>91,7 часов</b> воркера: <code>daily_sync</code> 36,4 ч, <code>index_repo</code> 34,4 ч,
+        <code>db_index</code> 33,9 ч</td>
+    <td>12 % дино за $50 → ёмкость <b>~8 таких проектов</b> на воркер</td>
+    <td><span class="pill bad">нет</span></td></tr>
+<tr><td><b>LLM</b></td>
+    <td>9,5 млн токенов, 3 402 вызова (6,95 млн in / 1,85 млн out)</td>
+    <td><b>~$48</b> по публичным ценам — <i>моя оценка, система своей не имеет</i></td>
+    <td><span class="pill warn">частично</span></td></tr>
+<tr><td>Места, подключения, проекты</td><td>5 участников на проекте</td>
+    <td>предельная стоимость ≈ 0</td><td><span class="pill ok">да</span></td></tr>
+</table>
+<p><b>Фиксированная инфраструктура — $94/мес:</b> web $25 + worker $50 + Postgres-откат $9 +
+Redis $3 + фронтенд $7. Один клиент добавляет к этому ~$54/мес переменных.</p>
+
+<h3>Планы против собственной себестоимости</h3>
+<table>
+<tr><th>План</th><th>Цена</th><th>Лимит токенов</th><th>LLM-затраты лимита</th><th>Маржа по LLM</th><th><code>stripe_price_id</code></th></tr>
+<tr><td>Free</td><td>$0</td><td>1 млн</td><td>~$4</td><td class="bad">−$4</td><td class="bad">NULL</td></tr>
+<tr><td><b>Pro</b></td><td>$49</td><td>15 млн</td><td>~$61</td><td class="bad">−$12</td><td class="bad">NULL</td></tr>
+<tr><td><b>Team</b></td><td>$199</td><td>75 млн</td><td>~$306</td><td class="bad">−$107</td><td class="bad">NULL</td></tr>
+</table>
+<p>И это <b>до</b> хранилища и вычислений. Team на полном использовании — 25 проектов × 91,7 ч ≈
+<b>2 292 часа воркера</b>, то есть ещё четыре дино по $50, плюс 25 × 295 МБ ≈ 7,4 ГБ. Итого около
+<b>$500+ затрат против $199 выручки</b>.</p>
+<p><code>stripe_price_id</code> пуст у всех трёх планов: чекаут не заработал бы и с ключом.</p>
+
+<h3>Три структурных дефекта, которые надо чинить до денег</h3>
+
+<h4>1. Система не умеет оценить свой вызов</h4>
+<p><code>estimate_cost()</code> читает <code>app.api.routes.models._cache["openrouter"]</code> —
+<b>внутрипроцессный кэш HTTP-ответа</b>, наполняемый только внутри обработчика
+<code>/api/models</code> (<code>models.py:126</code>). Воркер этот маршрут не обслуживает никогда,
+поэтому его кэш пуст всегда. На веб-дино кэш тёплый, только если кто-то недавно открыл выбор модели.</p>
+<pre>estimate_cost('openai/gpt-4o', 1000, 500)          -> None
+estimate_cost('anthropic/claude-4.6-opus-2026', …) -> None</pre>
+<p><b>Ни одна модель из тех, что реально работают, не оценивается</b> — включая
+<code>gpt-4o</code>, на который приходится 6 630 из 6 771 вызовов. Отсюда $0.00 на всех строках.</p>
+
+<h4>2. Три роутера не считают вообще</h4>
+<p><code>doc_generator.py:84</code>, <code>code_db_sync_analyzer.py:211</code>,
+<code>db_index_validator.py:150</code> строят <code>LLMRouter()</code> без sink. Генерация 758
+документов за пересборку — <b>крупнейший потребитель LLM во всём продукте</b> — не попадает в
+<code>token_usage</code> ни одной строкой. Значит 9,5 млн токенов за август — это <b>нижняя
+граница</b>, а не расход.</p>
+<p>Подключить sink как есть нельзя: он <b>записывает и проверяет одновременно</b>, поэтому включение
+закроет индексацию тому же аккаунту, который она обслуживает. Нужен режим «считать, не блокируя».</p>
+
+<h4>3. Субъект биллинга и владелец затрат — разные сущности</h4>
+<table>
+<tr><th>Что</th><th>Кому принадлежит</th></tr>
+<tr><td>Подписка, бюджет токенов</td><td><b>пользователь</b> (<code>Subscription.user_id</code>)</td></tr>
+<tr><td>Квоты проектов и подключений</td><td><b>владелец проекта</b> (<code>Project.owner_id</code>)</td></tr>
+<tr><td>295 МБ хранилища, 91,7 ч вычислений</td><td><b>проект</b> — и не тарифицируется ничем</td></tr>
+</table>
+<p>Наблюдаемо прямо сейчас: у <code>esim-php</code> пять участников, и токены жгли трое —
+<b>38,9 млн, 12,1 млн и 3,5 млн</b>, у каждого свой отдельный лимит в 1 млн. Владелец заблокирован,
+двое других имеют собственные бюджеты на том же проекте, а хранилище и вычисления не оплачивает
+никто.</p>
+
+<h2>2. Проект биллинга</h2>
+
+<h3>Решение первое: субъект — рабочее пространство, а не пользователь</h3>
+<p>Затраты попроектные и постоянные; пользователи внутри проекта приходят и уходят. Подписка должна
+висеть на <b>владельце проекта в роли организации</b>, а места входить в тариф — их предельная
+стоимость около нуля, и брать за них деньги значит тарифицировать не то, что тратится.</p>
+<p>Это <b>не</b> косметическая правка: меняется субъект <code>check_budget</code>,
+<code>enforce_*_quota</code> и всей таблицы <code>subscriptions</code>.</p>
+
+<h3>Решение второе: тариф по масштабу индекса, лимит по токенам</h3>
+<table>
+<tr><th>Ось</th><th>Как тарифицировать</th><th>Почему так</th></tr>
+<tr><td><b>Масштаб индекса</b><br><span class="dim">файлы / МБ индекса</span></td>
+    <td><b>Ступень подписки</b> (licensed)</td>
+    <td>Определяет и хранилище, и вычисления сразу. Постоянная, предсказуемая, растёт скачками — ровно
+        то, что ступени описывают хорошо</td></tr>
+<tr><td><b>Токены LLM</b></td>
+    <td><b>Включённый лимит</b> внутри ступени, жёсткий стоп сверху</td>
+    <td>Единственная по-настоящему переменная ось. Лимит обязан быть <b>дешевле цены ступени</b> —
+        сегодня он дороже</td></tr>
+<tr><td>Места</td><td>включены в ступень</td><td>предельная стоимость ≈ 0</td></tr>
+<tr><td>Подключения, проекты</td><td>потолок против злоупотребления, не источник выручки</td>
+    <td>то же</td></tr>
+</table>
+
+<h3>Решение третье: не строить usage-based биллинг сейчас</h3>
+<p>Указание самого Stripe однозначно: <b>для любой новой usage-based интеграции — Metronome, а не
+Billing Meters API</b>, и «SaaS или AI-продукт с usage-ценообразованием» назван там прямо.</p>
+<p>Но при <b>нуле обращений за сутки и одном клиенте</b> вводить Metronome — это платформа поверх
+платформы. И глубже: <b>мерить то, что не умеешь оценить, — это выставлять счёт наугад.</b> Пока
+<code>estimate_cost</code> возвращает <code>None</code> для всех боевых моделей, любой usage-биллинг
+будет тарифицировать вымысел.</p>
+<p><b>Рекомендация:</b> сейчас — ступени с включённым лимитом и жёстким стопом (это уже есть, надо
+лишь перецены́ть). Metronome — когда появится спрос на оплату по факту, и после того как измерение
+станет правдой.</p>
+
+<h3>Объектная модель Stripe</h3>
+<pre>Product  "checkmydata Starter"   ──► Price  monthly  (licensed, quantity=1)
+Product  "checkmydata Growth"    ──► Price  monthly
+Product  "checkmydata Scale"     ──► Price  monthly
+                                     └─ + Price annual на том же Product</pre>
+<ul>
+<li><b>Один Product на план, который клиент выбирает.</b> Ступени на одном Product ломают
+    сопоставление product-id → план и делают все строки счёта одинаковыми.</li>
+<li><b>Несколько Price на одном Product — только варианты одного плана</b> (месяц/год, валюта).</li>
+<li><b>Пинить id цен в конфигурации</b>, <code>prices.list({active:true})</code> — запасной путь:
+    после переценки у продукта две активные цены в порядке, который никто не обещал.</li>
+<li><b><code>billing_mode: flexible</code></b> — выбор необратим и делается при создании.</li>
+<li><b>metadata пишется дважды</b> — в сессию и в <code>subscription_data</code>: метаданные сессии
+    не наследуются подпиской, а через год от сессии не останется ничего.</li>
+</ul>
+
+<h3>Семь мест, где такие интеграции теряют деньги</h3>
+<ol>
+<li><b>Оплата — это вебхук, не редирект.</b> Редирект доказывает браузер.</li>
+<li><b>Подпись проверяется по сырому телу.</b> Пересериализованный JSON меняет байты.</li>
+<li><b>Идемпотентность по <code>event.id</code></b>, причём заявка берётся <b>до</b> работы:
+    <code>SELECT</code> затем <code>INSERT</code> — это гонка.</li>
+<li><b><code>invoice.paid</code> решается по <code>billing_reason</code>.</b> Выдача продукта на всех
+    подряд — самая дорогая ошибка: <code>subscription_update</code> прилетает на каждое изменение
+    количества, и клиент, четырежды добавивший и убравший место, получит четыре месяца продукта.</li>
+<li><b>Период читается с элемента подписки</b>, не с верхнего уровня — там его больше нет, и код
+    молча сохраняет эпоху.</li>
+<li><b><code>charge.amount_refunded</code> приходит накопительно</b>, не приращением.</li>
+<li><b>Сверка по расписанию.</b> Не пришедший вебхук оставляет оплатившего клиента без доступа, и в
+    логах об этом нет ничего.</li>
+</ol>
+
+<h2>3. Порядок работ</h2>
+<table>
+<tr><th>#</th><th>Что</th><th>Почему до денег</th><th>Чьё</th></tr>
+<tr><td>0</td><td><b>Разблокировать прод</b>: <code>BILLING_ENABLED=false</code></td>
+    <td>Сейчас лимиты планов применяются там, где план купить негде</td><td class="warn">ваше</td></tr>
+<tr><td>1</td><td>Починить <code>estimate_cost</code>: прайс в БД/конфиге, не в кэше маршрута</td>
+    <td>Без этого нельзя ни назначить цену, ни проверить маржу</td><td>моё</td></tr>
+<tr><td>2</td><td>Режим «считать, не блокируя» + sink в три роутера</td>
+    <td>Иначе расход известен как нижняя граница</td><td>моё</td></tr>
+<tr><td>3</td><td>Померить реальную себестоимость на месяце правдивых данных</td>
+    <td>Цены назначают по числам, а не по ощущению</td><td>моё</td></tr>
+<tr><td>4</td><td><b>Назначить цены и ступени</b></td>
+    <td>Бизнес-решение, которого не принимает ни один инструмент</td><td class="warn">ваше</td></tr>
+<tr><td>5</td><td>Перенести субъект с пользователя на пространство</td>
+    <td>Меняет схему и все проверки квот</td><td>моё</td></tr>
+<tr><td>6</td><td>Создать Product/Price в Stripe, заполнить <code>stripe_price_id</code></td>
+    <td>Сейчас NULL у всех трёх</td><td>моё, со Stripe MCP</td></tr>
+<tr><td>7</td><td>Вебхуки, verify-эндпоинт, сверка по расписанию</td>
+    <td>Семь пунктов выше</td><td>моё</td></tr>
+</table>
+<p class="dim">Шаги 1–3 не трогают Stripe вообще и делаются до любого решения о ценах. Шаг 4 —
+единственный, который блокирует всё остальное и который могу только подготовить.</p>
+
+<footer>
+Измерено: <code>pg_total_relation_size</code> по <code>public</code>, <code>indexing_runs</code>
+(длительности), <code>token_usage</code> (объём и записанная стоимость), <code>plans</code>,
+<code>project_members</code>, <code>heroku ps:type</code> и <code>addons</code>.
+Стоимость LLM — <b>моя оценка по публичным прайсам</b> ($2.50/$10 за млн для gpt-4o, $15/$75 для Opus)
+на наблюдавшемся соотношении 79 % in / 21 % out; система собственной оценки не имеет.
+Доктрина Stripe: <code>sheleg-dev:stripe-billing</code> и <code>stripe-best-practices</code>.
+</footer>
+</div></body></html>

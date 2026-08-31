@@ -140,7 +140,12 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)) -
     try:
         event = _billing.verify_webhook(payload, signature)
     except BillingError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # 400, not 500. A missing or wrong signing secret is a deploy that is broken now,
+        # and 5xx tells Stripe to keep retrying — which turns a one-minute fix into a
+        # backlog nobody is looking at. The detail is deliberately not echoed: the
+        # response is an oracle for anyone probing the endpoint.
+        logger.error("billing: webhook cannot be verified — check STRIPE_WEBHOOK_SECRET: %s", exc)
+        raise HTTPException(status_code=400, detail="Webhook verification unavailable") from exc
     except Exception as exc:  # bad signature / malformed payload
         logger.warning("billing: webhook signature verification failed: %s", exc)
         raise HTTPException(status_code=400, detail="Invalid webhook signature") from exc
