@@ -8,8 +8,22 @@ export const STEP_LABELS: Record<string, string> = {
   analyze_files: "Analyze Files",
   project_profile: "Project Profile",
   cross_file_analysis: "Cross-File Analysis",
+  // The flag-gated repo-index steps. Every one was missing, so a run spent 12 minutes in
+  // `graph_build` and 26 in `code_symbol_embed` showing the raw key — the fallback in
+  // ActiveTasksWidget is `|| task.currentStep`, which never looks broken enough to report.
+  ast_parse: "AST Parse",
+  graph_build: "Build Code Graph",
+  code_symbol_embed: "Embed Code Symbols",
+  bm25_build: "Build BM25",
+  schema_embed: "Embed Schema",
+  graph_db_bridge: "Code→DB Lineage",
+  graph_clustering: "Cluster Communities",
   generate_docs: "Generate Docs",
   record_index: "Record Index",
+  // daily_sync composes the three pipelines above.
+  repo_index: "Repository Index",
+  db_index: "Database Index",
+  code_db_sync: "Code-DB Sync",
   introspect_schema: "Introspect Schema",
   fetch_samples: "Fetch Samples",
   load_context: "Load Context",
