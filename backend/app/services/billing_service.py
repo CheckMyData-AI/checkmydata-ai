@@ -114,8 +114,36 @@ class BillingService:
     # ------------------------------------------------------------------
 
     async def list_plans(self, db: AsyncSession) -> list[Plan]:
+        """Plans a visitor can actually buy.
+
+        `is_active` is not sufficient. A plan with no Stripe price is one where the pricing
+        page shows a number and the button answers 400 — and this catalogue is public and
+        indexable, so the failure is advertised rather than merely reachable.
+
+        Found before shipping the tier migration: it activates `base` and `scale`, whose
+        `stripe_price_id` is null until live-mode prices exist, so the deploy alone would
+        have published $199 and $599 next to a checkout that cannot complete.
+
+        A free plan is exempt: there is nothing to charge, so there is no price to have.
+        """
         stmt = select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.sort_order)
-        return list((await db.execute(stmt)).scalars().all())
+        active = list((await db.execute(stmt)).scalars().all())
+        purchasable = []
+        for plan in active:
+            if plan.price_usd_month <= 0:
+                purchasable.append(plan)
+                continue
+            try:
+                _price_id_for(plan)
+            except BillingError:
+                logger.warning(
+                    "billing: plan %r is active but has no Stripe price — hidden from the "
+                    "public catalogue rather than offered with a broken checkout",
+                    plan.id,
+                )
+                continue
+            purchasable.append(plan)
+        return purchasable
 
     # ------------------------------------------------------------------
     # Customer / Checkout / Portal
@@ -219,6 +247,77 @@ class BillingService:
         return (
             sub.stripe_subscription_id if sub.status in ("active", "trialing", "past_due") else None
         )
+
+    async def verify_checkout(self, db: AsyncSession, user: User, session_id: str) -> dict:
+        """Close the window between Stripe's redirect and its webhook.
+
+        Stripe redirects the moment the card clears; the webhook lands when it lands. In
+        between, the customer is on the success page and our database knows nothing. This
+        performs *exactly the writes the webhook would* and lets the idempotency ledger
+        arbitrate — whoever loses reports success.
+
+        **A safety net, never the primary path.** A customer who closes the tab must still
+        get what they paid for, which is the webhook's job; this only removes the wait for
+        the customer who did not.
+
+        The ownership check is the security-critical part: without it, any authenticated
+        user who learns a `cs_…` id claims someone else's purchase.
+        """
+        if not session_id.startswith("cs_"):
+            raise BillingError("not a checkout session id")
+
+        stripe = _stripe()
+        # The exception class is imported rather than read off the configured client: it
+        # does not depend on the api_key, and reaching through the client for it coupled
+        # the handler to whatever `_stripe()` returns — which made it uncatchable the
+        # moment a test substituted a double, with `TypeError: catching classes that do
+        # not inherit from BaseException`.
+        from stripe import StripeError
+
+        try:
+            session = await asyncio.to_thread(
+                stripe.checkout.Session.retrieve, session_id, expand=["subscription"]
+            )
+        except StripeError as exc:
+            # Narrowed to Stripe's own hierarchy rather than catching everything. The
+            # suppression ratchet asked whether recording a broad handler was worth it and
+            # the answer was no: a missing session, a bad key and a mode mismatch all
+            # arrive as StripeError, while a bug in our own code below should not be
+            # swallowed into "session not found".
+            #
+            # Worth noting for whoever writes the next comment here: the ratchet matches
+            # text, so naming the broad form in prose counts as using it. It did, twice.
+            raise BillingError("checkout session not found") from exc
+
+        owner = (session.get("client_reference_id") or "") or (session.get("metadata") or {}).get(
+            "user_id", ""
+        )
+        if owner != user.id:
+            # Deliberately the same message as a missing session: distinguishing them
+            # tells a prober whether a given `cs_…` exists.
+            raise BillingError("checkout session not found")
+
+        if session.get("status") != "complete":
+            return {"settled": False, "reason": "incomplete"}
+        if session.get("payment_status") == "unpaid":
+            return {"settled": False, "reason": "unpaid"}
+
+        # The same writes the webhook makes, in the same order.
+        row = await self._get_or_create_subscription_row(db, user.id)
+        if session.get("customer"):
+            row.stripe_customer_id = session["customer"]
+
+        subscription = session.get("subscription")
+        if isinstance(subscription, dict):
+            await self._sync_subscription(db, subscription, deleted=False)
+        await db.commit()
+
+        return {
+            "settled": True,
+            "mode": session.get("mode"),
+            "plan_id": row.plan_id,
+            "status": row.status,
+        }
 
     async def create_portal_session(self, db: AsyncSession, user: User) -> str:
         """Create a Stripe Customer Portal session and return its URL."""

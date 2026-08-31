@@ -6,43 +6,31 @@ import { billing, type BillingPlan } from "@/lib/api/billing";
 import { useAuthStore } from "@/stores/auth-store";
 import { toast } from "@/stores/toast-store";
 
-/** Static catalog shown when the billing API is disabled (self-hosted mode). */
+/**
+ * Shown when the billing API answers nothing — a self-hosted install, or billing off.
+ *
+ * **Carries no prices.** It used to list free/pro/team at $0/$49/$199, which made this
+ * file a second home for numbers that live in the `plans` table and in Stripe. Those
+ * three tiers were retired on 2026-08-31 and this block still advertised them, which is
+ * exactly how a stale price reaches a customer: nothing fails, the page simply lies.
+ *
+ * A self-hosted install has no plan to sell, so the honest fallback describes the build
+ * rather than quoting a tariff.
+ */
 const FALLBACK_PLANS: BillingPlan[] = [
   {
-    id: "free",
-    name: "Free",
-    description: "Try CheckMyData on a single project.",
+    id: "self_hosted",
+    name: "Self-hosted",
+    description:
+      "You are running the open-source build. Every limit is yours to set, and you bring your own LLM key.",
     price_usd_month: 0,
-    daily_token_limit: 100_000,
-    monthly_token_limit: 1_000_000,
-    max_connections: 1,
-    max_projects: 1,
-    seats: 1,
+    daily_token_limit: null,
+    monthly_token_limit: null,
+    max_connections: null,
+    max_projects: null,
+    // 0 = unlimited, the convention used for every other limit here.
+    seats: 0,
     trial_days: 0,
-  },
-  {
-    id: "pro",
-    name: "Pro",
-    description: "For individual analysts and small teams.",
-    price_usd_month: 49,
-    daily_token_limit: 1_000_000,
-    monthly_token_limit: 15_000_000,
-    max_connections: 5,
-    max_projects: 5,
-    seats: 3,
-    trial_days: 14,
-  },
-  {
-    id: "team",
-    name: "Team",
-    description: "For data teams that need scale and collaboration.",
-    price_usd_month: 199,
-    daily_token_limit: 5_000_000,
-    monthly_token_limit: 75_000_000,
-    max_connections: 25,
-    max_projects: 25,
-    seats: 10,
-    trial_days: 14,
   },
 ];
 
@@ -58,7 +46,10 @@ function planFeatures(p: BillingPlan): string[] {
     `${p.max_projects ?? "Unlimited"} project${(p.max_projects ?? 2) === 1 ? "" : "s"}`,
     `${p.max_connections ?? "Unlimited"} database connection${(p.max_connections ?? 2) === 1 ? "" : "s"}`,
     `${fmtTokens(p.monthly_token_limit)} LLM tokens / month`,
-    `${p.seats} seat${p.seats === 1 ? "" : "s"}`,
+    // `0` is unlimited here as it is for every other limit in this codebase. Rendered
+    // literally it says "0 seats", which reads as a plan you cannot use — and the
+    // self-hosted fallback is exactly the entry that carries it.
+    p.seats > 0 ? `${p.seats} seat${p.seats === 1 ? "" : "s"}` : "Unlimited seats",
     ...(p.trial_days > 0 ? [`${p.trial_days}-day free trial`] : []),
   ];
 }

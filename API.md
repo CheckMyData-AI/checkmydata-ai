@@ -527,6 +527,7 @@ Present only when `billing_enabled` is on; every route below returns **404** whe
 | GET | `/api/billing/subscription` | The caller's plan, subscription state, and usage against its limits |
 | POST | `/api/billing/checkout` | Start a Stripe Checkout session for a plan |
 | POST | `/api/billing/portal` | Open the Stripe Customer Portal — invoices, cancellation, card update |
+| POST | `/api/billing/verify` | Settle a checkout the caller just returned from, if its webhook has not landed yet. A **safety net, never the primary path** — a customer who closes the tab is served by the webhook alone. Checks that the session belongs to the caller, and answers 404 identically for a wrong-owner and a missing session so the response is not an oracle |
 | POST | `/api/billing/webhook` | Stripe webhook receiver. Signature-verified and idempotent (T-BILL-5) |
 
 ## Demo

@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — a verify endpoint, so the redirect stops being a dead end
+
+Stripe redirects the moment the card clears; the webhook lands when it lands. In between the
+customer is on a success page and the database knows nothing about their payment.
+`POST /api/billing/verify` performs exactly the writes the webhook would and lets the
+idempotency ledger arbitrate.
+
+A safety net, never the primary path — a customer who closes the tab is served by the
+webhook alone, and code that grants on the redirect is the failure this design exists to
+avoid. The docstring says so, and a test asserts the docstring says so, because the next
+reader's temptation is to drop the webhook once this exists.
+
+Ownership is the load-bearing check: without it any authenticated user who learns a `cs_…`
+id claims someone else's purchase. A wrong-owner session and a missing session answer
+identically, so the response is not an oracle for which ids exist — asserted by comparing
+the two messages rather than by reading them.
+
+The Stripe exception is **imported** rather than read off the configured client. Reaching
+through `_stripe()` for it coupled the handler to whatever that returns, and made it
+uncatchable the moment a test substituted a double: `TypeError: catching classes that do not
+inherit from BaseException`. The class does not depend on the api_key.
+
+### Fixed — the pricing page would have advertised a checkout that cannot complete
+
+Found by asking what the tier migration does on deploy rather than by reading the diff.
+Activating `base` and `scale` makes `/api/billing/plans` return $199 and $599 while their
+`stripe_price_id` is null until live-mode prices exist — so the public, indexable pricing
+page would show both numbers next to a button answering
+`400 Plan 'base' has no Stripe price configured`. Not merely reachable: advertised.
+
+`list_plans` now returns only what can be bought. `is_active` was never sufficient; a free
+plan is exempt, because there is nothing to charge and therefore no price to have.
+
+And the other half, which is the same rule from the other side: `PricingTable.tsx` carried
+`FALLBACK_PLANS` quoting $0/$49/$199 for the three tiers retired the same day. Nothing
+would have failed — the page would simply have lied. The fallback no longer quotes a price
+at all: a self-hosted install has no tier to sell, so it describes the build instead.
+
+While fixing it: `seats: 0` rendered as "0 seats", which reads as a plan nobody can use. `0`
+means unlimited here as it does for every other limit in this codebase, and the
+self-hosted entry is precisely the one carrying it.
+
 ### Added — per-account OpenRouter credit: two pockets over one counter
 
 The billing model gives every account $30 of LLM credit at cost ($90 on Scale), tops it up

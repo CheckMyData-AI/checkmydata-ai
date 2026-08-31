@@ -38,6 +38,10 @@ class CheckoutRequest(BaseModel):
     plan_id: str
 
 
+class VerifyRequest(BaseModel):
+    session_id: str
+
+
 @router.get("/plans")
 async def list_plans(db: AsyncSession = Depends(get_db)) -> dict:
     """Public plan catalog for the pricing page."""
@@ -129,6 +133,34 @@ async def create_portal(
     except BillingError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"url": url}
+
+
+@router.post("/verify")
+@limiter.limit("20/minute")
+async def verify_checkout(
+    request: Request,
+    body: VerifyRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Settle a checkout the caller has just returned from, if its webhook has not landed.
+
+    Rate-limited a little higher than checkout: the success page may poll it while the
+    webhook is in flight, and a customer refreshing should not be throttled out of the
+    thing that tells them their payment worked.
+    """
+    _require_billing_enabled()
+    db_user = (
+        await db.execute(select(User).where(User.id == user["user_id"]))
+    ).scalar_one_or_none()
+    if db_user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    try:
+        return await _billing.verify_checkout(db, db_user, body.session_id)
+    except BillingError as exc:
+        # 404 rather than 400: the id came from a URL the user may have mangled, and a
+        # wrong-owner session answers identically so the response is not an oracle.
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/webhook")
