@@ -169,6 +169,11 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     openrouter_api_key: str = ""
+    #: OpenRouter **management** key — a higher privilege than the inference key above: it
+    #: can mint API keys that spend money. Only the cloud build sets it; the open-source
+    #: build provisions nothing and uses `openrouter_api_key` directly, bring-your-own.
+    #: Never logged. Belongs in the same class as `master_encryption_key`.
+    openrouter_management_key: str = ""
 
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"

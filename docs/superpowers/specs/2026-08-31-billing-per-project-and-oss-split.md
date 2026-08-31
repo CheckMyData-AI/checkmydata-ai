@@ -1,6 +1,6 @@
 # Billing: $90 per project, tokens at cost, and a build that ships without any of it
 
-**Status:** design, approved on the two decisions below. Not implemented.
+**Status:** implemented except where marked. See *What exists* at the foot of this file.
 **Date:** 2026-08-31
 **Supersedes:** the per-user plan model in `plans` / `subscriptions` (free/pro/team).
 
@@ -228,3 +228,57 @@ From the same audit, and unchanged by any of the above:
    read from the subscription instead of its item (moved in `2025-07-30.basil`),
    `billing_mode` is left to an irreversible default, metadata is written once, and there
    is no reconciliation job.
+
+
+---
+
+## What exists, as of 2026-08-31
+
+### Built and under test
+
+| | Where |
+|---|---|
+| Two-pocket credit ledger | `app/models/llm_credit.py`, migration `b48fcfc1524b` |
+| OpenRouter key lifecycle — provision, balance, top-up, renew, revoke | `app/services/openrouter_credit_service.py` |
+| Top-up and renewal wired to the webhook | `billing_service._credit_top_up`, `._renew_credit` |
+| Tier catalogue base $199 / scale $599 | migration `4f1a29a0e973` |
+| Eight Stripe seams | `billing_service.py`, `api/routes/billing.py` |
+| Entitlement seam with a permissive default | `app/entitlements/` |
+| Reconciliation on the 24-hour loop | `BillingService.reconcile`, `main._reconcile_billing` |
+
+### In Stripe, test mode only
+
+```
+prod_VAucxNJ0ZDqDYn  Base          price_1UAYnP6Y88bjICcxSM9FCSIO  base_monthly    $199/mo
+prod_VAucyQ1qlaDIEl  Scale         price_1UAYnW6Y88bjICcxrkg0R9T9  scale_monthly   $599/mo
+prod_VAucYLrW3jhVqh  LLM credit    price_1UAYns6Y88bjICcx2r01dto6  credit_topup    $10–2000
+```
+
+### Deliberately not done, and why
+
+- **Live-mode products and prices.** The upper tier was given as "500 or 600"; $599 is a
+  placeholder. Changing a price after the first sale costs more than deciding it now.
+- **The webhook endpoint.** Creating it through the API returns the signing secret in the
+  response, which would put a credential into an agent transcript. It belongs in the
+  Dashboard, pointed at `https://api.checkmydata.ai/api/billing/webhook`.
+- **`STRIPE_SECRET_KEY` and `OPENROUTER_MANAGEMENT_KEY`.** Set by a human, in a shell the
+  transcript does not see.
+- **The physical package split.** The seam exists and the four call sites go through it;
+  moving `billing_service` and `entitlement_service` into a private distribution is a
+  `git mv` plus a repository that does not exist yet.
+- **Mid-period upgrade credit.** Stripe prorates the tier price; whether the $60 difference
+  between Base and Scale is granted immediately or at the next renewal is still open. The
+  arithmetic waits.
+
+### Still true and still unaddressed
+
+- **Three routers meter nothing** — `doc_generator.py:84`,
+  `code_db_sync_analyzer.py:211`, `db_index_validator.py:150`. Under per-account keys the
+  money is right, because OpenRouter counts every call. Our own usage display will
+  understate what the customer spent, which is a different kind of wrong and needs a
+  record-without-gating mode before the sink can be wired.
+- **The billing subject is still a user**, while the cost is per project and a project has
+  members.
+- **Stripe's fee makes "no markup" untrue at the cent level** — a $20 top-up nets ~$19.12.
+  The decision was to absorb it, ~4 % of top-up revenue, so the claim stays true without a
+  footnote.

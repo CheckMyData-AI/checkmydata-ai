@@ -6,6 +6,81 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — per-account OpenRouter credit: two pockets over one counter
+
+The billing model gives every account $30 of LLM credit at cost ($90 on Scale), tops it up
+pay-as-you-go, and takes no margin on tokens. Implementing it moves the meter off our own
+broken estimator and onto the account's own OpenRouter key: `estimate_cost` reads an
+in-process cache of the `/api/models` route, which the worker — where most LLM calls happen
+— can never populate, which is why `estimated_cost_usd` was 0.00 on all 6 771 rows. With a
+per-account key, OpenRouter counts and we read.
+
+**OpenRouter has one counter; the model has two pockets.** `limit`, `usage` and
+`limit_remaining` describe a single spend ceiling. The included allowance expires monthly;
+purchased credit does not, because the customer paid for it separately. `llm_credit` holds
+the split, with `usage_at_period_start` as the hinge — OpenRouter's `usage` never resets by
+design, so "spent this period" is a subtraction against a stored watermark.
+
+**Spend depletes the included pocket first, and that ordering is not a preference.**
+Reversed, a customer who spent $10 of a $30 allowance while holding $50 of bought credit
+would end the month with $40 instead of $50 — $10 taken for nothing. A test states it as
+that number rather than as a principle.
+
+Money is `Numeric`, not float. mypy caught `Mapped[float]` over a `Numeric` column, which
+is a lie the driver corrects at runtime; `0.1 + 0.2 != 0.3` in binary and a balance drifts
+by cents over a year.
+
+**Two Stripe events that must not be confused.** `invoice.paid` rolls the credit period only
+on `billing_reason == "subscription_cycle"` — it also fires for the first invoice, which
+checkout already granted, and for every mid-cycle proration, so a customer who changed plan
+four times would otherwise be handed four months of allowance.
+`checkout.session.completed` arrives for both a subscription and a top-up, separated by
+`mode`; the amount is read from `amount_total` rather than from what we requested, because
+`custom_unit_amount` is how "no markup" is expressed and lets the customer name the figure.
+
+**A top-up never raises.** The charge has already succeeded, and raising would make Stripe
+retry a payment that cannot be un-taken. The failure path logs at ERROR with the amount and
+session id — `PAID BUT NOT CREDITED` — because that is money paid and not granted, and a
+human has to finish it.
+
+Error bodies are never echoed: OpenRouter's failure payloads can carry the key, and an
+exception message quoting one would put a spending credential into every log downstream.
+
+### Fixed — the credential rotation sweep assumed every primary key is called `id`
+
+Adding `llm_credit.key_encrypted` turned the derived-coverage guard red, exactly as
+designed: a `_encrypted` column the sweep does not carry becomes unreadable the moment the
+old key is dropped, and for this column that means the account can make no LLM call at all.
+
+Registering it surfaced the second half. `credential_rotation` ordered and reported by
+`model.id`, and all six models it covered until now happened to have one — so the
+assumption read as a property of models rather than of those six. `LlmCredit` is keyed on
+`user_id`, one row per account, and the sweep failed with
+`AttributeError: type object 'LlmCredit' has no attribute 'id'`. It now asks the mapper for
+the primary key. The crash was the good outcome; the alternative was a sweep that silently
+skipped a spending credential.
+
+### Changed — plans: base $199 and scale $599, replacing free/pro/team
+
+The old catalogue priced token allowances above the tier: Pro at $49 included 15M tokens
+worth ~$61, Team at $199 included 75M worth ~$306. Measured 2026-08-31, and invisible until
+then because the cost estimator had never returned a number.
+
+The new one prices what costs money. Measured on the single production project: 295 MB of
+index for a 9 981-file repository and 91.7 worker-hours in August, of which **33.9 went to
+re-indexing the schemas of three connections** — which is why data sources are a tier axis
+and not a free extra, and which corrects the same day's audit recording connections as
+"marginal cost ≈ 0". That was true of storage and false of compute.
+
+Old rows are **deactivated, not deleted**: a live subscription may still reference `pro`.
+`get_plan` deliberately does not filter on `is_active` while `create_checkout_session` does
+— a retired plan must still resolve and must not be purchasable, and that asymmetry is now
+held by a test.
+
+Stripe products and prices exist in **test mode only**: `base_monthly`, `scale_monthly`, and
+a `credit_topup` price using `custom_unit_amount` ($10–$2 000, preset $50). Live mode waits
+on a final price, because changing one after the first sale is dearer than deciding it now.
+
 ### Fixed — eight seams in a Stripe integration that had never executed
 
 `STRIPE_SECRET_KEY` has never been set, so none of the billing code has ever run. Every

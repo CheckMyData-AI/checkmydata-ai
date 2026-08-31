@@ -99,7 +99,18 @@ CEILINGS: dict[str, int] = {
     # A SECOND one was added and then deleted — a suppression on an inner function's
     # untyped argument, where annotating it cost one word. That is the answer this
     # ratchet exists to provoke, and it is why the raise here is one rather than two.
-    "except Exception": 621,
+    # 621 → 623 on 2026-08-31, both on the credit path, and both swallow a failure that
+    # would cost more than the thing it reports:
+    #
+    #   `_credit_top_up`  — the charge has ALREADY succeeded. Raising makes Stripe retry
+    #                       a payment that cannot be un-taken, so the honest outcome is
+    #                       an ERROR line carrying the amount and session id for a human
+    #                       to finish: "PAID BUT NOT CREDITED".
+    #   `_renew_credit`   — a failed ceiling update must not fail the webhook. Stripe
+    #                       would retry, the idempotency claim would refuse it, and the
+    #                       renewal would be lost rather than merely late; the
+    #                       reconciliation sweep is what catches it.
+    "except Exception": 623,
     "except ...: pass": 53,
     "# type: ignore": 49,
     # 129 → 130 on 2026-08-31. One, in `BillingService.reconcile`: BLE001 on a per-row

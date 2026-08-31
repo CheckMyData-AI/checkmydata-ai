@@ -90,6 +90,20 @@ def _period_from(obj: dict) -> tuple[int | None, int | None]:
     return obj.get("current_period_start"), obj.get("current_period_end")
 
 
+#: Included LLM credit per tier, in USD. Scales with the tier because a Scale customer
+#: runs three projects and fifteen data sources and will burn more — giving both tiers the
+#: same $30 would make the top-up an ordinary monthly event rather than an exception.
+#:
+#: Held here rather than on the `plans` row because it is a property of the commercial
+#: offer, and the plans table is what the open-source build still reads for its limits.
+_INCLUDED_CREDIT_USD: dict[str, float] = {"base": 30.0, "scale": 90.0}
+
+
+def _included_credit_for(plan) -> float:
+    """The tier's monthly credit, or 0 for a tier that includes none."""
+    return _INCLUDED_CREDIT_USD.get(getattr(plan, "id", "") or "", 0.0)
+
+
 def _ts_to_dt(ts: int | None) -> datetime | None:
     return datetime.fromtimestamp(ts, tz=UTC) if ts else None
 
@@ -346,6 +360,13 @@ class BillingService:
             if user_id and customer_id:
                 sub = await self._get_or_create_subscription_row(db, user_id)
                 sub.stripe_customer_id = customer_id
+
+            # A credit top-up is a one-time payment, not a subscription: `mode` separates
+            # them, and reading the amount from `amount_total` rather than from our own
+            # request means a customer who edited the amount on Stripe's page is credited
+            # what they actually paid.
+            if obj.get("mode") == "payment" and user_id:
+                await self._credit_top_up(db, user_id, obj)
             return
 
         if event_type.startswith("customer.subscription."):
@@ -358,7 +379,72 @@ class BillingService:
 
         if event_type == "invoice.paid":
             await self._set_status_by_customer(db, obj.get("customer"), "active")
+            # Only the renewal rolls the credit period. `invoice.paid` also fires for the
+            # first invoice (checkout already granted) and for every mid-cycle proration —
+            # a quantity or plan change emits `subscription_update` immediately, so a
+            # customer who upgraded and downgraded four times would otherwise be granted
+            # four months of allowance for four proration invoices.
+            if obj.get("billing_reason") == "subscription_cycle":
+                await self._renew_credit(db, obj)
             return
+
+    async def _credit_top_up(self, db: AsyncSession, user_id: str, session: dict) -> None:
+        """Add purchased credit for a completed one-time Checkout.
+
+        Not guarded for idempotency here: `handle_event` claims the Stripe event id before
+        `_apply_event` runs, so a redelivery never arrives. A second guard would be a
+        second ledger to keep in step with the first.
+
+        Never raises. The payment has already succeeded — refusing the webhook would make
+        Stripe retry a charge that cannot be un-taken, and the reconciliation sweep is what
+        finds a top-up that failed to land.
+        """
+        amount_cents = int(session.get("amount_total") or 0)
+        if amount_cents <= 0:
+            logger.warning("billing: top-up session with no amount for user=%s", user_id[:8])
+            return
+        try:
+            from app.services.openrouter_credit_service import OpenRouterCreditService
+
+            await OpenRouterCreditService().top_up(db, user_id, amount_usd=amount_cents / 100)
+        except Exception:
+            # Loud, and with the amount, because this is money the customer paid that has
+            # not been granted. A human has to finish it.
+            logger.error(
+                "billing: PAID BUT NOT CREDITED — user=%s amount=%.2f session=%s",
+                user_id[:8],
+                amount_cents / 100,
+                session.get("id"),
+                exc_info=True,
+            )
+
+    async def _renew_credit(self, db: AsyncSession, invoice: dict) -> None:
+        """Roll the included allowance for the new period; purchased credit carries over.
+
+        The tier decides the grant, and the tier is resolved from the price on the
+        subscription rather than from metadata — the same reason `_resolve_plan_id` prefers
+        it: metadata records what was bought once, the price records what is billed now.
+        """
+        customer_id = invoice.get("customer")
+        sub = await self._find_by_customer(db, customer_id)
+        if sub is None:
+            return
+        plan = (
+            (await db.execute(select(Plan).where(Plan.id == sub.plan_id))).scalar_one_or_none()
+            if sub.plan_id
+            else None
+        )
+        included = _included_credit_for(plan)
+        try:
+            from app.services.openrouter_credit_service import OpenRouterCreditService
+
+            await OpenRouterCreditService().renew(db, sub.user_id, included_usd=included)
+        except Exception:
+            logger.warning(
+                "billing: could not roll the credit period for user=%s",
+                sub.user_id[:8],
+                exc_info=True,
+            )
 
     async def _sync_subscription(self, db: AsyncSession, obj: dict, *, deleted: bool) -> None:
         customer_id = obj.get("customer")
