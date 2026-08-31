@@ -14,6 +14,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.code_db_sync import CodeDbSyncSummary
 from app.models.db_index import DbIndexSummary
 from app.models.indexing_checkpoint import IndexingCheckpoint
@@ -118,6 +119,117 @@ class StaleRunReaper:
             except Exception:
                 logger.warning("Reaper: failed to catalog reaped run %s", run_id[:8], exc_info=True)
 
+    #: Kinds worth re-enqueueing after a reap, and the task each maps to.
+    #:
+    #: `index_repo` alone, and the asymmetry is deliberate. `reconcile_embeddings`
+    #: advances the `embedding_fingerprint` marker on ENQUEUE rather than on completion,
+    #: so a deploy that restarts the worker mid-rebuild leaves a marker asserting the
+    #: rebuild happened; the nightly cron then runs `force_full=False`, which cannot
+    #: rebuild what only a clean run rebuilds. `db_index` and `code_db_sync` are short
+    #: and the nightly sync covers them, and `daily_sync` is the cron itself.
+    _REQUEUE_TASKS = {"index_repo": "run_repo_index"}
+
+    async def _run_meta(self, session: AsyncSession, run_id: str) -> dict:
+        """The reaped run's own `meta_json`, so the replacement inherits its arguments."""
+        import json
+
+        try:
+            raw = await session.scalar(
+                select(IndexingRun.meta_json).where(IndexingRun.id == run_id)
+            )
+            parsed = json.loads(raw or "{}")
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            logger.warning("Reaper: could not read meta for run %s", run_id[:8], exc_info=True)
+            return {}
+
+    async def _requeue_attempts(self, session: AsyncSession, project_id: str, kind: str) -> int:
+        """How many of this project's runs of this kind the reaper has killed recently.
+
+        Counted from the rows themselves rather than held in a counter on one row: the
+        row a counter would live on is the one just destroyed, and each replacement
+        starts a fresh row. `REAP_ERROR` narrows it to reaps — a run that failed on its
+        own merits is a different fact and must not spend this budget.
+        """
+        window = datetime.now(UTC) - timedelta(hours=settings.reaper_requeue_window_hours)
+        try:
+            return int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(IndexingRun)
+                    .where(
+                        IndexingRun.project_id == project_id,
+                        IndexingRun.kind == kind,
+                        IndexingRun.error == REAP_ERROR,
+                        IndexingRun.finished_at >= window,
+                    )
+                )
+                or 0
+            )
+        except Exception:
+            # Unknown attempt count must not read as zero, or the bound stops bounding.
+            logger.warning("Reaper: could not count requeue attempts", exc_info=True)
+            return settings.reaper_requeue_max_attempts
+
+    async def _requeue(
+        self,
+        session: AsyncSession,
+        doomed: list[tuple[str, str, str, str | None, str | None]],
+    ) -> int:
+        """Put back the work this reap destroyed. Never raises.
+
+        The reap IS the recovery: a re-enqueue that propagated would leave `running`
+        rows unreaped and the UI spinning, which is the state this class exists to end.
+        """
+        if not doomed or not settings.reaper_requeue_enabled:
+            return 0
+
+        from app.core.task_queue import enqueue
+
+        requeued = 0
+        for run_id, project_id, kind, _connection_id, current_step in doomed:
+            task = self._REQUEUE_TASKS.get(kind)
+            if not task:
+                continue
+            try:
+                attempts = await self._requeue_attempts(session, project_id, kind)
+                if attempts >= settings.reaper_requeue_max_attempts:
+                    logger.warning(
+                        "Reaper: not re-enqueueing %s for project %s — %d reaps in the "
+                        "last %dh is at the bound; the run is failing for its own "
+                        "reasons, not a restart.",
+                        kind,
+                        project_id[:8],
+                        attempts,
+                        settings.reaper_requeue_window_hours,
+                    )
+                    continue
+                meta = await self._run_meta(session, run_id)
+                job_id = await enqueue(
+                    task,
+                    project_id=project_id,
+                    force_full=bool(meta.get("force_full", False)),
+                )
+                requeued += 1
+                logger.info(
+                    "Reaper: re-enqueued %s for project %s after a reap at step %s "
+                    "(force_full=%s, job=%s, attempt %d)",
+                    kind,
+                    project_id[:8],
+                    current_step or "unknown",
+                    bool(meta.get("force_full", False)),
+                    job_id,
+                    attempts + 1,
+                )
+            except Exception:
+                logger.warning(
+                    "Reaper: failed to re-enqueue %s for project %s",
+                    kind,
+                    project_id[:8],
+                    exc_info=True,
+                )
+        return requeued
+
     async def reap_once(self, session: AsyncSession, *, timeout_seconds: int) -> dict[str, int]:
         cutoff = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
 
@@ -198,6 +310,7 @@ class StaleRunReaper:
         )
         await session.flush()
         await self._catalog(session, doomed)
+        await self._requeue(session, doomed)
 
         # max(0, …) guards the -1 "rowcount unknown" sentinel some drivers return.
         runs_count = max(0, int(runs_failed.rowcount or 0)) + max(

@@ -627,6 +627,25 @@ class Settings(BaseSettings):
     reaper_interval_seconds: int = 60
     stale_running_heartbeat_timeout_seconds: int = 300
 
+    #: Re-enqueue an `index_repo` run the reaper had to kill.
+    #:
+    #: Only that kind, and the asymmetry is the point. `reconcile_embeddings` advances
+    #: the `embedding_fingerprint` marker on ENQUEUE, so a deploy that restarts the
+    #: worker mid-rebuild leaves a marker claiming the rebuild happened — and the
+    #: nightly cron runs `force_full=False`, which cannot rebuild what only a clean run
+    #: rebuilds. That loss is invisible and permanent. `db_index` and `code_db_sync` are
+    #: short and the nightly sync covers them.
+    #:
+    #: Off switches a real cost, not a phantom one: `run_repo_index` runs `generate_docs`
+    #: through an LLM, so every re-enqueue is tokens.
+    reaper_requeue_enabled: bool = True
+    #: How many times one project's repo index may be reaped-and-retried inside the
+    #: window before the reaper stops paying for it. A run dying for its own reasons
+    #: rather than a deploy must not loop.
+    reaper_requeue_max_attempts: int = 2
+    #: The window the attempt bound counts over.
+    reaper_requeue_window_hours: int = 6
+
     # Telemetry retention (run-event journal + error catalog). Swept by the
     # maintenance cron.
     indexing_run_events_ttl_days: int = 30

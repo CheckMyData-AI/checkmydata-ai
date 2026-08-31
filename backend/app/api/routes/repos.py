@@ -331,10 +331,46 @@ async def run_repo_index_task(
             )
             return
         if wf_id is None:
-            wf_id = await tracker.begin(
-                "index_repo",
-                {"project_id": project_id, "repo_url": project.repo_url, "trigger": "queue"},
-            )
+            # Mint the run aggregate, not just a workflow. Four mechanisms read
+            # `IndexingRun` and all four were blind to this path: the reaper scans it
+            # for stalled work (and now re-enqueues from it), `RunCoordinator.step`
+            # writes `heartbeat_at` onto it, the sync-history route lists it, and the
+            # duplicate guard dedupes on it. `reconcile_embeddings` enqueues here, so
+            # every deploy-triggered `force_full` rebuild ran with none of that —
+            # measured 2026-08-31: a 12 091 s rebuild with zero rows in `running`.
+            from app.services.run_coordinator import RunAlreadyActiveError, RunCoordinator
+
+            try:
+                run = await RunCoordinator().start(
+                    db,
+                    kind="index_repo",
+                    project_id=project_id,
+                    connection_id=None,
+                    trigger="queue",
+                    force_full=force_full,
+                )
+                wf_id = run.workflow_id
+            except RunAlreadyActiveError:
+                logger.info(
+                    "run_repo_index_task: project %s already has an active index run; "
+                    "not starting a second one",
+                    project_id[:8],
+                )
+                return
+            except Exception:
+                # The row is bookkeeping; the index is the work. Falling back to a bare
+                # workflow is exactly the old behaviour, which indexed correctly — so a
+                # failure to write the row must not cost the rebuild.
+                logger.warning(
+                    "run_repo_index_task: could not create the run row for project %s; "
+                    "indexing without one (unreapable, invisible to sync-history)",
+                    project_id[:8],
+                    exc_info=True,
+                )
+                wf_id = await tracker.begin(
+                    "index_repo",
+                    {"project_id": project_id, "repo_url": project.repo_url, "trigger": "queue"},
+                )
 
     lock = _indexing_locks.setdefault(project_id, asyncio.Lock())
     body = IndexRequest(force_full=force_full)

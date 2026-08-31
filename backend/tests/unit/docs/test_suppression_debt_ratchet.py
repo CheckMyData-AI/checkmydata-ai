@@ -39,6 +39,26 @@ APP = Path(__file__).resolve().parents[4] / "backend" / "app"
 #: Counts measured 2026-08-25 over `backend/app/`. Lower them as suppressions go; raise
 #: one only in the same commit as the suppression it admits, so the increase is reviewed.
 CEILINGS: dict[str, int] = {
+    # 614 → 618 on 2026-08-31. Four, all in the recovery path, and each one swallows a
+    # failure whose propagation would destroy the thing it was reporting on:
+    #
+    #   `StaleRunReaper._run_meta`         — an unreadable `meta_json` must not stop the
+    #                                        reap; the replacement run just loses its
+    #                                        inherited `force_full`.
+    #   `StaleRunReaper._requeue_attempts` — an uncountable attempt history returns THE
+    #                                        BOUND, not zero, so a failure to count
+    #                                        cannot uncap the retry.
+    #   `StaleRunReaper._requeue`          — per run. The reap IS the recovery; a failed
+    #                                        re-enqueue must not leave `running` rows
+    #                                        unreaped and the UI spinning.
+    #   `run_repo_index_task`              — the `IndexingRun` row is bookkeeping and the
+    #                                        index is the work. Falling back to a bare
+    #                                        workflow is exactly the previous behaviour,
+    #                                        which indexed correctly.
+    #
+    # Every one logs at WARNING with the project id. None returns a value that reads as
+    # success: the shape this ratchet exists to catch is the `except: pass` that makes a
+    # broken thing look finished.
     # 611 → 613 on 2026-08-25, in two steps, and both raises are the mechanism working
     # rather than exceptions to it. `StaleRunReaper._catalog` (N3) swallows a failure to
     # write the error catalog, because a diagnostic that can abort the recovery it is
@@ -63,7 +83,7 @@ CEILINGS: dict[str, int] = {
     # A SECOND one was added and then deleted — a suppression on an inner function's
     # untyped argument, where annotating it cost one word. That is the answer this
     # ratchet exists to provoke, and it is why the raise here is one rather than two.
-    "except Exception": 614,
+    "except Exception": 618,
     "except ...: pass": 53,
     "# type: ignore": 49,
     "# noqa": 129,
