@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the required-filter guard could not read the predicates the system writes
+
+`code_db_sync.required_filters_json` is written by an LLM, and the tool description
+asking for it gives this example verbatim:
+
+    {"status": "= 1 (processed only)", "deleted_at": "IS NULL (exclude soft-deleted)"}
+
+`_predicate_to_regex` took everything after `=` — the parenthetical commentary included
+— and escaped it into the pattern, producing
+
+    was_handled\s*=\s*1\ \(processed\ only\)\b
+
+which no SQL can satisfy. Anything it failed to parse fell back to a bare `\bcol\b`
+presence check, which a mention in the SELECT list satisfies. Measured against
+production: **159 predicates configured, 1 enforced correctly** — 59 unsatisfiable
+across 57 tables, 98 vacuous. After the fix: **141 enforced, 0 unsatisfiable**, 18
+skipped because they are prose instructions ("filter by specific plan categories")
+rather than conditions.
+
+The cost, measured in two real requests. Trace `2e94da9c` (08-17, 358 s, timed out):
+each of its eight queries hard-failed the guard twice, paid ~23 s of LLM repair that
+could not possibly succeed, and was let through on the third attempt by the degrade
+rule. Trace `ab858d0f` (08-27, 269 s, failed): the same loop consumed ~190 s of 269,
+while the database work inside it totalled **1 second** — `execute_query` took 0.1 s
+six times over.
+
+Worse than the latency: on the third attempt the user was told the answer was returned
+WITHOUT the required filters and that totals may include soft-deleted rows. The query
+said `p.was_handled = 1 AND p.deleted_at IS NULL`. A false warning is not a small
+error — it teaches the reader to discount every warning the system emits.
+
+Three rules now hold:
+
+- **Parse from the left.** Operator, then operand; a tail is accepted only when empty
+  or wholly parenthesised. `= 'pending' or 'completed'` is a disjunction this cannot
+  express, so it is not enforced rather than half-enforced.
+- **A bound is satisfied by any narrowing of the column.** `created_at >= '2023-01-01'`
+  states which rows are valid, so a six-month window satisfies it and `status = 2`
+  satisfies `BETWEEN 1 AND 5`. Demanding the literal value would false-block nearly
+  every question, since most ask about a recent period.
+- **An unenforceable requirement is not claimed as checked.** It is skipped, counted in
+  `required_filter_unenforceable_total`, and still reaches the model as prompt context.
+
+Equality checks now tolerate what SQL actually writes: an alias (`o.was_handled`),
+backticks, `TRUE` for `1`, and `'1'` for `1` — while `prev_was_handled` still does not
+satisfy a requirement on `was_handled`.
+
+Fixed at the source too: the analyzer's tool description asked for the broken shape and
+now demands a bare SQL predicate, naming the operators that can be checked.
+
+The existing suite passed throughout, because every predicate in it was already clean
+(`= 1`, `IS NULL`) — a shape the writer does not produce. The new tests are built from
+the prose shapes production actually stores.
+
 ### Fixed — an empty result was reported as missing columns, blaming the query
 
 All seven `stage_validation` failures in production carry the same message, and it is

@@ -205,33 +205,50 @@ def test_merge_combines_sync_and_hint_preserving_sync_predicates():
 # ---------------------------------------------------------------------------
 
 
-def test_unparseable_condition_falls_back_to_bare_presence_advisory():
-    """An unparseable predicate like 'BETWEEN 1 AND 5' must fall back to bare
-    column-name presence check — compile_filter_check must not hard-block when the
-    column name appears, even though the exact condition cannot be verified."""
+def test_a_range_requirement_is_satisfied_by_any_narrowing_of_the_column():
+    """A range requirement states which rows are VALID, so narrowing that column
+    satisfies it — `status = 2` is inside `BETWEEN 1 AND 5`. What it cannot tolerate is
+    the column going unconstrained.
+
+    Renamed 2026-08-31. It read `..._falls_back_to_bare_presence_advisory`, and that
+    fallback was the defect: a bare `\bcol\b` check is satisfied by a mention in the
+    SELECT list, so 98 of production's 159 predicates passed queries carrying no WHERE
+    clause at all."""
     from app.core.required_filter_guard import compile_filter_check
 
     pat = compile_filter_check("status", "BETWEEN 1 AND 5")
-    # Column name present → advisory passes
-    assert pat.search("SELECT * FROM orders WHERE status BETWEEN 1 AND 5"), (
-        "Unparseable predicate should fall back to bare presence; column appears → should match"
-    )
+    assert pat is not None
+    assert pat.search("SELECT * FROM orders WHERE status BETWEEN 1 AND 5")
     assert pat.search("SELECT * FROM orders WHERE status = 2"), (
-        "Bare presence: any mention of 'status' should match when predicate is unparseable"
+        "an equality inside the required range must satisfy the range requirement"
     )
-    # Column name absent → bare presence correctly not matched
-    assert not pat.search("SELECT * FROM orders WHERE other_col = 1"), (
-        "Column name absent → bare-presence regex should NOT match"
+    assert not pat.search("SELECT * FROM orders WHERE other_col = 1")
+    assert not pat.search("SELECT status FROM orders"), (
+        "an unconstrained column must not satisfy a range requirement"
+    )
+
+
+def test_an_instruction_is_not_a_predicate_and_is_not_enforced():
+    """Production stores entries that are prose instructions, not conditions:
+
+        {"settings_type": "must filter by specific type for targeted configurations"}
+
+    There is nothing to compile. `compile_filter_check` returns None, and the guard
+    skips it — the old bare-presence fallback reported a pass it never performed."""
+    from app.core.required_filter_guard import compile_filter_check
+
+    assert compile_filter_check("settings_type", "must filter by specific type") is None
+    assert compile_filter_check("status", "= 'pending' or 'completed'") is None, (
+        "a disjunction cannot be expressed as one required pattern; half-enforcing it "
+        "would demand the first branch and false-block the second"
     )
 
 
 def test_unparseable_condition_guard_passes_when_column_appears():
-    """check_required_filters with an unparseable predicate must PASS (not hard-block)
-    when the column name appears anywhere in the query — even if the exact condition
-    shape cannot be verified."""
-    required = {"orders": {"status": "BETWEEN 1 AND 5"}}
-    sql_with_col = "SELECT COUNT(*) FROM orders WHERE status BETWEEN 1 AND 5"
-    res = check_required_filters(sql_with_col, "postgres", required, attempt=1, max_attempts=3)
-    assert res.is_valid, (
-        "Unparseable predicate with column present must PASS (advisory, not hard-block)"
+    """check_required_filters with an unenforceable requirement must PASS rather than
+    hard-block — the requirement still reaches the model as prompt context."""
+    required = {"orders": {"settings_type": "must filter by specific type"}}
+    res = check_required_filters(
+        "SELECT COUNT(*) FROM orders", "postgres", required, attempt=1, max_attempts=3
     )
+    assert res.is_valid, "an uncompilable instruction must not block a query"

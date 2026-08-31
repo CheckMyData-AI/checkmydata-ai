@@ -102,10 +102,14 @@ SYNC_ANALYSIS_TOOL = Tool(
             type="string",
             description=(
                 "JSON object of mandatory WHERE conditions the agent MUST use when querying "
-                "this table, based on patterns found in code. "
-                'E.g. {"status": "= 1 (processed only)", '
-                '"deleted_at": "IS NULL (exclude soft-deleted)"}. '
-                "If code always filters by a specific column value, include it here."
+                "this table, based on patterns found in code. Each value must be a BARE SQL "
+                "predicate and nothing else — no explanation, no parenthetical note, no 'or'. "
+                'E.g. {"status": "= 1", "deleted_at": "IS NULL", '
+                '"created_at": ">= \'2023-01-01\'"}. '
+                "Supported: = v, != v, <> v, > v, >= v, < v, <= v, IS NULL, IS NOT NULL, "
+                "IN (...), BETWEEN a AND b. A value that is not one of these cannot be "
+                "checked against a query and will be ignored, so state a condition or omit "
+                "the column. If code always filters by a specific column value, include it."
             ),
         ),
         ToolParameter(
