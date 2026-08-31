@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — IMPORTS edges were structurally impossible for PHP and Ruby
+
+Production recorded **28 033 imports and 0 IMPORTS edges**. The count came from a log
+line, so nothing contradicted it: the parser was finding the imports and the resolver
+could not turn one into a path. Two independent failures, either of which alone was
+enough.
+
+`_parse_import` dispatched on the language and had no branch for PHP or Ruby, so both
+fell to the generic fallback, which stores **the whole statement** as the module —
+`use App\Models\User;`, keyword and semicolon included — and leaves `imported_names`
+empty. `_resolve_imports` only emitted an edge when a name was present, so the count
+would have been zero even with perfect path resolution.
+
+`_candidate_module_paths` knew a Python dotted module, a relative JS/TS path, and a
+slash path tried against `.ts/.tsx/.js/.jsx/.py`. A PHP namespace carries neither a dot
+nor a slash, so `App\Models\User` took the Python branch and produced the candidate
+`App\Models\User.py` — a filename containing backslashes. Ruby's `require 'foo/bar'`
+took the slash branch and was tried against every extension except `.rb`.
+
+Now: PHP `use` (including `use A\B\{C, D}`, `as` aliases and `use function`) and Ruby
+`require` / `require_relative` are parsed properly, and a module that no direct
+candidate matches is resolved by **path suffix** against the repository's own file
+list. Suffix rather than convention: "`App\` means `app/`" is PSR-4, which is a claim
+about someone else's composer.json, and the repository already knows where its files
+are — `Illuminate\Support\Facades\DB` resolves through
+`vendor/laravel/framework/src/…`, which no convention predicts.
+
+Two bounds, both paid for previously. Ambiguity resolves to **nothing** rather than
+fanning out — a wrong edge is worse than a missing one because it is believed — with
+the importing file's own extension as the tie-break, so a `use` statement in a `.php`
+file does not reach `app/models/user.rb`. And a nameless import (Ruby's `require`)
+contributes at most `_MAX_IMPORT_FANOUT` edges to the target's top-level symbols; an
+unbounded fan-out is what turned `graph_build` into a forty-minute step once already.
 ### Fixed — the required-filter guard could not read the predicates the system writes
 
 `code_db_sync.required_filters_json` is written by an LLM, and the tool description

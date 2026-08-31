@@ -22,7 +22,9 @@ Design notes:
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -316,13 +318,14 @@ class CodeGraphBuilder:
             global_index[s.name].append(s)
 
         edges: list[GraphEdge] = []
+        suffix_index = _build_path_suffix_index(per_file_index.keys())
 
         # Pass B: per-file IMPORTS edges, EXTENDS edges, CALLS resolution.
         for file_path, pf in parsed_files.items():
             import_map = self._build_import_map(pf.imports)
             file_local = per_file_index.get(file_path, {})
             # IMPORTS edges: resolve module path to a file when possible.
-            edges.extend(self._resolve_imports(pf.imports, file_path, per_file_index))
+            edges.extend(self._resolve_imports(pf.imports, file_path, per_file_index, suffix_index))
             # EXTENDS edges: extracted via grammar-specific heritage walk.
             # Currently a stub; emitted from class signatures via name match.
             edges.extend(self._resolve_extends(pf.symbols, file_local, global_index))
@@ -389,33 +392,71 @@ class CodeGraphBuilder:
         imports: list[ImportRef],
         from_file: str,
         per_file_index: dict[str, dict[str, list[Symbol]]],
+        suffix_index: dict[str, list[str]] | None = None,
     ) -> list[GraphEdge]:
-        """Best-effort IMPORTS edges to symbols in the target file.
+        """IMPORTS edges to symbols in the target file.
 
-        Resolution is intentionally lossy: we only match when the imported
-        symbol exists at the target path. Relative paths are normalized in a
-        very limited way (drop leading ``./``).
+        Two resolution paths. The direct candidate list handles Python and relative
+        JS/TS, which it always did. The suffix index handles everything else — a PHP
+        namespace and a Ruby require carry no clue about the repository's layout, and
+        guessing one ("``App\\`` means ``app/``") is a claim about someone else's
+        composer.json.
+
+        A nameless import (Ruby's ``require``) still produces edges, to the target
+        file's top-level symbols, capped: an uncapped fan-out is what turned
+        `graph_build` into a forty-minute step once already.
         """
         edges: list[GraphEdge] = []
         for imp in imports:
-            candidates = _candidate_module_paths(imp.source_module, from_file)
-            for cand in candidates:
-                target_index = per_file_index.get(cand)
-                if not target_index:
-                    continue
-                if imp.imported_names:
-                    for name in imp.imported_names:
-                        for sym in target_index.get(name, []):
-                            edges.append(
-                                GraphEdge(
-                                    src_uid=f"file:{from_file}",
-                                    dst_uid=sym.uid,
-                                    edge_type=EDGE_IMPORTS,
-                                    confidence=1.0,
-                                    attrs={"line": imp.line},
-                                )
-                            )
-                break
+            target_path: str | None = None
+            for cand in _candidate_module_paths(imp.source_module, from_file):
+                if cand in per_file_index:
+                    target_path = cand
+                    break
+
+            if target_path is None and suffix_index is not None:
+                # Group syntax (`use App\Models\{User, Purchase}`) names a directory,
+                # so the file is module + name rather than the module alone.
+                for name in imp.imported_names:
+                    target_path = _resolve_module_to_file(
+                        f"{imp.source_module}/{name}", from_file, suffix_index
+                    )
+                    if target_path:
+                        break
+                if target_path is None:
+                    target_path = _resolve_module_to_file(
+                        imp.source_module, from_file, suffix_index
+                    )
+
+            if target_path is None or target_path == from_file:
+                continue
+            target_index = per_file_index.get(target_path)
+            if not target_index:
+                continue
+
+            matched: list[Symbol] = []
+            for name in imp.imported_names:
+                matched.extend(target_index.get(name, []))
+            if not matched and not imp.imported_names:
+                # Nameless: depend on what the file exposes at its top level.
+                matched = [
+                    sym
+                    for syms in target_index.values()
+                    for sym in syms
+                    if sym.kind in ("class", "module", "interface", "trait")
+                    and not getattr(sym, "parent_uid", None)
+                ][:_MAX_IMPORT_FANOUT]
+
+            for sym in matched[:_MAX_IMPORT_FANOUT]:
+                edges.append(
+                    GraphEdge(
+                        src_uid=f"file:{from_file}",
+                        dst_uid=sym.uid,
+                        edge_type=EDGE_IMPORTS,
+                        confidence=1.0,
+                        attrs={"line": imp.line},
+                    )
+                )
         return edges
 
     @staticmethod
@@ -633,6 +674,76 @@ def _extract_base_names(signature: str) -> list[str]:
             if name and name.isidentifier() and name not in ("object",):
                 bases.append(name)
     return bases
+
+
+_MAX_IMPORT_FANOUT = 8
+
+_MODULE_EXTS = (".py", ".ts", ".tsx", ".js", ".jsx", ".php", ".rb", ".go", ".java", ".kt")
+
+
+def _normalize_module(module: str) -> list[str]:
+    """Reduce a module string from any of the supported languages to path segments.
+
+    PHP writes ``App\\Models\\User``, Ruby ``require 'foo/bar'``, Python ``a.b.c``.
+    Lowercased because a repository's casing is not something an import statement can
+    be trusted to reproduce.
+    """
+    m = module.strip().strip("'\"")
+    m = m.replace("\\", "/").replace("::", "/")
+    if "/" not in m and "." in m:  # Python dotted module
+        m = m.replace(".", "/")
+    lowered = m.lower()
+    for ext in _MODULE_EXTS:
+        if lowered.endswith(ext):
+            m = m[: -len(ext)]
+            break
+    return [p for p in m.lower().split("/") if p and p != "."]
+
+
+def _build_path_suffix_index(file_paths: Iterable[str]) -> dict[str, list[str]]:
+    """Every path suffix (lowercased, extension stripped) -> the real paths carrying it.
+
+    Asked instead of guessed: "``App\\`` means ``app/``" is PSR-4, which is a claim about
+    someone else's composer.json. The repository already knows where its files are.
+    """
+    index: dict[str, list[str]] = {}
+    for file_path in file_paths:
+        stem = re.sub(r"\.[A-Za-z0-9]+$", "", file_path).lower()
+        parts = [p for p in stem.split("/") if p]
+        for i in range(len(parts)):
+            index.setdefault("/".join(parts[i:]), []).append(file_path)
+    return index
+
+
+def _resolve_module_to_file(
+    module: str,
+    from_file: str,
+    suffix_index: dict[str, list[str]],
+) -> str | None:
+    """Longest unique path suffix wins; ambiguity resolves to nothing.
+
+    A wrong edge is worse than a missing one, because it is believed. When two files
+    share a suffix, the importing file's own extension is tried as a tie-break — a PHP
+    ``use`` statement does not reach a ``.rb`` file — and if that does not settle it,
+    the import is dropped.
+    """
+    if not module:
+        return None
+    ext_match = re.search(r"(\.[A-Za-z0-9]+)$", from_file)
+    importer_ext = ext_match.group(1).lower() if ext_match else ""
+
+    segments = _normalize_module(module)
+    for start in range(len(segments)):
+        hits = suffix_index.get("/".join(segments[start:]))
+        if not hits:
+            continue
+        if len(hits) > 1 and importer_ext:
+            same_language = [h for h in hits if h.lower().endswith(importer_ext)]
+            if same_language:
+                hits = same_language
+        if len(hits) == 1:
+            return hits[0]
+    return None
 
 
 def _candidate_module_paths(module: str, from_file: str) -> list[str]:
