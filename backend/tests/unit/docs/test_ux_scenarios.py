@@ -258,7 +258,17 @@ def test_legacy_coverage_paths_do_not_regress() -> None:
 # have changed since the audit — the five access scenarios whose backend moved most.
 # All five held behaviourally; SCN-015 carried two line references that no longer
 # pointed at the code they named, and those were corrected.
-STALE_VERIFICATION_CEILING = 105
+# 105 → 100 on 2026-08-31: SCN-037, SCN-041, SCN-054, SCN-073, SCN-089, the next five
+# off the same backlog — this time frontend-heavy. All five held behaviourally and
+# seven line references did not: `ConnectionSelector.tsx` grew from ~1 100 lines to
+# 1 784 under the GA4 work, moving the empty/error block from :1097 to :1511, and
+# `ChatInput.tsx:12-90` named a range past the end of an 84-line file. SCN-054 was the
+# only one whose evidence still landed exactly where it claimed.
+#
+# The pattern across both batches: behaviour survives, coordinates rot. A `file:line`
+# reference is a claim with a short half-life, and the ones that decay silently are
+# worse than none — they read as evidence while pointing at unrelated code.
+STALE_VERIFICATION_CEILING = 100
 
 
 def _status_module():

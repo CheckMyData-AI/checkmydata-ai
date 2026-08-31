@@ -12,7 +12,7 @@ human review moves them to `validated`.
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-08-25 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-08-31 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -24,8 +24,8 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 | Scenarios | **127** |
 | Status | implemented × 127 |
 | Last verdict | PARTIAL × 2, PASS × 125 |
-| Verified when | 2026-07-19 × 105, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5 |
-| **Verified >30 days ago** | **105 of 127** (oldest 37 days) |
+| Verified when | 2026-07-19 × 100, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 5 |
+| **Verified >30 days ago** | **100 of 127** (oldest 43 days) |
 | Never verified (no date) | 0 |
 | Referenced from code or tests | **21 of 127** |
 
@@ -78,11 +78,11 @@ it is what moves it.
 | SCN-034 | Run code↔DB sync | connections | editor | implemented | 2026-07-19 PASS |
 | SCN-035 | Refresh schema cache | connections | editor | implemented | 2026-07-19 PASS |
 | SCN-036 | Connection health & reconnect | connections | analyst | implemented | 2026-07-19 PASS |
-| SCN-037 | Connections — empty state | connections | owner | implemented | 2026-07-19 PASS |
+| SCN-037 | Connections — empty state | connections | owner | implemented | 2026-08-31 PASS |
 | SCN-038 | Add an SSH key | ssh-keys | owner | implemented | 2026-07-19 PASS |
 | SCN-039 | Delete an SSH key | ssh-keys | owner | implemented | 2026-07-19 PASS |
 | SCN-040 | SSH keys — empty state | ssh-keys | owner | implemented | 2026-07-19 PASS |
-| SCN-041 | Ask a data question — streaming happy path | chat | analyst | implemented | 2026-07-19 PASS |
+| SCN-041 | Ask a data question — streaming happy path | chat | analyst | implemented | 2026-08-31 PASS |
 | SCN-042 | Quick-ask from project overview | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-043 | Stop / abort a running answer | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-044 | Empty chat + suggestion chips | chat | analyst | implemented | 2026-07-19 PASS |
@@ -95,7 +95,7 @@ it is what moves it.
 | SCN-051 | Answer a clarification request | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-052 | Rate an answer & report wrong data | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-053 | Save an answer to notes | chat | analyst | implemented | 2026-07-19 PASS |
-| SCN-054 | View the agent reasoning panel | chat | analyst | implemented | 2026-07-19 PASS |
+| SCN-054 | View the agent reasoning panel | chat | analyst | implemented | 2026-08-31 PASS |
 | SCN-055 | Step-limit reached → continue analysis | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-056 | Session-continuation (auto-summary) banner | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-057 | View & switch chart type | viz | analyst | implemented | 2026-07-19 PASS |
@@ -114,7 +114,7 @@ it is what moves it.
 | SCN-070 | Share / unshare a saved query | notes | analyst | implemented | 2026-07-19 PASS |
 | SCN-071 | Edit a saved-query comment | notes | analyst | implemented | 2026-07-19 PASS |
 | SCN-072 | Delete a saved query | notes | analyst | implemented | 2026-07-19 PASS |
-| SCN-073 | View agent learnings | learnings | editor | implemented | 2026-07-19 PASS |
+| SCN-073 | View agent learnings | learnings | editor | implemented | 2026-08-31 PASS |
 | SCN-074 | Confirm/contradict/edit/deactivate a learning | learnings | editor | implemented | 2026-07-19 PASS |
 | SCN-075 | Recompile learnings | learnings | editor | implemented | 2026-07-19 PASS |
 | SCN-076 | Clear all learnings | learnings | owner | implemented | 2026-07-19 PASS |
@@ -130,7 +130,7 @@ it is what moves it.
 | SCN-086 | Delete a dashboard | dashboards | editor | implemented | 2026-07-19 PASS |
 | SCN-087 | Run a batch of queries | batch | analyst | implemented | 2026-07-19 PASS |
 | SCN-088 | Build a batch from saved notes | batch | analyst | implemented | 2026-07-19 PASS |
-| SCN-089 | View batch results | batch | analyst | implemented | 2026-07-19 PASS |
+| SCN-089 | View batch results | batch | analyst | implemented | 2026-08-31 PASS |
 | SCN-090 | Create a scheduled query + alerts | schedules | owner | implemented | 2026-07-19 PASS |
 | SCN-091 | Edit / pause / run-now a schedule | schedules | owner | implemented | 2026-07-19 PASS |
 | SCN-092 | Delete a schedule | schedules | owner | implemented | 2026-07-19 PASS |
@@ -816,9 +816,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** "No connections yet" (or "Select a project first")
 - **UI elements:** empty-state text, "New connection" action (owner)
 - **States covered:** empty, error
-- **Errors & recovery:** connections load failure (project switch) → inline error + Retry in place of the empty state (shared `ListError`, audit M5; `ConnectionSelector.tsx:1097-1103`). Known gap: the connections list has no list-level loading spinner (populated via project switch)
+- **Errors & recovery:** connections load failure (project switch) → inline error + Retry in place of the empty state (shared `ListError`, audit M5; `ConnectionSelector.tsx:1511-1516`). Known gap: the connections list has no list-level loading spinner (populated via project switch)
 - **Status:** implemented
-- **Coverage:** components/connections/ConnectionSelector.tsx:1097-1110 (empty vs error states), :118-136 (retry); components/connections/ConnectionsPanel.tsx:12-37; components/ui/ListError.tsx
+- **Coverage:** components/connections/ConnectionSelector.tsx:1511-1523 (error vs empty states), :197 (`handleRetryLoad`); components/connections/ConnectionsPanel.tsx:12-18 ("Select a project first"); components/ui/ListError.tsx
 
 ## ssh-keys
 
@@ -882,9 +882,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** an assistant answer with reasoning trace, verification badge, and any visualization
 - **UI elements:** auto-growing textarea (grows with content up to 160px, then scrolls; Enter submits / Shift+Enter newline), send button, char-remaining counter, PlanSummaryCard, ThinkingLog, ToolCallIndicator, StageProgress, "■ Stop generating"
 - **States covered:** loading, success, error
-- **Errors & recovery:** session auto-create fails → toast + abort; stream error → in-transcript red "Error: …" bubble with optional Retry (`ChatPanel.tsx:417-420,611-621`)
+- **Errors & recovery:** session auto-create fails → toast + abort (`ChatPanel.tsx:423-426`); stream error → in-transcript red "Error: …" bubble with optional Retry (`ChatPanel.tsx:622-644` sets `responseType: "error"` + `isRetryable`; rendered `ChatMessage.tsx:596-597`)
 - **Status:** implemented
-- **Coverage:** components/chat/ChatPanel.tsx:394-672,912-955; components/chat/ChatInput.tsx:12-90 (auto-grow at :26-38); tests frontend/src/__tests__/components/ChatInput.test.tsx
+- **Coverage:** components/chat/ChatPanel.tsx:394-672, :940 and :962 ("■ Stop generating", two placements); components/chat/ChatInput.tsx:12-84 (auto-grow :27-37 capped by `MAX_TEXTAREA_HEIGHT_PX` :13; Enter/Shift+Enter :52; counter :77-78); tests frontend/src/__tests__/components/ChatInput.test.tsx
 
 ### SCN-042: Quick-ask from project overview
 - **Persona:** analyst
@@ -1358,7 +1358,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** learnings grouped by category with confidence bars and confirmed/applied counts
 - **UI elements:** category filter pills, sort dropdown, learning rows, skeleton
 - **States covered:** loading, empty, error, success
-- **Errors & recovery:** load fails → inline error "Failed to load learnings" + Retry in place of the empty state (toast kept; shared `ListError`, audit M5) (`LearningsPanel.tsx:53-71,303-308`)
+- **Errors & recovery:** load fails → inline error "Failed to load learnings" + Retry in place of the empty state (toast kept; shared `ListError`, audit M5) (`LearningsPanel.tsx:67-68` message + toast, `:307-311` inline error + Retry)
 - **Status:** implemented
 - **Coverage:** components/learnings/LearningsPanel.tsx:240-456; components/ui/ListError.tsx; tests frontend/src/__tests__/components/LearningsPanel.test.tsx
 
@@ -1600,7 +1600,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 ### SCN-089: View batch results
 - **Persona:** analyst
 - **Feature:** batch
-- **Entry point:** BatchRunner auto-opens BatchResults when the batch reaches a terminal status (`BatchRunner.tsx:172-174`)
+- **Entry point:** BatchRunner auto-opens BatchResults when the batch reaches a terminal status (`BatchRunner.tsx:174-176`)
 - **Steps:**
   1. On mount, `api.batch.get(batchId)` is fetched and `results_json` parsed
   2. Each per-query record renders as a titled block — success → result table (DataTable) with total_rows + duration; failed/blocked → the honest error text (+ SQL)
@@ -1610,7 +1610,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** loading (spinner), loaded (per-query success/failed blocks), empty ("Batch is still running…" / "No results"), error (fetch failed → message + Retry)
 - **Errors & recovery:** fetch fails → "Couldn't load batch results" + Retry; per-query failure/blocked → error text shown inline; export fails → toast
 - **Status:** implemented
-- **Coverage:** components/batch/BatchResults.tsx:49-236 (fetch/parse, success table + error block, states, export); handoff components/batch/BatchRunner.tsx:172-174; tests `__tests__/components/BatchResults.test.tsx`
+- **Coverage:** components/batch/BatchResults.tsx:49-236 (fetch/parse :59-71, loading :159-163, error + Retry :164-175, empty :176-182, per-query blocks :183-236, export :84-92); handoff components/batch/BatchRunner.tsx:174-176; tests `__tests__/components/BatchResults.test.tsx`
 
 ## schedules
 
