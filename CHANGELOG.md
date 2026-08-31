@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — an empty result was reported as missing columns, blaming the query
+
+All seven `stage_validation` failures in production carry the same message, and it is
+the largest single category of span failure in the system. At least two are provably
+false. Paired with the query the agent produced in the same trace:
+
+    plan wanted  ['data_revenue']
+    agent ran    SELECT ROUND(SUM(p.amount) / 100, 2) AS data_revenue, …
+
+    plan wanted  ['purchase_count', 'purchase_date', 'revenue_usd', 'virtual_number']
+    agent ran    SELECT DATE(p.created_at) AS purchase_date,
+                        pn.phone           AS virtual_number,
+                        SUM(p.amount)/100  AS revenue_usd,
+                        COUNT(*)           AS purchase_count  FROM …
+
+Every alias is exactly what the plan asked for. **The plan was right and the agent was
+right; the validator was wrong.**
+
+`mysql.py` and `postgres.py` both derived their column list from `rows[0].keys()` and
+returned `QueryResult(row_count=0)` — with no columns at all — when nothing matched.
+`StageValidator` compared the expected names against an empty set and called all of
+them missing. A correct query that legitimately matched zero rows failed after up to
+ten LLM calls and four minutes, blaming columns it had in fact selected.
+
+Three changes, two of them different in kind:
+
+* Both connectors now report the columns the cursor knows regardless of rows — MySQL
+  through `cur.description`, Postgres by preparing the statement before fetching so
+  `get_attributes()` can answer. SQLite and ClickHouse never had the defect.
+* `StageValidator` no longer treats "no metadata to check against" as "the check
+  failed". Whether emptiness is acceptable is what `min_rows` decides, and it is
+  evaluated separately. **Unverifiable is not violated.**
+
+Verified against a real PostgreSQL rather than a double, because the Postgres change
+broke eight existing tests and adjusting them first would have fitted the tests to
+unverified code:
+
+    EMPTY    -> columns: ['alpha', 'beta']  rows: 0
+    NONEMPTY -> columns: ['alpha', 'beta']  rows: 1
+
+Only then were the doubles updated: they modelled `conn.cursor` and had to learn
+`prepare` → `get_attributes` → `cursor`. A double that models the older shape passes
+where production cannot. The parameter-binding assertions were re-pointed, not
+weakened — numbered placeholder in the SQL, value passed separately, never
+interpolated.
+
+
 ### Fixed — 57 million tokens were burned and 0 were counted, so no limit could fire
 
 Measured over the whole `token_usage` table on 2026-08-28:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -66,16 +67,24 @@ class TestPostgresConnector:
         return pool
 
     @staticmethod
-    def _wire_cursor(mock_conn, rows):
+    def _wire_cursor(mock_conn, rows, columns=("id", "name")):
         """Wire the asyncpg server-side cursor flow (R2-1).
 
-        ``conn.transaction()`` is a sync call returning an async CM, and
-        ``await conn.cursor(q, *v)`` returns a cursor whose ``fetch(n)``
-        yields ``rows``.
+        ``conn.transaction()`` is a sync call returning an async CM. The connector
+        prepares the statement FIRST — that is how it learns the column names when no
+        row comes back, which an empty result otherwise could not report and which the
+        stage validator then read as every expected column being missing. So the double
+        has to model `prepare` -> `get_attributes` -> `cursor`, not `conn.cursor`
+        alone; a double that models the older shape passes while production cannot.
         """
         mock_conn.transaction = MagicMock(return_value=_ACM(None))
         cur = MagicMock()
         cur.fetch = AsyncMock(return_value=rows)
+        stmt = MagicMock()
+        stmt.get_attributes = MagicMock(return_value=[SimpleNamespace(name=c) for c in columns])
+        stmt.cursor = AsyncMock(return_value=cur)
+        mock_conn.prepare = AsyncMock(return_value=stmt)
+        # Kept so a test that asserts on the older call still finds the attribute.
         mock_conn.cursor = AsyncMock(return_value=cur)
         return cur
 
@@ -125,10 +134,15 @@ class TestPostgresConnector:
 
         result = await connector.execute_query("SELECT * FROM users WHERE id = :id", {"id": 1})
         assert result.error is None
-        mock_conn.cursor.assert_awaited_once()
-        call_args = mock_conn.cursor.call_args
-        assert "$1" in call_args[0][0]
-        assert call_args[0][1] == 1
+        # The statement is prepared first (that is how an empty result still knows its
+        # columns), so the query text goes to `prepare` and the values to the cursor
+        # taken from it. The contract asserted is unchanged: numbered placeholder in
+        # the SQL, bound value passed separately, never interpolated.
+        mock_conn.prepare.assert_awaited_once()
+        assert "$1" in mock_conn.prepare.call_args[0][0]
+        stmt = mock_conn.prepare.return_value
+        stmt.cursor.assert_awaited_once()
+        assert stmt.cursor.call_args[0][0] == 1
 
     async def test_execute_query_streams_cap_plus_one_and_truncates(self, connector):
         """R2-1: a cursor that yields MAX_RESULT_ROWS+1 rows must report
@@ -188,6 +202,10 @@ class TestPostgresConnector:
         cur = MagicMock()
         cur.fetch = _never
         mock_conn.cursor = AsyncMock(return_value=cur)
+        _stmt = MagicMock()
+        _stmt.get_attributes = MagicMock(return_value=[])
+        _stmt.cursor = AsyncMock(return_value=cur)
+        mock_conn.prepare = AsyncMock(return_value=_stmt)
         connector._pool = self._make_pool(mock_conn)
 
         # B2: a dynamic per-query budget (here 0.05s) bounds execution.
@@ -215,6 +233,10 @@ class TestPostgresConnector:
         cur = MagicMock()
         cur.fetch = _never
         mock_conn.cursor = AsyncMock(return_value=cur)
+        _stmt = MagicMock()
+        _stmt.get_attributes = MagicMock(return_value=[])
+        _stmt.cursor = AsyncMock(return_value=cur)
+        mock_conn.prepare = AsyncMock(return_value=_stmt)
         pool = self._make_pool(mock_conn)
         connector._pool = pool
 
@@ -936,6 +958,10 @@ class TestRowCountTruncationContract:
         cur = MagicMock()
         cur.fetch = AsyncMock(return_value=rows)
         mock_conn.cursor = AsyncMock(return_value=cur)
+        _stmt = MagicMock()
+        _stmt.get_attributes = MagicMock(return_value=[SimpleNamespace(name="id")])
+        _stmt.cursor = AsyncMock(return_value=cur)
+        mock_conn.prepare = AsyncMock(return_value=_stmt)
         pool = MagicMock()
         pool.acquire = MagicMock(return_value=_AcquireCtx(mock_conn))
         pool.release = AsyncMock()

@@ -137,14 +137,35 @@ class StageValidator:
         v = stage.validation
 
         if v.expected_columns and qr:
-            # Case-insensitive on both sides — the planner's expected column
-            # names and the driver's reported column names can differ in case
-            # (e.g. quoted identifiers vs lowercased), which previously caused
-            # spurious "missing column" failures.
-            actual_cols = {c.lower() for c in qr.columns}
-            missing = {col for col in v.expected_columns if col.lower() not in actual_cols}
-            if missing:
-                outcome.fail(f"Missing expected columns: {sorted(missing)}")
+            # An empty result carries no column metadata from some drivers, and that
+            # is NOT a missing column — it is an unanswerable question. All seven
+            # `stage_validation` failures in production said "Missing expected
+            # columns", and at least two of them named columns the query provably
+            # SELECTed under exactly those aliases:
+            #
+            #   plan wanted ['data_revenue']
+            #   agent ran   SELECT ROUND(SUM(p.amount)/100, 2) AS data_revenue, ...
+            #
+            # The query was right, it matched zero rows, and `mysql.py:161` returns
+            # `QueryResult(row_count=0)` with no `columns` — so every expected column
+            # read as missing and the stage failed for the wrong reason, after up to
+            # ten LLM calls and four minutes. Whether emptiness is acceptable is what
+            # `min_rows` is for, and it is checked separately below.
+            if not qr.columns and not qr.rows:
+                logger.debug(
+                    "expected_columns not evaluated: the result is empty and carries "
+                    "no column metadata (stage=%s)",
+                    stage.tool,
+                )
+            else:
+                # Case-insensitive on both sides — the planner's expected column
+                # names and the driver's reported column names can differ in case
+                # (e.g. quoted identifiers vs lowercased), which previously caused
+                # spurious "missing column" failures.
+                actual_cols = {c.lower() for c in qr.columns}
+                missing = {col for col in v.expected_columns if col.lower() not in actual_cols}
+                if missing:
+                    outcome.fail(f"Missing expected columns: {sorted(missing)}")
 
         strict = self._strict_row_bounds or getattr(v, "strict_row_bounds", False)
         if qr:

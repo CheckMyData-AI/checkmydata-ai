@@ -141,7 +141,7 @@ class MySQLConnector(BaseConnector):
             if isinstance(params, dict):
                 exec_query, exec_params = self._dict_to_positional(query, params)
 
-            async def _run() -> list[dict[str, Any]]:
+            async def _run() -> tuple[list[dict[str, Any]], list[str]]:
                 async with pool.acquire() as conn:
                     # R2/F-ARCH-5: stream via a server-side (unbuffered) cursor and
                     # pull at most ``MAX_RESULT_ROWS + 1`` rows. ``fetchall()`` on a
@@ -153,15 +153,23 @@ class MySQLConnector(BaseConnector):
                     # memory) so the pooled connection stays in sync.
                     async with conn.cursor(aiomysql.SSDictCursor) as cur:
                         await cur.execute(exec_query, exec_params)
-                        return await cur.fetchmany(MAX_RESULT_ROWS + 1)
+                        fetched = await cur.fetchmany(MAX_RESULT_ROWS + 1)
+                        # The cursor knows the column names whether or not any row
+                        # came back; the first row does not exist to be asked. An
+                        # empty result used to return no columns at all, and
+                        # `StageValidator` read that as every expected column being
+                        # missing — so a correct query matching zero rows failed with
+                        # "Missing expected columns", naming aliases it had SELECTed.
+                        described = [d[0] for d in (cur.description or ())]
+                        return fetched, described
 
-            rows = await asyncio.wait_for(_run(), timeout=effective_timeout)
+            rows, described = await asyncio.wait_for(_run(), timeout=effective_timeout)
             elapsed = (time.monotonic() - start) * 1000
 
             if not rows:
-                return QueryResult(row_count=0, execution_time_ms=elapsed)
+                return QueryResult(columns=described, row_count=0, execution_time_ms=elapsed)
 
-            columns = list(rows[0].keys())
+            columns = list(rows[0].keys()) or described
             truncated = len(rows) > MAX_RESULT_ROWS
             capped = rows[:MAX_RESULT_ROWS] if truncated else rows
             data = [list(r.values()) for r in capped]
