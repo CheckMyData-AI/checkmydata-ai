@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the boot-time honesty check was not honest about one setting
+
+`capability_report` exists because "the operator reading `heroku config` sees a feature
+switched on, and nothing ever tells them otherwise" — its own docstring. The
+`chroma_embedding_model` claim was that failure mode pointed at itself.
+
+It asked two questions: is the setting non-empty, and is `sentence_transformers`
+importable. It never asked **which store is in use**. Production runs pgvector, and
+`PgVectorStore._embed` constructs `ONNXMiniLM_L6_V2()` directly (`pgvector_store.py:114-116`)
+— it never reads that setting at all. So on pgvector the configured model is ignored
+*unconditionally*, and installing the `ml` extra would have made the warning **stop firing
+while its condition persisted**. A check that goes quiet without the thing being fixed is
+worse than no check, because silence then reads as a pass. Its remedy also named a
+re-index, which on pgvector cannot help.
+
+There are now two claims for the one setting, because the backends make different promises
+and a single claim has to pick one and be wrong on the other. On chroma the extra is still
+the remedy. On pgvector `provided` is `False` unconditionally — the same inversion the
+`chroma_server_url` claim already uses for a condition nothing in the image can satisfy —
+and the remedy is to clear the variable, with a note that `.[ml]` only hides the line.
+
+The backend is **resolved**, not read: the default is `auto`, so comparing
+`settings.vector_store_backend` literally would have matched neither branch and the claim
+would have vanished on the default configuration. Resolution failure yields `None` rather
+than raising, because an explicit `pgvector` on SQLite raises by design and a boot
+diagnostic must never be able to stop a boot.
+
+
 ### Fixed — a reap is a guess, and two places treated it as a fact
 
 Measured in production on 2026-08-31, every timestamp from the database:

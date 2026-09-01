@@ -61,6 +61,42 @@ class Claim:
     level: int = logging.WARNING
 
 
+def _active_backend() -> str | None:
+    """The store this process will actually use, or ``None`` when it cannot be determined.
+
+    Resolved rather than read: the default is ``auto``, so a literal comparison against
+    ``settings.vector_store_backend`` would match neither branch below and the claim would
+    silently vanish on the default configuration — a check that disappears exactly where it
+    is most needed.
+
+    ``None`` on error because an explicit ``pgvector`` against SQLite raises by design, and
+    a boot diagnostic must never be able to stop a boot.
+    """
+    try:
+        from app.knowledge.vector_store import resolve_backend
+
+        return resolve_backend(settings.vector_store_backend, settings.database_url)
+    except Exception:
+        # WARNING, not debug, and the silent-degradation ratchet is what caught it: a
+        # caller cannot tell this `None` from "no claim applies", so an unresolvable
+        # backend would make BOTH claims below vanish without a word — a capability check
+        # that stops checking, which is the exact failure this module was written against.
+        # Rare by construction: `resolve_backend` only raises on a configuration that is
+        # already invalid, such as an explicit `pgvector` against SQLite.
+        logger.warning(
+            "Capability check: the vector backend could not be resolved from "
+            "VECTOR_STORE_BACKEND=%r and the configured DATABASE_URL, so the "
+            "embedding-model claims below are NOT being checked",
+            settings.vector_store_backend,
+            exc_info=True,
+        )
+        return None
+
+
+def _model_configured() -> bool:
+    return bool((settings.chroma_embedding_model or "").strip())
+
+
 CLAIMS: tuple[Claim, ...] = (
     Claim(
         setting="reranker_enabled",
@@ -72,9 +108,11 @@ CLAIMS: tuple[Claim, ...] = (
         ),
         remedy="install the optional extra (`pip install -e '.[ml]'`) or unset RERANKER_ENABLED",
     ),
+    # TWO claims for one setting, because the two backends make different promises and a
+    # single claim has to pick one and be wrong on the other.
     Claim(
         setting="chroma_embedding_model",
-        asserted=lambda: bool((settings.chroma_embedding_model or "").strip()),
+        asserted=lambda: _model_configured() and _active_backend() == "chroma",
         provided=lambda: _importable("sentence_transformers"),
         consequence=(
             "the configured model is ignored and ChromaDB embeds at 384-d with its "
@@ -84,6 +122,28 @@ CLAIMS: tuple[Claim, ...] = (
         remedy=(
             "install `.[ml]` AND run a full re-index (queue_embedding_reindex), or clear "
             "CHROMA_EMBEDDING_MODEL so the configuration matches what is actually used"
+        ),
+    ),
+    Claim(
+        setting="chroma_embedding_model",
+        asserted=lambda: _model_configured() and _active_backend() == "pgvector",
+        # False unconditionally, like the `chroma_server_url` claim below: nothing in the
+        # image can satisfy this one. `PgVectorStore._embed` constructs
+        # `ONNXMiniLM_L6_V2()` directly and never reads the setting, so installing `.[ml]`
+        # would make this warning STOP while its condition persisted — a check going quiet
+        # without the thing being fixed, which is the exact failure this module documents.
+        provided=lambda: False,
+        consequence=(
+            "the active store is pgvector, which embeds with the bundled ONNX "
+            "all-MiniLM-L6-v2 at 384-d and never reads this setting at all — so the "
+            "configured model is ignored no matter what is installed, and the "
+            "configuration claims a capability that cannot exist on this backend"
+        ),
+        remedy=(
+            "clear CHROMA_EMBEDDING_MODEL so the configuration matches what runs. "
+            "Installing `.[ml]` does NOT help here and only hides this line; a different "
+            "embedding dimension on pgvector needs EMBEDDING_DIM, its migration, and a "
+            "full re-index, because 384-d and 768-d vectors are not comparable"
         ),
     ),
     Claim(
