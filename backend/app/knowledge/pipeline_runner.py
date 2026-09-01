@@ -181,19 +181,50 @@ class IndexingPipelineRunner:
                 f"{len(already_processed)} docs processed)",
             )
 
+        beat_missed = [False]
+
         async def _hb() -> None:
             # RES-2: tick the IndexingRun projection while long emit-less steps
             # (clone_or_pull, ast_parse, code_symbol_embed, bm25_build) run, so
             # a live run is never reaped as stale. Targeted UPDATE — mirrors
             # daily_knowledge_sync_service and avoids racing the _on_event
             # projection on ``IndexingRun.version``.
+            # NOT conditioned on `status == "running"`, and that is the whole point.
+            # A reap is provisional — `RunCoordinator._reconcile_reaped_run` exists
+            # precisely to fold a late `pipeline_end` into a row the reaper gave up on.
+            # While the condition was here, the moment the reaper flipped the row the beat
+            # stopped matching, so a working run could never re-assert liveness and the
+            # guess became self-fulfilling. Measured 2026-08-31: a run reaped at 22:07:11
+            # went on to finish `completed` at 22:49:08, and its replacement — started at
+            # 22:13:32 on the other process type — ran alongside it for 36 minutes.
             async with async_session_factory() as s:
-                await s.execute(
+                result = await s.execute(
                     update(IndexingRun)
-                    .where(IndexingRun.workflow_id == wf_id, IndexingRun.status == "running")
+                    .where(IndexingRun.workflow_id == wf_id)
                     .values(heartbeat_at=datetime.now(UTC))
                 )
                 await s.commit()
+            # A targeted UPDATE that matches nothing raises nothing. That silence is why
+            # the beat gap behind the 22:07 reap could not be diagnosed from the data:
+            # a beat keyed on a workflow id the row does not carry looks exactly like a
+            # beat that worked. Logged once per gap rather than every 30 s.
+            # getattr rather than `# type: ignore`: the async stub types this as
+            # `Result`, which has no rowcount, while an UPDATE really returns a
+            # CursorResult. -1 means "could not tell", which must NOT read as zero —
+            # warning about a beat you cannot measure is how a real warning gets ignored.
+            landed = getattr(result, "rowcount", -1)
+            if landed == 0:
+                if not beat_missed[0]:
+                    beat_missed[0] = True
+                    logger.warning(
+                        "heartbeat matched no IndexingRun for workflow %s — this run is "
+                        "invisible to the reaper's liveness check and will be reaped while "
+                        "it works",
+                        wf_id,
+                    )
+            elif beat_missed[0]:
+                beat_missed[0] = False
+                logger.info("heartbeat for workflow %s is landing again", wf_id)
 
         try:
             async with heartbeat(_hb, interval_seconds=settings.heartbeat_interval_seconds):

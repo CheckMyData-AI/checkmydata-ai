@@ -118,8 +118,23 @@ CEILINGS: dict[str, int] = {
     # the money is already bounded by the account's own OpenRouter ceiling. So both log
     # WARNING with the project id and continue unmetered, which understates one
     # customer's spend on one run and is visible in the log rather than silent.
-    "except Exception": 625,
-    "except ...: pass": 53,
+    #
+    # 625 -> 624 on 2026-09-01, with no handler removed: the counter stopped counting
+    # comment lines, and one of the 625 was prose describing a handler rather than a
+    # handler.
+    "except Exception": 624,
+    # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
+    # than debt growing. The old regex required `except …:` and `pass` on consecutive
+    # lines, so a comment between them hid the handler entirely. Two were hiding:
+    #
+    #   `vector_store.py:43`      — a probe for the embedder's max-token attribute;
+    #                               "attribute absent or any other error — skip silently".
+    #   `db_index_service.py:128` — artifact cleanup inside `delete_all`, silenced so
+    #                               cleanup cannot break that method's public contract.
+    #
+    # Both predate this change and both are defensible; they are recorded here rather
+    # than fixed, because a counter fix is not a licence to edit unrelated handlers.
+    "except ...: pass": 55,
     "# type: ignore": 49,
     # 129 → 130 on 2026-08-31. One, in `BillingService.reconcile`: BLE001 on a per-row
     # handler, because a subscription Stripe cannot answer for must not end the sweep
@@ -141,12 +156,44 @@ PATTERNS: dict[str, re.Pattern[str]] = {
 }
 
 
+#: Directives that only take effect TRAILING a line of code. `# type: ignore` on its own
+#: line suppresses nothing in mypy, and a lone `# noqa` suppresses nothing in ruff — both
+#: must sit on the line that errors. So a full-line comment naming one is prose.
+_TRAILING_DIRECTIVES = frozenset({"# type: ignore", "# noqa"})
+
+
+def _strip_comment_lines(text: str) -> str:
+    """Blank out whole-line comments, keeping the line structure.
+
+    Blanked rather than deleted so the multi-line `except ...: pass` pattern still sees the
+    same shape: a comment between `except` and `pass` does not stop the body being `pass`.
+    """
+    return "\n".join("" if ln.lstrip().startswith("#") else ln for ln in text.splitlines())
+
+
 def _count() -> dict[str, int]:
+    """Count SUPPRESSIONS, not mentions of them.
+
+    This ratchet counted its own explanations four times in one session — twice on
+    `except Exception`, twice on `# type: ignore`, including a comment that said "getattr
+    rather than `# type: ignore`" while adding no suppression at all (mypy: 0 errors). Each
+    time the response was to reword the prose, which teaches an author to hide the word
+    rather than to weigh the suppression. A check that punishes explaining yourself is
+    worse than no check, so the rule is now structural: prose cannot suppress anything.
+    """
     totals = dict.fromkeys(PATTERNS, 0)
     for path in APP.rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
+        raw = path.read_text(encoding="utf-8")
+        text = _strip_comment_lines(raw)
         for name, pattern in PATTERNS.items():
-            totals[name] += len(pattern.findall(text))
+            if name in _TRAILING_DIRECTIVES:
+                # One per line at most: a line has one effective suppression.
+                for line in text.splitlines():
+                    m = pattern.search(line)
+                    if m and line[: m.start()].strip():
+                        totals[name] += 1
+            else:
+                totals[name] += len(pattern.findall(text))
     return totals
 
 
@@ -196,3 +243,58 @@ def test_the_patterns_match_what_they_claim() -> None:
 
     assert PATTERNS["# type: ignore"].findall("x = y  # type: ignore[arg-type]")
     assert PATTERNS["# noqa"].findall("import x  # noqa" + ": F401")
+
+
+class TestTheCounterCountsSuppressionsNotMentions:
+    """The guard for the guard.
+
+    This ratchet counted its own explanations four times in one session. Each time the
+    response was to reword the comment, which is the wrong lesson: it teaches an author to
+    avoid naming a suppression rather than to weigh whether to add one.
+    """
+
+    def test_a_comment_naming_a_directive_is_not_counted(self, tmp_path) -> None:
+        """The exact comment that tripped it: prose saying a suppression was AVOIDED."""
+        import re
+
+        line = "            # getattr rather than `# type: ignore`: the async stub types this"
+        pattern = re.compile(r"#\s*type:\s*ignore")
+        stripped = _strip_comment_lines(line)
+        assert pattern.search(line), "the raw line does contain the marker"
+        assert not pattern.search(stripped), "a whole-line comment must not count"
+
+    def test_a_real_trailing_suppression_is_counted(self) -> None:
+        """The control. Without it, a counter that counts nothing passes every ceiling."""
+        import re
+
+        line = "    x = frobnicate(y)  # type: ignore[arg-type]"
+        pattern = re.compile(r"#\s*type:\s*ignore")
+        stripped = _strip_comment_lines(line)
+        m = pattern.search(stripped)
+        assert m and stripped[: m.start()].strip(), "a trailing suppression must count"
+
+    def test_a_lone_directive_line_is_not_counted(self) -> None:
+        """`# type: ignore` on its own line suppresses nothing in mypy, and a lone
+        `# noqa` suppresses nothing in ruff. Both must trail the erroring line."""
+        import re
+
+        pattern = re.compile(r"#\s*noqa")
+        stripped = _strip_comment_lines("    # noqa")
+        assert not pattern.search(stripped)
+
+    def test_prose_naming_a_handler_is_not_counted(self) -> None:
+        import re
+
+        pattern = re.compile(r"except\s+Exception\b")
+        stripped = _strip_comment_lines("    # wrapped in except Exception so a probe cannot")
+        assert not pattern.search(stripped)
+
+    def test_a_handler_with_a_comment_before_pass_still_counts(self) -> None:
+        """The false NEGATIVE this fix removed. Two real handlers were invisible because a
+        comment sat between `except` and `pass`."""
+        import re
+
+        pattern = re.compile(r"except[^\n]*:\s*\n\s*pass\b")
+        src = "    try:\n        f()\n    except Exception:\n        # why\n        pass\n"
+        assert not pattern.search(src), "the raw form is what the old counter missed"
+        assert pattern.search(_strip_comment_lines(src)), "blanking must reveal it"

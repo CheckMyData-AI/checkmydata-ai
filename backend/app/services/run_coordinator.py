@@ -16,9 +16,9 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,6 +45,40 @@ _TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 _LAST_JOURNALLED_MAX = 512
 
 
+def _is_live(
+    status: str,
+    heartbeat_at: datetime | None,
+    *,
+    timeout_seconds: float,
+    error: str | None = None,
+) -> bool:
+    """Is something still working on this run?
+
+    Status is what the REAPER writes when it guesses; ``heartbeat_at`` is what the RUN
+    writes while it works. The duplicate guard read only status, and status is exactly the
+    field a wrong reap falsifies — so on 2026-08-31 a run reaped at 22:07:11, still working
+    and finishing `completed` at 22:49:08, failed to block its own replacement, which
+    started at 22:13:32 on the other process type and ran alongside it for 36 minutes.
+
+    Only ONE terminal verdict is provisional: the reaper's. A `completed`, `cancelled` or
+    genuinely-`failed` row reached an end and said so, and treating a recent final beat as
+    life there would block every legitimate retry — which is what the first version of this
+    function did, and what the existing retry tests caught.
+    """
+    if status in _ACTIVE_STATUSES:
+        return True
+    # Reaped is a guess. Everything else terminal is a statement.
+    if status != "failed" or error != REAP_ERROR:
+        return False
+    if heartbeat_at is None:
+        return False
+    # SQLite stores no timezone, so dev and the whole test suite read this column back
+    # naive while `_now()` is aware; subtracting the two raises. Assume UTC, which is what
+    # every writer of this column uses.
+    beat = heartbeat_at if heartbeat_at.tzinfo else heartbeat_at.replace(tzinfo=UTC)
+    return (_now() - beat).total_seconds() <= timeout_seconds
+
+
 class RunAlreadyActiveError(Exception):
     """Raised when a run already exists for (project, kind, connection)."""
 
@@ -59,6 +93,15 @@ class RunCancelledError(Exception):
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _stale_timeout() -> float:
+    """The same number the reaper judges staleness by, read from the same setting — two
+    copies of this threshold would disagree in exactly the window that matters."""
+    try:
+        return float(settings.stale_running_heartbeat_timeout_seconds)
+    except (TypeError, ValueError):
+        return 300.0
 
 
 def _beat_interval() -> float:
@@ -177,13 +220,28 @@ class RunCoordinator:
     async def _find_active(
         self, db: AsyncSession, project_id: str, kind: str, connection_id: str | None
     ) -> IndexingRun | None:
+        # Deliberately NOT filtered on status in SQL: a row the reaper flipped to
+        # `failed` may still be beating, and that is the case this guard missed. The
+        # window bounds the scan instead — a reaped row stops being interesting once its
+        # beat is older than the timeout.
+        window = _now() - timedelta(seconds=_stale_timeout() * 2)
         stmt = select(IndexingRun).where(
             IndexingRun.project_id == project_id,
             IndexingRun.kind == kind,
-            IndexingRun.status.in_(_ACTIVE_STATUSES),
+            or_(
+                IndexingRun.status.in_(_ACTIVE_STATUSES),
+                IndexingRun.heartbeat_at >= window,
+            ),
         )
         for row in (await db.execute(stmt)).scalars().all():
-            if (row.connection_id or None) == (connection_id or None):
+            if (row.connection_id or None) != (connection_id or None):
+                continue
+            if _is_live(
+                row.status,
+                row.heartbeat_at,
+                timeout_seconds=_stale_timeout(),
+                error=row.error,
+            ):
                 return row
         return None
 
