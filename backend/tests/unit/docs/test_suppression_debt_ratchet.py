@@ -122,7 +122,14 @@ CEILINGS: dict[str, int] = {
     # 625 -> 624 on 2026-09-01, with no handler removed: the counter stopped counting
     # comment lines, and one of the 625 was prose describing a handler rather than a
     # handler.
-    "except Exception": 624,
+    #
+    # 624 -> 625 on 2026-09-01. One handler, in `capability_report._active_backend`: the
+    # boot diagnostic resolves the vector backend, and `resolve_backend` raises on an
+    # invalid configuration. A diagnostic that can stop a boot is worse than the thing it
+    # diagnoses. It logs at WARNING and says the claims are not being checked — the
+    # silent-degradation ratchet caught the first version, which returned None at debug and
+    # would have made both claims disappear without a word.
+    "except Exception": 625,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:
