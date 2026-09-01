@@ -133,6 +133,23 @@ class WindowTokenizer:
                 from tokenizers import Tokenizer
 
                 self._tokenizer = Tokenizer.from_pretrained(self._model_name)
+                # A tokenizer loaded from the hub carries the truncation and padding
+                # settings its author saved. This object is used ONLY to count tokens and
+                # place chunk boundaries — never to build model input — so both are wrong
+                # here, in opposite directions: truncation makes a long document report the
+                # window size instead of its real length, and padding makes a short one
+                # report the window size too.
+                #
+                # Measured 2026-09-01: `sentence-transformers/all-MiniLM-L6-v2` ships
+                # truncation enabled, so `count_tokens` returned **128 for a 14 149-character
+                # document** and `chunk_document` emitted ONE chunk for the whole thing. The
+                # previous default, `BAAI/bge-base-en-v1.5`, happens to ship no truncation,
+                # which is the only reason this never surfaced — a latent bug whose presence
+                # depended on which model someone configured.
+                for disable in ("no_truncation", "no_padding"):
+                    fn = getattr(self._tokenizer, disable, None)
+                    if callable(fn):
+                        fn()
                 logger.debug("tokenizer_window: loaded real tokenizer for %s", self._model_name)
             except Exception:
                 logger.debug(

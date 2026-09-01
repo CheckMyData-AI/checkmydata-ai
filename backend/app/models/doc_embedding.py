@@ -31,11 +31,11 @@ from sqlalchemy import JSON, DateTime, ForeignKey, Index, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+# Imported, not declared: it lived here as a second copy, and two homes for one fact is
+# how the configured window and the real embedder drifted 512 against 256. Re-exported so
+# existing `from app.models.doc_embedding import EMBEDDING_DIM` callers keep working.
+from app.core.embedder import EMBEDDING_DIM
 from app.models.base import Base
-
-#: Dimensions produced by ChromaDB's bundled ONNX ``all-MiniLM-L6-v2``. Asserted at
-#: write time — a mismatch is a silently wrong index, not a crash, so it is checked.
-EMBEDDING_DIM = 384
 
 
 class DocEmbedding(Base):

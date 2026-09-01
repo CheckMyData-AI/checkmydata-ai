@@ -139,3 +139,73 @@ class TestWindowTokenizerRealTokenizer:
         text = "word " * 500
         truncated = real_tokenizer.truncate_to_tokens(text, max_tokens=64)
         assert real_tokenizer.count_tokens(truncated) <= 64
+
+
+class TestTheCountingTokenizerNeverTruncates:
+    """A tokenizer loaded from the hub carries the truncation and padding its author saved.
+
+    This object is used ONLY to count tokens and place chunk boundaries — never to build
+    model input — so both settings are wrong here, in opposite directions: truncation makes
+    a long document report the window size instead of its real length, and padding makes a
+    short one report the window size too.
+
+    Measured 2026-09-01: `sentence-transformers/all-MiniLM-L6-v2` ships truncation enabled,
+    so `count_tokens` returned **128 for a 14 149-character document** and `chunk_document`
+    emitted ONE chunk for the whole thing — everything past token 256 would never have been
+    indexed at all. The previous default, `BAAI/bge-base-en-v1.5`, happens to ship no
+    truncation, which is the only reason this stayed latent: a bug whose existence depended
+    on which model someone configured.
+    """
+
+    def test_a_long_text_counts_far_above_any_window(self) -> None:
+        import pytest
+
+        from app.core.embedder import BUNDLED_EMBEDDING_MAX_TOKENS, BUNDLED_EMBEDDING_MODEL
+        from app.knowledge.tokenizer_window import get_tokenizer
+
+        tk = get_tokenizer(BUNDLED_EMBEDDING_MODEL)
+        text = "class Model:\n" + "    field = Column(Integer)\n" * 500
+        n = tk.count_tokens(text)
+
+        if tk._get_tokenizer() is None:
+            pytest.skip("no real tokenizer available; the char fallback never truncates")
+
+        assert n > BUNDLED_EMBEDDING_MAX_TOKENS * 4, (
+            f"{len(text)} characters counted as {n} tokens — the counting tokenizer is "
+            "returning a TRUNCATED length, so the chunker will believe any document fits "
+            "the window and emit one chunk for all of it"
+        )
+
+    def test_a_short_text_is_not_padded_up(self) -> None:
+        import pytest
+
+        from app.core.embedder import BUNDLED_EMBEDDING_MODEL
+        from app.knowledge.tokenizer_window import get_tokenizer
+
+        tk = get_tokenizer(BUNDLED_EMBEDDING_MODEL)
+        if tk._get_tokenizer() is None:
+            pytest.skip("no real tokenizer available")
+
+        assert tk.count_tokens("hello world") < 10, (
+            "padding is enabled, so every short chunk reports the window size and the "
+            "chunker splits documents that did not need splitting"
+        )
+
+    def test_chunks_actually_fit_the_window_end_to_end(self) -> None:
+        """The property that matters, measured rather than reasoned about."""
+        import pytest
+
+        from app.config import settings
+        from app.knowledge.chunker import chunk_document
+        from app.knowledge.tokenizer_window import get_tokenizer
+
+        tk = get_tokenizer(settings.chroma_embedding_model)
+        if tk._get_tokenizer() is None:
+            pytest.skip("no real tokenizer available")
+
+        parts = [f"class Model{i}:\n" + "    field = Column(Integer)\n" * 50 for i in range(10)]
+        chunks = chunk_document("\n".join(parts), "models.py", "orm_model")
+        assert len(chunks) > 1, "a 14 000-character document must not be one chunk"
+        assert all(tk.count_tokens(c.content) <= settings.embedder_max_tokens for c in chunks), (
+            "a chunk exceeds the window it was sized to"
+        )
