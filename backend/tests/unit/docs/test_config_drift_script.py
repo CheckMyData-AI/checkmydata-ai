@@ -162,11 +162,28 @@ def test_settings_absent_from_config_py_are_ignored(drift) -> None:
 
 
 def test_it_reads_string_and_int_settings_too(drift) -> None:
-    """The one that would have caught `VECTOR_STORE_BACKEND` the day it was set."""
+    """The one that would have caught `VECTOR_STORE_BACKEND` the day it was set.
+
+    Compared against what `Settings` actually declares rather than against literals
+    written here. The first version asserted `== "chroma"`, and when that default became
+    `auto` the test went red over a value it was never about — its subject is that
+    non-boolean settings are read at all. Type and presence are asserted separately so it
+    cannot pass by both sides being absent.
+    """
+    from app.config import Settings
+
     defaults = drift.code_defaults()
-    assert defaults.get("VECTOR_STORE_BACKEND") == "chroma"
-    assert defaults.get("DEFAULT_LLM_PROVIDER") == "openai"
-    assert defaults.get("EMBEDDING_UPSERT_BATCH_SIZE") == "8"
+    for key, field in [
+        ("VECTOR_STORE_BACKEND", "vector_store_backend"),
+        ("DEFAULT_LLM_PROVIDER", "default_llm_provider"),
+        ("EMBEDDING_UPSERT_BATCH_SIZE", "embedding_upsert_batch_size"),
+    ]:
+        declared = Settings.model_fields[field].default
+        assert not isinstance(declared, bool), (
+            f"{key} is a bool; this test exists to prove NON-boolean settings are read"
+        )
+        assert key in defaults, f"{key} was not read out of config.py at all"
+        assert defaults[key] == str(declared), (key, defaults[key], declared)
 
 
 def test_booleans_still_compare_case_and_spelling_insensitively(drift) -> None:

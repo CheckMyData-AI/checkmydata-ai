@@ -126,21 +126,72 @@ class TestTheTwoRefusals:
 
 
 class TestTheBackendSwitch:
-    def test_the_default_is_still_chroma(self) -> None:
-        """The flip is a decision taken on a verified deployment, not a side effect of
-        merging this change."""
+    """The default is `auto`, and neither literal would have done.
+
+    The condition recorded beside the old default — "the code default flips once one full
+    re-index has reached pipeline_end on it" — is met: pgvector went live in production on
+    2026-08-28 (release v285), a full rebuild ran 2026-08-31 08:32 to 11:57 UTC and
+    finished `completed`, and `doc_embeddings` holds 34 348 rows for the one project.
+
+    But a literal `pgvector` default breaks every fresh install: `make setup` creates
+    SQLite, where the migration that creates `doc_embeddings` is deliberately a no-op. And
+    keeping `chroma` leaves the real deployment on a store written to the dyno's container
+    filesystem, wiped on every restart and unshared between web and worker — which is what
+    made `index_repo` complete 16 times in 94 runs. So the default resolves by database
+    instead of asserting one answer for two situations.
+    """
+
+    def test_the_default_is_auto(self) -> None:
         from app.config import Settings
 
-        assert Settings.model_fields["vector_store_backend"].default == "chroma"
+        assert Settings.model_fields["vector_store_backend"].default == "auto"
 
-    def test_the_factory_returns_chroma_by_default(self) -> None:
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            ("sqlite+aiosqlite:///./data/agent.db", "chroma"),
+            ("postgresql+asyncpg://u:p@h/db", "pgvector"),
+            ("postgres://u:p@h/db", "pgvector"),
+        ],
+    )
+    def test_auto_resolves_by_database(self, url: str, expected: str) -> None:
+        """Pure on purpose: constructing PgVectorStore opens a psycopg pool and registers
+        the vector type, so the DECISION cannot be tested through the factory without a
+        live Postgres. Separating them is what makes this case checkable at all."""
+        from app.knowledge.vector_store import resolve_backend
+
+        assert resolve_backend("auto", url) == expected
+
+    def test_auto_is_what_an_empty_setting_means(self) -> None:
+        """An unset or blank env var must not read as a fourth behaviour."""
+        from app.knowledge.vector_store import resolve_backend
+
+        for blank in (None, "", "   "):
+            assert resolve_backend(blank, "postgresql+asyncpg://u:p@h/db") == "pgvector"
+
+    def test_an_operator_can_still_pin_either_one(self) -> None:
+        """`auto` is a default, not a policy. Someone debugging a retrieval difference
+        needs to hold the store still while the database stays where it is."""
+        from app.knowledge.vector_store import resolve_backend
+
+        pg = "postgresql+asyncpg://u:p@h/db"
+        assert resolve_backend("chroma", pg) == "chroma"
+        assert resolve_backend("pgvector", pg) == "pgvector"
+        assert resolve_backend("  PgVector  ", pg) == "pgvector"
+
+    def test_the_factory_returns_chroma_on_sqlite(self) -> None:
+        """Which is what the test suite and every dev machine run on."""
         assert isinstance(make_vector_store(), VectorStore)
 
     def test_pgvector_on_sqlite_says_so_instead_of_failing_later(self, monkeypatch) -> None:
         """Development and the test suite run on SQLite, where the migration that
         creates `doc_embeddings` is deliberately a no-op. Asking for pgvector there is
         a configuration error, and it should read as one — not as a missing table
-        several stack frames deep."""
+        several stack frames deep.
+
+        Still an ERROR rather than a silent downgrade to chroma: `auto` is how you ask for
+        "whatever fits", and an explicit `pgvector` is a claim about where the vectors are.
+        """
         from app.config import settings
 
         monkeypatch.setattr(settings, "vector_store_backend", "pgvector", raising=False)
@@ -154,6 +205,53 @@ class TestTheBackendSwitch:
         monkeypatch.setattr(settings, "vector_store_backend", "qdrant", raising=False)
         with pytest.raises(ValueError, match="not a backend"):
             make_vector_store()
+
+    def test_an_unknown_backend_is_refused_before_the_database_is_consulted(self) -> None:
+        """Order matters for the message: a typo on SQLite must read as a typo, not as
+        "pgvector requires PostgreSQL"."""
+        from app.knowledge.vector_store import resolve_backend
+
+        with pytest.raises(ValueError, match="not a backend"):
+            resolve_backend("qdrant", "sqlite+aiosqlite:///x.db")
+
+    def test_the_boot_log_says_which_store_and_that_it_was_auto_resolved(self, caplog) -> None:
+        """`auto` means the answer is written nowhere an operator can read — not in the
+        config, not in the env. The boot log is the only place it appears, and a store that
+        silently differs between two deployments is what took thirteen days to notice last
+        time.
+
+        Asserted on the record produced by `make_vector_store` specifically. An earlier
+        version of this test looked for the word "chroma" anywhere in the log and passed
+        before the feature existed, because constructing `VectorStore` already logs it.
+        """
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="app.knowledge.vector_store"):
+            make_vector_store()
+
+        lines = [r.getMessage() for r in caplog.records if r.name == "app.knowledge.vector_store"]
+        chosen = [ln for ln in lines if ln.startswith("vector store:")]
+        assert chosen, f"make_vector_store named no backend; saw {lines}"
+        assert "chroma" in chosen[-1], chosen[-1]
+        assert "auto-resolved" in chosen[-1], (
+            "the default is auto here, so the log must say the answer was derived rather "
+            f"than configured: {chosen[-1]}"
+        )
+
+    def test_a_pinned_store_does_not_claim_to_have_been_derived(self, monkeypatch, caplog) -> None:
+        import logging
+
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "vector_store_backend", "chroma", raising=False)
+        with caplog.at_level(logging.INFO, logger="app.knowledge.vector_store"):
+            make_vector_store()
+        chosen = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "app.knowledge.vector_store" and r.getMessage().startswith("vector store:")
+        ]
+        assert chosen and "pinned" in chosen[-1], chosen
 
 
 class TestTheTwoBatchSizesAreSeparate:

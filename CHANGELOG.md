@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the vector store default resolves by database instead of naming a winner
+
+The condition recorded beside the old `chroma` default — *the code default flips once one
+full re-index has reached pipeline_end on pgvector* — is met. pgvector went live in
+production on 2026-08-28 (release v285), a full rebuild ran 2026-08-31 08:32–11:57 UTC and
+finished `completed`, and `doc_embeddings` holds 34 348 rows for the one project.
+
+The default is now **`auto`**, not `pgvector`, because neither literal serves both cases:
+
+- `pgvector` breaks a fresh `make setup`, which creates SQLite — where the migration that
+  creates `doc_embeddings` is a deliberate no-op.
+- `chroma` leaves the real deployment on a store written to the dyno's container
+  filesystem, wiped on every restart and unshared between `web` and `worker`. That is what
+  made `index_repo` complete 16 times in 94 runs.
+
+An explicit value still pins it, and an explicit `pgvector` on SQLite **raises** rather
+than downgrading silently: `auto` is how you ask for whatever fits, so naming a backend is
+a claim about where the vectors are.
+
+Two things fell out of building it. The decision now lives in a pure `resolve_backend()`,
+because constructing `PgVectorStore` opens a psycopg pool and registers the vector type
+against a live server — so the choice could not be tested through the factory anywhere
+Postgres is absent, which is the entire test suite. And **`auto` means the answer is
+written nowhere an operator can read**, so the boot log names it and says whether it was
+derived or pinned.
+
+`VECTOR_STORE_BACKEND=pgvector` in production is now redundant rather than a divergence.
+It stays set until this ships — unsetting it against a `chroma` default would move the
+whole knowledge layer back onto the dyno's local disk — and the `config_drift` entry
+records that, with the measurement behind it.
+
+
 ### Fixed — three background routers spent tokens that reached no table
 
 A rebuild makes hundreds of LLM calls (`generate_docs` alone ~758), and none of them were
