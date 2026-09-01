@@ -108,9 +108,19 @@ class Settings(BaseSettings):
     # not touch. Requires Postgres — development and the test suite run on SQLite,
     # where the migration is a no-op and this must stay "chroma".
     #
-    # Default is still "chroma" so the switch is a deliberate flip on a verified
-    # deployment rather than a side effect of deploying this change.
-    vector_store_backend: str = "chroma"
+    # `auto` resolves by DATABASE_URL: SQLite gets chroma, Postgres gets pgvector.
+    # The old default was "chroma", with the flip deferred until one full re-index had
+    # reached pipeline_end on pgvector. It has: pgvector went live in production on
+    # 2026-08-28 (release v285), a full rebuild ran 2026-08-31 08:32-11:57 UTC and
+    # finished `completed`, and `doc_embeddings` holds 34 348 rows.
+    #
+    # It resolves rather than naming a winner because neither literal serves both cases.
+    # `pgvector` breaks a fresh `make setup`, which creates SQLite, where the migration
+    # that creates `doc_embeddings` is deliberately a no-op. `chroma` leaves the real
+    # deployment on a store written to the dyno's container filesystem — wiped on every
+    # restart, unshared between web and worker — which is what made `index_repo` complete
+    # 16 times in 94 runs. An explicit value still pins it.
+    vector_store_backend: str = "auto"
     # How many embedded rows go to Postgres in one statement. Separate from
     # `embedding_upsert_batch_size` because the two pull in opposite directions and
     # only shared a number while ChromaDB's write was local and free: embedding is

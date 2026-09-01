@@ -303,6 +303,47 @@ class VectorStore:
         logger.info("VectorStore closed")
 
 
+def resolve_backend(configured: str | None, database_url: str) -> str:
+    """Which store this process will use: ``"chroma"`` or ``"pgvector"``.
+
+    Separate from :func:`make_vector_store` because constructing ``PgVectorStore`` opens a
+    psycopg pool and registers the vector type against a live server — so the DECISION
+    cannot otherwise be checked anywhere Postgres is absent, which includes the whole test
+    suite and every development machine.
+
+    ``auto`` is the default and resolves by database: SQLite gets chroma, because the
+    migration that creates ``doc_embeddings`` is deliberately a no-op there; anything else
+    gets pgvector. Neither literal would serve both — ``pgvector`` breaks a fresh
+    ``make setup``, and ``chroma`` leaves a real deployment on a store written to the
+    dyno's container filesystem, wiped on every restart and unshared between web and
+    worker.
+
+    An explicit value is honoured and an explicit ``pgvector`` on SQLite RAISES rather than
+    quietly falling back: ``auto`` is how you ask for whatever fits, so naming a backend is
+    a claim about where the vectors are, and a silent downgrade would make that claim false
+    without saying so.
+    """
+    backend = (configured or "").strip().lower() or "auto"
+    is_sqlite = database_url.startswith("sqlite")
+
+    # Refused before the database is consulted, so a typo reads as a typo rather than as
+    # "pgvector requires PostgreSQL".
+    if backend not in {"auto", "chroma", "pgvector"}:
+        raise ValueError(
+            f"VECTOR_STORE_BACKEND={backend!r} is not a backend; "
+            "expected 'auto', 'chroma' or 'pgvector'"
+        )
+    if backend == "auto":
+        return "chroma" if is_sqlite else "pgvector"
+    if backend == "pgvector" and is_sqlite:
+        raise ValueError(
+            "VECTOR_STORE_BACKEND=pgvector requires a PostgreSQL DATABASE_URL; "
+            "on SQLite the doc_embeddings migration is a no-op and the table "
+            "does not exist"
+        )
+    return backend
+
+
 def make_vector_store() -> "VectorStore | Any":
     """Return the configured vector store.
 
@@ -317,19 +358,22 @@ def make_vector_store() -> "VectorStore | Any":
     for it there is a configuration error, and it says so instead of failing later on
     a missing table.
     """
-    backend = (settings.vector_store_backend or "chroma").strip().lower()
+    configured = (settings.vector_store_backend or "").strip().lower() or "auto"
+    backend = resolve_backend(configured, settings.database_url)
+    if configured == "auto":
+        # `auto` means the answer is not written anywhere an operator can read, so the
+        # boot log is the only place it appears. A store that silently differs between two
+        # deployments is what took thirteen days to notice last time.
+        logger.info(
+            "vector store: %s (auto-resolved from DATABASE_URL; set VECTOR_STORE_BACKEND to pin)",
+            backend,
+        )
+    else:
+        logger.info("vector store: %s (pinned by VECTOR_STORE_BACKEND)", backend)
+
     if backend == "chroma":
         return VectorStore()
-    if backend == "pgvector":
-        if settings.database_url.startswith("sqlite"):
-            raise ValueError(
-                "VECTOR_STORE_BACKEND=pgvector requires a PostgreSQL DATABASE_URL; "
-                "on SQLite the doc_embeddings migration is a no-op and the table "
-                "does not exist"
-            )
-        from app.knowledge.pgvector_store import PgVectorStore
 
-        return PgVectorStore()
-    raise ValueError(
-        f"VECTOR_STORE_BACKEND={backend!r} is not a backend; expected 'chroma' or 'pgvector'"
-    )
+    from app.knowledge.pgvector_store import PgVectorStore
+
+    return PgVectorStore()
