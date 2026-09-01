@@ -495,6 +495,33 @@ Per-connection, **not** a global flag: `collection_enabled` (default **on**) and
 | `reaper_interval_seconds` | 60 | How often the reaper sweeps for stuck rows |
 | `stale_running_heartbeat_timeout_seconds` | 300 | Rows older than this are reset to `failed` |
 
+**A reap is provisional, and two places treated it as final (2026-09-01).** Production,
+every timestamp from the database: a schedule run started 22:00:20 on the **web** dyno,
+`graph_build` began 22:01:22, the row was **reaped at 22:07:11**, the reaper's replacement
+started **22:13:32** on the **worker** dyno, and the reaped run emitted
+`pipeline_end completed` at **22:49:08** — it was never dead. Two full repo indexes ran
+concurrently for 36 minutes on the memory-constrained process.
+
+Two independent causes. The pipeline's beat (`pipeline_runner.py`) was
+`UPDATE … WHERE workflow_id = :wf AND status = 'running'`, so the instant the reaper
+flipped the row the beat stopped matching and a working run could **never re-assert
+liveness** — the guess made itself true, while `_reconcile_reaped_run` existed all along to
+fold a late `pipeline_end` back in. And `RunCoordinator._active_run` filtered on **status**,
+the one field a wrong reap falsifies. It now consults `heartbeat_at` through `_is_live()`,
+where **only `failed` + `REAP_ERROR` is provisional** — `completed`, `cancelled` and an
+honest `failed` are statements, and treating their last beat as life blocked legitimate
+retries (caught by the existing coordinator tests, not by the new ones).
+
+**A zero-row beat is now logged**, once per gap. A targeted `UPDATE` matching nothing
+raises nothing, and that silence is why the beat gap behind the 22:07 reap still cannot be
+explained from the data. `rowcount == -1` ("could not tell") is kept distinct from `0`.
+
+**Still open: repo-index mutual exclusion is per-process only.** `_indexing_locks`
+(`repos.py:53`) is a module-level dict of `asyncio.Lock`, while the entry points span both
+process types — `daily_knowledge_sync_service.py:348` calls the task directly on `web`, the
+reaper enqueues to ARQ on `worker`. A Redis lock was deferred deliberately: its TTL would
+need renewing by the same beat that failed here.
+
 **A reaped run now reaches `error_log` (N3, 2026-08-25).** `RunCoordinator` catalogs failures only on terminal-event paths (`run_coordinator.py:317`, `:450`, `:485`); the reaper flips rows with a bulk `UPDATE` and emits no terminal event, so 143 failed runs produced 3 catalog rows. `StaleRunReaper` reads the doomed rows before killing them and catalogs each — message carries the step (`stale run reaped (step: graph_build)`), so the concentration that identifies a cause is visible in `/api/logs` rather than only in ad-hoc SQL. The run's `error` column stays exactly `REAP_ERROR`, because `run_coordinator.py:393` compares it verbatim to reconcile a run that turns out to be alive.
 **The beat runs *inside* a step, not only at its edges (N1, 2026-08-25).** `RunCoordinator.step` wrote `heartbeat_at` on entry and on success and nothing between, so any single step longer than `stale_running_heartbeat_timeout_seconds` (300) was reaped **while it was still working**. Production: 64 of 70 repo-index failures, all `current_step='graph_build'`, `error='stale run reaped'`, every day from 2026-08-07. It was invisible for thirteen days because a heartbeat *did* exist — `_run_index_background` (`repos.py:556-563`) ticks `IndexingCheckpoint`, and the reaper's `stale run reaped` marker lands on `IndexingRun`, a different row. The fix is in `step` because all four repo-index entry points (ARQ task, manual route, retry route, daily sync) reach the pipeline through it, and because `IndexingRun` is created and finished there. The writer uses **its own session** — the step's `db` driven from two tasks is a race, not a heartbeat — and a targeted `UPDATE` rather than an ORM load, so it cannot carry a stale `version` or overwrite columns it does not own.
 

@@ -6,6 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a reap is a guess, and two places treated it as a fact
+
+Measured in production on 2026-08-31, every timestamp from the database:
+
+| Time | What happened | Evidence |
+|---|---|---|
+| 22:00:20 | schedule run `745c6ff3` starts (web dyno, in-process) | `indexing_run_events` |
+| 22:01:22 | `graph_build` starts | event |
+| 22:07:11 | that step is **reaped**; the row flips to `failed`/`REAP_ERROR` | `error_log.last_seen_at` |
+| 22:13:32 | the reaper's replacement starts (worker dyno, via ARQ) | event |
+| 22:49:08 | `745c6ff3` emits `pipeline_end completed` | event |
+
+The reaped run was never dead. **Two full repo indexes ran concurrently for 36 minutes**
+on the process this project documents as SIGKILLed at 1053 MiB against a 512 MiB quota.
+The re-enqueue that produced the second one shipped earlier the same day.
+
+Two defects, each sufficient alone:
+
+- **The pipeline's heartbeat was conditioned on `status == "running"`.** The moment the
+  reaper flipped the row, the beat stopped matching and the working run could never
+  re-assert liveness — the provisional verdict made itself true. The codebase already knew
+  the verdict was provisional: `_reconcile_reaped_run` exists to fold a late `pipeline_end`
+  into a row the reaper gave up on.
+- **The duplicate guard read status**, and status is exactly the field a wrong reap
+  falsifies. It now reads `heartbeat_at`, which is what a run writes *while it works* — and
+  only the reaper's verdict is treated as provisional. `completed`, `cancelled` and a
+  genuine `failed` are statements; treating a recent final beat as life there blocked
+  legitimate retries, which the existing coordinator tests caught.
+
+**A beat that matches no row now says so.** A targeted `UPDATE` matching zero rows raises
+nothing, and that silence is why the gap behind the 22:07 reap cannot be explained from the
+data even now. "Could not measure" is kept distinct from "zero" — warning about a beat you
+did not measure is how a real warning gets ignored.
+
+Still open, and stated rather than implied: **mutual exclusion for repo indexing is
+per-process only.** `_indexing_locks` is a module-level dict of asyncio locks, while the
+entry points span both process types — `daily_knowledge_sync_service` calls the task
+directly on `web`, the reaper enqueues to ARQ on `worker`. This pair closes the observed
+path, not the general one. A Redis lock was considered and deferred deliberately: its TTL
+would have to be renewed by the same beat that failed here, so it would guarantee
+exclusion only where exclusion already held.
+
+### Changed — the suppression ratchet counts suppressions, not mentions of them
+
+It counted its own explanations four times in one session, including a comment reading
+"getattr rather than `# type: ignore`" that added no suppression at all (mypy: 0 errors).
+Each time the response was to reword the prose, which teaches an author to avoid naming a
+suppression rather than to weigh adding one.
+
+The rule is now structural: a whole-line comment cannot suppress anything, and
+`# type: ignore` / `# noqa` count only where they trail a line of code — on their own line
+neither directive suppresses anything in mypy or ruff.
+
+`except ...: pass` rose 53 → 55, and that is the counter becoming **more accurate**: the
+old regex needed `except …:` and `pass` on consecutive lines, so a comment between them hid
+the handler. Two were hidden (`vector_store.py:43`, `db_index_service.py:128`); both
+predate this change, both are defensible, and both are recorded rather than edited.
+
+
 ### Changed — the vector store default resolves by database instead of naming a winner
 
 The condition recorded beside the old `chroma` default — *the code default flips once one
