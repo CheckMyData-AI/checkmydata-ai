@@ -250,7 +250,7 @@ async def ask(
 
     config = None
     if body.connection_id:
-        conn_model = await _conn_svc.get(db, body.connection_id)
+        conn_model = await _conn_svc.get_in_project(db, body.connection_id, body.project_id)
         if not conn_model:
             raise HTTPException(status_code=404, detail="Connection not found")
         config = await _safe_to_config(db, conn_model)
@@ -616,7 +616,7 @@ async def ask_stream(
 
     config = None
     if body.connection_id:
-        conn_model = await _conn_svc.get(db, body.connection_id)
+        conn_model = await _conn_svc.get_in_project(db, body.connection_id, body.project_id)
         if not conn_model:
             raise HTTPException(status_code=404, detail="Connection not found")
         config = await _safe_to_config(db, conn_model)
@@ -1549,7 +1549,7 @@ async def chat_websocket(
 
             config = None
             if connection_id and connection_id != "_none":
-                conn_model = await _conn_svc.get(db, connection_id)
+                conn_model = await _conn_svc.get_in_project(db, connection_id, project_id)
                 if not conn_model:
                     await websocket.send_json({"error": "Connection not found"})
                     await websocket.close()
