@@ -6,6 +6,76 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the counting tokenizer returned a truncated count, so the chunker stopped splitting
+
+Found while fixing something else, and much worse than the thing it was found under.
+
+`WindowTokenizer` loads a HuggingFace tokenizer to **count tokens and place chunk
+boundaries** — never to build model input. A tokenizer loaded from the hub carries the
+truncation and padding its author saved, and `encode()` honours both. So the count is wrong
+in two directions: truncation makes a long document report the window size instead of its
+real length, and padding makes a short one report the window size too.
+
+Measured: **14 149 characters counted as 128 tokens**, and `chunk_document` emitted **one
+chunk** for the whole document. After disabling both: 3 040 tokens, 20 chunks, largest
+exactly 256 — the window. The previous default model, `BAAI/bge-base-en-v1.5`, happens to
+ship no truncation, which is the only reason this stayed latent: a defect whose existence
+depended on which model somebody configured.
+
+### Fixed — the chunker was sized for an embedder that never ran
+
+`chroma_embedding_model` defaulted to `BAAI/bge-base-en-v1.5` (768-d, needs the optional
+`ml` extra that no shipped install carries) and `embedder_max_tokens = 512` is documented as
+"the real tokenizer context window of `chroma_embedding_model`" — true of bge, and it is the
+number the chunker sizes to. What embeds is ChromaDB's bundled ONNX `all-MiniLM-L6-v2`,
+whose own source does `tokenizer.enable_truncation(max_length=256)`.
+
+Measured over 1 500 production chunks: p50 112 tokens, p90 **490**, max 513 — chunking
+respected 512 faithfully — with **434 (28.9%) above 256**, so roughly 9 900 of 34 348 rows
+carried a vector built from the first half of their text. The text stays in `document` and
+is returned once retrieved; it simply cannot be *found* by the half that was cut. (Counted
+with bge's tokenizer, since that was the configured one; MiniLM's would differ, so the
+figure is an order rather than an exact value.)
+
+**This is the second attempt at this defect.** Wave 2 (CODEIDX-C1) found chunks targeting
+1 500 tokens against a 256-token embedder and fixed it by **raising the embedder** — making
+bge the default and declaring 512 authoritative — rather than lowering the chunker. Since
+bge never embedded anything here, an ~80% truncation became an invisible ~50% one.
+
+**And its validation lock never ran.** `test_embedder_window_validation.py` opened with a
+module-level `importorskip("sentence_transformers")`, so on every shipped install and every
+dev machine without the optional extra the entire file collected as one skipped item:
+`1 skipped in 0.04s`. The invariant is now asserted without the optional package, and a test
+fails if a module-level skip returns.
+
+The embedder's facts (`BUNDLED_EMBEDDING_MODEL`, `BUNDLED_EMBEDDING_MAX_TOKENS`,
+`EMBEDDING_DIM`) now live in one leaf module. `EMBEDDING_DIM` was a second declaration of the
+same fact, and two homes for one number is the mechanism by which the window and the model
+drifted apart. The 256 is **pinned against ChromaDB's own source** by a test rather than
+restated in a comment.
+
+Both keys ride `embedding_fingerprint()`, so deploying this enqueues one idempotent,
+advisory-locked `force_full` rebuild — **about 3.4 hours of worker time**. That is required,
+not incidental: `save_incremental` merges by file, so without it the new boundaries would
+reach only files somebody happens to edit.
+
+### Changed — the suppression ratchet is tokenised, because prose hides in two shapes
+
+It counted its own explanations five times in one session. Four were `#` comments; the fifth
+was a module **docstring** quoting `except Exception: pass`, which a comment-only strip
+cannot see. Handler shapes are now counted over text with comments *and strings* blanked by
+token, while the two comment directives are counted from the comment tokens themselves —
+each metric from the source that can answer it. Blanking comments alone had zeroed both
+directives, since those directives *are* comments.
+
+`except ...: pass` rose 55 → 57, again from the counter becoming more accurate: two handlers
+were hidden by a **trailing** comment, where the old regex backtracked around the colon
+inside `# pragma: no cover` / `# noqa: BLE001` and never reached the `pass`
+(`required_filter_guard.py:257`, `git_tracker.py:84`). The second already declared itself in
+the `# noqa` metric while its shape stayed invisible here. Both predate this change and are
+recorded rather than edited.
+
+
 ### Fixed — the boot-time honesty check was not honest about one setting
 
 `capability_report` exists because "the operator reading `heroku config` sees a feature

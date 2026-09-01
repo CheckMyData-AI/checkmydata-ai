@@ -27,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.config import settings
+from app.core.embedder import BUNDLED_EMBEDDING_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,15 @@ def _active_backend() -> str | None:
 
 
 def _model_configured() -> bool:
-    return bool((settings.chroma_embedding_model or "").strip())
+    """True only when a model OTHER than the bundled one is asked for.
+
+    Naming the bundled ONNX all-MiniLM-L6-v2 is not a claim about an optional extra — it
+    is a description of what runs, and it is the default. A check that warns about the
+    untouched default fires on every boot of every install, which is how an operator
+    learns to scroll past the line that one day matters.
+    """
+    configured = (settings.chroma_embedding_model or "").strip()
+    return bool(configured) and configured != BUNDLED_EMBEDDING_MODEL
 
 
 CLAIMS: tuple[Claim, ...] = (

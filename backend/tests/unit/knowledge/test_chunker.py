@@ -34,12 +34,20 @@ def test_small_doc_single_chunk() -> None:
     assert chunks[0].metadata["source_path"] == "d.md"
 
 
-def test_default_model_is_512_ctx() -> None:
-    """CODEIDX-C1 fix: default model is a 512-token model and embedder_max_tokens=512."""
-    from app.config import settings
+def test_the_default_window_matches_the_embedder_that_runs() -> None:
+    """Was `test_default_model_is_512_ctx`, and both halves of that name were the bug.
 
-    assert settings.chroma_embedding_model == "BAAI/bge-base-en-v1.5"
-    assert settings.embedder_max_tokens == 512
+    CODEIDX-C1 found chunks sized past the embedder's window and fixed it by RAISING the
+    window — switching the default model to `BAAI/bge-base-en-v1.5` (512 tokens) and
+    declaring 512 authoritative. But `sentence-transformers` is in an optional extra that no
+    shipped install carries, so bge never embedded anything: the window moved to a model
+    that never ran, and ChromaDB's bundled MiniLM kept truncating at 256.
+    """
+    from app.config import settings
+    from app.core.embedder import BUNDLED_EMBEDDING_MAX_TOKENS, BUNDLED_EMBEDDING_MODEL
+
+    assert settings.chroma_embedding_model == BUNDLED_EMBEDDING_MODEL
+    assert settings.embedder_max_tokens == BUNDLED_EMBEDDING_MAX_TOKENS
 
 
 def test_compat_call_no_extra_metadata() -> None:

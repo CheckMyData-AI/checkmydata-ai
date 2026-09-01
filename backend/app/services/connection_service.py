@@ -239,7 +239,35 @@ class ConnectionService:
         return conn
 
     async def get(self, session: AsyncSession, connection_id: str) -> Connection | None:
+        """Resolve by id ALONE — carries no tenant scope.
+
+        Correct only where the caller has already established that this connection belongs
+        to something the user may reach. Where the project is known, use
+        :meth:`get_in_project`: three chat entry points called this one after checking
+        membership on a *caller-supplied* project id, so naming your own project and
+        someone else's connection resolved that connection and decrypted its credentials.
+        """
         result = await session.execute(select(Connection).where(Connection.id == connection_id))
+        return result.scalar_one_or_none()
+
+    async def get_in_project(
+        self, session: AsyncSession, connection_id: str, project_id: str
+    ) -> Connection | None:
+        """Resolve a connection only if it belongs to *project_id*.
+
+        The scope is in the query rather than in an `if` at the call site, because the `if`
+        is what went missing: it is written out verbatim in six sibling route modules
+        (`batch.py:71`, `notes.py:117`, `notes.py:243`, `schedules.py:118`,
+        `data_investigations.py:99`, `chat_utility.py:456`) and absent from the three that
+        matter most. A getter that cannot be called without a project cannot be forgotten
+        at a fourth entry point.
+        """
+        result = await session.execute(
+            select(Connection).where(
+                Connection.id == connection_id,
+                Connection.project_id == project_id,
+            )
+        )
         return result.scalar_one_or_none()
 
     async def list_by_project(

@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>checkmydata-ai — аудит 2026-09-01</title>
+<style>
+  :root {
+    --bg:#fbfaf8; --fg:#1d1c1a; --dim:#5d5a55; --line:#e0dcd5; --card:#fff;
+    --accent:#7a2f2f; --code:#f3f1ed;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16151a; --fg:#e9e6e1; --dim:#a09b93; --line:#2e2c33; --card:#1e1d23;
+             --accent:#d98a8a; --code:#25242b; }
+  }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1080px; margin:0 auto; padding:48px 24px 96px }
+  h1 { font-size:2rem; margin:0 0 .3em; letter-spacing:-.02em }
+  h2 { font-size:1.35rem; margin:2.6em 0 .7em; padding-bottom:.3em; border-bottom:2px solid var(--line) }
+  h3 { font-size:1.06rem; margin:.5em 0 .6em; line-height:1.4 }
+  .lede { color:var(--dim); font-size:1.05rem; max-width:70ch }
+  .kpi { display:flex; flex-wrap:wrap; gap:10px; margin:26px 0 8px }
+  .kpi div { background:var(--card); border:1px solid var(--line); border-radius:9px;
+    padding:11px 15px; min-width:112px }
+  .kpi b { display:block; font-size:1.5rem; line-height:1.2 }
+  .kpi span { color:var(--dim); font-size:.8rem }
+  .callout { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--accent);
+    border-radius:9px; padding:18px 22px; margin:22px 0 }
+  .callout p { margin:.5em 0 }
+  article.f { background:var(--card); border:1px solid var(--line); border-radius:11px;
+    padding:18px 22px; margin:14px 0 }
+  article.f header { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:4px }
+  .sev { color:#fff; font-size:.68rem; text-transform:uppercase; letter-spacing:.09em;
+    padding:3px 9px; border-radius:99px; font-weight:700 }
+  .angle { font-size:.75rem; color:var(--dim); text-transform:uppercase; letter-spacing:.07em }
+  .v { font-size:.7rem; padding:2px 8px; border-radius:99px; border:1px solid var(--line) }
+  .v.me { color:#1f6b3a; border-color:#1f6b3a55 }
+  .v.ag { color:var(--dim) }
+  .eff { margin-left:auto; font-size:.72rem; color:var(--dim); border:1px solid var(--line);
+    border-radius:6px; padding:2px 8px }
+  dl { margin:0 }
+  dt { font-size:.7rem; text-transform:uppercase; letter-spacing:.09em; color:var(--dim); margin-top:12px }
+  dd { margin:3px 0 0 }
+  dd.ev { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.83rem;
+    background:var(--code); padding:10px 13px; border-radius:7px; overflow-x:auto }
+  dd.fix { color:var(--fg) }
+  section.pl { margin:26px 0 }
+  section.pl .sub { color:var(--dim); margin:.2em 0 .9em; font-size:.94rem }
+  section.pl ul { list-style:none; padding:0; margin:0 }
+  section.pl li { display:flex; gap:12px; align-items:baseline; padding:9px 0;
+    border-bottom:1px solid var(--line) }
+  section.pl li.done .what { text-decoration:line-through; color:var(--dim) }
+  .tag { min-width:44px; font-size:.68rem; font-weight:700; color:#1f6b3a }
+  .what { flex:1 }
+  .meta { color:var(--dim); font-size:.78rem; white-space:nowrap }
+  footer { margin-top:56px; padding-top:20px; border-top:1px solid var(--line);
+    color:var(--dim); font-size:.85rem }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; font-size:.9em }
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>checkmydata-ai — аудит проекта</h1>
+<p class="lede">1 сентября 2026. Восемь независимых углов обзора, читавших код параллельно, плюс механический
+скан и мои собственные проверки. Отчёт read-only: он ничего не чинит — кроме одной находки, которая не могла ждать.</p>
+
+<div class="kpi">
+  <div><b>7</b><span>critical</span></div>
+  <div><b>16</b><span>high</span></div>
+  <div><b>10</b><span>medium</span></div>
+  <div><b>2</b><span>low</span></div>
+  <div><b>8</b><span>углов обзора</span></div>
+  <div><b>43</b><span>открытых строк доски</span></div>
+</div>
+
+<div class="callout">
+<p><b>Одна находка исправлена по ходу, а не записана.</b> Любой зарегистрированный пользователь мог указать свой
+проект и чужой <code>connection_id</code> — и сервер расшифровывал чужие креды и открывал чужую продовую базу.
+Воспроизведено на работающем приложении, закрыто скоупленным геттером, который нельзя вызвать без проекта.</p>
+<p><b>И одна вещь, которую этот аудит говорит обо мне.</b> За предшествующие сутки я закрыл двадцать дефектов —
+heartbeat, реапер, окно эмбеддера, счётчики подавлений. Все настоящие. Но поиск, ради которого продукт существует,
+всё это время выбрасывал любой результат, найденный одной ногой, и ни один тест этого не ловил. Я измерял прод и
+чинил найденное, ни разу не спросив, работает ли ядро.</p>
+</div>
+
+<h2>Механический скан: полезный выход — ноль</h2>
+<p>29 находок: <b>28 ложно-положительных и 1 ложно-отрицательная</b>.
+All 28 &#x27;critical&#x27; findings were one pattern — a PEM header string. I checked four: a UI hint in the SSH manager telling the user what to copy, a fixture with four characters of base64, a placeholder with an ellipsis, and — most tellingly — a literal inside the security test that asserts a key never reaches a cache key. The history hits are the same test files plus ssh_tunnel.py and ssh_key_service.py, which legitimately contain the header for parsing. The one false negative: &#x27;no error reporting found&#x27; while Sentry is wired and SENTRY_DSN is set in production.</p>
+<p class="lede">Записано не чтобы поругать инструмент: 28 непроверенных «critical» читались бы как катастрофа,
+а «наблюдаемости нет» — как отсутствие Sentry. Оба вывода ложны.</p>
+
+<h2>Находки</h2>
+
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b4232a">critical</span>
+        <span class="angle">money</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">M</span>
+      </header>
+      <h3>Paid plans carry no token ceiling and the per-account OpenRouter key is never created</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">4f1a29a0e973:64-65,80-81 set daily/monthly_token_limit = 0 on both paid tiers, and 0 means unlimited (usage_service.py:100). The migration&#x27;s comment says the limit &#x27;lives on the account&#x27;s OpenRouter key&#x27; — OpenRouterCreditService.provision has NO caller anywhere in backend/, frontend/ or scripts/. LLMRouter reads one global key.</dd>
+        <dt>Impact</dt><dd>A subscriber — or anyone inside the 14-day trial, having paid nothing — runs the agent in a loop against the operator&#x27;s single OpenRouter account with no ceiling and no gate. Turning BILLING_ENABLED on in this state makes the first scripted trial account a five-figure provider bill.</dd>
+        <dt>Fix</dt><dd class="fix">Put a real number on both tiers today; then wire provision() into _sync_subscription on activation and revoke() on deletion, and make the router resolve the per-account key.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b4232a">critical</span>
+        <span class="angle">product</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>Nobody can sign up: every account is created with can_create_projects=False and no grant path exists</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">models/user.py:26 default False; projects.py:152 returns 403 &quot;Please request access&quot;; the only &#x27;grant&#x27; is POST /api/projects/access-requests (projects.py:209-228) which sends an email and returns ok — it sets nothing. Corroborated independently: the test conftest installs a SQLite trigger that auto-grants the flag on every insert, so no test can ever see this wall.</dd>
+        <dt>Impact</dt><dd>Every visitor who clicks &#x27;Get Started Free&#x27; hits a waitlist ~40 seconds later, drained by hand. This is the strongest single explanation for one customer and zero traffic. Already recorded as FA-132 and deferred.</dd>
+        <dt>Fix</dt><dd class="fix">Auto-grant on email verification (Google logins are pre-verified); keep the flag as a revocation switch.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b4232a">critical</span>
+        <span class="angle">product</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>Nobody can buy: /api/billing/plans returns empty, so /pricing advertises the product as free and unlimited</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">billing_service.py:129-146 drops any plan without a resolvable Stripe price; migration 4f1a29a0e973:109 deactivated free/pro/team; base/scale have stripe_price_id NULL and STRIPE_PRICE_* unset. PricingTable.tsx:69 then keeps FALLBACK_PLANS — a $0 &#x27;Self-hosted&#x27; card rendering &#x27;Unlimited projects / connections / tokens / seats&#x27;.</dd>
+        <dt>Impact</dt><dd>The only page that asks for money tells every prospect the product is free and unlimited. The $199/$599 tiers have never been visible to a human.</dd>
+        <dt>Fix</dt><dd class="fix">Set the three STRIPE_PRICE_* env vars (the live prices exist). The code is correctly refusing to show a price whose button would 400.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b4232a">critical</span>
+        <span class="angle">product-honesty</span>
+        <span class="v me">verified by me</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>The synthesis prompt instructs the model to present a truncated analysis as complete</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">response_builder.py:341-342, verbatim in the user message sent to the LLM: &quot;Do NOT mention step limits, partial results, or that anything was cut short — present this as a complete answer.&quot;</dd>
+        <dt>Impact</dt><dd>The product&#x27;s entire pitch is that the answer can be trusted; vision.md §7 lists honesty about partial data as an invariant, and CLAUDE.md records a whole workstream (W0/W1) shipping truncation caveats. One sentence in the prompt inverts all of it. The honest fallbacks exist but fire only when synthesis returns EMPTY.</dd>
+        <dt>Fix</dt><dd class="fix">Delete the sentence; replace with an instruction to state plainly which part of the question was not reached.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b4232a">critical</span>
+        <span class="angle">retrieval</span>
+        <span class="v me">verified by me</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>Hybrid retrieval is an AND-gate: anything found by only one leg is always discarded</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">config.py:803 hybrid_min_score = 0.03; hybrid_retriever.py:268,292 add 1/(rrf_k + rank) with rrf_k = 60. Computed by me: the maximum score for a document found in ONE leg is 1/61 = 0.01639, below the floor. Both legs must hit AND both be within rank 6 (2/66 = 0.0303 passes, 2/67 fails).</dd>
+        <dt>Impact</dt><dd>A question with no lexical overlap — &quot;how do we decide when a subscription lapses?&quot; — retrieves nothing even when the embedding leg ranked twenty near-perfect chunks. The dense leg exists for exactly those questions and is unreachable. Compounding it: the BM25 corpus is built only from LLM-generated markdown while symbol bodies are written only to the vector store, so code chunks can never be in both legs — the code_symbol_embed stage that costs ~2 300 s of every rebuild produces data that is mathematically unretrievable.</dd>
+        <dt>Fix</dt><dd class="fix">Set hybrid_min_score below 1/(rrf_k+1) — or to 0.0 — and rewrite the two tests that pin 0.03 against a rank-30 argument. Then feed symbol chunks into the BM25 corpus. Measure context_recall@10 before and after.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b4232a">critical</span>
+        <span class="angle">security</span>
+        <span class="v me">verified by me</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>Any user could query any other tenant&#x27;s production database through chat</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">chat.py:244 checks membership on the CALLER-SUPPLIED project_id; chat.py:253 then resolves the connection with ConnectionService.get — select(Connection).where(Connection.id == …), no project scope — and _safe_to_config decrypts its credentials. Same at :619 (SSE) and :1552 (WebSocket). The missing comparison is written verbatim in six sibling modules (batch.py:71, notes.py:117, notes.py:243, schedules.py:118, data_investigations.py:99, chat_utility.py:456).</dd>
+        <dt>Impact</dt><dd>Name your own project and someone else&#x27;s connection id, and the server opens their production database — through their SSH bastion where configured — and answers questions about it in natural language. Reproduced end-to-end against the running app: /api/chat/ask and /ask/stream both accepted it. The WS ticket route already refused.</dd>
+        <dt>Fix</dt><dd class="fix">FIXED. ConnectionService.get_in_project() — a getter that cannot be called without a project — used at all three entry points. Not a fourth copy of the `if`, because a forgotten `if` is exactly what happened.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b4232a">critical</span>
+        <span class="angle">security</span>
+        <span class="v me">verified by me</span>
+        <span class="eff">M</span>
+      </header>
+      <h3>SafetyGuard is walked past with a string literal — in READ_ONLY mode</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">core/safety.py:52-62 strips comments with two regexes that do not know about string literals, and every check runs against the stripped text while the ORIGINAL is executed. Executed by me: &quot;SELECT &#x27;/*&#x27; AS a; DROP TABLE users; SELECT &#x27;*/&#x27; AS b&quot; strips to &quot;SELECT &#x27; &#x27; AS b&quot; and returns is_safe=True in BOTH READ_ONLY and ALLOW_DML.</dd>
+        <dt>Impact</dt><dd>vision.md §7 #1 — read-only by default — is the product&#x27;s first invariant. Pooled drivers blunt it (asyncpg rejects stacked statements), but the SSH-exec path pipes the query into psql on stdin, which runs it as a script. is_read_only_statement delegates to the same function, so a mutating statement can also be classified repeatable and re-sent after a reconnect.</dd>
+        <dt>Fix</dt><dd class="fix">Tokenise before stripping: one alternation that consumes a quoted run OR a comment, replacing only the comment branch.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">architecture</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">M</span>
+      </header>
+      <h3>The ARQ worker and the nightly cron import their job bodies out of api/routes/</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">8 function-level imports from app.api.routes into worker.py and services/. run_repo_index_task — the body of the repo-index job and the path every deploy&#x27;s reconcile_embeddings uses — lives in api/routes/repos.py:198+. daily_knowledge_sync_service.py:449 imports the private _regenerate_overview out of a route module.</dd>
+        <dt>Impact</dt><dd>The worker has no HTTP layer, yet its longest job is defined inside a FastAPI router; route refactoring silently changes worker behaviour, and none of it is testable without importing the API.</dd>
+        <dt>Fix</dt><dd class="fix">Move the job bodies to app/services/ or app/jobs/; leave thin await calls in the routes.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">architecture</span>
+        <span class="v me">verified by me</span>
+        <span class="eff">M</span>
+      </header>
+      <h3>&#x27;Execute a stored query&#x27; is implemented five times and the read-only level diverges between them</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">main.py:1090-1291 (cron), schedules.py:226-336 (run-now), notes.py:249-290, batch_service.py:333-400, mcp_server/tools.py:525-560. Verified by me: main.py:1168-1171 picks READ_ONLY or ALLOW_DML from is_read_only; schedules.py:252 uses a bare SafetyGuard(), which defaults to READ_ONLY.</dd>
+        <dt>Impact</dt><dd>The same schedule row gets two verdicts: the cron path runs DML, the &#x27;Run now&#x27; button refuses. A future change to the safety level will be applied to some of the five.</dd>
+        <dt>Fix</dt><dd class="fix">One execute_stored_query() owning the level decision, the connector lifecycle, the row cap and the byte cap.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">correctness</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>Every SQL question rebuilds the whole schema BM25 index on the event loop</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">sql_agent.py:1493-1501 builds a fresh SchemaRetriever and calls has_index() with no await and no to_thread; that reaches bm25_index.py:419-427, whose docstring claims &#x27;the parse is O(1)&#x27; while it does gzip.open + json.load + BM25Okapi over the corpus. ops/bm25_local_reconcile.py:124 wraps the same call in to_thread.</dd>
+        <dt>Impact</dt><dd>On a ~700-table connection every question decompresses and rebuilds the index on the loop before any SQL runs; concurrent SSE streams and heartbeats stall for that window.</dd>
+        <dt>Fix</dt><dd class="fix">await asyncio.to_thread(...), hoist the retriever to an attribute, and correct the docstring — it is why nobody looked.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">correctness</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>The revenue-leak and opportunity detectors can never read a NUMERIC column</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">db_index_pipeline.py:113-117 stores Decimal as str(val) because json.dumps raises; loss_detector.py:492-503 and opportunity_detector.py:543-554 then accept only isinstance(val, (int, float)). Measured: _extract_numeric([{&#x27;revenue&#x27;:&#x27;12.50&#x27;}], &#x27;revenue&#x27;) → []. data_gate.py:449 gets this right, which shows the codebase knows.</dd>
+        <dt>Impact</dt><dd>/losses on any schema where money is NUMERIC — the normal case — returns &#x27;no leaks found&#x27;. &#x27;Nothing wrong&#x27; and &#x27;the detector cannot read this column&#x27; are the same output.</dd>
+        <dt>Fix</dt><dd class="fix">Accept Decimal and fall back to float(str(val)).</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">money</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">M</span>
+      </header>
+      <h3>No refund or dispute handling anywhere</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">_HANDLED_EVENTS (billing_service.py:37-44) lists six events; charge.refunded, charge.dispute.created and charge.dispute.funds_withdrawn are absent. amount_refunded appears nowhere in backend/app/.</dd>
+        <dt>Impact</dt><dd>A customer buys $2 000 of credit, the credit is granted, then they charge back. The balance and the provider ceiling stay raised and the credit is spent against the operator&#x27;s account after the money is clawed back. Repeatable per card.</dd>
+        <dt>Fix</dt><dd class="fix">Handle charge.refunded as a DELTA against a stored last-seen amount (Stripe sends it cumulative) and dispute.funds_withdrawn as a revoke.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">money</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">M</span>
+      </header>
+      <h3>A top-up that fails to credit is marked permanently processed, and its named recovery path does not exist</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">billing_service.py:558-567 swallows every exception in _credit_top_up, so _apply_event cannot raise and the StripeEvent ledger row commits. Its docstring points at &#x27;the reconciliation sweep&#x27; — reconcile() iterates only Subscription rows. Every Stripe redelivery is then refused as a duplicate.</dd>
+        <dt>Impact</dt><dd>Money taken, nothing granted, no retry, no sweep, no admin route. Separately verify_checkout returns {settled: true} for a payment-mode session it never credits.</dd>
+        <dt>Fix</dt><dd class="fix">Roll back before logging so Stripe retries; mirror the payment branch into verify_checkout and let the ledger arbitrate.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">ops</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">L</span>
+      </header>
+      <h3>The only quality gate in CI scores an oracle that is handed the answer key</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">ci.yml:103-112 runs test_retrieval_eval.py, whose retriever is `async def oracle(question): return [*by_q[question].relevant_ids, &#x27;noise_a&#x27;, &#x27;noise_b&#x27;]` and then asserts hit_at_k == 1.0. HybridRetriever is never wired to the harness. The golden set is 10 synthetic cases. test_retrieval_floor.py pins hybrid_min_score = 0.03 as a number without measuring its effect.</dd>
+        <dt>Impact</dt><dd>Every retrieval finding in this report could ship green. The min_score defect demonstrably did: the config value is asserted, its consequence is not. No number anywhere moves if chunk size, the embedder, rrf_k or k changes.</dd>
+        <dt>Fix</dt><dd class="fix">Wire the real HybridRetriever into run_eval against a fixture project indexed in CI; keep the oracle as a harness self-check and stop calling it a gate.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">ops</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>The daily-sync heartbeat still carries the predicate pipeline_runner removed today</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">daily_knowledge_sync_service.py:128-138 updates heartbeat_at WHERE status == &#x27;running&#x27; and checks no rowcount — the exact defect fixed in pipeline_runner.py:192-227 earlier today, whose new comment claims it &#x27;mirrors daily_knowledge_sync_service&#x27;.</dd>
+        <dt>Impact</dt><dd>Once the reaper flips a daily_sync run to failed, its beat matches zero rows forever and silently, so the next dispatch starts a second sync beside the live one — the 36-minute double-run already measured on the other beat.</dd>
+        <dt>Fix</dt><dd class="fix">Drop the status predicate and log once on rowcount == 0, copying the fix three files away.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">product-honesty</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>The 216 s hard cutoff can be surfaced as an ordinary successful answer</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">orchestrator.py:1596-1610 — past wall_clock_limit × 1.2 it takes whatever the model had, sets wall_clock_timeout_hit and streams a normal result event. If _validate_partial_answer accepts the prose, response_type stays sql_result and no marker reaches the UI.</dd>
+        <dt>Impact</dt><dd>The direct answer to &#x27;what does the user see at 180 s&#x27;: not an error, a confident-looking answer built from whatever was in hand. With the prompt instruction above, the worst failure mode is that it looks like success.</dd>
+        <dt>Fix</dt><dd class="fix">When wall_clock_timeout_hit is set, force response_type=&#x27;step_limit_reached&#x27; regardless of the validator.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">retrieval</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>Learning confidence decay can never fire for a learning that reaches the prompt</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">expose_learning (agent_learning_service.py:642-646) issues an UPDATE, and AgentLearning.updated_at carries onupdate=func.now(); decay_stale_learnings selects on updated_at &lt; cutoff. sql_agent.py:2117 exposes every surfaced learning on every run. Two agents found this independently.</dd>
+        <dt>Impact</dt><dd>The top-30 learnings for any active connection are immortal — they can never lose confidence or be deactivated. Nothing automatically removes a wrong lesson; only three explicit user downvotes can.</dd>
+        <dt>Fix</dt><dd class="fix">Decay on a column exposure does not touch (last_decayed_at), or pin updated_at in the exposure UPDATE.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">retrieval</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>render_context_block drops Artifact.title, so table names, rule names and file paths never reach the prompt</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">context_pack_renderer.py:345 renders only a.summary; a.title is never referenced. Titles being discarded include table_name, rule.name and the RAG chunk&#x27;s source path. It also dedups on summary alone, so artifacts with an empty summary collapse to one line. This is the live path — context_planner_enabled is True.</dd>
+        <dt>Impact</dt><dd>The block the orchestrator reads as &#x27;RELEVANT KNOWLEDGE (traceable)&#x27; has no table name in it. The agent cannot write SQL from it and cannot cite a file, which is vision invariant #2.</dd>
+        <dt>Fix</dt><dd class="fix">Render title before summary; dedup on (title, summary).</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">retrieval</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>Freshness has no signal for an empty vector store, and the SHA it trusts survives the wipe that empties it</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">knowledge_freshness_service.py combines three signals — DB-index age, code↔DB sync, git HEAD vs indexed SHA — and never asks the vector store for a count. The SHA is read from Postgres, which survives the dyno restart that wipes an ephemeral Chroma dir. All four of its checks also swallow exceptions to &#x27;fresh&#x27;.</dd>
+        <dt>Impact</dt><dd>The failure this repo documents most carefully — &#x27;index_repo completed 16 times in 94 runs&#x27; — is invisible to the service whose job is to warn about it. The user gets an answer synthesised from nothing, with no staleness banner.</dd>
+        <dt>Fix</dt><dd class="fix">Add a fourth signal: collection.count() == 0 → critical warning. On exception, append a &#x27;check could not run&#x27; detail instead of dropping it.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">retrieval</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>BM25&#x27;s tokenizer destroys every whole identifier — the one thing the lexical leg exists to match</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">bm25_index.py:121-143 splits on non-word characters, then on underscores, then camelCase. get_user_by_id is indexed as {get, user, id}; the whole identifier is never a term. Both module docstrings claim the opposite.</dd>
+        <dt>Impact</dt><dd>Symbol search degrades to a bag of the corpus&#x27;s commonest words, so IDF has nothing rare to latch onto and the lexical leg ranks near-randomly — while the min_score floor makes that leg decide which dense hits survive.</dd>
+        <dt>Fix</dt><dd class="fix">Emit the full lowercased identifier as an additional term alongside its parts.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">retrieval</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">M</span>
+      </header>
+      <h3>DataGate&#x27;s hard checks never look at a money column</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">data_gate.py:424-427 only checks columns the model aliased with one of 21 keywords (percent, count, rate, date). total_revenue, revenue, amount, total, balance, mrr all classify as &#x27;other&#x27; and get zero checking. The LLM classifier that would fix it is wired at no SQL-path construction site.</dd>
+        <dt>Impact</dt><dd>-4 200 000 in a column aliased total_revenue is returned to the customer as a fact. The &#x27;no impossible numbers&#x27; invariant is enforced against the model&#x27;s naming habits rather than against the data.</dd>
+        <dt>Fix</dt><dd class="fix">Classify on data shape as well as name, or wire the classifier at the four construction sites.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">retrieval</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>ResultValidation returns on truncation BEFORE running DataGate&#x27;s impossible-value checks</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">result_validation.py:152-159 returns a warn directive on truncation, before :171 calls check_query_result. The decision table documents the order as intentional.</dd>
+        <dt>Impact</dt><dd>A capped result is the case most likely to contain a broken aggregate — a percentage over 100 against a partial denominator. Truncation is the flag that makes the gate skip exactly those.</dd>
+        <dt>Fix</dt><dd class="fix">Run the hard checks first, then the truncation warn; merge the directives.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#b8641a">high</span>
+        <span class="angle">trust</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>The privacy policy and support FAQ both state query results are never stored; up to 500 rows per message are</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">privacy/page.tsx:119-120 and :156-159 — &#x27;Chat history does not include raw database rows&#x27;, &#x27;Query results are transient&#x27;. Contradicted by chat_response_builder.py:44-59 → chat.py:460,476 → ChatMessage.metadata_json, capped at chat_raw_result_row_cap = 500. Also DbIndex.column_distinct_values_json persists sampled live values.</dd>
+        <dt>Impact</dt><dd>The product&#x27;s whole ask is production database credentials, and its binding data-handling promise is measurably false. Any prospect with a security review fails the product at diligence. vision.md §8 says the system &#x27;never stores data out of a user&#x27;s production database&#x27;.</dd>
+        <dt>Fix</dt><dd class="fix">Decide it deliberately: correct the two pages, or add a retention setting and make the claim conditional. Same-day copy fix either way.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#8a7513">medium</span>
+        <span class="angle">architecture</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">L</span>
+      </header>
+      <h3>ConnectionSelector.tsx is one 1 689-line function with 26 useState hooks and three API domains</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">frontend/src/components/connections/ConnectionSelector.tsx — the component opens at line 96 and closes at 1784; 26 useState, 7 useEffect, 16 API calls across connections/vendorCredentials/learnings. Nine independent responsibilities named by the state variables.</dd>
+        <dt>Impact</dt><dd>Every GA4 credential change re-renders the whole connections panel and risks the SSH form. 3.5% of the frontend in one file.</dd>
+        <dt>Fix</dt><dd class="fix">Extract by responsibility — Ga4CredentialSection, AnalyticsCollectionSettings, ConnectionIndexingActions, ConnectionLearningsBadge — each taking its own state block.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#8a7513">medium</span>
+        <span class="angle">correctness</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>One ClickHouse session driven by five concurrent queries</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">clickhouse.py:128 creates a single client with autogenerate_session_id defaulting True and no lock; db_index_pipeline.py:464,642 gathers sample queries across a Semaphore(5) onto it. The connector&#x27;s own docstring says a second query on the session fails.</dd>
+        <dt>Impact</dt><dd>Indexing a ClickHouse connection marks the losing tables sample_failed and stores them is_active=False — they vanish from the schema context, so the agent answers as if they do not exist.</dd>
+        <dt>Fix</dt><dd class="fix">Pass autogenerate_session_id=False, or hold a lock across execute_query.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#8a7513">medium</span>
+        <span class="angle">correctness</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">M</span>
+      </header>
+      <h3>check_required_filters is satisfied by the predicate appearing anywhere — a comment, a literal, another table</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">required_filter_guard.py:299-301 searches a column-bound pattern over the raw query with no alias binding. Executed: a two-table join requiring deleted_at IS NULL on both passes when only one is filtered; the same text in a comment or a string literal passes; created_at &lt;&gt; &#x27;2024-01-01&#x27; satisfies a &gt;= bound.</dd>
+        <dt>Impact</dt><dd>Production carries 159 predicates across 57 tables and soft-delete column names are shared by construction, so the guard reports a pass it did not perform — the same class the 2026-08-31 rewrite fixed for parsing.</dd>
+        <dt>Fix</dt><dd class="fix">Bind the alias per table; drop != / &lt;&gt; / NOT IN from the bound-satisfaction alternation.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#8a7513">medium</span>
+        <span class="angle">ops</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">M</span>
+      </header>
+      <h3>15 silent degrading handlers the ratchet structurally cannot see</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">test_silent_failure_ratchets.py counts only ast.Constant returns, so `return []` / `return {}` are invisible. An AST scan with the ratchet&#x27;s own predicate found 15 broad handlers returning an empty container without logging at warning — seven of them every section builder of knowledge_catalog_service.</dd>
+        <dt>Impact</dt><dd>A catalog load failure renders &#x27;no tables&#x27;, identical to a connection that was never indexed. This is the 2026-08-09 incident shape verbatim, one AST node type outside the test written to catch it.</dd>
+        <dt>Fix</dt><dd class="fix">Extend the ratchet to empty List/Dict/Set and no-arg list()/dict(); raise those seven to warning.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#8a7513">medium</span>
+        <span class="angle">ops</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>The reaper reports a successful re-enqueue for a job that was never queued</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">stale_run_reaper.py:207-223 increments requeued unconditionally; core/task_queue.py:149-152 returns None without raising when the ARQ pool is absent. embedding_reindex.py:76-84 has the same shape.</dd>
+        <dt>Impact</dt><dd>A Redis blip logs &#x27;re-enqueued index_repo … job=None&#x27;, indistinguishable from success — while reconcile_embeddings has already advanced the fingerprint marker asserting the rebuild happened.</dd>
+        <dt>Fix</dt><dd class="fix">Log at ERROR and do not increment when the job id is None; do not advance the marker.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#8a7513">medium</span>
+        <span class="angle">ops</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>75 tests assert only that a mock was called, and 51 assert nothing at all</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">AST walk over 6 846 collectible test functions: 75 whose only assertions are mock.assert_called* on an object the test constructed, 51 with zero assertions, 11 asserting a constant equals its own definition. Worst cluster: four benchmark_service tests whose docstrings name a value the assertion never reads; six reaper/staleness tests that patch out the mutation and never inspect the row.</dd>
+        <dt>Impact</dt><dd>Four of the six reaper tests cover the crash-recovery path this audit found silent on three of four tables — they stay green if the reaper flips the wrong status.</dd>
+        <dt>Fix</dt><dd class="fix">Assert the field the docstring names. Replace the three reaper constant checks with the relational invariant that actually matters (interval × 3 &lt; timeout).</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#8a7513">medium</span>
+        <span class="angle">product</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">M</span>
+      </header>
+      <h3>The demo demonstrates the commodity, not the differentiator</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">demo_data.py:30-47 — two tables, 5 customers, 8 orders, deliberately small enough to add up in the head. No repository, so no code↔DB lineage. The landing page&#x27;s whole argument is codebase-aware context.</dd>
+        <dt>Impact</dt><dd>On a 2-table, 13-row schema a generic chatbot with a pasted DDL wins. The only path to value inside five minutes is the one that proves the product replaceable; the path that proves it isn&#x27;t costs 3.4 hours plus a manual approval.</dd>
+        <dt>Fix</dt><dd class="fix">Ship a demo with a small pre-indexed repo whose code contradicts the schema, and one seeded question whose naive answer is wrong by 100×.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#8a7513">medium</span>
+        <span class="angle">product</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>Zero analytics anywhere, sold as a feature — so &#x27;nobody visits&#x27; and &#x27;everybody bounces&#x27; are indistinguishable</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">No gtag/posthog/plausible/mixpanel/amplitude anywhere in frontend/src. page.tsx:137 advertises the absence.</dd>
+        <dt>Impact</dt><dd>With zero requests and one customer, the most valuable fact — did anyone reach the landing page, and where did they leave — is unknowable. Every fix in this report is an untestable guess until a funnel exists.</dd>
+        <dt>Fix</dt><dd class="fix">Cookieless, self-hosted, IP-anonymised page views on the marketing routes only; keep the promise honest by scoping it to &#x27;no tracking inside the product&#x27;.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#8a7513">medium</span>
+        <span class="angle">product</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">M</span>
+      </header>
+      <h3>&#x27;From zero to insight in 30 seconds&#x27; against a 3.4-hour index the UI declares failed after 15 minutes</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">page.tsx:839 headline; polling.ts:2 MAX_POLL_MS = 15 min; ReadinessGate.tsx:96-102 then fires toast(&#x27;Index the repository timed out&#x27;, &#x27;error&#x27;) on a job the CHANGELOG measures at ~3.4 hours. Nothing in the frontend states an expected duration.</dd>
+        <dt>Impact</dt><dd>The trialist who does the one thing that unlocks the differentiator is told by the product, in an error toast, that it failed — and churns believing it is broken rather than slow.</dd>
+        <dt>Fix</dt><dd class="fix">Replace the timeout verdict with &#x27;still running&#x27;, print an expected duration, and change the headline to a claim the product keeps.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#8a7513">medium</span>
+        <span class="angle">trust</span>
+        <span class="v me">verified by me</span>
+        <span class="eff">M</span>
+      </header>
+      <h3>A privacy control deciding whether customer rows reach an LLM is unreachable from the UI and defaults on</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">send_sample_data_to_llm defaults True (models/connection.py:89), is settable and returned over the API (connections.py:393,466,489), and has ZERO references in frontend/src — verified by me. types.ts holds 82 hand-written types with no generation and no contract test.</dd>
+        <dt>Impact</dt><dd>The user cannot see or change whether their real rows are sent to a third-party model.</dd>
+        <dt>Fix</dt><dd class="fix">Generate types.ts from the OpenAPI schema and fail CI on a diff; as a stopgap add the field and a toggle.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#4a6b78">low</span>
+        <span class="angle">ops</span>
+        <span class="v me">verified by me</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>Board hygiene: duplicate ids and a severity colour that means two different things</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">Measured by me: CB-OPS3 and CB-KNOW4 each appear twice with different content — in each pair one closed, one open. 🟢 marks both &#x27;closed&#x27; and &#x27;open but low&#x27;, so &#x27;49 open rows&#x27; is not a measurement; the real split is 43 open, 6 closed.</dd>
+        <dt>Impact</dt><dd>A reference to CB-OPS3 is ambiguous, and the board&#x27;s own severity distribution reads as &#x27;almost everything is fine&#x27;.</dd>
+        <dt>Fix</dt><dd class="fix">Renumber the duplicates; add an explicit Status column so closed is not encoded in a colour that also means low.</dd>
+      </dl>
+    </article>
+    <article class="f">
+      <header>
+        <span class="sev" style="background:#4a6b78">low</span>
+        <span class="angle">product</span>
+        <span class="v ag">agent evidence</span>
+        <span class="eff">S</span>
+      </header>
+      <h3>The UX foundation has no personas, no JTBD and no buyer</h3>
+      <dl>
+        <dt>Evidence</dt><dd class="ev">docs/ux/foundation.md is 41 lines and contains only a design-tooling decision. The only &#x27;personas&#x27; are permission levels in scenarios.md:173-200 — new-user, analyst, owner, editor, viewer, api-consumer — each defined by what it may click. None names an industry, a company size, a budget or a trigger.</dd>
+        <dt>Impact</dt><dd>This is the root cause under most product findings: with no economic buyer described, nothing arbitrates $199 vs $599, nothing says whether the differentiator is worth 3.4 hours, and the roadmap optimises the thing that can be measured — engineering depth.</dd>
+        <dt>Fix</dt><dd class="fix">Write one page: the buyer, their trigger, the number they get wrong today, and what they compare you against.</dd>
+      </dl>
+    </article>
+
+<h2>План</h2>
+<p class="lede">Старые строки доски и новые находки в одном порядке, а не двумя списками: бэклог без новых находок
+уже устарел, а новые находки без бэклога не знают, что рядом.</p>
+<section class="pl"><h3>P0 — today</h3><p class="sub">Live breach, live lie, or the product cannot be bought at all.</p><ul><li class="done"><span class="tag">DONE</span><span class="what">Cross-tenant connection scope in all three chat entry points</span><span class="meta">shipped this session</span></li><li class=""><span class="tag"></span><span class="what">SafetyGuard: tokenise before stripping comments</span><span class="meta">M · security</span></li><li class=""><span class="tag"></span><span class="what">hybrid_min_score below 1/(rrf_k+1) — retrieval currently discards single-leg hits</span><span class="meta">S · retrieval</span></li><li class=""><span class="tag"></span><span class="what">Delete the &#x27;present this as a complete answer&#x27; sentence</span><span class="meta">S · honesty</span></li><li class=""><span class="tag"></span><span class="what">BILLING_ENABLED=false OR set the three STRIPE_PRICE_* vars — the one live account is 402-blocked</span><span class="meta">S · ops</span></li><li class=""><span class="tag"></span><span class="what">Auto-grant can_create_projects on email verification</span><span class="meta">S · funnel</span></li><li class=""><span class="tag"></span><span class="what">Put a real token ceiling on base/scale before billing is switched on</span><span class="meta">S · money</span></li></ul></section><section class="pl"><h3>P1 — this week</h3><p class="sub">Money that leaks, and promises that are false.</p><ul><li class=""><span class="tag"></span><span class="what">charge.refunded / dispute handling</span><span class="meta">M</span></li><li class=""><span class="tag"></span><span class="what">Top-up: roll back on credit failure; mirror the payment branch into verify_checkout</span><span class="meta">M</span></li><li class=""><span class="tag"></span><span class="what">Correct the privacy policy and support FAQ, or add a retention setting</span><span class="meta">S</span></li><li class=""><span class="tag"></span><span class="what">Wire provision()/revoke() into _sync_subscription</span><span class="meta">M</span></li><li class=""><span class="tag"></span><span class="what">Learning decay: stop exposure resetting the staleness clock</span><span class="meta">S</span></li><li class=""><span class="tag"></span><span class="what">Freshness: add an empty-vector-store signal; stop swallowing checks to &#x27;fresh&#x27;</span><span class="meta">S</span></li><li class=""><span class="tag"></span><span class="what">Force step_limit_reached when the 216 s cutoff fires</span><span class="meta">S</span></li></ul></section><section class="pl"><h3>P2 — core quality</h3><p class="sub">The layer the product is sold on.</p><ul><li class=""><span class="tag"></span><span class="what">Render Artifact.title; dedup on (title, summary)</span><span class="meta">S</span></li><li class=""><span class="tag"></span><span class="what">Feed symbol chunks into the BM25 corpus</span><span class="meta">M</span></li><li class=""><span class="tag"></span><span class="what">Emit whole identifiers as BM25 terms</span><span class="meta">S</span></li><li class=""><span class="tag"></span><span class="what">Run DataGate before the truncation return; widen hard checks past 21 keywords</span><span class="meta">M</span></li><li class=""><span class="tag"></span><span class="what">Wire the real retriever into the CI eval; stop calling the oracle a gate</span><span class="meta">L</span></li><li class=""><span class="tag"></span><span class="what">to_thread the schema BM25 load off the request path</span><span class="meta">S</span></li><li class=""><span class="tag"></span><span class="what">Decimal in the loss/opportunity detectors</span><span class="meta">S</span></li><li class=""><span class="tag"></span><span class="what">Alias-bind check_required_filters</span><span class="meta">M</span></li></ul></section><section class="pl"><h3>P3 — structure</h3><p class="sub">What lets the same decision be implemented twice.</p><ul><li class=""><span class="tag"></span><span class="what">Move job bodies out of api/routes/ into services or jobs</span><span class="meta">M</span></li><li class=""><span class="tag"></span><span class="what">One execute_stored_query() — collapse the five copies</span><span class="meta">M</span></li><li class=""><span class="tag"></span><span class="what">Hoist the 867 unnecessary function-level imports, then add a layer contract</span><span class="meta">M</span></li><li class=""><span class="tag"></span><span class="what">Generate types.ts from OpenAPI and fail CI on a diff</span><span class="meta">M</span></li><li class=""><span class="tag"></span><span class="what">Split ConnectionSelector by responsibility</span><span class="meta">L</span></li><li class=""><span class="tag"></span><span class="what">Daily-sync heartbeat: match pipeline_runner&#x27;s fix</span><span class="meta">S</span></li><li class=""><span class="tag"></span><span class="what">Extend the silent-degradation ratchet to empty containers</span><span class="meta">M</span></li></ul></section><section class="pl"><h3>P4 — the existing board, re-read</h3><p class="sub">43 genuinely open rows. The severity distribution said almost everything was fine; this audit disagrees with that reading, not with the rows.</p><ul><li class=""><span class="tag"></span><span class="what">CB-BILL1 — production blocked. Now P0 above.</span><span class="meta">was 🔴</span></li><li class=""><span class="tag"></span><span class="what">CB-OPS4 — repo-index mutual exclusion is per-process. Still open, still correct.</span><span class="meta">was 🟠</span></li><li class=""><span class="tag"></span><span class="what">CB-UX1 — 102 scenarios unverified &gt;30 days. The scenario base did not move when pricing changed.</span><span class="meta">was ⚪</span></li><li class=""><span class="tag"></span><span class="what">CB-KNOW1 — double pluralisation still invents table names</span><span class="meta">was 🟢</span></li><li class=""><span class="tag"></span><span class="what">F-CHAT-05 / CB-M5 / CB-L1 — silent handlers and suppression debt: now measured 15 beyond the ratchet</span><span class="meta">was ⚪</span></li><li class=""><span class="tag"></span><span class="what">The other 38 rows keep their order; none of them outranks anything in P0–P2.</span><span class="meta"></span></li></ul></section>
+
+<footer>
+Метка «verified by me» означает, что я исполнил код или прочитал строку сам. «agent evidence» — доказательство
+агента с <code>file:line</code>, которое я не перепроверял построчно; ссылки в нём проверяемы.
+Отчёт не менял репозиторий, кроме фикса межтенантного доступа, отправленного отдельным PR.
+</footer>
+
+</div></body></html>

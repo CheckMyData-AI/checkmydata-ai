@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.embedder import BUNDLED_EMBEDDING_MAX_TOKENS, BUNDLED_EMBEDDING_MODEL
+
 
 @dataclass(frozen=True)
 class AgentSettingsView:
@@ -133,18 +135,30 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "./data/chroma"
     chroma_server_url: str = ""
     chroma_embedding_model: str = Field(
-        default="BAAI/bge-base-en-v1.5",
+        default=BUNDLED_EMBEDDING_MODEL,
         description=(
-            "Embedding model for ChromaDB (768-d). Requires the optional "
-            "`sentence-transformers` extra: `pip install -e '.[ml]'`. Without it "
-            "this value is silently ignored and Chroma embeds at 384-d with its "
-            "built-in all-MiniLM-L6-v2. The two are NOT comparable -- switching "
-            "requires a full re-index."
+            "Embedding model. The default NAMES the bundled ONNX all-MiniLM-L6-v2 "
+            "(384-d) that actually runs. It used to default to BAAI/bge-base-en-v1.5 "
+            "(768-d), which needs the optional `ml` extra that no shipped install "
+            "carries -- so every install configured a model it could not use, and the "
+            "window below was sized for that model rather than for the one embedding. "
+            "Setting anything else requires the optional `sentence-transformers` "
+            "package (`pip install -e '.[ml]'`) AND a full re-index: 384-d and 768-d "
+            "vectors are not comparable, and without that package the value here is "
+            "silently ignored."
         ),
     )
-    # Real tokenizer context window of ``chroma_embedding_model`` (tokens). Chunking
-    # sizes to this, not chars/4. Changing the model requires a full re-embed (W2).
-    embedder_max_tokens: int = 512
+    # Real tokenizer context window of the embedder that RUNS (tokens). Chunking sizes to
+    # this, not chars/4.
+    #
+    # 512 -> 256 on 2026-09-01, and the 512 was not a safety margin — it was the window of
+    # a model that never embedded anything here. ChromaDB's bundled ONNX MiniLM does
+    # `tokenizer.enable_truncation(max_length=256)`, so a quarter of the index was cut:
+    # measured over 1 500 production chunks, p90 490 tokens and 434 (28.9%) above 256, with
+    # everything past 256 absent from the vector. The number is pinned against ChromaDB's
+    # own source by a test rather than restated here, and both this key and the model ride
+    # `embedding_fingerprint()`, so changing either enqueues one idempotent full rebuild.
+    embedder_max_tokens: int = BUNDLED_EMBEDDING_MAX_TOKENS
 
     # AUD-0819-01: how many documents reach one `collection.upsert` call. This is
     # the knob that decides peak worker memory, and it is not obvious why.
