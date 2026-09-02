@@ -194,8 +194,13 @@ class TestProjectAccessControl:
 class TestProjectCreationEligibility:
     """Test that only eligible users can create projects."""
 
-    async def test_ineligible_user_gets_403(self, client, db_session):
-        """A user with can_create_projects=False cannot create projects."""
+    async def test_unverified_user_is_told_to_verify_not_to_ask(self, client, db_session):
+        """The 403 must say what to do, and the two ways to reach it are not the same.
+
+        It used to say "Please request access" to everyone, while the endpoint it
+        pointed at sent an email and granted nothing. An unverified address has a
+        self-serve route out; a revoked account does not.
+        """
         from sqlalchemy import update
 
         from app.models.user import User
@@ -203,7 +208,9 @@ class TestProjectCreationEligibility:
         user = await register_user(client, db_session=db_session)
         # Override the test trigger that auto-grants the flag
         await db_session.execute(
-            update(User).where(User.id == user["user_id"]).values(can_create_projects=False)
+            update(User)
+            .where(User.id == user["user_id"])
+            .values(can_create_projects=False, email_verified=False)
         )
         await db_session.flush()
 
@@ -213,7 +220,32 @@ class TestProjectCreationEligibility:
             headers=auth_headers(user["token"]),
         )
         assert resp.status_code == 403
-        assert "not eligible" in resp.json()["detail"].lower()
+        detail = resp.json()["detail"].lower()
+        assert "verify your email" in detail
+        assert "request access" not in detail
+
+    async def test_a_revoked_verified_user_is_not_sent_to_verify(self, client, db_session):
+        from sqlalchemy import update
+
+        from app.models.user import User
+
+        user = await register_user(client, db_session=db_session)
+        await db_session.execute(
+            update(User)
+            .where(User.id == user["user_id"])
+            .values(can_create_projects=False, email_verified=True)
+        )
+        await db_session.flush()
+
+        resp = await client.post(
+            "/api/projects",
+            json={"name": "Should Fail"},
+            headers=auth_headers(user["token"]),
+        )
+        assert resp.status_code == 403
+        detail = resp.json()["detail"].lower()
+        assert "not permitted" in detail
+        assert "verify your email" not in detail
 
     async def test_eligible_user_can_create(self, client, db_session):
         """A user with can_create_projects=True can create projects."""

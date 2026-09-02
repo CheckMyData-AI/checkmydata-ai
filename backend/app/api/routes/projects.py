@@ -150,10 +150,21 @@ async def create_project(
         await db.execute(select(User).where(User.id == user["user_id"]))
     ).scalar_one_or_none()
     if not user_obj or not user_obj.can_create_projects:
-        raise HTTPException(
-            status_code=403,
-            detail="You are not eligible to create projects. Please request access.",
-        )
+        # The right is granted at email verification, so the two ways to be here are
+        # not the same thing and must not read the same. "Please request access" was
+        # said to everyone while the request endpoint granted nothing, which is how a
+        # signup became a waitlist nobody was draining.
+        if user_obj is not None and not user_obj.email_verified:
+            detail = (
+                "Verify your email address to create projects. Check your inbox, or "
+                "request a new link from your account page."
+            )
+        else:
+            detail = (
+                "Your account is not permitted to create projects. Contact the "
+                "workspace owner if you think that is wrong."
+            )
+        raise HTTPException(status_code=403, detail=detail)
 
     if body.ssh_key_id:
         await _require_owned_ssh_key(db, body.ssh_key_id, user["user_id"])

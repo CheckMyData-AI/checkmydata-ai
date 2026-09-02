@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — nobody could create a project, and no code path could grant the right
+
+`User.can_create_projects` defaults to `False` (`models/user.py:26`) and `projects.py:152`
+refuses creation without it. The only endpoint calling itself a grant —
+`POST /api/projects/access-requests` — sends an email and returns `{"ok": True}`. It sets
+nothing. Every visitor who clicked "Get Started Free" hit a waitlist about forty seconds
+later, drained by hand. It is the strongest single explanation for one customer and zero
+traffic.
+
+It stayed invisible because the integration `conftest` installs a SQLite trigger setting
+the flag on **every** insert (`tests/integration/conftest.py:75-79`), so no test in the
+suite could reach the wall. The new tests bring their own database for exactly that
+reason, and say so.
+
+The right is now granted where the address is proven owned: when email verification
+succeeds, and at creation for a Google login, which Google has already verified. Granted
+on the **transition**, never on every login — the flag stays a revocation switch, and a
+re-grant per sign-in would silently undo an admin's decision. A test holds that line.
+
+Migration `a1c2e3f4b5d6` backfills existing verified users. It is safe as a blanket
+`UPDATE` for one reason that will stop being true: no code path could ever set the column
+`True`, so `False` on a verified user means "never granted", not "taken away". Its
+`downgrade` is deliberately empty — after the fact those rows are indistinguishable from
+rows granted by verification, and guessing wrong locks a customer out of their own
+workspace.
+
+The 403 now says what to do, and distinguishes the two ways to reach it: an unverified
+address is told to verify (with the resend route), a revoked account is told it is not
+permitted. "Please request access" was said to everyone while the request endpoint
+granted nothing.
+
+`SCN-004` and `SCN-016` updated in the same change. New:
+`tests/unit/test_project_access_grant.py`, 6 cases, 3 red against the old code.
+
 ### Fixed — the synthesis prompt told the model to pass a truncated analysis off as a complete one
 
 `ResponseBuilder.build_synthesis_messages` is reached from exactly one place: the `else`

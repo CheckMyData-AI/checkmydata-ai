@@ -14,8 +14,8 @@ Status vocabulary: `todo` · `wip` · `done` · `dropped (reason)`.
 | 0.1 | SafetyGuard: tokenise before stripping comments | M | done | `app/core/safety.py:52-155`, `tests/unit/test_safety_comment_lexing.py` (27 cases, 12 red before); shipped in #268, deployed `abe6245` → Heroku v309, boot clean (`capability check: 4 claims … all satisfied`), health 200 |
 | 0.2 | `hybrid_min_score` below `1/(rrf_k+1)` — retrieval discards single-leg hits | S | done | `config.py:801-810`, `hybrid_retriever.py`, `tests/unit/test_hybrid_rrf_floor.py` (10 cases, 8 red before); measured 0/40 single-leg and 82/1600 pairs surviving the old floor; shipped in #269, deployed `6e23eea` |
 | 0.3 | Delete the "present this as a complete answer" sentence | S | done | `response_builder.py:335-356`, `tests/unit/test_synthesis_prompt_honesty.py` (7 cases, 5 red before); `test_prompt_instructs_no_limits_mention` inverted; SCN-055 updated |
-| 0.4 | `BILLING_ENABLED=false` or set the three `STRIPE_PRICE_*` vars | S | todo | |
-| 0.5 | Auto-grant `can_create_projects` on email verification | S | todo | |
+| 0.4 | Turn selling on for real — three `STRIPE_PRICE_*` + `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` | S | **blocked** | Operator decision 2026-09-02: sell for real. **Gated on 0.6** — paid tiers carry `token_limit = 0` (unlimited) and no per-account OpenRouter key, so switching billing on first would make the first scripted trial account a five-figure provider bill. Prod measured: `BILLING_ENABLED=true`, zero `STRIPE_*` vars, `/api/billing/plans` → `{"plans":[]}`. Needs the live credentials from the operator |
+| 0.5 | Auto-grant `can_create_projects` on email verification | S | done | `auth_service.py` (verify_email, find_or_create_google_user), migration `a1c2e3f4b5d6`, `tests/unit/test_project_access_grant.py` (6 cases, 3 red before); SCN-004/016 updated |
 | 0.6 | A real token ceiling on base/scale before billing is switched on | S | todo | |
 | 0.7 | Delete the `PgVectorStore` isinstance assert — the RAG leg is empty in prod | S | todo | |
 
