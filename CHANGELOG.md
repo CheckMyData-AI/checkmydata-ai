@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the paid tiers had no token ceiling, and their own descriptions said they did
+
+`4f1a29a0e973` activated `base` ($199) and `scale` ($599) with `daily_token_limit = 0` and
+`monthly_token_limit = 0`, where **`0` means unlimited** (`usage_service.py:138` returns
+early when neither limit is set). Both rows describe a ceiling in their own `description`
+— "$30/month of LLM credit at cost" and "$90/month" — so each row contradicted itself: the
+sentence sold a cap, the columns removed one.
+
+Nothing downstream caught it. `USER_DAILY_TOKEN_LIMIT` / `USER_MONTHLY_TOKEN_LIMIT` are
+unset in production, `effective_token_limits` takes the strictest **non-zero** of plan and
+config, and `trialing` is in `ACTIVE_STATUSES`. A 14-day trial that had paid nothing ran
+the agent against the operator's single OpenRouter key with no gate anywhere.
+
+**The numbers are measured, not chosen.** Against production `token_usage` on 2026-09-02:
+the `openai/gpt-4o` prompt/completion split is 14 593 199 / 3 768 306 (79.5% / 20.5%), and
+gpt-4o lists at $2.50/M prompt and $10.00/M completion (fetched from OpenRouter, not
+recalled) — a blend of **$4.0392 per million tokens**. So $30 of credit is 7.43 M tokens
+and $90 is 22.28 M; rounded to 7.5 M and 22.5 M, about 1% above the promise, which errs
+toward the customer. The blend agrees with the project's own earlier arithmetic:
+`test_plan_catalogue_transition` records the retired Pro tier's 15 M tokens as "worth
+~$61", i.e. $4.07/M.
+
+The daily cap is one third of the monthly one — 2.5 M and 7.5 M. Measured over 79 real
+user-days: median 540 804, p95 2 111 241, max 4 975 830. It therefore sits above p95 and
+bounds a runaway loop to a third of the month rather than all of it. The heaviest user-day
+on record (≈$20) *would* exceed base's daily cap, and that is the plan's economics rather
+than a mis-set number: $30 of credit for a month cannot afford a $20 day.
+
+`test_plan_token_ceilings.py` recomputes the ceiling from the recorded blend and fails if
+the constant and its derivation drift apart — the failure mode this pass keeps meeting, of
+which `hybrid_min_score = 0.03` was the last example. Planting the original defect
+(`monthly = 0, daily = 0` on base) turns 4 of the 9 red.
+
+**What this stands in for.** The mechanism designed for this is already in the schema and
+dormant: `b48fcfc1524b` created `llm_credit` — two pockets over one OpenRouter counter, an
+`included_grant_usd` that expires monthly and a `purchased_balance_usd` that does not — and
+`OpenRouterCreditService.provision` fills it. **Nothing calls `provision`.** Until that is
+wired, a token ceiling is what stands between an unpaid trial and an unbounded provider
+bill, so it ships now.
+
+Recorded, not fixed here: `estimated_cost_usd` is NULL on all 6 771 production rows,
+because `estimate_cost` reads an in-process cache of the `/api/models` HTTP response that
+the worker — serving no HTTP — never populates. The operator has no cost figure for any
+request ever made.
+
 ### Fixed — nobody could create a project, and no code path could grant the right
 
 `User.can_create_projects` defaults to `False` (`models/user.py:26`) and `projects.py:152`
