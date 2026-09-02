@@ -11,9 +11,9 @@ Status vocabulary: `todo` · `wip` · `done` · `dropped (reason)`.
 | # | Task | Size | Status | Evidence |
 |---|---|---|---|---|
 | 0.0 | Cross-tenant connection scope in all three chat entry points | S | done | #267, `a568448` |
-| 0.1 | SafetyGuard: tokenise before stripping comments | M | done | `app/core/safety.py:52-155`, `tests/unit/test_safety_comment_lexing.py` (27 cases, 12 red before) |
-| 0.2 | `hybrid_min_score` below `1/(rrf_k+1)` — retrieval discards single-leg hits | S | done | `config.py:801-810`, `hybrid_retriever.py`, `tests/unit/test_hybrid_rrf_floor.py` (10 cases, 8 red before); measured 0/40 single-leg and 82/1600 pairs surviving the old floor |
-| 0.3 | Delete the "present this as a complete answer" sentence | S | todo | |
+| 0.1 | SafetyGuard: tokenise before stripping comments | M | done | `app/core/safety.py:52-155`, `tests/unit/test_safety_comment_lexing.py` (27 cases, 12 red before); shipped in #268, deployed `abe6245` → Heroku v309, boot clean (`capability check: 4 claims … all satisfied`), health 200 |
+| 0.2 | `hybrid_min_score` below `1/(rrf_k+1)` — retrieval discards single-leg hits | S | done | `config.py:801-810`, `hybrid_retriever.py`, `tests/unit/test_hybrid_rrf_floor.py` (10 cases, 8 red before); measured 0/40 single-leg and 82/1600 pairs surviving the old floor; shipped in #269, deployed `6e23eea` |
+| 0.3 | Delete the "present this as a complete answer" sentence | S | done | `response_builder.py:335-356`, `tests/unit/test_synthesis_prompt_honesty.py` (7 cases, 5 red before); `test_prompt_instructs_no_limits_mention` inverted; SCN-055 updated |
 | 0.4 | `BILLING_ENABLED=false` or set the three `STRIPE_PRICE_*` vars | S | todo | |
 | 0.5 | Auto-grant `can_create_projects` on email verification | S | todo | |
 | 0.6 | A real token ceiling on base/scale before billing is switched on | S | todo | |
@@ -70,6 +70,7 @@ Status vocabulary: `todo` · `wip` · `done` · `dropped (reason)`.
 | From | Finding | Homed |
 |---|---|---|
 | 0.1 | `core/sql_parser.py:10-11` strips comments and then string literals with the same quoting-blind regexes. It is **not** a guard — it feeds `extract_tables` for pre-validation and the required-filter guard — so its failure mode is a wrong table list, not an executed statement. Same defect shape, different blast radius. | folded into 2.8 (`Alias-bind check_required_filters`), which already edits that seam |
+| post-deploy 0.1 | `HEROKU_SLUG_COMMIT` is unset on `checkmydata-api`, so Sentry's `release` is `None` in production and no stack trace names the commit that caused it. `CLAUDE.md` already records the requirement (`heroku labs:enable runtime-dyno-metadata`); nobody ran it. One command, and it restarts the dynos. | backlog — ops, needs its own moment |
 | 0.1 | A `;` inside a string literal still trips the read-only multi-statement refusal (`SELECT * FROM t WHERE name = 'a;b'` is refused). Pre-existing, unchanged by this fix, and a false refusal rather than a false pass. | backlog — needs literal-aware `;` detection, which is a behaviour change to read-only mode |
 
 ## P4 — the existing board

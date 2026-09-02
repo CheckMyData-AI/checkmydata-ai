@@ -2161,10 +2161,21 @@ class TestBuildSynthesisMessagesEnhanced:
         assert "SELECT method, total" in user_msg
         assert "Monthly revenue" in user_msg
         assert "Payment methods" in user_msg
+        # The multi-query summary is data framing, not a status report: the
+        # step-budget notice belongs to the instruction block above it, and these
+        # two phrasings are the ones that used to leak into the data section.
         assert "reached its step limit" not in user_msg
         assert "analysis is incomplete" not in user_msg
 
-    def test_prompt_instructs_no_limits_mention(self):
+    def test_prompt_admits_the_run_stopped_instead_of_hiding_it(self):
+        """This assertion used to be its own inversion.
+
+        It required the prompt to contain "Do NOT mention step limits … present this
+        as a complete answer" — the sentence that told the model to pass a truncated
+        analysis off as a finished one. The function is reached only when the step
+        budget is spent, so that instruction applied to every answer it ever built.
+        See tests/unit/test_synthesis_prompt_honesty.py for the full case.
+        """
         messages = [
             Message(role="system", content="You are a data assistant."),
             Message(role="user", content="Show me data"),
@@ -2176,8 +2187,10 @@ class TestBuildSynthesisMessagesEnhanced:
             32000,
         )
         user_msg = result[1].content
-        assert "Do NOT mention step limits" in user_msg
-        assert "complete answer" in user_msg.lower()
+        assert "Do NOT mention step limits" not in user_msg
+        assert "present this as a complete answer" not in user_msg
+        assert "stopped at its step budget" in user_msg
+        assert "did not reach" in user_msg
 
     def test_synthesis_instructs_user_language(self):
         messages = [
