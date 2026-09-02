@@ -17,7 +17,7 @@ Status vocabulary: `todo` · `wip` · `done` · `dropped (reason)`.
 | 0.4 | Turn selling on for real — three `STRIPE_PRICE_*` + `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` | S | **blocked** | Operator decision 2026-09-02: sell for real. **Gated on 0.6** — paid tiers carry `token_limit = 0` (unlimited) and no per-account OpenRouter key, so switching billing on first would make the first scripted trial account a five-figure provider bill. Prod measured: `BILLING_ENABLED=true`, zero `STRIPE_*` vars, `/api/billing/plans` → `{"plans":[]}`. Needs the live credentials from the operator |
 | 0.5 | Auto-grant `can_create_projects` on email verification | S | done | `auth_service.py` (verify_email, find_or_create_google_user), migration `a1c2e3f4b5d6`, `tests/unit/test_project_access_grant.py` (6 cases, 3 red before); SCN-004/016 updated |
 | 0.6 | A real token ceiling on base/scale before billing is switched on | S | done | migration `c3d4e5f6a7b8` (base 7.5M/mo + 2.5M/day, scale 22.5M + 7.5M), `tests/unit/test_plan_token_ceilings.py` (9 cases; planting the original `0` turns 4 red); blend $4.0392/M measured from prod `token_usage` + fetched OpenRouter pricing |
-| 0.7 | Delete the `PgVectorStore` isinstance assert — the RAG leg is empty in prod | S | todo | |
+| 0.7 | Delete the `PgVectorStore` isinstance assert — the RAG leg is empty in prod | S | done | `knowledge_catalog_service.py` (assert removed, both `except` blocks raised DEBUG→WARNING), `tests/unit/test_catalog_rag_leg_backend_agnostic.py` (4 cases, 2 red before); `PgVectorStore.__mro__` and `resolve_backend` verified by execution |
 
 ## P1 — this week · money that leaks, promises that are false
 
