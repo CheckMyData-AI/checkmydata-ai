@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a top-up that failed to credit was marked permanently processed
+
+`handle_event` claims a `StripeEvent` row **before** `_apply_event` runs and rolls it back
+only if `_apply_event` raises. `_credit_top_up` caught every exception and returned, so it
+never raised: the claim committed, the customer's money was taken, nothing was granted,
+and every Stripe redelivery was then refused as a duplicate.
+
+Its docstring named "the reconciliation sweep" as the recovery. `reconcile()` iterates
+`Subscription` rows; a top-up is a one-time payment and appears in none of them. The named
+recovery path did not exist.
+
+The comment's reasoning was nearly right, and that is what made it survive: *"refusing the
+webhook would make Stripe retry a charge that cannot be un-taken."* Retrying the
+**webhook** does not retry the **charge** — it redelivers the event. Redelivery is exactly
+what a failed grant needs, and it is the only retry Stripe offers. So the handler now
+re-raises after logging, `handle_event` rolls back, the claim goes with it, and the next
+delivery can succeed.
+
+**`verify_checkout` now credits what it calls settled.** The success page exists to close
+the window before the webhook lands; it handled the subscription branch and returned
+`{"settled": true}` for a payment-mode session it never credited.
+
+Mirroring that branch naively would have been worse than the bug. `_credit_top_up` is
+**additive**, so the webhook and the success page would both grant. The docstring's promise
+that "the idempotency ledger arbitrates" held for the subscription branch, whose writes are
+idempotent, and had no mechanism behind it for a top-up. The claim is therefore now real and
+keyed on the **checkout session**, which is the only thing both callers hold — the event-id
+ledger cannot see a success-page race, nor a redelivery under a new event id, as a
+duplicate. It is taken inside a SAVEPOINT so a lost race does not poison the transaction
+`handle_event` still has to commit.
+
+When the success page cannot grant, it rolls back and reports `settled: false, reason:
+pending` — the webhook is the primary path and is still owed the grant, and telling the
+customer it is done would be the same lie in a different place.
+
+A test pinned the swallow as the requirement (`test_it_does_not_raise`), carrying the same
+nearly-right reasoning. It now asserts the opposite and explains why. That is the fifth
+test in this remediation pass that encoded the defect.
+
+New: `tests/unit/test_topup_grant_survives_failure.py`, 9 cases, 6 red against the old
+code, behavioural against a real database because idempotency is a property of the
+database and not of the shape of the code.
+
 ### Fixed — money could leave without the credit it bought leaving with it
 
 `_HANDLED_EVENTS` listed six Stripe events and none of them was a reversal. A customer
