@@ -50,14 +50,110 @@ _READ_ONLY_LEADING = frozenset(
 # valid statement starts (e.g. ``(SELECT 1)``), so they delimit the token too.
 _LEADING_TOKEN = re.compile(r"^[\s(]*([A-Za-z]+)")
 
-_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
-_LINE_COMMENT = re.compile(r"--[^\n]*")
+# --------------------------------------------------------------------------
+# Comment stripping, and why it has to lex rather than match
+# --------------------------------------------------------------------------
+#
+# Every check below runs against a copy of the query with comments removed,
+# while the connector executes the ORIGINAL. Stripping is therefore only safe in
+# one direction: removing something the database ignores (a comment) is fine;
+# removing something it would have executed is a hole in vision.md §7 #1.
+#
+# Two bare regexes could not tell the difference. ``/\*.*?\*/`` matched from a
+# ``/*`` inside a string literal to a ``*/`` inside another one, so
+# ``SELECT '/*' AS a; DROP TABLE users; SELECT '*/' AS b`` was checked as
+# ``SELECT ' ' AS b`` and passed in READ_ONLY. So the comment fences are found by
+# a single left-to-right scan that also knows the quoting forms — only the comment
+# branches are replaced, every literal is handed back untouched.
+#
+# Where a dialect is ambiguous the scan errs toward keeping text, because leftover
+# text can only cause a refusal while missing text causes an execution.
+# Consequences of that rule, all deliberate:
+#   * block comments are NOT treated as nesting, though PostgreSQL and ClickHouse
+#     nest them: ``/* /* */ DROP TABLE t */`` is one comment to those engines and
+#     a visible DROP to us — a false refusal, never a false pass;
+#   * backslash escapes inside string literals are NOT honoured, so MySQL's
+#     ``'a\''`` ends the literal early and the rest of the statement stays visible;
+#   * an unterminated literal matches nothing and is scanned as ordinary text.
+#
+# Dialect facts are the vendors': PostgreSQL "Lexical Structure" (doubled-quote
+# escape, dollar quoting, ``--`` needs no following space), MySQL 8.4 "Comment
+# Syntax" (``#`` to end of line; ``--`` requires a following whitespace or control
+# character), ClickHouse "Syntax" (``--``, ``#``, ``#!``, ``//``).
+
+_SQL_DIALECT_BY_DB_TYPE = {
+    "postgres": "postgres",
+    "postgresql": "postgres",
+    "mysql": "mysql",
+    "mariadb": "mysql",
+    "clickhouse": "clickhouse",
+}
+
+# Quoting forms, per dialect. ``dollar`` is PostgreSQL-only on purpose: MySQL and
+# SQLite allow ``$`` inside identifiers and placeholders, so reading ``$x$…$x$``
+# as a literal there would hide whatever sits between the two markers.
+_QUOTE_BRANCHES = {
+    "postgres": [
+        r"(?P<sq>'(?:[^']|'')*')",
+        r"(?P<dq>\"(?:[^\"]|\"\")*\")",
+        r"(?P<dollar>\$(?P<tag>[A-Za-z_][A-Za-z0-9_]*|)\$.*?\$(?P=tag)\$)",
+    ],
+    "mysql": [
+        r"(?P<sq>'(?:[^']|'')*')",
+        r"(?P<dq>\"(?:[^\"]|\"\")*\")",
+        r"(?P<bq>`(?:[^`]|``)*`)",
+    ],
+    "clickhouse": [
+        r"(?P<sq>'(?:[^']|'')*')",
+        r"(?P<dq>\"(?:[^\"]|\"\")*\")",
+        r"(?P<bq>`(?:[^`]|``)*`)",
+    ],
+    "default": [
+        r"(?P<sq>'(?:[^']|'')*')",
+        r"(?P<dq>\"(?:[^\"]|\"\")*\")",
+        r"(?P<bq>`(?:[^`]|``)*`)",
+    ],
+}
+
+# Line-comment forms, per dialect. A form the engine honours and we do not is an
+# evasion (``DROP#\nTABLE`` on MySQL); a form we strip and the engine executes is
+# a blind spot (``SELECT 1--2; DROP TABLE t`` on MySQL, where ``--2`` is
+# arithmetic, and ``#`` on PostgreSQL, where it is an operator character).
+_LINE_COMMENT_FORMS = {
+    "postgres": [r"--[^\n]*"],
+    "mysql": [r"--(?![^\s\x00-\x1f])[^\n]*", r"\#[^\n]*"],
+    "clickhouse": [r"--[^\n]*", r"\#[^\n]*", r"//[^\n]*"],
+    "default": [r"--[^\n]*"],
+}
 
 
-def _strip_sql_comments(query: str) -> str:
+def _build_scanner(dialect: str) -> re.Pattern[str]:
+    line = "|".join(_LINE_COMMENT_FORMS[dialect])
+    branches = [r"(?P<block>/\*.*?\*/)", f"(?P<line>{line})"]
+    branches.extend(_QUOTE_BRANCHES[dialect])
+    return re.compile("|".join(branches), re.DOTALL)
+
+
+_SCANNERS = {d: _build_scanner(d) for d in _LINE_COMMENT_FORMS}
+
+
+def _blank_comment(match: re.Match[str]) -> str:
+    """A space for a comment, the original text for anything else."""
+    if match.group("block") is not None or match.group("line") is not None:
+        return " "
+    return match.group(0)
+
+
+def sql_dialect_for(db_type: str) -> str:
+    """Map a connection's ``db_type`` onto a lexing dialect."""
+    return _SQL_DIALECT_BY_DB_TYPE.get((db_type or "").lower(), "default")
+
+
+def _strip_sql_comments(query: str, db_type: str = "") -> str:
     """Replace SQL comments with a space so they cannot be used as token
-    separators to evade keyword detection (e.g. ``DELETE/**/FROM``)."""
-    return _LINE_COMMENT.sub(" ", _BLOCK_COMMENT.sub(" ", query))
+    separators to evade keyword detection (e.g. ``DELETE/**/FROM``), without
+    ever reaching inside a string literal or a quoted identifier to do it."""
+    return _SCANNERS[sql_dialect_for(db_type)].sub(_blank_comment, query)
 
 
 @dataclass
@@ -73,8 +169,8 @@ class SafetyGuard:
     def __init__(self, level: SafetyLevel = SafetyLevel.READ_ONLY):
         self.level = level
 
-    def validate_sql(self, query: str) -> SafetyResult:
-        stripped = _strip_sql_comments(query).strip().rstrip(";")
+    def validate_sql(self, query: str, db_type: str = "") -> SafetyResult:
+        stripped = _strip_sql_comments(query, db_type).strip().rstrip(";")
 
         for pattern in DANGEROUS_PATTERNS_SQL:
             match = pattern.search(stripped)
@@ -197,7 +293,7 @@ class SafetyGuard:
 
         if db_type in {"mongodb", "mongo"}:
             return self.validate_mongo(query)
-        return self.validate_sql(query)
+        return self.validate_sql(query, db_type)
 
 
 def is_read_only_statement(query: str, db_type: str) -> bool:
