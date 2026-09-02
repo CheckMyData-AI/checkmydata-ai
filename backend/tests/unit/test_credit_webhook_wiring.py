@@ -54,18 +54,28 @@ class TestATopUpIsSeparatedFromASubscription:
 
 class TestAPaidTopUpIsNeverLostQuietly:
     def test_the_failure_path_logs_at_error_with_the_amount(self) -> None:
-        """The charge has already succeeded. Raising would make Stripe retry a payment that
-        cannot be un-taken, so the only honest outcome is a loud record a human can finish
-        — and it has to carry the amount and the session id to be actionable."""
+        """A grant that did not happen has to leave a record a human can act on, carrying
+        the amount and the session id."""
         src = inspect.getsource(BillingService._credit_top_up)
         assert "logger.error" in src
         assert "PAID BUT NOT CREDITED" in src
         assert "amount" in src and "session" in src
 
-    def test_it_does_not_raise(self) -> None:
+    def test_it_raises_so_the_event_is_redelivered(self) -> None:
+        """This assertion was its own inversion — it required the handler NOT to raise.
+
+        The reasoning it carried was nearly right: "raising would make Stripe retry a
+        payment that cannot be un-taken." Retrying the *webhook* does not retry the
+        *charge*; it redelivers the event. Swallowing let `handle_event` commit its
+        idempotency claim, so the money was taken, nothing was granted, and every
+        redelivery was refused as a duplicate — with the docstring pointing at a
+        `reconcile()` sweep that iterates Subscription rows and never sees a one-time
+        payment. See tests/unit/test_topup_grant_survives_failure.py for the behavioural
+        case.
+        """
         src = inspect.getsource(BillingService._credit_top_up)
         body = src[src.index("try:") :]
-        assert "raise" not in body
+        assert "raise" in body
 
 
 class TestTheGrantScalesWithTheTier:

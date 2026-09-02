@@ -153,7 +153,14 @@ CEILINGS: dict[str, int] = {
     # reads as success — the shape this ratchet exists to catch. The same reasoning the
     # existing Stripe-seam entries above carry, for the same reason: a webhook that
     # raises is a retry of something that cannot be un-done.
-    "except Exception": 628,
+    # 628 -> 629 on 2026-09-02. One, in `BillingService.verify_checkout`'s payment
+    # branch. The success page is a SAFETY NET over the webhook, never the primary path,
+    # so a grant it cannot complete must not become the customer's problem: it rolls back
+    # — dropping the session claim so the webhook can still win it — logs ERROR with the
+    # session id, and answers `settled: false, reason: pending`. Propagating would turn a
+    # webhook-recoverable state into a 500 on the page the customer is looking at, while
+    # the grant they paid for is still owed and still deliverable.
+    "except Exception": 629,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

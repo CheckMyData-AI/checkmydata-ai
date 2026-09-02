@@ -319,6 +319,24 @@ class BillingService:
         subscription = session.get("subscription")
         if isinstance(subscription, dict):
             await self._sync_subscription(db, subscription, deleted=False)
+
+        # The payment branch, which this used to omit — it reported `settled: true` for a
+        # top-up it never credited. `_credit_top_up` claims the session, so whichever of
+        # this and the webhook arrives second finds the claim taken and grants nothing.
+        if session.get("mode") == "payment":
+            try:
+                await self._credit_top_up(db, user.id, session)
+            except Exception:
+                # The webhook is the primary path and is still owed this grant. Rolling
+                # back drops the claim so it can win; reporting `settled: false` tells the
+                # customer to wait rather than telling them it is done.
+                await db.rollback()
+                logger.error(
+                    "billing: success-page credit failed for session=%s; leaving it to the webhook",
+                    session_id,
+                    exc_info=True,
+                )
+                return {"settled": False, "reason": "pending"}
         await db.commit()
 
         return {
@@ -682,20 +700,57 @@ class BillingService:
                 exc_info=True,
             )
 
+    async def _claim_top_up(self, db: AsyncSession, session_id: str) -> bool:
+        """Win the right to credit this checkout session exactly once.
+
+        Keyed on the **session**, not on the Stripe event id, because two different
+        deliveries can carry the same payment: a redelivery under a new event id, and the
+        success page (`verify_checkout`) racing the webhook. The event-id ledger cannot
+        see either of those as a duplicate.
+
+        Taken inside a SAVEPOINT so a lost race does not poison the surrounding
+        transaction — `handle_event` has already claimed its own row and still has to
+        commit it.
+        """
+        try:
+            async with db.begin_nested():
+                db.add(
+                    StripeEvent(
+                        stripe_event_id=f"topup:{session_id}",
+                        event_type="credit_topup",
+                        payload=None,
+                    )
+                )
+        except IntegrityError:
+            return False
+        return True
+
     async def _credit_top_up(self, db: AsyncSession, user_id: str, session: dict) -> None:
         """Add purchased credit for a completed one-time Checkout.
 
-        Not guarded for idempotency here: `handle_event` claims the Stripe event id before
-        `_apply_event` runs, so a redelivery never arrives. A second guard would be a
-        second ledger to keep in step with the first.
+        **Raises on failure, deliberately.** It used to swallow, and the comment explaining
+        why was nearly right: "refusing the webhook would make Stripe retry a charge that
+        cannot be un-taken." Retrying the *webhook* does not retry the *charge* — it
+        redelivers the event, which is exactly what a failed grant needs and the only
+        retry Stripe offers. Swallowing let `handle_event` commit its claim, so the money
+        was taken, nothing was granted, and every redelivery was refused as a duplicate.
+        The old docstring named "the reconciliation sweep" as the recovery; `reconcile()`
+        iterates `Subscription` rows and a one-time payment is in none of them.
 
-        Never raises. The payment has already succeeded — refusing the webhook would make
-        Stripe retry a charge that cannot be un-taken, and the reconciliation sweep is what
-        finds a top-up that failed to land.
+        Idempotency is claimed here on the session id rather than left to the caller,
+        because two callers exist — the webhook and the success page — and only the
+        session is common to both.
         """
         amount_cents = int(session.get("amount_total") or 0)
+        session_id = str(session.get("id") or "")
         if amount_cents <= 0:
             logger.warning("billing: top-up session with no amount for user=%s", user_id[:8])
+            return
+        if not session_id:
+            logger.warning("billing: top-up with no session id for user=%s", user_id[:8])
+            return
+        if not await self._claim_top_up(db, session_id):
+            logger.info("billing: top-up %s already credited", session_id)
             return
         try:
             from app.services.openrouter_credit_service import OpenRouterCreditService
@@ -703,14 +758,18 @@ class BillingService:
             await OpenRouterCreditService().top_up(db, user_id, amount_usd=amount_cents / 100)
         except Exception:
             # Loud, and with the amount, because this is money the customer paid that has
-            # not been granted. A human has to finish it.
+            # not been granted. Then re-raised: the caller rolls back — dropping this
+            # claim with it — and answers Stripe with a non-2xx so the event is
+            # redelivered and the grant tried again.
             logger.error(
-                "billing: PAID BUT NOT CREDITED — user=%s amount=%.2f session=%s",
+                "billing: PAID BUT NOT CREDITED — user=%s amount=%.2f session=%s; "
+                "rolling back so Stripe redelivers",
                 user_id[:8],
                 amount_cents / 100,
-                session.get("id"),
+                session_id,
                 exc_info=True,
             )
+            raise
 
     async def _renew_credit(self, db: AsyncSession, invoice: dict) -> None:
         """Roll the included allowance for the new period; purchased credit carries over.

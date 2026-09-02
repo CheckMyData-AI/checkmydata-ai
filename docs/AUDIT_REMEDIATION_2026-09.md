@@ -24,7 +24,7 @@ Status vocabulary: `todo` · `wip` · `done` · `dropped (reason)`.
 | # | Task | Size | Status | Evidence |
 |---|---|---|---|---|
 | 1.1 | `charge.refunded` / dispute handling | M | done | `billing_service.py` (`refund.created` + both dispute events), `openrouter_credit_service.debit/restore`, `tests/unit/test_refund_and_dispute_handling.py` (12 cases, 7 red before). **`charge.refunded` deliberately unhandled** — cumulative `amount_refunded` would double every partial reversal; per Stripe's own guidance |
-| 1.2 | Top-up: roll back on credit failure; mirror payment branch into `verify_checkout` | M | todo | |
+| 1.2 | Top-up: roll back on credit failure; mirror payment branch into `verify_checkout` | M | done | `billing_service.py` (`_claim_top_up` on the session id inside a SAVEPOINT, `_credit_top_up` re-raises, payment branch in `verify_checkout`), `tests/unit/test_topup_grant_survives_failure.py` (9 cases, 6 red before); `test_it_does_not_raise` inverted |
 | 1.3 | Correct the privacy policy and support FAQ, or add a retention setting | S | todo | |
 | 1.4 | Wire `provision()`/`revoke()` into `_sync_subscription` | M | todo | |
 | 1.5 | Learning decay: stop exposure resetting the staleness clock | S | todo | |
