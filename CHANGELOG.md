@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the billing model's ceiling was never armed for a single account
+
+`b48fcfc1524b` created `llm_credit` — two pockets over one OpenRouter counter, an
+`included_grant_usd` that expires monthly and a `purchased_balance_usd` that does not —
+and `OpenRouterCreditService.provision` fills it, creating a per-account key with a dollar
+limit. **Nothing called `provision`.** Not `_sync_subscription`, not checkout, not the
+reconcile sweep; no caller anywhere in `backend/`, `frontend/` or `scripts/`.
+
+Two consequences, both live. Every request ran against one shared operator key with no
+per-account ceiling — which is what made the token ceilings shipped earlier in this
+release the only thing standing between an unpaid trial and an unbounded provider bill.
+And `create_topup_session` refused every top-up with *"No LLM key to credit yet"*: the
+paid feature was unreachable because the thing it depends on was never created.
+
+`revoke` had the mirror problem — cancelling a subscription left the key alive and
+spending.
+
+Both are now wired to the subscription's own transitions:
+
+- **Activation** provisions, for `active` and `trialing` only. `past_due` has not paid and
+  `incomplete` may never; a trial *is* armed, because an account that has paid nothing for
+  fourteen days is exactly the one that must not run uncapped.
+- **Deletion** revokes, keeping the row and the purchased balance — that credit is still
+  owed, and a re-subscription provisions a key whose limit includes it again.
+
+Safe on every update, not only on the transition: `provision` returns the existing key
+*before* it touches `included_grant_usd`, so a re-run cannot reset a grant mid-period.
+What it also cannot do is **raise** the grant on an upgrade — that follows at the next
+`subscription_cycle` invoice, which is `_renew_credit`. Recorded rather than silently
+chosen.
+
+Both are allowed to **raise**, following the top-up fix in this same release:
+`handle_event` rolls its idempotency claim back on an exception, so Stripe redelivers and
+the work is retried. On the success page the opposite holds — `verify_checkout` is a
+safety net over the webhook, so it rolls back and reports `settled: false, reason:
+pending` instead of 500-ing the page while the subscription is still being set up.
+
+The first version of this wiring passed `None` where the database session belongs. It read
+fine and would have died in production at `self._row(db, …)`; the stub shrugged at the
+argument, so the tests passed. The stub now records the session and two cases assert it —
+`test_provision_receives_the_session_not_none`.
+
+New: `tests/unit/test_subscription_provisions_the_key.py`, 10 cases, 6 red against the old
+code. Two existing `TestWebhookSync` cases now stub the key work, because they are about
+the subscription fields and reached a third party once provisioning landed.
+
 ### Fixed — the public pages said query results are never stored; up to 500 rows per message are
 
 Four surfaces carried it, not the two the audit named: `privacy`, `terms`, `about` and the

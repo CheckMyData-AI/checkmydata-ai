@@ -160,7 +160,15 @@ CEILINGS: dict[str, int] = {
     # session id, and answers `settled: false, reason: pending`. Propagating would turn a
     # webhook-recoverable state into a 500 on the page the customer is looking at, while
     # the grant they paid for is still owed and still deliverable.
-    "except Exception": 629,
+    # 629 -> 630 on 2026-09-02. One, and it is the twin of the 629th: the SUBSCRIPTION
+    # branch of `BillingService.verify_checkout`. `_sync_subscription` now provisions the
+    # account's OpenRouter key, which is a third-party call. On the WEBHOOK that failure
+    # must propagate so Stripe redelivers; on the success page it must not, because that
+    # page is a safety net over the webhook and the webhook is still owed the same work.
+    # It rolls back, logs ERROR with the session id, and answers
+    # `settled: false, reason: pending` — telling the customer to wait rather than 500-ing
+    # the page while the subscription they just bought is still being set up.
+    "except Exception": 630,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

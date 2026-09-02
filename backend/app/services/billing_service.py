@@ -53,6 +53,14 @@ _HANDLED_EVENTS = {
 }
 
 
+#: Subscription statuses that earn a per-account LLM key. Mirrors
+#: ``EntitlementService.ACTIVE_STATUSES`` deliberately rather than importing it: that set
+#: answers "does this account get its plan's entitlements", this one answers "does this
+#: account get a key that can spend money", and the day those two stop being the same
+#: question the import would silently pick the wrong answer.
+_LIVE_SUBSCRIPTION_STATUSES = frozenset({"active", "trialing"})
+
+
 class BillingError(Exception):
     """Raised for user-facing billing failures (bad plan, no Stripe config)."""
 
@@ -318,7 +326,23 @@ class BillingService:
 
         subscription = session.get("subscription")
         if isinstance(subscription, dict):
-            await self._sync_subscription(db, subscription, deleted=False)
+            try:
+                await self._sync_subscription(db, subscription, deleted=False)
+            except Exception:
+                # `_sync_subscription` now provisions the account's OpenRouter key, which
+                # is a call to a third party. On the WEBHOOK that failure must propagate
+                # so Stripe redelivers; here it must not, because this page is a safety
+                # net over the webhook and the webhook is still owed the same work.
+                # Reporting `pending` tells the customer to wait rather than 500-ing the
+                # page while the subscription they just bought is still being set up.
+                await db.rollback()
+                logger.error(
+                    "billing: success-page subscription sync failed for session=%s; "
+                    "leaving it to the webhook",
+                    session_id,
+                    exc_info=True,
+                )
+                return {"settled": False, "reason": "pending"}
 
         # The payment branch, which this used to omit — it reported `settled: true` for a
         # top-up it never credited. `_credit_top_up` claims the session, so whichever of
@@ -816,6 +840,11 @@ class BillingService:
             sub.plan_id = "free"
             sub.stripe_subscription_id = None
             sub.cancel_at_period_end = False
+            # The key outlives the subscription unless something takes it back, and a
+            # revoked key is the only thing that stops a cancelled account spending.
+            # `revoke` keeps the row and the purchased balance — that credit is still
+            # owed, and a re-subscription provisions a key whose limit includes it again.
+            await self._revoke_key(db, sub.user_id)
             return
 
         sub.stripe_subscription_id = obj.get("id")
@@ -829,6 +858,47 @@ class BillingService:
         plan_id = await self._resolve_plan_id(db, obj)
         if plan_id:
             sub.plan_id = plan_id
+
+        # Arm the per-account ceiling. `llm_credit` and `provision` have existed since
+        # `b48fcfc1524b` and NOTHING called provision — so the dollar ceiling the billing
+        # model is built around was never created for a single account, every request ran
+        # against one shared operator key, and `create_topup_session` refused every
+        # top-up with "no LLM key to credit yet".
+        #
+        # Only for a subscription that is actually live. `past_due` has not paid and
+        # `incomplete` may never; a trial IS armed, because an account that has paid
+        # nothing for fourteen days is exactly the one that must not run uncapped.
+        #
+        # Safe on every update, not only on the transition: `provision` returns the
+        # existing key before it touches `included_grant_usd`, so a re-run cannot reset a
+        # grant mid-period. What it also cannot do is RAISE the grant on an upgrade —
+        # that follows at the next `subscription_cycle` invoice, which is `_renew_credit`.
+        if sub.status in _LIVE_SUBSCRIPTION_STATUSES:
+            plan = (
+                (await db.execute(select(Plan).where(Plan.id == sub.plan_id))).scalar_one_or_none()
+                if sub.plan_id
+                else None
+            )
+            await self._provision_key(db, sub.user_id, included_usd=_included_credit_for(plan))
+
+    async def _provision_key(self, db: AsyncSession, user_id: str, *, included_usd: float) -> None:
+        """Create the account's OpenRouter key. Deliberately allowed to raise.
+
+        `handle_event` rolls its idempotency claim back on an exception, so Stripe
+        redelivers and this is retried. Swallowing would leave a paying customer with no
+        key, no ceiling and no second attempt — the same shape as the top-up that was
+        marked processed after failing to credit.
+        """
+        from app.services.openrouter_credit_service import OpenRouterCreditService
+
+        await OpenRouterCreditService().provision(db, user_id, included_usd=included_usd)
+
+    async def _revoke_key(self, db: AsyncSession, user_id: str) -> None:
+        """Delete the account's key on cancellation. Allowed to raise, same reasoning:
+        a revocation that quietly failed leaves a cancelled account still spending."""
+        from app.services.openrouter_credit_service import OpenRouterCreditService
+
+        await OpenRouterCreditService().revoke(db, user_id)
 
     async def _resolve_plan_id(self, db: AsyncSession, obj: dict) -> str | None:
         """Map the subscription's Stripe price back to a catalog plan.
