@@ -3,8 +3,13 @@
 Verifies that:
   - ``chroma_max_distance=0.45`` drops noisy hits (distance 0.60) and keeps
     relevant ones (distance 0.30).
-  - ``config.rag_relevance_threshold`` and ``config.hybrid_min_score`` are set
-    to the tightened values (sim floor ≥ 0.55, min-score above rank-30 RRF).
+  - ``config.rag_relevance_threshold`` is set to the tightened value (sim floor
+    ≥ 0.55) and the rank-30 tail cut-off is in place as ``hybrid_max_rank``.
+
+``hybrid_min_score`` used to be asserted here at 0.03, "above rank-30 RRF". It
+was above every single-leg contribution too (1/61 = 0.0164), so it filtered tail
+noise by filtering the whole dense-only and lexical-only case. Corrected
+2026-09-02; the cut-off is now a rank cut-off.
 """
 
 from __future__ import annotations
@@ -82,9 +87,9 @@ def test_config_floor_values() -> None:
         f"rag_relevance_threshold should be 0.45 (distance ≤ 0.45 ⟺ sim ≥ 0.55), "
         f"got {settings.rag_relevance_threshold}"
     )
-    assert settings.hybrid_min_score == pytest.approx(0.03), (
-        f"hybrid_min_score should be 0.03 (above rank-30 RRF contribution ~0.011), "
-        f"got {settings.hybrid_min_score}"
+    assert settings.hybrid_max_rank == 30, (
+        f"hybrid_max_rank should be 30 (the rank-30 tail cut-off RET-R5 asked for), "
+        f"got {settings.hybrid_max_rank}"
     )
 
 
@@ -99,12 +104,16 @@ def test_config_floor_implies_meaningful_similarity() -> None:
     )
 
 
-def test_hybrid_min_score_above_rank30_contribution() -> None:
-    """hybrid_min_score must be above a rank-30 RRF contribution (1/90 ≈ 0.0111)."""
+def test_the_tail_cutoff_survives_a_change_to_rrf_k() -> None:
+    """The cut-off is a rank, so it means the same thing at any ``rrf_k``.
+
+    The value it replaced did not: it was chosen against ``rrf_k = 60`` and would
+    have silently changed meaning the moment anyone edited that constant.
+    """
     from app.config import settings
 
-    rank30_contribution = 1.0 / (60 + 30)  # 0.0111…
-    assert settings.hybrid_min_score > rank30_contribution, (
-        f"hybrid_min_score={settings.hybrid_min_score:.4f} ≤ rank-30 contribution "
-        f"{rank30_contribution:.4f}; rank-30 hits are not filtered"
+    assert settings.hybrid_max_rank > 0
+    assert settings.hybrid_min_score < 1.0 / (settings.hybrid_rrf_k + 1), (
+        f"hybrid_min_score={settings.hybrid_min_score:.5f} is at or above the best "
+        "single-leg RRF contribution; single-leg hits would be discarded outright"
     )

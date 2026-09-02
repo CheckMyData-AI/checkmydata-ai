@@ -425,6 +425,8 @@ Most behavior ships behind flags in `backend/app/config.py`. Gate regressions th
 | Flag | Default | Notes |
 |---|---|---|
 | `hybrid_retrieval_enabled` | on | Falls back to dense-only without BM25 snapshot |
+| `hybrid_min_score` | **0.0** | Floor on the **fused** RRF score. Was `0.03` until 2026-09-02, which made retrieval an AND-gate: RRF gives `1/(rrf_k+rank)` *per leg*, so the most a single-leg hit can score is `1/61 = 0.0164` and the floor sat above all of it — 0 of 40 single-leg documents and 82 of 1 600 two-leg rank pairs survived. A value at or above `1/(rrf_k+1)` now **raises at boot** rather than being clamped |
+| `hybrid_max_rank` | 30 | The rank cut-off RET-R5 actually wanted: drop a document only when **both** legs ranked it worse than this (0 = off). A rank, so it means the same thing at any `rrf_k` — the float it replaced was tuned against `rrf_k = 60` and would have changed meaning silently if anyone edited that constant |
 | `schema_retrieval_enabled` | on | Unioned with legacy relevance safety net |
 | `sql_agent_safety_net_min_relevance` | 3 | RET-R10: min `relevance_score` for safety-net tables; raise to 4 for tighter filtering, 2 to restore legacy behaviour |
 | `code_graph_enabled` | **on** | CPU-heavy indexing; gated on `python -m app.eval.graph_benchmark` (W6) |

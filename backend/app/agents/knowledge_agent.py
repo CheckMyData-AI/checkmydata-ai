@@ -68,6 +68,7 @@ class KnowledgeAgent(BaseAgent):
                 vector_store=self._vector_store,
                 rrf_k=settings.hybrid_rrf_k,
                 min_score=settings.hybrid_min_score,
+                max_rank=settings.hybrid_max_rank,
                 chroma_max_distance=settings.rag_relevance_threshold,
                 reranker=reranker,
                 rerank_candidates=settings.reranker_candidates,

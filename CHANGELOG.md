@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — hybrid retrieval was an AND-gate, and the floor that made it one was pinned by two tests
+
+RRF gives a document `1/(rrf_k + rank)` **per leg that found it**, and `hybrid_min_score`
+is compared against the sum. With `rrf_k = 60` the most a document found by one leg alone
+can ever score is `1/61 = 0.01639`. The floor was `0.03`, chosen (RET-R5, Wave 2 T10) to
+sit above a rank-30 contribution of `1/90 ≈ 0.0111` — and therefore above every single-leg
+hit there is, rank 1 included.
+
+Measured over ranks 1..40 at `rrf_k = 60`: **0 of 40 single-leg documents survived the
+floor**, and **82 of 1 600 two-leg rank pairs** — a document had to be found by both legs
+*and* by both within about rank 6 (`2/66 = 0.03030` passes, `2/67 = 0.02985` does not).
+
+So a question with no lexical overlap — "how do we decide when a subscription lapses?" —
+returned nothing however well the embeddings ranked it, which is the exact case the dense
+leg exists for. Compounding it, the BM25 corpus is built only from generated markdown while
+symbol bodies go only to the vector store, so code chunks can never be in both legs at all:
+the `code_symbol_embed` stage that costs ~2 300 s of every rebuild produced data this gate
+made unreachable. (Feeding symbol chunks into the corpus is a separate change.)
+
+A scalar floor on a sum cannot express "rank ≤ N", so the rank cut-off is now a rank
+cut-off: **`hybrid_max_rank` (default 30)** drops a document only when *both* legs ranked it
+worse than that, and `hybrid_min_score` defaults to `0.0`. Being deep in one leg can no
+longer bury a document the other leg ranked first. The cut-off also survives an edit to
+`rrf_k`, which the tuned float did not.
+
+An explicit `HYBRID_MIN_SCORE` at or above `1/(HYBRID_RRF_K + 1)` is **refused at boot**
+rather than clamped, naming the consequence: at that value the retriever is an AND-gate.
+The operator meant something by the number and it cannot be delivered.
+
+Two tests pinned the broken value as correct — `test_retrieval_floor.py` and
+`test_cosine_distance_validation.py`, both asserting the floor sits *above* the rank-30
+contribution. They now assert RET-R5's actual goal against the mechanism that can meet it,
+and both files carry the reasoning so the next reader does not re-derive the old one.
+New: `tests/unit/test_hybrid_rrf_floor.py`, 10 cases, 8 red against the old code.
+
 ### Fixed — CI was red on `main`, and the reason had nothing to do with any commit
 
 `npm audit --audit-level=high` is a blocking gate by design, so a fresh advisory against a
