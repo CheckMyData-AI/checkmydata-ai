@@ -264,7 +264,14 @@ class TestWebhookSync:
         sub = _sub(status="trialing")
         db = AsyncMock()
         db.add = MagicMock()
-        with patch.object(svc, "_find_by_customer", AsyncMock(return_value=sub)):
+        # `_sync_subscription` also arms the account's OpenRouter key now. That is a
+        # third-party call with its own tests
+        # (tests/unit/test_subscription_provisions_the_key.py); this case is about the
+        # subscription fields, so the key work is stubbed rather than reached.
+        with (
+            patch.object(svc, "_provision_key", AsyncMock()),
+            patch.object(svc, "_find_by_customer", AsyncMock(return_value=sub)),
+        ):
             await svc.handle_event(
                 db,
                 {
@@ -296,7 +303,12 @@ class TestWebhookSync:
         sub = _sub(status="active")
         db = AsyncMock()
         db.add = MagicMock()
-        with patch.object(svc, "_find_by_customer", AsyncMock(return_value=sub)):
+        # Cancellation also revokes the account's key — a third-party call with its own
+        # tests. This case is about the subscription fields.
+        with (
+            patch.object(svc, "_revoke_key", AsyncMock()),
+            patch.object(svc, "_find_by_customer", AsyncMock(return_value=sub)),
+        ):
             await svc.handle_event(
                 db,
                 {
