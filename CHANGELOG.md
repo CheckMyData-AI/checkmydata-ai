@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — money could leave without the credit it bought leaving with it
+
+`_HANDLED_EVENTS` listed six Stripe events and none of them was a reversal. A customer
+buys $200 of LLM credit, it lands in `purchased_balance_usd` via `_credit_top_up`, and
+then the charge is refunded — by the operator, or by the customer's bank as a chargeback.
+Stripe takes the money back; the credit stayed. The account kept both.
+
+**The obvious event is the wrong one.** `charge.refunded` carries the charge, whose
+`amount_refunded` is **cumulative**: two partial refunds emit two events reading 5.00 and
+then 17.00, and debiting that field twice takes 22.00 for a 17.00 refund. Stripe's own
+guidance is explicit — *"during each partial refund, we send a `refund.created` event"*,
+and *"listen to the `refund.created` event instead of `charge.refunded` to accurately
+process individual refunds."* So `refund.created` is handled and `charge.refunded` is
+deliberately **not**, with a test pinning that: handling both would double every reversal.
+
+Three distinctions that are easy to get backwards, each with a test:
+
+- A refunded **subscription invoice** is not a refunded **top-up**. Only a one-time
+  payment has `invoice = None`, and only that one ever added to `purchased_balance_usd`.
+  Debiting the purchased pocket for a refunded month of subscription would take credit
+  the customer never bought with that money.
+- `charge.dispute.created` reverses the credit and nothing else — the subscription's own
+  fate arrives separately as `customer.subscription.deleted`.
+- `charge.dispute.closed` restores credit **only** when `status == "won"`. A lost dispute
+  is a refund that already happened and was already reversed.
+
+The debit **floors at zero**. A negative balance is not a state this ledger has, and
+inventing one would make the next top-up silently pay off a debt the customer never
+agreed to. What the balance could not absorb is returned as `shortfall_usd` and logged at
+ERROR with the number — that is credit the customer already spent, so the operator paid
+for those tokens and gets nothing back, and a silent floor is exactly how such a loss
+stops being visible.
+
+`OpenRouterCreditService.debit` / `restore` deliberately do **not** copy `top_up`'s refusal
+to act before the key is provisioned: a refund has to reduce what the customer is owed
+whether or not a remote key exists to enforce it.
+
+The credit-layer tests are **behavioural**, not source greps — on a money path a source
+pattern proves nothing about what the arithmetic does. New:
+`tests/unit/test_refund_and_dispute_handling.py`, 12 cases, 7 red against the old code.
+The suppression ratchet is raised 625 → 628 in the same commit, with the reason for each
+of the three new handlers.
+
 ### Fixed — the RAG leg was empty on the production vector backend, and nothing said so
 
 `_get_hybrid_retriever` asserted `isinstance(self._vector_store, VectorStore)`. `VectorStore`
