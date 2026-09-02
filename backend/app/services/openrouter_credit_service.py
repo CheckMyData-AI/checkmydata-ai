@@ -181,6 +181,76 @@ class OpenRouterCreditService:
             "limit_usd": float(new_limit),
         }
 
+    async def _adjust(
+        self, db: AsyncSession, user_id: str, *, delta_usd: Decimal, reason: str
+    ) -> dict:
+        """Move the purchased pocket by *delta_usd* and re-push the ceiling.
+
+        Unlike :meth:`top_up`, this does **not** refuse when the key has not been
+        provisioned. A refund has to reduce what the customer is owed whether or not a
+        remote key exists to enforce it; refusing would leave the credit standing after
+        the money went back, which is the whole defect being closed.
+        """
+        row = await self._row(db, user_id)
+        before = _q(row.purchased_balance_usd or 0)
+        after = max(Decimal(0), before + delta_usd)
+        # What the balance could not absorb. Only meaningful on a debit: the customer
+        # already spent it, so the operator paid for those tokens and gets nothing back.
+        shortfall = max(Decimal(0), -(before + delta_usd))
+        row.purchased_balance_usd = after
+
+        new_limit: Decimal | None = None
+        if row.key_hash:
+            remote = await self._call("GET", f"/{row.key_hash}")
+            usage = _q(remote.get("usage") or 0)
+            new_limit = await self._limit_for(row, usage)
+            await self._call("PATCH", f"/{row.key_hash}", limit=float(new_limit))
+        await db.commit()
+
+        if shortfall > 0:
+            # ERROR, with the number. This is money the operator will not recover, and a
+            # floor at zero is exactly the shape that makes such a loss invisible.
+            logger.error(
+                "credit: %s short by %.2f for user=%s — that credit was already spent",
+                reason,
+                float(shortfall),
+                user_id[:8],
+            )
+        logger.info(
+            "credit: %s of %.2f for user=%s; purchased now %.2f",
+            reason,
+            float(delta_usd),
+            user_id[:8],
+            float(after),
+        )
+        return {
+            "purchased_balance_usd": float(after),
+            "shortfall_usd": float(shortfall),
+            "limit_usd": float(new_limit) if new_limit is not None else None,
+        }
+
+    async def debit(
+        self, db: AsyncSession, user_id: str, *, amount_usd: float, reason: str = "reversal"
+    ) -> dict:
+        """Take purchased credit back — a refund, or a chargeback.
+
+        Floors at zero: a negative balance is not a state this ledger has, and inventing
+        one would make the next top-up silently pay off a debt the customer never agreed
+        to. The part that could not be taken is reported as ``shortfall_usd`` and logged
+        at ERROR rather than absorbed.
+        """
+        if amount_usd <= 0:
+            raise CreditError("debit amount must be positive")
+        return await self._adjust(db, user_id, delta_usd=-_q(amount_usd), reason=reason)
+
+    async def restore(
+        self, db: AsyncSession, user_id: str, *, amount_usd: float, reason: str = "dispute won"
+    ) -> dict:
+        """Put credit back after a dispute resolved in the operator's favour."""
+        if amount_usd <= 0:
+            raise CreditError("restore amount must be positive")
+        return await self._adjust(db, user_id, delta_usd=_q(amount_usd), reason=reason)
+
     async def renew(self, db: AsyncSession, user_id: str, *, included_usd: float) -> dict:
         """Roll the period: the included pocket is replaced, the purchased one carries.
 

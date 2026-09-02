@@ -129,7 +129,31 @@ CEILINGS: dict[str, int] = {
     # diagnoses. It logs at WARNING and says the claims are not being checked — the
     # silent-degradation ratchet caught the first version, which returned None at debug and
     # would have made both claims disappear without a word.
-    "except Exception": 625,
+    # 625 -> 628 on 2026-09-02. Three, all on the refund/dispute reversal path added in
+    # the same commit, and all three swallow a failure whose propagation would make an
+    # already-irreversible money movement worse:
+    #
+    #   `BillingService._charge_owner`             — Stripe cannot be read for the charge
+    #                                                behind a refund. Raising fails the
+    #                                                webhook, and Stripe then retries a
+    #                                                reversal for money that has already
+    #                                                left. Logs ERROR "REVERSAL NOT
+    #                                                APPLIED" with the charge id.
+    #   `BillingService._reverse_purchased_credit` — the debit itself failed. Same
+    #                                                reasoning; logs ERROR "MONEY RETURNED
+    #                                                BUT CREDIT NOT REVERSED" with the user
+    #                                                and the amount, because a human has to
+    #                                                finish it.
+    #   `BillingService._restore_purchased_credit` — a won dispute that could not be
+    #                                                re-credited. Logs ERROR with the
+    #                                                amount rather than leaving the
+    #                                                customer quietly short.
+    #
+    # Each logs at ERROR with the money in the message, and none returns a value that
+    # reads as success — the shape this ratchet exists to catch. The same reasoning the
+    # existing Stripe-seam entries above carry, for the same reason: a webhook that
+    # raises is a retry of something that cannot be un-done.
+    "except Exception": 628,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

@@ -41,6 +41,15 @@ _HANDLED_EVENTS = {
     "customer.subscription.deleted",
     "invoice.payment_failed",
     "invoice.paid",
+    # Money leaving. `refund.created` and NOT `charge.refunded`: the charge carries a
+    # cumulative `amount_refunded`, so two partial refunds emit two events reading 5.00
+    # and then 17.00, and debiting that field twice takes 22.00 for a 17.00 refund.
+    # Stripe's own guidance — "during each partial refund, we send a refund.created
+    # event", "listen to refund.created instead of charge.refunded to accurately process
+    # individual refunds". Handling both would double every reversal.
+    "refund.created",
+    "charge.dispute.created",
+    "charge.dispute.closed",
 }
 
 
@@ -525,6 +534,50 @@ class BillingService:
             await self._set_status_by_customer(db, obj.get("customer"), "past_due")
             return
 
+        if event_type == "refund.created":
+            # The Refund object's `amount` is this refund alone, which is the delta the
+            # ledger needs. It carries no customer, so the charge is fetched for the two
+            # fields that decide everything: who, and whether this was a top-up at all.
+            await self._reverse_purchased_credit(
+                db,
+                charge_id=obj.get("charge"),
+                amount_cents=int(obj.get("amount") or 0),
+                reason="refund",
+                ref=obj.get("id"),
+            )
+            return
+
+        if event_type == "charge.dispute.created":
+            # The bank has already pulled the funds. The subscription's own fate arrives
+            # separately as customer.subscription.deleted, so this only reverses credit.
+            await self._reverse_purchased_credit(
+                db,
+                charge_id=obj.get("charge"),
+                amount_cents=int(obj.get("amount") or 0),
+                reason="chargeback",
+                ref=obj.get("id"),
+            )
+            return
+
+        if event_type == "charge.dispute.closed":
+            # Only a WON dispute returns the money. "lost" is a refund that already
+            # happened and was reversed on `created`; restoring there would hand back
+            # credit for money the operator no longer has.
+            if obj.get("status") != "won":
+                logger.info(
+                    "billing: dispute %s closed as %s — credit stays reversed",
+                    obj.get("id"),
+                    obj.get("status"),
+                )
+                return
+            await self._restore_purchased_credit(
+                db,
+                charge_id=obj.get("charge"),
+                amount_cents=int(obj.get("amount") or 0),
+                ref=obj.get("id"),
+            )
+            return
+
         if event_type == "invoice.paid":
             await self._set_status_by_customer(db, obj.get("customer"), "active")
             # Only the renewal rolls the credit period. `invoice.paid` also fires for the
@@ -535,6 +588,99 @@ class BillingService:
             if obj.get("billing_reason") == "subscription_cycle":
                 await self._renew_credit(db, obj)
             return
+
+    async def _charge_owner(self, db: AsyncSession, charge_id: str | None) -> str | None:
+        """The user whose purchased credit a charge bought, or ``None`` with a reason logged.
+
+        Two gates, and the second is the one that is easy to get backwards. A refunded
+        **subscription invoice** is not a refunded **top-up**: only a one-time payment has
+        ``invoice = None``, and only that one ever added to ``purchased_balance_usd``.
+        Debiting the purchased pocket for a refunded month of subscription would take
+        credit the customer never bought with that money.
+        """
+        if not charge_id:
+            logger.warning("billing: reversal event carries no charge id")
+            return None
+        try:
+            charge = _stripe().Charge.retrieve(charge_id)
+        except Exception:
+            # Never raise: the money has already moved, and a failed webhook makes Stripe
+            # retry something that cannot be un-done. A human has to finish it.
+            logger.error(
+                "billing: REVERSAL NOT APPLIED — could not read charge %s", charge_id, exc_info=True
+            )
+            return None
+        if charge.get("invoice"):
+            logger.info(
+                "billing: charge %s is a subscription invoice, not a top-up — "
+                "purchased credit untouched",
+                charge_id,
+            )
+            return None
+        sub = await self._find_by_customer(db, charge.get("customer"))
+        if sub is None:
+            logger.warning(
+                "billing: no subscription row for customer on charge %s — reversal skipped",
+                charge_id,
+            )
+            return None
+        return sub.user_id
+
+    async def _reverse_purchased_credit(
+        self,
+        db: AsyncSession,
+        *,
+        charge_id: str | None,
+        amount_cents: int,
+        reason: str,
+        ref: str | None,
+    ) -> None:
+        """Take back credit whose money has gone — a refund or a chargeback."""
+        if amount_cents <= 0:
+            logger.warning("billing: %s %s carries no amount", reason, ref)
+            return
+        user_id = await self._charge_owner(db, charge_id)
+        if user_id is None:
+            return
+        try:
+            from app.services.openrouter_credit_service import OpenRouterCreditService
+
+            await OpenRouterCreditService().debit(
+                db, user_id, amount_usd=amount_cents / 100, reason=reason
+            )
+        except Exception:
+            logger.error(
+                "billing: MONEY RETURNED BUT CREDIT NOT REVERSED — user=%s amount=%.2f %s=%s",
+                user_id[:8],
+                amount_cents / 100,
+                reason,
+                ref,
+                exc_info=True,
+            )
+
+    async def _restore_purchased_credit(
+        self, db: AsyncSession, *, charge_id: str | None, amount_cents: int, ref: str | None
+    ) -> None:
+        """Put credit back after a dispute the operator won."""
+        if amount_cents <= 0:
+            return
+        user_id = await self._charge_owner(db, charge_id)
+        if user_id is None:
+            return
+        try:
+            from app.services.openrouter_credit_service import OpenRouterCreditService
+
+            await OpenRouterCreditService().restore(
+                db, user_id, amount_usd=amount_cents / 100, reason=f"dispute {ref} won"
+            )
+        except Exception:
+            logger.error(
+                "billing: WON DISPUTE NOT RE-CREDITED — user=%s amount=%.2f dispute=%s",
+                user_id[:8],
+                amount_cents / 100,
+                ref,
+                exc_info=True,
+            )
 
     async def _credit_top_up(self, db: AsyncSession, user_id: str, session: dict) -> None:
         """Add purchased credit for a completed one-time Checkout.
