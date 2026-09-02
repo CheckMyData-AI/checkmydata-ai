@@ -2,7 +2,7 @@ import importlib.util
 import logging
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import chromadb
@@ -140,6 +140,37 @@ def _parse_chroma_server_url(value: str) -> tuple[str, int, bool]:
     except ValueError as exc:
         raise ValueError(f"CHROMA_SERVER_URL has a non-numeric port: {value!r}.") from exc
     return host, port, False
+
+
+class VectorStoreLike(Protocol):
+    """What a retrieval consumer needs from a vector store — stated structurally.
+
+    There are two implementations and they are **not** related by inheritance:
+    :class:`VectorStore` wraps ChromaDB, :class:`~app.knowledge.pgvector_store.PgVectorStore`
+    wraps a Postgres table, and neither is a subclass of the other. Consumers were typed
+    against the concrete Chroma class, so the one place that checked
+    (``isinstance(store, VectorStore)`` in ``KnowledgeCatalogService``) raised on the
+    production backend, was swallowed, and emptied the RAG leg on every request for five
+    days.
+
+    A ``Protocol`` and not a base class, because the two share a shape and nothing else —
+    ``VectorStore.__init__`` opens a chromadb client. Deliberately **not**
+    ``runtime_checkable``: a runtime ``isinstance`` over a structural contract is the
+    defect this exists to prevent, and a Protocol's runtime check only looks at method
+    names anyway.
+
+    Narrow on purpose: it lists what retrieval consumers call, not everything an indexer
+    needs (``add_documents``, ``delete_by_source_path``, …). Widen it when a consumer
+    needs more, not before.
+    """
+
+    def query(
+        self,
+        project_id: str,
+        query_text: str,
+        n_results: int = 5,
+        where: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]: ...
 
 
 class VectorStore:

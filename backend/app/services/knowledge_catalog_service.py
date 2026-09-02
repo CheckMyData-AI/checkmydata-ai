@@ -80,14 +80,25 @@ class KnowledgeCatalogService:
             from app.knowledge.bm25_index import BM25Index
             from app.knowledge.hybrid_retriever import HybridRetriever
             from app.knowledge.reranker import build_reranker
-            from app.knowledge.vector_store import VectorStore
 
-            assert isinstance(self._vector_store, VectorStore), (
-                "_get_hybrid_retriever called without a VectorStore"
-            )
+            store = self._vector_store
+            if store is None:
+                # Reachable only through a caller that skipped its own None check. An
+                # explicit failure that the WARNING below will name, rather than an
+                # assert that emptied the leg in silence.
+                raise RuntimeError("hybrid retriever requested without a vector store")
+
+            # No isinstance check here, deliberately. It used to assert
+            # ``isinstance(self._vector_store, VectorStore)`` — a NOMINAL test over a
+            # STRUCTURAL contract. ``VectorStore`` is the concrete ChromaDB class;
+            # ``PgVectorStore`` implements the same method surface and inherits from
+            # ``object`` alone, and production resolves to pgvector. So the assert failed
+            # on every request, `_rag_artifacts_async` swallowed the AssertionError, and
+            # `pack.rag_chunks` was always empty with nothing saying so. The other two
+            # call sites pass the same object with no check and work.
             self._hybrid_retriever = HybridRetriever(
                 bm25=BM25Index(_settings.bm25_data_dir),
-                vector_store=self._vector_store,
+                vector_store=store,
                 rrf_k=_settings.hybrid_rrf_k,
                 min_score=_settings.hybrid_min_score,
                 max_rank=_settings.hybrid_max_rank,
@@ -480,7 +491,11 @@ class KnowledgeCatalogService:
         try:
             chunks = self._vector_store.query(project_id, question, n_results=n_results)
         except Exception:
-            logger.debug("catalog: rag query failed", exc_info=True)
+            # WARNING, not DEBUG. Reaching here means the store raised — an empty result
+            # is `chunks = []` and never comes through this branch. Returning `[]` keeps
+            # the vision-§7 graceful degradation; logging it at DEBUG is what let a
+            # permanently broken RAG leg look identical to a project with no documents.
+            logger.warning("catalog: rag query failed, answering without documents", exc_info=True)
             return []
 
         artifacts: list[Artifact] = []
@@ -539,7 +554,11 @@ class KnowledgeCatalogService:
             else:
                 chunks = self._vector_store.query(project_id, question, n_results=n_results)
         except Exception:
-            logger.debug("catalog: rag query failed", exc_info=True)
+            # WARNING, not DEBUG — same reasoning as the sync leg above. This is the
+            # branch the `isinstance` assert fell into on every production request, and
+            # DEBUG is why a permanently empty RAG leg looked like a project with no
+            # documents for five days.
+            logger.warning("catalog: rag query failed, answering without documents", exc_info=True)
             return []
 
         artifacts: list[Artifact] = []

@@ -29,7 +29,7 @@ from typing import Any
 from app.knowledge.bm25_index import BM25_UNUSABLE, BM25Index
 from app.knowledge.reranker import Reranker
 from app.knowledge.retrieval_degradation import emit_retrieval_degraded
-from app.knowledge.vector_store import VectorStore
+from app.knowledge.vector_store import VectorStoreLike
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,10 @@ class HybridResult:
 
 
 class HybridRetriever:
-    """Glue between :class:`BM25Index` and :class:`VectorStore`.
+    """Glue between :class:`BM25Index` and any :class:`VectorStoreLike` dense store.
+
+    Typed against the Protocol rather than the concrete ChromaDB class: production runs
+    ``PgVectorStore``, which shares the shape and none of the ancestry.
 
     Stateful only via the two underlying retrievers it composes; safe to share
     across requests. Construct once at app startup and inject.
@@ -77,7 +80,7 @@ class HybridRetriever:
     def __init__(
         self,
         bm25: BM25Index,
-        vector_store: VectorStore,
+        vector_store: VectorStoreLike,
         *,
         rrf_k: int = 60,
         min_score: float = 0.0,

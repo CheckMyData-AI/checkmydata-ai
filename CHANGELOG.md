@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the RAG leg was empty on the production vector backend, and nothing said so
+
+`_get_hybrid_retriever` asserted `isinstance(self._vector_store, VectorStore)`. `VectorStore`
+is the concrete ChromaDB class; `PgVectorStore` implements the same method surface and
+inherits from `object` alone (`__mro__` is `[PgVectorStore, object]`, executed). Production
+resolves to pgvector — `resolve_backend(None, "postgresql…")` returns `"pgvector"`, also
+executed — so the assert failed on **every** request.
+
+`_rag_artifacts_async` catches `Exception`, logged at **DEBUG**, and returned `[]`. So
+`pack.rag_chunks` was always empty, `sources.add("rag")` never fired, and answers were
+composed with no documentation context at all — with no counter, no event, no sentence and
+no trace span saying so. Live since the 2026-08-28 backend flip, and #263 made `auto` the
+code default, which extended it to every fresh install on Postgres.
+
+The assert guarded nothing it could guard: a **nominal** `isinstance` over a **structural**
+contract fails exactly when the contract is honoured by a different class. The other two
+call sites pass the same object with no check and work.
+
+Both `except` blocks now log at WARNING. Reaching them means the store *raised* — an empty
+result is `chunks = []` and never comes through that branch — so returning `[]` still keeps
+the vision-§7 graceful degradation while the reason stops being invisible. Writing the test
+caught that the sync leg and the async leg carry the same handler and only one had been
+fixed.
+
+New: `tests/unit/test_catalog_rag_leg_backend_agnostic.py`, 4 cases, 2 red against the old
+code. Its stub carries a `distance`, because `PgVectorStore.query` returns one shaped
+exactly as ChromaDB's and the fused path drops any hit without it — a stub without it would
+have passed for the wrong reason.
+
 ### Fixed — the paid tiers had no token ceiling, and their own descriptions said they did
 
 `4f1a29a0e973` activated `base` ($199) and `scale` ($599) with `daily_token_limit = 0` and
