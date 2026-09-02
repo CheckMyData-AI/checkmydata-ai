@@ -266,8 +266,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** "Request project access" button, email/description/message inputs, "Send request" button, success panel, "Got it" button, FormModal close
 - **States covered:** loading, success, error
 - **Errors & recovery:** submit fails → toast "Failed to send request" (`RequestAccessModal.tsx:40`)
+- **Reached far less often since 2026-09-02:** `can_create_projects` defaulted to False and **no code path anywhere granted it** — this very screen's "Send request" emails a human and returns ok, setting nothing. So every signup landed here about forty seconds in, and the queue was drained by hand. The right is now granted the moment the address is proven owned: at email verification, and at creation for a Google login. This scenario survives for the two cases that remain — an account whose right was revoked, and a self-hosted install with no mail configured — and the wall a user hits before verifying now says *verify your email*, with the resend link, instead of *request access*.
 - **Status:** implemented
-- **Coverage:** components/projects/RequestAccessModal.tsx:26,38-73,90-132
+- **Coverage:** components/projects/RequestAccessModal.tsx:26,38-73,90-132; backend/app/api/routes/projects.py:152-169; backend/app/services/auth_service.py (verify_email, find_or_create_google_user); tests backend/tests/unit/test_project_access_grant.py, backend/tests/integration/test_projects.py
 
 ## auth
 
@@ -446,7 +447,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Persona:** owner
 - **Feature:** projects
 - **Entry point:** sidebar "New project" action → "New Project" FormModal
-- **Preconditions:** authenticated with `can_create_projects`
+- **Preconditions:** authenticated with `can_create_projects` — held by every user whose email address is verified (2026-09-02); before that the flag had no grant path at all and this scenario was unreachable for a self-signup
 - **Steps:**
   1. User opens New Project
   2. User enters a name, optionally a Git repo URL (+ SSH key/branch), optionally LLM models

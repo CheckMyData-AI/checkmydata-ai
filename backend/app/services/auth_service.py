@@ -150,9 +150,16 @@ class AuthService:
             return None
         user.email_verified = True
         user.email_verify_token = None
+        # Verification is the moment the address is proven owned, and it is the only
+        # grant path there is. `can_create_projects` defaulted to False with nothing
+        # anywhere setting it True — `POST /api/projects/access-requests` sends an
+        # email and returns ok — so every signup ended at a waitlist drained by hand.
+        # Granted on the transition, never on every login: the flag stays a revocation
+        # switch, and a re-grant per sign-in would silently undo an admin's decision.
+        user.can_create_projects = True
         await session.commit()
         await session.refresh(user)
-        logger.info("Email verified for user: %s", user.email)
+        logger.info("Email verified for user: %s (project creation granted)", user.email)
         return user
 
     # ------------------------------------------------------------------
@@ -290,6 +297,10 @@ class AuthService:
             if user.password_hash is None:
                 user.auth_provider = "google"
             # F-PROJ-01: Google proved ownership of this address.
+            # Grant on the verification TRANSITION only — an already-verified user
+            # signing in again keeps whatever an admin last decided.
+            if not user.email_verified:
+                user.can_create_projects = True
             user.email_verified = True
             await session.commit()
             await session.refresh(user)
@@ -304,6 +315,8 @@ class AuthService:
             picture_url=picture,
             password_hash=None,
             email_verified=True,  # F-PROJ-01: Google-verified address.
+            # A verified address at creation, so the right comes with it.
+            can_create_projects=True,
         )
         session.add(user)
         await session.commit()
