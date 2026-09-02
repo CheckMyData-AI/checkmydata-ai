@@ -116,8 +116,11 @@ export default function PrivacyPage() {
             continuity across sessions.
           </li>
           <li>
-            Chat history does <em>not</em> include raw database rows or query
-            result sets.
+            Chat history <em>does</em> include the result table an answer was
+            built from, up to 500 rows per message, so a conversation you
+            return to still shows what it was based on. It is stored with the
+            message and deleted with it — see{" "}
+            <a href="#retention">Data Retention and Deletion</a>.
           </li>
         </ul>
 
@@ -153,11 +156,14 @@ export default function PrivacyPage() {
           </p>
           <ul className="!pl-5">
             <li>
-              <strong>Your database content</strong> — the actual rows,
-              columns, and values inside your databases are never stored by
-              us. Query results are transient: they exist only in memory
-              during your active session and are discarded when the session
-              ends.
+              <strong>A copy of your database</strong> — we do not replicate,
+              mirror, or bulk-export your data, and we hold no standing copy
+              of it. What we do keep is narrower and worth stating plainly:
+              the result table behind an answer is stored with that chat
+              message, capped at 500 rows, and column indexing stores a small
+              sample of distinct values per column so the agent can write
+              correct queries. Both are deleted when you delete the chat, the
+              connection, or the project they belong to.
             </li>
             <li>
               <strong>Raw source code</strong> — repository indexing extracts
@@ -353,6 +359,16 @@ export default function PrivacyPage() {
           <li>
             <strong>Repository index data</strong> — retained until you
             remove the project or delete your account.
+          </li>
+          <li>
+            <strong>Query results stored with a chat message</strong> (up to
+            500 rows) — deleted with that chat session, its project, or your
+            account;
+          </li>
+          <li>
+            <strong>Sampled column values</strong> collected while indexing a
+            database — deleted when you remove the connection, its project, or
+            your account.
           </li>
         </ul>
         <p>

@@ -1951,8 +1951,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** FAQ `<details>` (support), mailto links (contact), legal sections, cross-links
 - **States covered:** success (static)
 - **Errors & recovery:** none. Note: contact page is mailto links only — there is no contact form
+- **The data-handling claim is a measurement, not a slogan (2026-09-02):** four of these pages — privacy, terms, about and the support FAQ — stated that query results are transient and never stored on our servers. Measured against production: **55 of 131** chat messages carry a `raw_result` key, **39** contain a `rows` array, and **213 of 213** `db_index` rows carry sampled live column values. The product's whole ask is production database credentials, so this was the one promise a security review would test, and it was false. The pages now say what is kept (the result table behind an answer, capped at `chat_raw_result_row_cap` = 500 rows; a sample of distinct values per column, for query correctness), and what deletes it (the chat, the connection, the project, the account). `tests/unit/docs/test_privacy_claims_match_storage.py` fails if the old sentence returns or if the cap the pages quote stops matching the setting.
 - **Status:** implemented
-- **Coverage:** app/(marketing)/support/page.tsx:117-249; app/(marketing)/contact/page.tsx:90-156
+- **Coverage:** app/(marketing)/support/page.tsx:117-249; app/(marketing)/contact/page.tsx:90-156; tests backend/tests/unit/docs/test_privacy_claims_match_storage.py
 
 ### SCN-112: Logged-in visitor auto-redirect to /app
 - **Persona:** analyst
