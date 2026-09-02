@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — CI was red on `main`, and the reason had nothing to do with any commit
+
+`npm audit --audit-level=high` is a blocking gate by design, so a fresh advisory against a
+transitive dependency turns every branch red at once, including `main`. Two advisories
+landed against `browserslist <= 4.28.6` (GHSA-c83g-rgw3-j3cx, GHSA-73wf-gq98-2v4g), reached
+through `@sentry/nextjs` → `webpack` and `@babel/core`. Deploy to Heroku was consequently
+**skipped**, not failed, which is the quieter of the two ways a release can not happen.
+
+Lockfile only — `browserslist` 4.28.2 → 4.28.8, 25 lines each way, no `package.json` change.
+`npx tsc --noEmit`, `npx eslint . --max-warnings=0`, `npm run build` and 709 Vitest tests
+across 94 files all pass on the bumped tree.
+
+The gate is left blocking. Its comment in `ci.yml` already says what to do when an advisory
+has no fix — record the decision, the way `scripts/config_drift.py` records a deliberate
+divergence — and this one had a fix.
+
 ### Security — a string literal walked the query past SafetyGuard, in read-only mode
 
 `SafetyGuard` checks a copy of the query with comments stripped while the connector
