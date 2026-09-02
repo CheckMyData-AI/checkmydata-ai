@@ -31,7 +31,7 @@ const FAQS = [
   },
   {
     q: "Is my data safe?",
-    a: "Yes. Query results are transient — they exist only in your browser session and are never stored on our servers. Database credentials are encrypted at rest. The entire codebase is open source so you can verify every claim.",
+    a: "We hold no standing copy of your database — no replication, no mirror, no bulk export. Two things are stored, and both are worth knowing: the result table behind an answer is kept with that chat message, up to 500 rows, so the conversation still shows what it was based on; and indexing a database records a small sample of distinct values per column so the agent can write correct queries. Both are deleted when you delete the chat, the connection, or the project. Database credentials are encrypted at rest. The entire codebase is open source, so you can verify every claim here rather than take it on trust.",
   },
   {
     q: "Can I self-host CheckMyData.ai?",

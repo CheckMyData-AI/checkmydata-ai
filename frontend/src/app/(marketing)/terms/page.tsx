@@ -155,9 +155,10 @@ export default function TermsPage() {
             The Service acts as a real-time conduit: your natural-language
             question is translated into a SQL query, executed against your
             database via the connection <em>you</em> provide, and the results
-            are returned directly to your browser session. Query results are
-            transient and are not persisted on our servers beyond the active
-            session.
+            are returned to your browser. The result table behind an answer is
+            also stored with that chat message, capped at 500 rows, so the
+            conversation still shows what it was based on when you come back
+            to it.
           </p>
         </div>
         <p>Specifically:</p>
@@ -165,8 +166,8 @@ export default function TermsPage() {
           <li>
             <strong>Connection metadata</strong> (host, port, database name,
             database type) is stored to maintain your configured connections.
-            The actual data inside your databases is never copied or stored by
-            us.
+            We hold no standing copy of your database — no replication, no
+            mirror, no bulk export.
           </li>
           <li>
             <strong>Database credentials</strong> (usernames, passwords) are
@@ -175,14 +176,18 @@ export default function TermsPage() {
             behalf.
           </li>
           <li>
-            <strong>Query results</strong> exist only in-memory for the
-            duration of your session and are discarded afterward.
+            <strong>Query results</strong> are stored with the chat message
+            they answered, capped at 500 rows, and are deleted when you delete
+            that chat session, its project, or your account.
+          </li>
+          <li>
+            <strong>Sampled column values</strong> — indexing a database
+            records a small sample of distinct values per column so the agent
+            can write correct queries. Deleted with the connection.
           </li>
           <li>
             <strong>Chat history</strong> (your questions and the AI
-            responses) is stored to provide conversation continuity. This does
-            not include raw database rows — only the questions you asked and
-            the AI&apos;s textual/SQL responses.
+            responses) is stored to provide conversation continuity.
           </li>
         </ul>
       </Section>

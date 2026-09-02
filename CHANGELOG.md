@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the public pages said query results are never stored; up to 500 rows per message are
+
+Four surfaces carried it, not the two the audit named: `privacy`, `terms`, `about` and the
+support FAQ. *"Query results are transient — they exist only in your browser session and
+are never stored on our servers."* *"Chat history does not include raw database rows."*
+
+Measured against production on 2026-09-02:
+
+- **55 of 131** chat messages carry a `raw_result` key; **39** contain a `rows` array —
+  `chat.py` puts the result table into the assistant message's `metadata`, capped at
+  `chat_raw_result_row_cap = 500`.
+- **213 of 213** `db_index` rows carry `column_distinct_values_json` — sampled live values
+  from the customer's database, on every indexed table.
+
+The product's entire ask is production database credentials, so this is the one promise a
+security review tests, and it was false in both directions. `vision.md` §8 says the system
+"never stores data out of a user's production database", which is the claim the code
+contradicts.
+
+The pages now say what is kept and why — the result table behind an answer, so a
+conversation you return to still shows what it was based on; a sample of distinct values
+per column, so the agent can write correct queries — and what removes it: deleting the
+chat, the connection, the project or the account, each of which cascades. What stays true
+is the part that actually matters and is now stated as the narrower claim it always was:
+**no standing copy of the database — no replication, no mirror, no bulk export.**
+
+`tests/unit/docs/test_privacy_claims_match_storage.py` fails if any of the eight retired
+phrasings returns, if a marketing page moves out from under the guard, or if
+`chat_raw_result_row_cap` stops being the 500 the pages quote. Against the old pages it
+reports 7 failures. It is a **text** test on purpose: the defect was never in the code,
+which does exactly what it says.
+
+A retention *setting* — letting an operator turn the row storage off — is the other half
+of the audit's suggestion and is recorded as backlog rather than pretended here.
+
 ### Fixed — a top-up that failed to credit was marked permanently processed
 
 `handle_event` claims a `StripeEvent` row **before** `_apply_event` runs and rolls it back

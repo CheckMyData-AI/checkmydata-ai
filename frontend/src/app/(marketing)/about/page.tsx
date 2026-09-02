@@ -106,8 +106,9 @@ export default function AboutPage() {
             gives you smarter, more relevant answers.
           </p>
           <p>
-            Query results are transient. They exist only in your browser
-            session and are never stored on our servers. Your database
+            We hold no standing copy of your database. The result table
+            behind an answer is stored with that chat message — up to 500 rows
+            — and is deleted when you delete the chat. Your database
             credentials are encrypted at rest and decrypted only at connection
             time.
           </p>
