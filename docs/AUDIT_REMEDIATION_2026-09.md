@@ -6,6 +6,41 @@ Every row moves to `done` only with a merged PR and green CI behind it.
 
 Status vocabulary: `todo` · `wip` · `done` · `dropped (reason)`.
 
+## Where this stands — 2026-09-02
+
+**14 done, 24 open.** P0 is closed in code except 0.4; P1 is 7 of 12.
+
+Shipped and deployed: 0.1, 0.2, 0.3, 0.5, 0.6, 0.7 (PRs #268–#274). Merged and
+awaiting or mid-deploy: 1.1–1.5 (#275–#279). In review: **1.6 + 1.8 → #280**.
+
+**Next task: 1.7** — force `step_limit_reached` when the 216 s cutoff fires. Then 1.9
+(pass `tracker` at the three `HybridRetriever` sites), then 1.10–1.12.
+
+**0.4 is the only row blocked on a person.** The operator chose "sell for real"; 0.6 and
+1.4 have since removed both reasons it was gated. What remains is credentials only:
+
+```
+heroku config:set -a checkmydata-api \
+  STRIPE_SECRET_KEY=sk_live_... STRIPE_WEBHOOK_SECRET=whsec_... \
+  STRIPE_PRICE_BASE=price_... STRIPE_PRICE_SCALE=price_...
+```
+
+**Working rules learned in this pass, worth keeping:**
+
+- A test that pins the defect as the requirement has appeared **five times** (safety
+  comment stripping, `hybrid_min_score`, the synthesis prompt, the top-up swallow, the
+  conftest trigger that hid the project-access wall). Read the test before trusting it.
+- Every claim here is measured against production before it is fixed, and the
+  measurement goes in the commit. Twice the measurement changed the fix (`refund.created`
+  over `charge.refunded`; a real ledger claim instead of mirroring the payment branch).
+- PRs stack badly: a conflicting PR reports **no checks**, which reads as "CI hasn't
+  started"; deleting a base branch on merge **closes** the PR stacked on it; and pushing
+  to `main` right after a merge cancels that merge's CI through the concurrency group.
+- Alembic is serial — a second migration in flight must be stacked, not branched beside.
+
+**Untouched and not mine:** PR #266 (`fix(knowledge): the counting tokenizer truncated its
+own count`) has been open since before this pass.
+
 ## P0 — today · live breach, live lie, or the product cannot be bought
 
 | # | Task | Size | Status | Evidence |
