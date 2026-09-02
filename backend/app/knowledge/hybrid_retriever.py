@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -80,6 +81,7 @@ class HybridRetriever:
         *,
         rrf_k: int = 60,
         min_score: float = 0.0,
+        max_rank: int | None = None,
         retriever_timeout_sec: float = _DEFAULT_RETRIEVER_TIMEOUT_SEC,
         chroma_max_distance: float | None = None,
         reranker: Reranker | None = None,
@@ -91,6 +93,12 @@ class HybridRetriever:
         self._vector = vector_store
         self._rrf_k = max(1, rrf_k)
         self._min_score = max(0.0, min_score)
+        # RET-R5, expressed as the rank cut-off it always was. A floor on the fused
+        # score cannot say "rank ≤ N": RRF gives 1/(rrf_k + rank) per leg, and any
+        # value above a rank-N contribution is also above every single-leg hit, so
+        # the floor that filtered tail noise also made the retriever an AND-gate.
+        # ``None`` or 0 leaves the cut-off off.
+        self._max_rank = max_rank if max_rank and max_rank > 0 else None
         self._timeout = max(0.1, retriever_timeout_sec)
         # When set, dense (Chroma) hits whose distance exceeds this threshold
         # are dropped *before* fusion so low-relevance semantic matches can't
@@ -166,6 +174,11 @@ class HybridRetriever:
             )
 
         fused = self._fuse(bm25_results, chroma_results)
+        # Rank cut-off first: it is the filter that means something. A document is
+        # kept when EITHER leg ranked it inside the cut-off, so being deep in one
+        # leg cannot bury a document the other leg ranked first.
+        if self._max_rank is not None:
+            fused = [r for r in fused if _best_rank(r) <= self._max_rank]
         # Apply min_score (trim to k happens after optional reranking).
         fused = [r for r in fused if r.rrf_score >= self._min_score]
 
@@ -294,6 +307,12 @@ class HybridRetriever:
             entry.sources = tuple(set(entry.sources) | {"chroma"})
 
         return sorted(merged.values(), key=lambda r: r.rrf_score, reverse=True)
+
+
+def _best_rank(result: HybridResult) -> int:
+    """The better of the two leg ranks; ``sys.maxsize`` when neither leg found it."""
+    ranks = [r for r in (result.bm25_rank, result.chroma_rank) if r is not None]
+    return min(ranks) if ranks else sys.maxsize
 
 
 __all__ = ["HybridResult", "HybridRetriever"]

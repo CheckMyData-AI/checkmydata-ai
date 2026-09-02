@@ -12,7 +12,7 @@ Status vocabulary: `todo` · `wip` · `done` · `dropped (reason)`.
 |---|---|---|---|---|
 | 0.0 | Cross-tenant connection scope in all three chat entry points | S | done | #267, `a568448` |
 | 0.1 | SafetyGuard: tokenise before stripping comments | M | done | `app/core/safety.py:52-155`, `tests/unit/test_safety_comment_lexing.py` (27 cases, 12 red before) |
-| 0.2 | `hybrid_min_score` below `1/(rrf_k+1)` — retrieval discards single-leg hits | S | todo | |
+| 0.2 | `hybrid_min_score` below `1/(rrf_k+1)` — retrieval discards single-leg hits | S | done | `config.py:801-810`, `hybrid_retriever.py`, `tests/unit/test_hybrid_rrf_floor.py` (10 cases, 8 red before); measured 0/40 single-leg and 82/1600 pairs surviving the old floor |
 | 0.3 | Delete the "present this as a complete answer" sentence | S | todo | |
 | 0.4 | `BILLING_ENABLED=false` or set the three `STRIPE_PRICE_*` vars | S | todo | |
 | 0.5 | Auto-grant `can_create_projects` on email verification | S | todo | |

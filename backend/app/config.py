@@ -799,8 +799,17 @@ class Settings(BaseSettings):
     hybrid_retrieval_enabled: bool = True
     bm25_data_dir: str = "./data/bm25"
     hybrid_rrf_k: int = 60
-    # above rank-30 RRF contribution (1/90 ≈ 0.011); filters tail noise (RET-R5)
-    hybrid_min_score: float = 0.03
+    # A floor on the FUSED score, and it cannot express a rank cut-off. RRF gives a
+    # document 1/(rrf_k + rank) per leg it was found in, so the most a single-leg hit
+    # can ever score is 1/(rrf_k + 1) = 0.0164. Setting this to 0.03 to sit above a
+    # rank-30 contribution (1/90 ≈ 0.011) therefore sat above every single-leg hit
+    # there is, rank 1 included: hybrid retrieval became an AND-gate requiring both
+    # legs within about rank 6 (2/66 passes, 2/67 does not). Default 0.0 — the rank
+    # cut-off RET-R5 wanted is `hybrid_max_rank` below, which is a rank cut-off.
+    # `_validate_numeric_ranges` refuses any value at or above 1/(rrf_k + 1).
+    hybrid_min_score: float = 0.0
+    # Drop a document whose best rank in EITHER leg is worse than this (0 = off).
+    hybrid_max_rank: int = 30
     hybrid_k: int = 20
 
     # Phase 3: cross-encoder reranking (second stage over fused RRF hits).
@@ -1241,6 +1250,21 @@ class Settings(BaseSettings):
         # Analytics collection: a zero/negative window would make the collector
         # silently idle (nothing "expected", so nothing ever pending) instead of
         # failing — the exact silent-no-data mode this module exists to prevent.
+        # A fused-score floor at or above 1/(rrf_k + 1) discards every document found
+        # by only one leg — the dense leg's entire purpose — however well it ranked.
+        # It reads as a relevance threshold and behaves as an AND-gate, so it is
+        # refused rather than clamped: the operator meant something, and the value
+        # cannot deliver it.
+        if self.hybrid_min_score >= 1.0 / (max(1, self.hybrid_rrf_k) + 1):
+            raise ValueError(
+                f"HYBRID_MIN_SCORE={self.hybrid_min_score} is at or above "
+                f"1/(HYBRID_RRF_K+1)={1.0 / (max(1, self.hybrid_rrf_k) + 1):.5f}, the most a "
+                "document found by one retrieval leg can score. At this value hybrid "
+                "retrieval is an AND-gate: single-leg hits are always discarded. Use "
+                "HYBRID_MAX_RANK for a rank cut-off."
+            )
+        if self.hybrid_max_rank < 0:
+            raise ValueError("HYBRID_MAX_RANK must be >= 0 (0 = no rank cut-off).")
         if self.analytics_backfill_days <= 0:
             raise ValueError("ANALYTICS_BACKFILL_DAYS must be positive.")
         if self.analytics_refetch_tail_periods < 0:

@@ -90,6 +90,7 @@ class KnowledgeCatalogService:
                 vector_store=self._vector_store,
                 rrf_k=_settings.hybrid_rrf_k,
                 min_score=_settings.hybrid_min_score,
+                max_rank=_settings.hybrid_max_rank,
                 chroma_max_distance=_settings.rag_relevance_threshold,
                 reranker=build_reranker(
                     enabled=_settings.reranker_enabled,
