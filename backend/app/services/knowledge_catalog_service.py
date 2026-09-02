@@ -606,6 +606,7 @@ class KnowledgeCatalogService:
                 project_id=project_id,
                 connection_id=connection_id,
                 repo_clone_dir=repo_clone_dir,
+                vector_store=self._vector_store,
             )
             return snapshot.to_dict()
         except Exception:

@@ -747,6 +747,7 @@ async def _freshness_reconcile() -> None:
             maybe_autostart_sync,
         )
         from app.api.routes.repos import poll_and_index_changed_repos
+        from app.knowledge.vector_store import get_vector_store
         from app.services.connection_service import ConnectionService
         from app.services.knowledge_freshness_service import KnowledgeFreshnessService
         from app.services.project_service import ProjectService
@@ -754,6 +755,10 @@ async def _freshness_reconcile() -> None:
         proj_svc = ProjectService()
         conn_svc = ConnectionService()
         fresh_svc = KnowledgeFreshnessService()
+        # This loop has no agent to borrow a store from, so it takes the process-wide
+        # one. Built once, outside the per-connection loop, because that is the whole
+        # reason the freshness service refuses to construct its own.
+        fresh_store = get_vector_store()
         triggered = 0
 
         # One-shot guard: (project_id, connection_id) keys that have already been
@@ -772,6 +777,7 @@ async def _freshness_reconcile() -> None:
                         project_id=project.id,
                         connection_id=conn.id,
                         repo_clone_dir=repo_dir if repo_dir.exists() else None,
+                        vector_store=fresh_store,
                     )
                     if not fresh.overall_stale:
                         continue

@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — freshness had two states where it needed three, and no signal for the failure it exists to warn about
+
+**"We could not check" read as "we checked and it is fresh."** `ContextLoader.check_staleness`
+caught every exception, logged at DEBUG and returned `None`. That `None` becomes the
+answer's `staleness_warning`, and `Seal.tsx` renders `stalenessWarning ? "inferred" :
+"verified"` — so a crashed check and a clean one produced the identical green seal. The
+invariant's whole point is that the third state, *unknown*, must be visible, and the code
+had only two. It now returns a sentence a reader can act on, the seal downgrades to
+`inferred`, and the log is WARNING because that branch decides how much to trust an answer.
+
+The same shape sat inside the service: all five checks swallowed their exception and
+dropped the signal, so a snapshot with no warnings meant either "nothing is stale" or
+"nothing could be examined". Each failing check now records *"could not be checked …
+freshness for it is unknown"* — deliberately at `info`, **below** `critical`, because
+unknown is its own state and dressing it as a failure teaches the reader to ignore the
+ones that are.
+
+**And the fourth signal, which never existed.** `KnowledgeFreshnessService` combined
+DB-index age, code↔DB sync, code-graph symbols and git HEAD versus the indexed SHA — and
+never asked the vector store how many chunks it holds. All of those live in Postgres and
+survive the dyno restart that wipes an ephemeral Chroma directory, so after the wipe this
+repository documents most carefully (*"`index_repo` completed 16 times in 94 runs"*) every
+signal still read fresh while the store was empty and the answer was written from no
+documents at all. `count(project_id) == 0` is now a **critical** warning with a re-index
+action, and `VectorStore` gained the `count` that `PgVectorStore` already had, so freshness
+can ask either backend the same question.
+
+Found while writing it: the first version built a vector store on the path of every
+question. The agents already hold one for their own lifetime, so `ContextLoader` now hands
+its own down, and the new memoised `get_vector_store()` is the fallback for callers with no
+such lifetime — the health endpoint, a cron sweep.
+
+New: `tests/unit/test_freshness_is_honest_about_unknown.py`, 7 cases, 5 red against the old
+code.
+
 ### Fixed — a learning that reached the prompt could never grow stale
 
 `AgentLearning.updated_at` carries `onupdate=func.now()`. `expose_learning` issues an

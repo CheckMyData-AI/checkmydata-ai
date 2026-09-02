@@ -6,6 +6,41 @@ Every row moves to `done` only with a merged PR and green CI behind it.
 
 Status vocabulary: `todo` · `wip` · `done` · `dropped (reason)`.
 
+## Where this stands — 2026-09-02
+
+**14 done, 24 open.** P0 is closed in code except 0.4; P1 is 7 of 12.
+
+Shipped and deployed: 0.1, 0.2, 0.3, 0.5, 0.6, 0.7 (PRs #268–#274). Merged and
+awaiting or mid-deploy: 1.1–1.5 (#275–#279). In review: **1.6 + 1.8 → #280**.
+
+**Next task: 1.7** — force `step_limit_reached` when the 216 s cutoff fires. Then 1.9
+(pass `tracker` at the three `HybridRetriever` sites), then 1.10–1.12.
+
+**0.4 is the only row blocked on a person.** The operator chose "sell for real"; 0.6 and
+1.4 have since removed both reasons it was gated. What remains is credentials only:
+
+```
+heroku config:set -a checkmydata-api \
+  STRIPE_SECRET_KEY=sk_live_... STRIPE_WEBHOOK_SECRET=whsec_... \
+  STRIPE_PRICE_BASE=price_... STRIPE_PRICE_SCALE=price_...
+```
+
+**Working rules learned in this pass, worth keeping:**
+
+- A test that pins the defect as the requirement has appeared **five times** (safety
+  comment stripping, `hybrid_min_score`, the synthesis prompt, the top-up swallow, the
+  conftest trigger that hid the project-access wall). Read the test before trusting it.
+- Every claim here is measured against production before it is fixed, and the
+  measurement goes in the commit. Twice the measurement changed the fix (`refund.created`
+  over `charge.refunded`; a real ledger claim instead of mirroring the payment branch).
+- PRs stack badly: a conflicting PR reports **no checks**, which reads as "CI hasn't
+  started"; deleting a base branch on merge **closes** the PR stacked on it; and pushing
+  to `main` right after a merge cancels that merge's CI through the concurrency group.
+- Alembic is serial — a second migration in flight must be stacked, not branched beside.
+
+**Untouched and not mine:** PR #266 (`fix(knowledge): the counting tokenizer truncated its
+own count`) has been open since before this pass.
+
 ## P0 — today · live breach, live lie, or the product cannot be bought
 
 | # | Task | Size | Status | Evidence |
@@ -28,9 +63,9 @@ Status vocabulary: `todo` · `wip` · `done` · `dropped (reason)`.
 | 1.3 | Correct the privacy policy and support FAQ, or add a retention setting | S | done | four surfaces corrected (privacy, terms, about, support FAQ — two more than the audit named), `tests/unit/docs/test_privacy_claims_match_storage.py` (11 cases; 7 fail against the old pages); measured 55/131 messages with `raw_result`, 213/213 `db_index` rows with sampled values. Retention **setting** deferred → backlog |
 | 1.4 | Wire `provision()`/`revoke()` into `_sync_subscription` | M | done | `billing_service.py` (`_provision_key` on active/trialing, `_revoke_key` on delete, both allowed to raise), `tests/unit/test_subscription_provisions_the_key.py` (10 cases, 6 red before). **Unblocks 0.4** — the dollar ceiling now exists per account |
 | 1.5 | Learning decay: stop exposure resetting the staleness clock | S | done | `agent_learning_service.expose_learning` pins `updated_at`, `tests/unit/test_learning_decay_clock.py` (4 cases, 2 red before); measured in prod — exposed learnings capped at 14 days' staleness against 5-month-old rows, 0 of 74 eligible to decay |
-| 1.6 | Freshness: empty-vector-store signal; stop swallowing checks to "fresh" | S | todo | |
+| 1.6 | Freshness: empty-vector-store signal; stop swallowing checks to "fresh" | S | done | `knowledge_freshness_service.py` (4th signal `vector_store`, `_unknown()` on all five checks), `VectorStore.count`, `get_vector_store()`; `tests/unit/test_freshness_is_honest_about_unknown.py` (7 cases, 5 red before) |
 | 1.7 | Force `step_limit_reached` when the 216 s cutoff fires | S | todo | |
-| 1.8 | Freshness failure must downgrade the seal, not certify the answer | S | todo | |
+| 1.8 | Freshness failure must downgrade the seal, not certify the answer | S | done | `context_loader.check_staleness` returns `STALENESS_UNKNOWN_TEXT` instead of `None`, log DEBUG→WARNING; shipped with 1.6 — same seam |
 | 1.9 | Pass `tracker` at the three `HybridRetriever` sites | S | todo | |
 | 1.10 | Scope `semantic_layer` / `data_graph` / `feed` by the connection's own project | S | todo | |
 | 1.11 | Scope data-validation writes | S | todo | |

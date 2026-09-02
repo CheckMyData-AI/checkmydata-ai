@@ -168,7 +168,16 @@ CEILINGS: dict[str, int] = {
     # It rolls back, logs ERROR with the session id, and answers
     # `settled: false, reason: pending` — telling the customer to wait rather than 500-ing
     # the page while the subscription they just bought is still being set up.
-    "except Exception": 630,
+    # 630 -> 631 on 2026-09-02. One, and it is the fourth freshness signal itself:
+    # `KnowledgeFreshnessService`'s vector-store chunk count. A freshness check exists to
+    # describe the knowledge base, so it must never be the thing that fails the answer —
+    # and this one talks to a chromadb client or a psycopg pool. It does NOT swallow: the
+    # handler calls `_unknown("vector_store", exc)`, which puts "could not be checked …
+    # freshness for it is unknown" into the snapshot the reader sees, at `info` rather
+    # than `critical` because unknown is its own state. That is the opposite of the
+    # silence this ratchet exists to catch — the same commit removes four such silences
+    # from the other checks, which had been dropping their exceptions entirely.
+    "except Exception": 631,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:
