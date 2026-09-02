@@ -314,6 +314,13 @@ class VectorStore:
             )
             return 0
 
+    def count(self, project_id: str) -> int:
+        """Chunks held for a project. Mirrors ``PgVectorStore.count`` so freshness can
+        ask either backend the same question — an empty store is the one failure the
+        freshness signals could not see, because the indexed SHA lives in Postgres and
+        survives the restart that wipes an ephemeral Chroma directory."""
+        return int(self.get_or_create_collection(project_id).count())
+
     def delete_collection(self, project_id: str) -> None:
         with self._lock:
             self._collections.pop(project_id, None)
@@ -408,3 +415,27 @@ def make_vector_store() -> "VectorStore | Any":
     from app.knowledge.pgvector_store import PgVectorStore
 
     return PgVectorStore()
+
+
+_store_singleton: "VectorStore | Any | None" = None
+_store_lock = threading.Lock()
+
+
+def get_vector_store() -> "VectorStore | Any":
+    """The process-wide vector store, built once.
+
+    :func:`make_vector_store` opens a chromadb client or a psycopg pool, so callers on
+    the request path must not construct one per call. The agents already hold theirs for
+    the life of the object; this exists for the callers that have no such lifetime —
+    the freshness check runs on every question and needs one chunk count.
+
+    Not reset anywhere: the backend is resolved from configuration at start-up and does
+    not change under a running process. Tests substitute this function rather than the
+    value it caches.
+    """
+    global _store_singleton
+    if _store_singleton is None:
+        with _store_lock:
+            if _store_singleton is None:
+                _store_singleton = make_vector_store()
+    return _store_singleton

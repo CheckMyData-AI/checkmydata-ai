@@ -503,6 +503,14 @@ class ContextLoader:
 
         return await self.load_relevant_knowledge(project_id, question)
 
+    #: What ``check_staleness`` returns when it could not run. Deliberately a sentence a
+    #: reader can act on rather than a code, because it reaches the prompt and the UI
+    #: unchanged.
+    STALENESS_UNKNOWN_TEXT = (
+        "Knowledge freshness could not be checked for this answer, so how current the "
+        "underlying index is not known."
+    )
+
     async def check_staleness(
         self,
         project_id: str,
@@ -528,9 +536,14 @@ class ContextLoader:
                     project_id=project_id,
                     connection_id=connection_id,
                     repo_clone_dir=repo_dir,
+                    # Reuse the loader's own store rather than building a second one on
+                    # the path of every question.
+                    vector_store=self._vector_store,
                 )
         except Exception:
-            logger.debug("Staleness check failed", exc_info=True)
+            # WARNING, not DEBUG: this is the branch that decides what the reader is
+            # told about how much to trust the answer.
+            logger.warning("Staleness check failed", exc_info=True)
             if wf_id:
                 try:
                     await self._tracker.emit(
@@ -541,4 +554,9 @@ class ContextLoader:
                     )
                 except Exception:
                     logger.debug("Failed to emit staleness degradation warning", exc_info=True)
-            return None
+            # A sentinel, not None. `Seal.tsx` renders `stalenessWarning ? "inferred" :
+            # "verified"`, so returning None made a crashed check and a clean one produce
+            # the identical green seal — "we could not check" reading as "we checked and
+            # it is fresh". The invariant's whole point is that the third state, unknown,
+            # must be visible, and the code had only two.
+            return self.STALENESS_UNKNOWN_TEXT

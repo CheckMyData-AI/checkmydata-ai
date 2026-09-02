@@ -19,7 +19,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.config import settings
 
@@ -27,6 +27,17 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+
+#: Human labels for the "could not be checked" message, so the sentence names the thing
+#: a reader recognises rather than the internal category key.
+_CHECK_LABELS = {
+    "db_index": "The database index",
+    "sync": "Code-to-database sync",
+    "code_graph": "The code graph",
+    "git": "Repository freshness",
+    "vector_store": "The knowledge index",
+}
 
 
 @dataclass
@@ -76,6 +87,10 @@ class KnowledgeFreshness:
     # ``git_behind_commits`` since both come from the same indexer run.
     code_graph_symbol_count: int = 0
     code_graph_stale: bool = False
+    # The fourth signal. ``None`` means the count could not be taken, which is not the
+    # same as zero and must not read as either fresh or empty.
+    vector_chunk_count: int | None = None
+    vector_store_empty: bool = False
     warnings: list[str] = field(default_factory=list)
     # Structured, actionable mirror of ``warnings`` (Phase 1, additive).
     details: list[FreshnessWarningDetail] = field(default_factory=list)
@@ -104,6 +119,8 @@ class KnowledgeFreshness:
             "git_behind_commits": self.git_behind_commits,
             "git_unindexed": self.git_unindexed,
             "code_graph_symbol_count": self.code_graph_symbol_count,
+            "vector_chunk_count": self.vector_chunk_count,
+            "vector_store_empty": self.vector_store_empty,
             "code_graph_stale": self.code_graph_stale,
             "warnings": [d.to_dict() for d in self.details],
         }
@@ -124,6 +141,7 @@ class KnowledgeFreshnessService:
         project_id: str,
         connection_id: str | None,
         repo_clone_dir: Path | None = None,
+        vector_store: Any | None = None,
     ) -> KnowledgeFreshness:
         warnings: list[str] = []
         snapshot = KnowledgeFreshness(warnings=warnings)
@@ -147,6 +165,54 @@ class KnowledgeFreshnessService:
                     connection_id=connection_id,
                 )
             )
+
+        def _unknown(category: str, exc: BaseException) -> None:
+            """Record a check that could not run.
+
+            Dropping the exception made "nothing is stale" and "nothing could be
+            examined" the same snapshot, and the caller renders an absent warning as a
+            verified answer. Severity stays below `critical` on purpose: *unknown* is its
+            own state, and dressing it as a failure teaches the reader to ignore the ones
+            that are.
+            """
+            _warn(
+                f"{_CHECK_LABELS.get(category, category)} could not be checked "
+                f"({type(exc).__name__}); freshness for it is unknown.",
+                category=category,
+                severity="info",
+            )
+
+        # The signal none of the other three can give. DB-index age, sync status and the
+        # indexed SHA all live in Postgres and survive the dyno restart that wipes an
+        # ephemeral vector store — so after that wipe every one of them still reads fresh
+        # while the store holds nothing and the answer is synthesised from no documents.
+        # The store is INJECTED and never constructed here. Building one opens a
+        # chromadb client and loads an ONNX embedding model; doing that to ask for a
+        # single count would put it on the path of every question, and the first version
+        # of this check did exactly that — it took the test suite from 6 minutes to 23.
+        # With no handle the signal is simply not taken: "nobody passed a store" is a
+        # fact about the caller's wiring, not about freshness, and reporting it as
+        # unknown would fire on every unit test that builds the service directly.
+        # `test_every_production_caller_passes_a_vector_store` is what keeps the three
+        # real call sites wired.
+        if vector_store is not None:
+            try:
+                chunk_count = int(vector_store.count(project_id))
+                snapshot.vector_chunk_count = chunk_count
+                if chunk_count == 0:
+                    snapshot.vector_store_empty = True
+                    _warn(
+                        "The knowledge index holds no documents — answers will be "
+                        "written without any repository or documentation context. "
+                        "Re-index to restore it.",
+                        category="vector_store",
+                        action_kind="reindex_repo",
+                        action_label="Re-index repository",
+                        severity="critical",
+                    )
+            except Exception as exc:
+                logger.warning("freshness: vector store count failed", exc_info=True)
+                _unknown("vector_store", exc)
 
         if connection_id:
             try:
@@ -174,8 +240,9 @@ class KnowledgeFreshnessService:
                             action_kind="reindex_db",
                             action_label="Re-index database",
                         )
-            except Exception:
+            except Exception as exc:
                 logger.debug("freshness: db index check failed", exc_info=True)
+                _unknown("db_index", exc)
 
             try:
                 from app.services.code_db_sync_service import CodeDbSyncService
@@ -193,8 +260,9 @@ class KnowledgeFreshnessService:
                         action_label="Re-sync code & database",
                         severity="critical" if snapshot.sync_status == "failed" else "warning",
                     )
-            except Exception:
+            except Exception as exc:
                 logger.debug("freshness: sync status check failed", exc_info=True)
+                _unknown("sync", exc)
 
         # M6: code-graph freshness — empty graph means M2 either never ran or was wiped.
         # Gate on *consumer* flags (lineage_enabled or clustering_enabled): an empty graph
@@ -216,8 +284,9 @@ class KnowledgeFreshnessService:
                         action_kind="reindex_repo",
                         action_label="Re-index repository",
                     )
-        except Exception:
+        except Exception as exc:
             logger.debug("freshness: code graph check failed", exc_info=True)
+            _unknown("code_graph", exc)
 
         if repo_clone_dir is not None:
             try:
@@ -291,8 +360,9 @@ class KnowledgeFreshnessService:
                                 action_label="Re-index repository",
                                 severity="critical",
                             )
-            except Exception:
+            except Exception as exc:
                 logger.debug("freshness: git head check failed", exc_info=True)
+                _unknown("git", exc)
 
         return snapshot
 
@@ -303,11 +373,13 @@ class KnowledgeFreshnessService:
         project_id: str,
         connection_id: str | None,
         repo_clone_dir: Path | None = None,
+        vector_store: Any | None = None,
     ) -> str | None:
         snapshot = await self.evaluate(
             session,
             project_id=project_id,
             connection_id=connection_id,
             repo_clone_dir=repo_clone_dir,
+            vector_store=vector_store,
         )
         return snapshot.to_summary()

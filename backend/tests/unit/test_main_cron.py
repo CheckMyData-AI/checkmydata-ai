@@ -193,7 +193,7 @@ async def test_reconciler_iterates_all_connections(monkeypatch):
             self.sync_failed = False
 
     class FakeFreshSvc:
-        async def evaluate(self, session, *, project_id, connection_id, repo_clone_dir):
+        async def evaluate(self, session, *, project_id, connection_id, repo_clone_dir, **_):
             return FakeFreshness()
 
     monkeypatch.setattr(proj_svc_mod, "ProjectService", lambda: FakeProjSvc())
@@ -263,7 +263,7 @@ async def test_reconciler_sync_failed_one_shot_guard(monkeypatch):
             self.sync_failed = True
 
     class FakeFreshSvc:
-        async def evaluate(self, session, *, project_id, connection_id, repo_clone_dir):
+        async def evaluate(self, session, *, project_id, connection_id, repo_clone_dir, **_):
             return FakeFreshness()
 
     monkeypatch.setattr(proj_svc_mod, "ProjectService", lambda: FakeProjSvc())

@@ -28,9 +28,9 @@ Status vocabulary: `todo` · `wip` · `done` · `dropped (reason)`.
 | 1.3 | Correct the privacy policy and support FAQ, or add a retention setting | S | done | four surfaces corrected (privacy, terms, about, support FAQ — two more than the audit named), `tests/unit/docs/test_privacy_claims_match_storage.py` (11 cases; 7 fail against the old pages); measured 55/131 messages with `raw_result`, 213/213 `db_index` rows with sampled values. Retention **setting** deferred → backlog |
 | 1.4 | Wire `provision()`/`revoke()` into `_sync_subscription` | M | done | `billing_service.py` (`_provision_key` on active/trialing, `_revoke_key` on delete, both allowed to raise), `tests/unit/test_subscription_provisions_the_key.py` (10 cases, 6 red before). **Unblocks 0.4** — the dollar ceiling now exists per account |
 | 1.5 | Learning decay: stop exposure resetting the staleness clock | S | done | `agent_learning_service.expose_learning` pins `updated_at`, `tests/unit/test_learning_decay_clock.py` (4 cases, 2 red before); measured in prod — exposed learnings capped at 14 days' staleness against 5-month-old rows, 0 of 74 eligible to decay |
-| 1.6 | Freshness: empty-vector-store signal; stop swallowing checks to "fresh" | S | todo | |
+| 1.6 | Freshness: empty-vector-store signal; stop swallowing checks to "fresh" | S | done | `knowledge_freshness_service.py` (4th signal `vector_store`, `_unknown()` on all five checks), `VectorStore.count`, `get_vector_store()`; `tests/unit/test_freshness_is_honest_about_unknown.py` (7 cases, 5 red before) |
 | 1.7 | Force `step_limit_reached` when the 216 s cutoff fires | S | todo | |
-| 1.8 | Freshness failure must downgrade the seal, not certify the answer | S | todo | |
+| 1.8 | Freshness failure must downgrade the seal, not certify the answer | S | done | `context_loader.check_staleness` returns `STALENESS_UNKNOWN_TEXT` instead of `None`, log DEBUG→WARNING; shipped with 1.6 — same seam |
 | 1.9 | Pass `tracker` at the three `HybridRetriever` sites | S | todo | |
 | 1.10 | Scope `semantic_layer` / `data_graph` / `feed` by the connection's own project | S | todo | |
 | 1.11 | Scope data-validation writes | S | todo | |
