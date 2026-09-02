@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — a string literal walked the query past SafetyGuard, in read-only mode
+
+`SafetyGuard` checks a copy of the query with comments stripped while the connector
+executes the **original**, so stripping is only safe in one direction: removing what the
+database ignores is fine, removing what it would execute is a hole in `vision.md` §7 #1.
+Two regexes could not tell the difference — `/\*.*?\*/` matched from a `/*` inside one
+string literal to a `*/` inside another.
+
+Executed against the shipped code:
+`SELECT '/*' AS a; DROP TABLE users; SELECT '*/' AS b` was checked as `SELECT ' ' AS b`
+and returned `is_safe=True` in **both** READ_ONLY and ALLOW_DML. Pooled drivers blunt it
+(asyncpg refuses stacked statements) but the SSH-exec path pipes the query into `psql` on
+stdin, which runs it as a script — and `is_read_only_statement` delegates to the same
+function, so the mutating statement was also classified safe to **re-send** after a lost
+connection (F-SSH-07).
+
+The fences are now found by one left-to-right scan that also knows the quoting forms;
+only the comment branches are replaced and every literal is handed back untouched.
+
+The scan is dialect-aware, because a comment form the engine honours and the guard does
+not is an evasion, while one the guard strips and the engine executes is a blind spot.
+Both existed: `DROP#\nTABLE users` passed on MySQL, where `#` opens a comment; and
+`SELECT 1--2; DROP TABLE users` passed on MySQL, where `--2` is arithmetic and the guard
+deleted the rest of the line the server was about to run. `#` is deliberately *not* a
+comment on PostgreSQL, where it is an operator character, and dollar quoting is
+PostgreSQL-only, since `$` sits inside identifiers and placeholders elsewhere.
+
+Where a dialect is ambiguous the scan keeps text rather than dropping it — leftover text
+can only cause a refusal, missing text causes an execution. So block comments are not
+treated as nesting (PostgreSQL and ClickHouse nest them) and backslash escapes inside
+literals are not honoured: both are false refusals by construction, never false passes.
+
+Dialect facts are the vendors' own lexical references, not recall. 27 cases in
+`tests/unit/test_safety_comment_lexing.py`; 12 of them failed against the old code.
+
 ### Fixed — the counting tokenizer returned a truncated count, so the chunker stopped splitting
 
 Found while fixing something else, and much worse than the thing it was found under.
