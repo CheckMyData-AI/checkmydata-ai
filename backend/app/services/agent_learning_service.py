@@ -638,11 +638,35 @@ class AgentLearningService:
         learning into its prompt context, regardless of whether the LLM
         actually cites it. C5, v1.13.0: separates read-side traffic from
         citation so ``times_applied`` (and the decay score derived from it)
-        remains a meaningful signal."""
+        remains a meaningful signal.
+
+        ``updated_at`` is pinned to itself, and that is the whole point of this
+        method. The column carries ``onupdate=func.now()``, and
+        :meth:`decay_stale_learnings` selects on ``updated_at < now() - 30 days`` —
+        so an UPDATE here reset the very clock the decay measures. The SQL agent
+        exposes every surfaced learning on every run, which made the top learnings
+        for any active connection immortal: they could never lose confidence and
+        never be deactivated, and only three explicit downvotes could remove a
+        wrong lesson.
+
+        Measured in production on 2026-09-02: of 79 active learnings, the 35 ever
+        exposed had a maximum staleness of 14 days against a 5-month-old creation
+        date, while the 44 never exposed reached 27 days and cycled normally. None
+        of the 74 created over a month ago was eligible to decay.
+
+        The separation this docstring already promised is what the default undid:
+        exposure is read-side traffic, not a substantive update, so it must not
+        move the clock that measures substantive updates. Every other writer in
+        this service sets ``updated_at`` by hand; this was the only one relying on
+        ``onupdate``, and the only one that must not.
+        """
         await session.execute(
             update(AgentLearning)
             .where(AgentLearning.id == learning_id)
-            .values(times_exposed=AgentLearning.times_exposed + 1)
+            .values(
+                times_exposed=AgentLearning.times_exposed + 1,
+                updated_at=AgentLearning.updated_at,
+            )
         )
 
     async def deactivate_learning(

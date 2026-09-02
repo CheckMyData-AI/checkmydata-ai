@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a learning that reached the prompt could never grow stale
+
+`AgentLearning.updated_at` carries `onupdate=func.now()`. `expose_learning` issues an
+`UPDATE`, and `decay_stale_learnings` selects on `updated_at < now() - 30 days`. The SQL
+agent exposes every surfaced learning on every run (`sql_agent.py:2117`), so the top
+learnings for any active connection reset their own staleness clock faster than the clock
+runs out. They could never lose confidence and never be deactivated; only three explicit
+user downvotes could remove a wrong lesson.
+
+Measured in production on 2026-09-02, and the split is exactly the shape of the defect:
+
+| | rows | oldest `updated_at` | oldest `created_at` |
+|---|---|---|---|
+| ever exposed | 35 | **14 days** | 5 months 13 days |
+| never exposed | 44 | 27 days | 5 months 12 days |
+
+The never-exposed ones cycle through decay normally. The exposed ones cannot reach 30 days
+at all. **74 of the 79 active learnings were created over a month ago and not one was
+eligible to decay.**
+
+`expose_learning`'s own docstring already said it "separates read-side traffic from
+citation so `times_applied` (and the decay score derived from it) remains a meaningful
+signal". The column default silently undid that separation. Exposure is read-side traffic,
+not a substantive update, so it must not move the clock that measures substantive updates —
+`updated_at` is now pinned to itself in that one statement. Every other writer in the
+service already sets it by hand; this was the only one relying on `onupdate`, and the only
+one that must not.
+
+New: `tests/unit/test_learning_decay_clock.py`, 4 cases, 2 red against the old code. One
+of them asserts the *other* direction — a confirmation still refreshes the clock — because
+a pin applied too widely would break the window rather than fix it.
+
 ### Fixed — the billing model's ceiling was never armed for a single account
 
 `b48fcfc1524b` created `llm_credit` — two pockets over one OpenRouter counter, an
