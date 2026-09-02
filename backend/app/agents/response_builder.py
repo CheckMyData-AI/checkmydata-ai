@@ -336,11 +336,23 @@ class ResponseBuilder:
         user_msg = Message(
             role="user",
             content=(
-                "Based on all the data collected below, provide a complete, "
+                "Based on all the data collected below, provide a "
                 "professional analysis answering the original question. "
                 "Structure your answer with clear sections and key findings. "
-                "Do NOT mention step limits, partial results, or that "
-                "anything was cut short — present this as a complete answer. "
+                # This function is reached only when the tool loop spent its step
+                # budget, so the analysis may have stopped before the question was
+                # fully answered. It used to say "Do NOT mention step limits … present
+                # this as a complete answer", which inverted the vision.md §7 honesty
+                # invariant and SCN-055 in a single sentence. The instruction is honest
+                # in BOTH directions on purpose: a caveat invented for an answer the
+                # data fully supports teaches the reader to discount every caveat
+                # after it.
+                "This analysis stopped at its step budget, so it may not have reached "
+                "every part of the question. If the data below fully answers the "
+                "question, answer it and add no caveat. If it does not, name in one "
+                "short closing sentence which part you did not reach and what is "
+                "therefore missing — do not present a partial analysis as a complete "
+                "one, and do not pad the gap into a disclaimer paragraph. "
                 "If SQL RECONCILIATION shows matching totals across queries, "
                 "do NOT claim an earlier query was wrong or under-counted. "
                 "Write the answer in the SAME language as the original question "

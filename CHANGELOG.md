@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the synthesis prompt told the model to pass a truncated analysis off as a complete one
+
+`ResponseBuilder.build_synthesis_messages` is reached from exactly one place: the `else`
+branch of the orchestrator's tool loop, entered when the step budget is spent
+(`orchestrator.py:1869-1883`). Every answer it builds is therefore, by construction, an
+answer the agent stopped working on. The user message it sent said, verbatim:
+
+> Do NOT mention step limits, partial results, or that anything was cut short — present
+> this as a complete answer.
+
+`vision.md` §7 lists honesty about partial data as an invariant, `SCN-055` promises "an
+honest partial answer plus Continue analysis", and W0/W1 shipped an entire
+truncation-caveat workstream. One sentence in the prompt inverted all of it. The honest
+fallbacks (`build_partial_text`, `build_timeout_text`) exist but only fire when synthesis
+returns nothing at all — when it succeeded, the badge said partial and the text said
+finished.
+
+The orchestrator already told the *next* turn the truth (`orchestrator.py:1271-1274`: "The
+LAST assistant message was a partial result cut short by the step limit"). Only the reader
+was kept from it.
+
+The prompt now says the run stopped at its budget and asks the model to name, in one short
+closing sentence, which part of the question it did not reach. It is honest in **both**
+directions: when the collected data does fully answer the question the model is told to add
+**no** caveat, because a caveat invented for a complete answer teaches the reader to
+discount every caveat after it.
+
+A test pinned the sentence as the requirement — `test_prompt_instructs_no_limits_mention`
+asserted `"Do NOT mention step limits" in user_msg`. It now asserts the opposite and
+carries the reason. New: `tests/unit/test_synthesis_prompt_honesty.py`, 7 cases, 5 red
+against the old prompt. `SCN-055` updated in the same change.
+
 ### Fixed — hybrid retrieval was an AND-gate, and the floor that made it one was pinned by two tests
 
 RRF gives a document `1/(rrf_k + rank)` **per leg that found it**, and `hybrid_min_score`

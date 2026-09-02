@@ -12,7 +12,7 @@ human review moves them to `validated`.
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-08-31 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-09-02 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -25,9 +25,9 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 | Status | implemented × 127 |
 | Last verdict | PARTIAL × 2, PASS × 125 |
 | Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10 |
-| **Verified >30 days ago** | **95 of 127** (oldest 43 days) |
+| **Verified >30 days ago** | **95 of 127** (oldest 45 days) |
 | Never verified (no date) | 0 |
-| Referenced from code or tests | **21 of 127** |
+| Referenced from code or tests | **22 of 127** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -1085,11 +1085,12 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   1. User clicks "Continue analysis"
 - **Expected result:** the agent resumes from where it stopped
 - **The wall clock is one budget for the whole request (F-SQL-03, 2026-08-21):** on the multi-stage path a failing stage is replanned up to `max_pipeline_replans` times, and every replan spends from the *same* deadline the first attempt started. When it is spent the request returns the failed stage's result rather than starting another plan — so a hard question ends in a bounded time with an honest partial answer plus "Continue analysis", instead of running three full budgets back to back. Before this each replan started a fresh budget, so a request whose documented limit is `agent_wall_clock_timeout_seconds` could occupy roughly three times that with the user watching a spinner.
+- **The answer says what it did not reach (2026-09-02):** the synthesis prompt used for this path carried, verbatim, "Do NOT mention step limits, partial results, or that anything was cut short — present this as a complete answer." That function is reached only when the step budget is spent, so the instruction applied to every answer on this scenario: the badge said partial and the text said finished. The prompt now tells the model the run stopped at its budget and asks it to name, in one short closing sentence, which part of the question it did not reach. Honest in both directions — when the collected data does fully answer the question it is told to add **no** caveat, because a caveat invented for a complete answer teaches the reader to discount every caveat after it.
 - **UI elements:** "Continue analysis" button
-- **States covered:** success
+- **States covered:** success, partial (the answer names what it did not reach)
 - **Errors & recovery:** as the normal stream (SCN-046)
 - **Status:** implemented
-- **Coverage:** components/chat/ChatMessage.tsx:619-642; components/chat/ChatPanel.tsx:215-315
+- **Coverage:** components/chat/ChatMessage.tsx:619-642; components/chat/ChatPanel.tsx:215-315; backend/app/agents/response_builder.py:335-356; tests backend/tests/unit/test_synthesis_prompt_honesty.py
 
 ### SCN-056: Session-continuation (auto-summary) banner
 - **Persona:** analyst
