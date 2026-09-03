@@ -42,6 +42,44 @@ heroku config:set -a checkmydata-api \
 **Untouched and not mine:** PR #266 (`fix(knowledge): the counting tokenizer truncated its
 own count`) has been open since before this pass.
 
+## The measurement that should reorder this whole ledger — 2026-09-03
+
+Taken from production during A1's post-deploy step, every number a query against the
+live database (run inside a dyno, so no credential left Heroku):
+
+| | |
+|---|---|
+| users | **9**, of which **1** has `email_verified` |
+| projects | 3 |
+| connections | 3, **all `database`** |
+| analytics connections | **0** |
+| vendor credentials | **0** |
+| analytics imports | **0** |
+| chat messages, last 30 days | **17** |
+| pipeline runs, last 30 days | **4** |
+
+**A1 fixed a real defect with no current production exposure.** Nobody has connected an
+analytics source, so nothing could ever have hit the missing pipeline branch. The same is
+true of most of this ledger: PRs #262–#281 corrected defects in a product that ~1 person
+is using.
+
+That is not wasted work — the defects are real, #267 was a live cross-tenant breach, and
+they all had to be fixed before anyone arrives. But **the ordering was derived from the
+code, not from usage**, and it shows. My own review (`target-gap-2026-09-03.html`) ranked
+A1 as the top blocker of the target. Structurally it is. In users affected, it is zero.
+
+**And the low usage is not a mystery, it is a consequence already on this board.** The
+product cannot be bought: `BILLING_ENABLED=true` with zero `STRIPE_*` variables and
+`/api/billing/plans` returning `{"plans":[]}` — row **0.4**, the one row blocked on a
+person. Every other row competes for an audience that 0.4 gates.
+
+**What this changes.** Rows whose value is proportional to usage — retrieval quality (C1–C3),
+vendor breadth (B2–B4), the data graph (A4) — are worth less than the ledger's ordering
+implies until 0.4 lands. Rows that are prerequisites for the first real user surviving —
+0.4 itself, the tenant-isolation remainder (1.10–1.12), and the honesty gates already
+shipped — are worth more. This is a note, not a re-ranking: re-ranking a board on one
+operator's behalf without asking is how a plan stops being theirs.
+
 ## P0 — today · live breach, live lie, or the product cannot be bought
 
 | # | Task | Size | Status | Evidence |
@@ -142,6 +180,41 @@ analytics-only project's last-resort plan named a tool it had no source for; and
 `test_analytics_only_pipeline_bounces_to_the_flat_loop` pinned the workaround as the
 requirement — the **sixth** occurrence of that pattern in this programme. It was
 inverted, not deleted.
+
+### A1 post-deploy — 2026-09-03, release v321
+
+Two legs of the verification trio, and the third is named rather than skipped.
+
+| Leg | Verdict |
+|---|---|
+| Release carries the commit | **PASS** — v321 at 22:00:51 local, `ee87f74`, previous release was v320 from 2026-09-02 |
+| Clean boot | **PASS** — `Capability check: 4 configuration claims verified against the runtime, all satisfied`; embedding and encryption reconcile both `unchanged`; `Application startup complete`; BM25 reconcile `ok`; no traceback, no ERROR. `/api/health` 200 `{"status":"ok"}` in 0.82 s |
+| Behaviour observed | **IMPOSSIBLE, not skipped** — production holds 0 analytics connections and 0 vendor credentials, so no project exists on which an analytics stage can be planned. `has_analytics` is False everywhere, the stage is never dispatched, and the only observable change is the `Connected sources:` line for the three database projects — which needs a pipeline run, and there were 4 in 30 days. REQ-1 stays **unit-verified, not product-verified** |
+
+**The monitor lied first, and the lie was almost invisible.** The initial deploy watch broke
+on the condition "a completed `Deploy to Heroku` run exists in the last six" — and one did,
+from 2026-09-02. It reported `Deploy to Heroku: success` about a minute after the merge,
+while CI for `ee87f74` was still running and the live release was still v320. Caught only by
+comparing `headSha`, not by reading the word *success*. The replacement watch is scoped to
+the SHA. Worth keeping because a false green carrying a machine's signature is worse than no
+check: nobody argues with it.
+
+### Found by the post-deploy read, and it is somebody else's paragraph
+
+`grep -ic "vector store"` over 1000 lines of production web log returns **0**.
+
+`CLAUDE.md` states that because `VECTOR_STORE_BACKEND` defaults to `auto`, "the answer is
+written nowhere an operator can read, so the boot log names it". The line exists
+(`vector_store.py:406` auto-resolved / `:410` pinned) but it is emitted when the store is
+**constructed**, and construction is lazy: `main.py:761` builds it inside the freshness
+reconciler cron loop — which `freshness_reconciler_enabled` leaves **off by default** — or on
+first retrieval use. `capability_report.py:79` calls the pure `resolve_backend`, which logs
+nothing, and the success line it does print does not name the store.
+
+So on a quiet dyno the signal added to answer "which store is live?" is never emitted at all,
+and the documentation asserts an operator-visible fact the operator cannot see. One line in
+the capability report fixes it. Filed rather than fixed here: it is a different concern from
+A1 and belongs in its own change.
 
 ### Carry-over from A1
 
