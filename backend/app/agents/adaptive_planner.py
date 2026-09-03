@@ -52,6 +52,7 @@ class AdaptivePlanner:
         recent_learnings: str | None = None,
         staleness_warning: str | None = None,
         fallback_tool: str = "query_database",
+        available_sources: list[str] | None = None,
     ) -> ExecutionPlan:
         """Generate an LLM-based execution plan for the question.
 
@@ -75,6 +76,7 @@ class AdaptivePlanner:
             current_datetime=current_datetime,
             recent_learnings=recent_learnings,
             staleness_warning=staleness_warning,
+            available_sources=available_sources,
         )
         if plan is None:
             logger.warning(
@@ -98,6 +100,7 @@ class AdaptivePlanner:
         model: str | None = None,
         replan_history: list[dict[str, str]] | None = None,
         staleness_warning: str | None = None,
+        available_sources: list[str] | None = None,
     ) -> ExecutionPlan | None:
         """Generate a new plan after a stage failure, keeping completed stages."""
         completed_summaries = []
@@ -134,6 +137,7 @@ class AdaptivePlanner:
             db_type=db_type,
             replan_history=replan_history,
             allowed_dep_ids=allowed_dep_ids,
+            available_sources=available_sources,
         )
 
         system_content = PLANNER_SYSTEM_PROMPT
@@ -245,6 +249,7 @@ class AdaptivePlanner:
         current_datetime: str | None = None,
         recent_learnings: str | None = None,
         staleness_warning: str | None = None,
+        available_sources: list[str] | None = None,
     ) -> ExecutionPlan | None:
         for attempt in range(2):
             raw = await self._call_planner_llm(
@@ -257,6 +262,7 @@ class AdaptivePlanner:
                 current_datetime=current_datetime,
                 recent_learnings=recent_learnings,
                 staleness_warning=staleness_warning,
+                available_sources=available_sources,
             )
             if raw is None:
                 continue
@@ -290,6 +296,7 @@ class AdaptivePlanner:
         current_datetime: str | None = None,
         recent_learnings: str | None = None,
         staleness_warning: str | None = None,
+        available_sources: list[str] | None = None,
     ) -> dict[str, Any] | None:
         system_content = PLANNER_SYSTEM_PROMPT
         if staleness_warning:
@@ -307,6 +314,7 @@ class AdaptivePlanner:
                     project_overview=project_overview,
                     current_datetime=current_datetime,
                     recent_learnings=recent_learnings,
+                    available_sources=available_sources,
                 ),
             ),
         ]

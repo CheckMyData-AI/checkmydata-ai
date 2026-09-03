@@ -46,6 +46,17 @@ question into a sequence of discrete stages that can be executed one at a time.
    - "query_mcp_source" — query an external data source connected via MCP \
      (Model Context Protocol). Use when the question requires data from \
      external APIs or services not in the primary database.
+   - "query_analytics_source" — read a connected analytics source (Google \
+     Analytics, App Store Connect, Google Play): traffic, revenue, installs, \
+     events, geography, platform. The data was already COLLECTED into this \
+     project on a schedule, so the stage answers from local tables and also \
+     reports which periods are on file — a period nobody collected comes back \
+     as missing, never as zero. This stage returns ROWS, so it can be the \
+     input to a "process_data" or "analyze_results" stage that compares a \
+     vendor's daily numbers against a daily aggregate from the database. \
+     CROSS-SOURCE RECIPE: Stage 1 query_analytics_source (per-day vendor \
+     metric) → Stage 2 query_database (the same days from your own tables) → \
+     Stage 3 analyze_results (compare) → Stage 4 synthesize.
    - "analyze_git" — inspect the project's local Git clone (read-only): \
      commit history, diffs, blame, releases/tags, authorship, file churn, \
      and commit-trailer review signals. Use the first stage to fetch a \
@@ -88,6 +99,27 @@ Only call the tool ONCE. Do not produce any other text.
 """
 
 
+def _sources_line(available_sources: list[str] | None) -> str | None:
+    """Render the connected-source line, or nothing at all.
+
+    The system prompt is a constant, so every tool it names is offered to every
+    project — and a stage naming a source the project has not connected fails
+    ``error_category="configuration"``, which is deliberately non-retryable and
+    ends the run. This line is the per-project half.
+
+    An empty list renders **nothing** rather than "none": the availability
+    probes degrade to ``False`` on error, and a probe that failed must not be
+    reported to the model as the fact that nothing is connected.
+    """
+    if not available_sources:
+        return None
+    return (
+        "\nConnected sources: "
+        + ", ".join(available_sources)
+        + "\nPlan stages ONLY against these sources."
+    )
+
+
 def build_planner_user_prompt(
     question: str,
     table_map: str = "",
@@ -95,12 +127,16 @@ def build_planner_user_prompt(
     project_overview: str | None = None,
     current_datetime: str | None = None,
     recent_learnings: str | None = None,
+    available_sources: list[str] | None = None,
 ) -> str:
     parts = [f"User question:\n{question}"]
     if current_datetime:
         parts.append(f"\nCurrent date/time: {current_datetime}")
     if project_overview:
         parts.append(f"\nProject context:\n{project_overview[:1000]}")
+    sources = _sources_line(available_sources)
+    if sources:
+        parts.append(sources)
     if db_type:
         parts.append(f"\nDatabase type: {db_type}")
     if table_map:
@@ -121,6 +157,7 @@ def build_replan_prompt(
     db_type: str | None = None,
     replan_history: list[dict[str, str]] | None = None,
     allowed_dep_ids: frozenset[str] | None = None,
+    available_sources: list[str] | None = None,
 ) -> str:
     """Build the user prompt for a replan after stage failure.
 
@@ -167,6 +204,12 @@ def build_replan_prompt(
             "you define in THIS new plan, or one of these carried-over completed "
             f"stage ids: {sorted(allowed_dep_ids)}. Do not reference any other id."
         )
+    # A replan is where the LLM is explicitly told to take a different
+    # approach — the likeliest moment for it to reach for a source that the
+    # vocabulary names but this project has not connected.
+    sources = _sources_line(available_sources)
+    if sources:
+        parts.append(sources)
     if db_type:
         parts.append(f"\nDatabase type: {db_type}")
     if table_map:

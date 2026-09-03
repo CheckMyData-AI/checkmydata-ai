@@ -6,9 +6,10 @@ Every row moves to `done` only with a merged PR and green CI behind it.
 
 Status vocabulary: `todo` · `wip` · `done` · `dropped (reason)`.
 
-## Where this stands — 2026-09-02
+## Where this stands — 2026-09-03
 
-**14 done, 24 open.** P0 is closed in code except 0.4; P1 is 7 of 12.
+**15 done, 24 open.** P0 is closed in code except 0.4; P1 is 7 of 12. **Track A opened**
+by the target review in `docs/reports/target-gap-2026-09-03.html`, and A1 is done.
 
 Shipped and deployed: 0.1, 0.2, 0.3, 0.5, 0.6, 0.7 (PRs #268–#274). Merged and
 awaiting or mid-deploy: 1.1–1.5 (#275–#279). In review: **1.6 + 1.8 → #280**.
@@ -112,6 +113,44 @@ own count`) has been open since before this pass.
 | 1.4 | An **upgrade** (base → scale) does not raise the included grant until the next `subscription_cycle` invoice: `provision` returns the existing key before touching `included_grant_usd`, and a proration invoice is deliberately excluded from `_renew_credit`. The customer pays the higher price and keeps the lower allowance for the rest of that month. | backlog — needs a deliberate decision, since granting immediately also double-grants a month already partly consumed |
 | post-deploy 0.1 | `HEROKU_SLUG_COMMIT` is unset on `checkmydata-api`, so Sentry's `release` is `None` in production and no stack trace names the commit that caused it. `CLAUDE.md` already records the requirement (`heroku labs:enable runtime-dyno-metadata`); nobody ran it. One command, and it restarts the dynos. | backlog — ops, needs its own moment |
 | 0.1 | A `;` inside a string literal still trips the read-only multi-statement refusal (`SELECT * FROM t WHERE name = 'a;b'` is refused). Pre-existing, unchanged by this fix, and a false refusal rather than a false pass. | backlog — needs literal-aware `;` detection, which is a behaviour change to read-only mode |
+
+## Track A — one agent over all sources
+
+Opened 2026-09-03 by `docs/reports/target-gap-2026-09-03.html`. The audit's P0–P3 rows
+are defects in what exists; these are the gap between what exists and the product the
+operator described: one agent over repositories, databases and analytics vendors, able
+to answer any question about the project's data.
+
+| # | Task | Size | Status | Evidence |
+|---|---|---|---|---|
+| A1 | Analytics in the multi-stage pipeline — dispatch branch, planner vocabulary, per-project source availability | M | done | `stage_executor.py` (`_run_analytics_stage`, dispatch case), `planner_prompt.py` (vocabulary entry + `_sources_line`), `adaptive_planner.py` (kwarg through `plan`/`_llm_plan`/`_call_planner_llm`/`replan`), `orchestrator.py` (T13 bounce removed, fallback ladder gained an analytics branch, `_available_sources` computed and passed), `connection_service.resolve_analytics_connection`; 45 new tests across `test_analytics_pipeline_stage.py` (15), `test_planner_source_availability.py` (20), `test_analytics_connection_resolver.py` (10); 28 red before. Two negative controls executed: removing the dispatch case turns 12 red, removing the tenant comparison turns 1 red. Full suite **7469 passed, 0 failed** |
+| A2 | Report catalogue in the tool description from the connection, not the hardcoded GA4 five | S | todo | `analytics_tools.py:55-62` names overview/geo/platform/trend/events literally, in one global definition for every project |
+| A3 | Period-alignment primitive in `process_data` — join a vendor's daily rows to a daily aggregate from the database | M | todo | A1 delivered its input: the analytics stage now populates `StageResult.query_result` |
+| A4 | `source_type` + `source_ref` on `metric_definitions`; relationships across sources | M | todo | `metric_definition.py:34-35` has `source_table`/`source_column` and no source kind, so the data graph is DB-shaped and analytics cannot enter it |
+
+### What A1 found that the report did not say
+
+The report claimed analytics was unreachable in the pipeline. True, but the shape was
+sharper: `_run_complex_pipeline` **knew**, documented it as T13, and bounced an
+analytics-**only** project to the flat loop. What no workaround could cover is the mixed
+case — analytics *plus* a database — which is exactly the target sentence. Single-source
+worked; the combination did not, and said nothing.
+
+Two adjacent defects, same function, found by reading rather than by the report:
+`_fallback_tool`'s ladder ended at `query_mcp_source` unconditionally, so an
+analytics-only project's last-resort plan named a tool it had no source for; and
+`test_analytics_only_pipeline_bounces_to_the_flat_loop` pinned the workaround as the
+requirement — the **sixth** occurrence of that pattern in this programme. It was
+inverted, not deleted.
+
+### Carry-over from A1
+
+| Finding | Homed |
+|---|---|
+| The pipeline **resume** path passes `available_sources=None`: it has no `has_*` probes in scope. A partial list would be worse than none — naming only the database on a project that also has analytics forbids the planner from using it — so the line is omitted rather than guessed. A replan during a resumed pipeline is therefore still unprotected, exactly as every replan was before A1. | backlog — needs the probes threaded into the resume path |
+| `query_mcp_source` is absent from `_TEXT_STAGE_TOOLS` (`stage_validator.py:27-30`) although `_run_mcp_stage` returns only a summary and structurally cannot produce rows. A planner-set `min_rows` on an MCP stage fails against a stage that can never satisfy it. Same class as A1, different tool. Analytics is deliberately NOT in that set — it does produce rows. | backlog — new row |
+| Pre-existing invalid `# noqa` directive at `tests/unit/docs/test_suppression_debt_ratchet.py:240` (warning, not error). Untouched by A1 and left untouched deliberately: a one-character fix inside the commit that raises that file's ceiling would read as part of the ceiling decision. | backlog — trivial |
+| `except Exception` ceiling 631 → 632, justified in the file. It was **two** on the first pass; the second was removed rather than justified, because both arms classified identically and it only split one log line in half. | closed in this commit |
 
 ## P4 — the existing board
 

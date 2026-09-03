@@ -27,6 +27,28 @@ _ssh_key_svc = SshKeyService()
 #: a 400-day backfill does not return four hundred strings to the UI.
 PENDING_SAMPLE_LIMIT = 10
 
+#: Why an analytics connection could not be resolved. Machine-readable because
+#: the flat loop renders it as text for a model and the pipeline renders it as
+#: an error category for the scheduler; deriving one from the other's prose is
+#: how two callers drift apart.
+ANALYTICS_UNAVAILABLE_REASONS = ("not_found", "wrong_project", "none_connected")
+
+
+class AnalyticsConnectionUnavailableError(Exception):
+    """No analytics connection this project may read matches the request."""
+
+    def __init__(self, reason: str, *, connection_id: str | None = None) -> None:
+        if reason not in ANALYTICS_UNAVAILABLE_REASONS:
+            # A typo'd reason must fail here rather than render as a blank
+            # message in front of a user.
+            raise ValueError(
+                f"unknown reason {reason!r}; expected one of {ANALYTICS_UNAVAILABLE_REASONS}"
+            )
+        self.reason = reason
+        self.connection_id = connection_id
+        super().__init__(reason)
+
+
 _UPDATABLE_FIELDS = {
     "name",
     "db_type",
@@ -269,6 +291,52 @@ class ConnectionService:
             )
         )
         return result.scalar_one_or_none()
+
+    async def resolve_analytics_connection(
+        self,
+        session: AsyncSession,
+        *,
+        project_id: str,
+        connection_id: str | None = None,
+    ) -> Connection:
+        """Resolve the analytics connection a project may read, or refuse.
+
+        Two callers ask this question and they must not answer it twice: the
+        orchestrator's tool dispatcher (flat loop) and the pipeline's analytics
+        stage. #267 was one check written per entry point where one entry point
+        did not have it, so the decision lives here and the callers only render
+        it — the dispatcher as a string an LLM reads, the stage as a typed
+        ``error_category`` the scheduler acts on.
+
+        ``connection_id`` comes from an LLM, which means it comes from whatever
+        the user typed: "the model asked for it" is not authority to read
+        another tenant's collected analytics (R3).
+
+        Raises:
+            AnalyticsConnectionUnavailableError: with a machine-readable ``reason``,
+                because the two callers render different things and neither may
+                re-derive *why* by matching prose.
+        """
+        from app.analytics.source_types import ANALYTICS_SOURCE_TYPES
+
+        if connection_id:
+            conn = await self.get(session, connection_id)
+            if conn is None or conn.source_type not in ANALYTICS_SOURCE_TYPES:
+                # Right project but wrong kind is also "not found": the project
+                # may well own that connection, so calling it wrong_project
+                # would be a false statement about ownership.
+                raise AnalyticsConnectionUnavailableError("not_found", connection_id=connection_id)
+            if conn.project_id != project_id:
+                raise AnalyticsConnectionUnavailableError(
+                    "wrong_project", connection_id=connection_id
+                )
+            return conn
+
+        connections = await self.list_by_project(session, project_id)
+        for conn in connections:
+            if conn.source_type in ANALYTICS_SOURCE_TYPES:
+                return conn
+        raise AnalyticsConnectionUnavailableError("none_connected")
 
     async def list_by_project(
         self,

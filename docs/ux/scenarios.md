@@ -12,7 +12,7 @@ human review moves them to `validated`.
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-09-02 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-09-03 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -21,13 +21,13 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 
 | | |
 |---|---|
-| Scenarios | **127** |
-| Status | implemented × 127 |
-| Last verdict | PARTIAL × 2, PASS × 125 |
-| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10 |
-| **Verified >30 days ago** | **95 of 127** (oldest 45 days) |
+| Scenarios | **128** |
+| Status | implemented × 128 |
+| Last verdict | PARTIAL × 2, PASS × 126 |
+| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1 |
+| **Verified >30 days ago** | **95 of 128** (oldest 46 days) |
 | Never verified (no date) | 0 |
-| Referenced from code or tests | **22 of 127** |
+| Referenced from code or tests | **22 of 128** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -161,6 +161,7 @@ it is what moves it.
 | SCN-117 | Ask about analytics data in chat — grounded answer or honest refusal | analytics-sources | analyst | implemented | 2026-08-19 PASS |
 | SCN-118 | Analytics answer renders a chart | analytics-sources | analyst | implemented | 2026-08-19 PASS |
 | SCN-119 | Unsupported analytics source refused at creation | analytics-sources | owner | implemented | 2026-08-19 PASS |
+| SCN-128 | One question across analytics and the database in a single answer | analytics-sources | analyst | implemented | 2026-09-03 PASS |
 | SCN-120 | Database does not answer — honest stop instead of a silent grind | chat | analyst | implemented | 2026-08-19 PASS |
 | SCN-121 | Attaching an SSH key you do not own is refused | connections | owner | implemented | 2026-08-19 PASS |
 | SCN-122 | Every answer says how it is known — the seal | chat | analyst | implemented | 2026-08-16 PARTIAL → fixed |
@@ -2091,6 +2092,25 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Status:** implemented
 - **Audit note (2026-08-19):** verified against shipped code, AUD-0819-15. These nine shipped in `[1.16.0]` and stayed `draft` with `Last audit: —` for a month, which is the drift the scenario-first rule exists to prevent: the base is the source of truth only while it is kept current.
 - **Coverage:** backend/app/services/connection_service.py
+
+### SCN-128: One question across analytics and the database in a single answer
+- **Persona:** analyst
+- **Feature:** analytics-sources
+- **Entry point:** a question in chat that needs both a connected analytics source and the project's own database
+- **Preconditions:** a project with BOTH an analytics connection (collected periods on file) and a queryable database connection
+- **Steps:**
+  1. User asks something that spans both, e.g. "compare GA4 sessions per day in August with signups per day in our database"
+  2. The router marks the question complex / multi-source, so the multi-stage pipeline is taken
+  3. The planner names an analytics stage and a database stage, because the planner's user prompt lists what this project has connected
+  4. The analytics stage reads the collected fact tables and returns rows; the database stage returns its own rows
+  5. A following analyse/transform stage compares them and the synthesis answers from both
+- **Expected result:** one answer grounded in both sources, carrying the analytics caveats it always carries — a period nobody collected is reported missing, never as zero
+- **UI elements:** chat answer, Agent Reasoning Panel (both stages visible), chart where the comparison is chartable
+- **States covered:** success, partial (a period is not collected), error (the analytics source is unreachable)
+- **Errors & recovery:** an analytics source that cannot be resolved fails the stage as `configuration` — non-retryable, because no retry makes a connection appear — and the pipeline replans without it rather than grinding; a project with no analytics connection is never told analytics exists, so no stage is planned against a source that is not there
+- **Status:** implemented
+- **Audit note (2026-09-03):** added with A1. Before it, `StageExecutor` dispatched six tools and `query_analytics_source` was not among them, while the planner's vocabulary did not name it either. The orchestrator knew and worked around it: an analytics-**only** project was bounced to the flat loop (T13). What no workaround covered is this scenario — analytics *plus* a database — where the pipeline ran and analytics was silently absent. The bounce is removed: the pipeline executes analytics stages now.
+- **Coverage:** backend/app/agents/stage_executor.py (`_run_analytics_stage`), backend/app/agents/prompts/planner_prompt.py, backend/app/services/connection_service.py (`resolve_analytics_connection`), backend/tests/unit/agents/test_analytics_pipeline_stage.py, backend/tests/unit/agents/test_planner_source_availability.py
 
 ### SCN-120: Database does not answer — honest stop instead of a silent grind
 - **Persona:** analyst
