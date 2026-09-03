@@ -38,6 +38,31 @@ heroku config:set -a checkmydata-api \
   started"; deleting a base branch on merge **closes** the PR stacked on it; and pushing
   to `main` right after a merge cancels that merge's CI through the concurrency group.
 - Alembic is serial — a second migration in flight must be stacked, not branched beside.
+- **A test that pins the defect as the requirement has now appeared six times** (add
+  `test_analytics_only_pipeline_bounces_to_the_flat_loop` to the five already listed). At six
+  it stops being an anecdote and becomes a rate: expect roughly one per task, invert it rather
+  than delete it, and say in the new docstring what the old assertion claimed.
+- **`git stash push --keep-index` leaves the index intact, so the next `git commit` takes
+  everything in it.** Used it to separate a report from a code fix and committed both under the
+  report's message — the same mixing as 2026-09-01, made this time *while narrating that I was
+  avoiding it*. The check is one command and it is not optional: `git show --stat` before every
+  push, because the mistake is invisible in `git status`.
+- **A watcher's exit condition must be scoped to the identity being watched.** A deploy monitor
+  keyed on "a completed `Deploy to Heroku` exists in the last six runs" reported success a
+  minute after merge — matching *yesterday's* deploy while CI was still running and the release
+  was still v320. Scope on `headSha`. And never read the word `success` without checking what it
+  is success **of**: a false green carrying a machine's signature is worse than no check,
+  because nobody argues with it.
+- **Before writing "there is no channel for X", grep how the sibling does X.** A carry-over row
+  claimed a pipeline stage cannot carry parameters because `PlanStage` has no field, and sized
+  the fix at M. `input_context` was already a JSON params channel that `process_data` parses.
+  Wrong in mechanism and in size, corrected an hour later — a partial read that reaches a ledger
+  is a decision somebody else will make on it.
+- **The ordering came from the code, not from usage, and that is a method error rather than a
+  slip.** 101 findings and twenty PRs were ranked without once asking how many people are on the
+  product. The answer — 17 chat messages in 30 days, 1 verified user, 0 analytics connections —
+  was one query away the whole time and would have put row 0.4 first on day one. Measure the
+  audience before ranking the work.
 
 **Untouched and not mine:** PR #266 (`fix(knowledge): the counting tokenizer truncated its
 own count`) has been open since before this pass.
