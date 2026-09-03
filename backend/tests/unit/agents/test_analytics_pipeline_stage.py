@@ -355,3 +355,102 @@ class TestTheImportStaysLazy:
             "analytics_agent must be imported inside the stage, not at module "
             f"level; found: {offenders}"
         )
+
+
+# ------------------------------------------------------------------
+# REQ-3, the other half: a transform must actually CONSUME those rows
+# ------------------------------------------------------------------
+
+
+class TestTheChainActuallyChains:
+    """Populating ``query_result`` is only half the claim.
+
+    The tests above prove the analytics stage *offers* rows. This one drives the
+    real ``process_data`` stage over them with no LLM anywhere: if
+    ``_select_process_data_source`` did not accept an analytics stage as a
+    declared dependency, every test above would still pass and the feature would
+    still not work.
+    """
+
+    @pytest.mark.asyncio
+    async def test_process_data_aggregates_the_analytics_rows(
+        self, executor, context, mock_analytics_agent
+    ):
+        import json as _json
+
+        mock_analytics_agent.run.return_value = _FakeAnalyticsResult(
+            status="success",
+            answer="Three days of sessions.",
+            columns=["date", "sessions"],
+            # Two rows share a date deliberately: 100 + 250 = 350 can only
+            # appear if BOTH reached the processor, which a passthrough or a
+            # scavenged unrelated dataset would not produce.
+            rows=[["2026-08-01", 100], ["2026-08-01", 250], ["2026-08-02", 400]],
+        )
+
+        an = _analytics_stage("an1")
+        pd = PlanStage(
+            stage_id="pd1",
+            description="total the sessions",
+            tool="process_data",
+            depends_on=["an1"],
+            # The params channel `process_data` already uses (stage_executor.py:1205).
+            input_context=_json.dumps(
+                {
+                    "operation": "aggregate_data",
+                    "group_by": ["date"],
+                    "aggregations": [["sessions", "sum"]],
+                }
+            ),
+        )
+        stage_ctx = StageContext(plan=_plan(an, pd))
+
+        with _resolver_returns():
+            an_result = await executor._execute_stage(an, stage_ctx, context)
+        stage_ctx.set_result("an1", an_result)
+
+        pd_result = await executor._execute_stage(pd, stage_ctx, context)
+
+        assert pd_result.status == "success", (
+            "the transform must run on the analytics rows; "
+            f"got status={pd_result.status} error={pd_result.error}"
+        )
+        assert pd_result.query_result is not None
+        flat = [v for row in pd_result.query_result.rows for v in row]
+        assert 350 in flat, (
+            "100 + 250 = 350 must appear for 2026-08-01, which is only possible "
+            f"if the analytics rows reached the processor; got {flat}"
+        )
+        assert 400 in flat, f"the second group must survive too; got {flat}"
+
+    @pytest.mark.asyncio
+    async def test_a_text_only_analytics_stage_starves_the_transform_honestly(
+        self, executor, context, mock_analytics_agent
+    ):
+        """No rows must be `data_missing`, not a transform over nothing.
+
+        `data_missing` is replan-eligible, so the pipeline can try another route.
+        Reporting success over an empty result is what would let a wrong number
+        reach the answer.
+        """
+        mock_analytics_agent.run.return_value = _FakeAnalyticsResult(
+            status="success", answer="August is fully collected.", columns=[], rows=[]
+        )
+
+        an = _analytics_stage("an1")
+        pd = PlanStage(
+            stage_id="pd1",
+            description="total the sessions",
+            tool="process_data",
+            depends_on=["an1"],
+        )
+        stage_ctx = StageContext(plan=_plan(an, pd))
+
+        with _resolver_returns():
+            an_result = await executor._execute_stage(an, stage_ctx, context)
+        stage_ctx.set_result("an1", an_result)
+
+        pd_result = await executor._execute_stage(pd, stage_ctx, context)
+
+        assert pd_result.status == "error"
+        assert pd_result.error_category == "data_missing"
