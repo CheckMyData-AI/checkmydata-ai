@@ -59,6 +59,15 @@ _WALL_GUARDED_TOOLS = frozenset(
 
 MAX_SUB_AGENT_RETRIES = settings.max_sub_agent_retries
 
+#: What the model is told when no analytics connection resolves. The wording is
+#: unchanged from when the tenant check lived inline here — the check moved, the
+#: text a model reads did not, so no learning trained on it goes stale.
+_ANALYTICS_UNAVAILABLE_TEXT: dict[str, str] = {
+    "not_found": "Error: analytics connection '{id}' not found",
+    "wrong_project": "Error: analytics connection does not belong to this project",
+    "none_connected": "Error: no analytics sources are connected to this project",
+}
+
 
 class _ClarificationRequestError(Exception):
     """Internal signal: the orchestrator wants to ask the user a question."""
@@ -1226,9 +1235,11 @@ class ToolDispatcher:
         read another tenant's collected analytics.
         """
         from app.agents.analytics_agent import AnalyticsAgent
-        from app.agents.tools.analytics_tools import ANALYTICS_SOURCE_TYPES
         from app.models.base import async_session_factory
-        from app.services.connection_service import ConnectionService
+        from app.services.connection_service import (
+            AnalyticsConnectionUnavailableError,
+            ConnectionService,
+        )
 
         args = tc.arguments or {}
         sub_question: str = args.get("question", context.user_question)
@@ -1236,29 +1247,14 @@ class ToolDispatcher:
 
         conn_svc = ConnectionService()
         async with async_session_factory() as session:
-            if connection_id:
-                conn = await conn_svc.get(session, connection_id)
-                if not conn or conn.source_type not in ANALYTICS_SOURCE_TYPES:
-                    return (
-                        f"Error: analytics connection '{connection_id}' not found",
-                        None,
-                    )
-                if conn.project_id != context.project_id:
-                    return (
-                        "Error: analytics connection does not belong to this project",
-                        None,
-                    )
-            else:
-                connections = await conn_svc.list_by_project(session, context.project_id)
-                analytics_conns = [
-                    c for c in connections if c.source_type in ANALYTICS_SOURCE_TYPES
-                ]
-                if not analytics_conns:
-                    return (
-                        "Error: no analytics sources are connected to this project",
-                        None,
-                    )
-                conn = analytics_conns[0]
+            try:
+                conn = await conn_svc.resolve_analytics_connection(
+                    session,
+                    project_id=context.project_id,
+                    connection_id=connection_id or None,
+                )
+            except AnalyticsConnectionUnavailableError as exc:
+                return (_ANALYTICS_UNAVAILABLE_TEXT[exc.reason].format(id=connection_id), None)
             source_type = conn.source_type
             source_name = conn.name
             resolved_id = conn.id

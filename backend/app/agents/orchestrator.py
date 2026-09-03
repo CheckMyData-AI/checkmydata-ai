@@ -2300,20 +2300,15 @@ class OrchestratorAgent(BaseAgent):
         last-resort quick-plan fallback picks a tool that can actually execute
         against the available data sources.
 
-        ``has_analytics`` (T13) — analytics counts as a data source for routing,
-        but ``StageExecutor`` dispatches ``query_database`` / ``search_codebase``
-        / ``analyze_git`` / ``query_mcp_source`` only. A project whose ONLY
-        source is analytics is therefore bounced to the flat loop, where
-        ``query_analytics_source`` is offered.
+        ``has_analytics`` (T13, A1) — analytics is a data source here as well as
+        in routing: ``StageExecutor`` dispatches ``query_analytics_source``, so
+        an analytics-only project plans and executes like any other. Until A1 it
+        did not, and this method bounced such a project to the flat loop; what
+        that workaround could never cover is the mixed case — analytics *plus* a
+        database — where the pipeline ran with analytics silently absent from
+        its vocabulary.
         """
         has_connection = is_queryable_database(context.connection_config)
-        if has_analytics and not (has_connection or has_kb or has_repo or has_mcp):
-            return await self._fallback_to_unified(
-                context,
-                wf_id,
-                "Analytics is the only connected source — the multi-stage pipeline "
-                "cannot execute analytics stages; using the standard approach…",
-            )
 
         await self._tracker.emit(
             wf_id,
@@ -2331,8 +2326,28 @@ class OrchestratorAgent(BaseAgent):
             _fallback_tool = "search_codebase"
         elif has_repo:
             _fallback_tool = "analyze_git"
+        elif has_mcp:
+            _fallback_tool = "query_mcp_source"
+        elif has_analytics:
+            _fallback_tool = "query_analytics_source"
         else:
             _fallback_tool = "query_mcp_source"
+
+        # A1: the planner's vocabulary is a constant, so this is the only place
+        # that knows what THIS project has connected. Without it a stage can
+        # name a source that does not exist, which fails as `configuration` —
+        # deliberately non-retryable, so it ends the run rather than replanning.
+        _available_sources: list[str] = []
+        if has_connection:
+            _available_sources.append(f"database ({db_type})" if db_type else "database")
+        if has_kb:
+            _available_sources.append("indexed codebase")
+        if has_repo:
+            _available_sources.append("git history")
+        if has_mcp:
+            _available_sources.append("external MCP source")
+        if has_analytics:
+            _available_sources.append("analytics source (already-collected reports)")
 
         recent_learnings = await self._ctx_loader.load_recent_learnings(context)
         active_insights = await self._ctx_loader.load_relevant_insights(context.project_id)
@@ -2367,6 +2382,7 @@ class OrchestratorAgent(BaseAgent):
                 recent_learnings=recent_learnings,
                 staleness_warning=staleness_warning,
                 fallback_tool=_fallback_tool,
+                available_sources=_available_sources,
             )
             if plan:
                 _sd_plan["output_preview"] = f"{len(plan.stages)} stage(s)"
@@ -2452,6 +2468,7 @@ class OrchestratorAgent(BaseAgent):
                 run_id=pipeline_run.id,
                 wf_id=wf_id,
                 deadline=pipeline_deadline,
+                available_sources=_available_sources,
             )
 
             await self._persist_stage_results(pipeline_run.id, exec_result.stage_ctx)
@@ -2623,6 +2640,7 @@ class OrchestratorAgent(BaseAgent):
         run_id: str,
         wf_id: str,
         deadline: float | None = None,
+        available_sources: list[str] | None = None,
     ) -> tuple[Any, list[dict[str, Any]]]:
         """Replan loop shared by the initial and resume pipeline paths.
 
@@ -2707,6 +2725,7 @@ class OrchestratorAgent(BaseAgent):
                 model=context.model,
                 replan_history=replan_history,
                 staleness_warning=staleness_warning,
+                available_sources=available_sources,
             )
             if not new_plan:
                 logger.warning("Replanning returned no plan — giving up")
@@ -2946,6 +2965,13 @@ class OrchestratorAgent(BaseAgent):
                     run_id=run_id,
                     wf_id=wf_id,
                     deadline=resume_deadline,
+                    # The resume path does not compute source availability
+                    # (it has no has_* probes in scope), so the line is
+                    # omitted rather than guessed: a PARTIAL list is a false
+                    # statement — naming only the database on a project that
+                    # also has analytics forbids the planner from using it —
+                    # while an absent list is silence. Carried over.
+                    available_sources=None,
                 )
 
             await self._persist_stage_results(run_id, exec_result.stage_ctx, user_feedback)

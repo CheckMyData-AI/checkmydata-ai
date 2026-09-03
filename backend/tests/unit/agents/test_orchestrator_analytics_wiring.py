@@ -303,18 +303,25 @@ class TestAnalyticsCountsAsADataSource:
             f"got kwargs={pipeline_mock.await_args.kwargs}"
         )
 
-    async def test_analytics_only_pipeline_bounces_to_the_flat_loop(
-        self, orch, mock_llm, mock_tracker
-    ):
-        """The M0 ``StageExecutor`` has no analytics stage.
+    async def test_analytics_only_pipeline_reaches_the_planner(self, orch, mock_llm, mock_tracker):
+        """Inverted by A1, and the inversion is the point.
 
-        A project whose only source is analytics must therefore be bounced to
-        the flat loop (where ``query_analytics_source`` IS offered) instead of
-        planning stages nothing can execute.
+        This test used to assert the opposite — that an analytics-only project
+        is bounced to the flat loop — because ``StageExecutor`` had no analytics
+        branch and planning stages nothing could execute was worse than not
+        planning. That made the workaround the requirement, so the assertion had
+        to be turned over rather than deleted when the branch landed:
+        ``query_analytics_source`` is dispatched now, so the bounce would send
+        every analytics-only project down a path that cannot chain stages.
+
+        What the bounce never covered is the case behind A1: analytics **plus** a
+        database, where the pipeline ran with analytics absent from the
+        planner's vocabulary. That is asserted in
+        ``test_planner_source_availability.py``.
         """
         context = _make_context(mock_llm, mock_tracker, has_connection=False)
         fallback_mock = AsyncMock(return_value=_SENTINEL_RESPONSE)
-        planner_mock = AsyncMock()
+        planner_mock = AsyncMock(return_value=None)
 
         with (
             patch.object(orch, "_fallback_to_unified", fallback_mock),
@@ -323,7 +330,7 @@ class TestAnalyticsCountsAsADataSource:
                 MagicMock(return_value=MagicMock(plan=planner_mock)),
             ),
         ):
-            result = await orch._run_complex_pipeline(
+            await orch._run_complex_pipeline(
                 context,
                 "wf-1",
                 "",
@@ -332,9 +339,20 @@ class TestAnalyticsCountsAsADataSource:
                 has_analytics=True,
             )
 
-        fallback_mock.assert_awaited_once()
-        planner_mock.assert_not_awaited()
-        assert result is _SENTINEL_RESPONSE
+        assert planner_mock.await_count == 1, (
+            "an analytics-only project must be planned, not bounced; "
+            f"planner awaited {planner_mock.await_count} time(s), "
+            f"fallback awaited {fallback_mock.await_count} time(s)"
+        )
+        kwargs = planner_mock.await_args.kwargs
+        assert kwargs.get("fallback_tool") == "query_analytics_source", (
+            "the last-resort quick plan must name a tool this project has a "
+            f"source for; got {kwargs.get('fallback_tool')!r}"
+        )
+        assert any("analytics" in s for s in kwargs.get("available_sources") or []), (
+            "the planner must be told analytics is what this project has; "
+            f"got available_sources={kwargs.get('available_sources')!r}"
+        )
 
     async def test_direct_route_escalates_when_analytics_is_the_only_source(
         self, orch, mock_llm, mock_tracker

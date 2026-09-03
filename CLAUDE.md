@@ -168,6 +168,24 @@ Frontend (ChatPanel)
 
 Key files: `backend/app/agents/orchestrator.py`, `adaptive_planner.py`, `stage_executor.py`, `sql_agent.py`, `knowledge_agent.py`, `viz_agent.py`, `git_agent.py`, `answer_validator.py`, `data_gate.py`, `router.py`. Deep-dive: `docs/SYSTEM_ARCHITECTURE.md`, `ARCHITECTURE.md`.
 
+**`QueryResult` is the currency between stages, and it was named in none of these
+documents** until 2026-09-03 — while being the single most connected node in the
+repository (600 edges, `graphify god-nodes`, measured after a full re-extract). Defined in
+`app/connectors/base.py:301`: `columns`, `rows`, `row_count`, `truncated`, plus `error` and
+a machine-readable `error_type` the classifier trusts instead of pattern-matching prose the
+application wrote itself.
+
+It matters because **`StageResult.query_result` is what makes a stage chainable.** A stage
+that returns only a `summary` can be read by the synthesis and by nothing else: DataGate's
+six checks, `StageValidator`'s `expected_columns`/`min_rows`, and every `process_data`
+transform are all guarded by `if qr:` and skip a text-only stage entirely. So "does this
+stage populate `query_result`?" decides whether a later stage can compute on its output or
+only quote it. Four producers populate it — `_run_sql_stage`
+(`stage_executor.py:807`), `_run_analytics_stage` (`:1104`), `_run_process_data_stage`
+(`:1200`) and `StageResult.from_summary_dict` (`stage_context.py:220`, a resumed stage's
+sample rows). `query_mcp_source`, `search_codebase`, `analyze_git` and `analyze_results` do
+not, which is why nothing downstream can compute on their output.
+
 Multilingual: the agent reasons in English but answers in the user's language. Session rotation auto-summarizes near context limits (`session_rotation_enabled`).
 
 ### Knowledge indexing pipeline (M1–M6)

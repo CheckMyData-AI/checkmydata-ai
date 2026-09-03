@@ -177,7 +177,20 @@ CEILINGS: dict[str, int] = {
     # than `critical` because unknown is its own state. That is the opposite of the
     # silence this ratchet exists to catch — the same commit removes four such silences
     # from the other checks, which had been dropping their exceptions entirely.
-    "except Exception": 631,
+    # 631 -> 632 on 2026-09-03. One, and it is the analytics pipeline stage (A1):
+    # `StageExecutor._run_analytics_stage`, the same shape its sibling
+    # `_run_mcp_stage` has carried since it was written. A sub-agent that raises must
+    # become a classified stage failure rather than an exception out of the scheduler,
+    # because the caller is a topological loop running up to three stages in parallel
+    # and an escape orphans the siblings with live sessions. It does NOT swallow: the
+    # handler logs `logger.exception` with the stage id and returns
+    # `_classify_stage_error(exc)`, which is what decides retry, replan or
+    # short-circuit — a value that reads as failure, not as success.
+    #
+    # Worth recording that this was TWO on the first pass, one either side of the
+    # connection resolve. The second was removed rather than justified: both arms
+    # classified identically, so it only split one log line in half.
+    "except Exception": 632,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

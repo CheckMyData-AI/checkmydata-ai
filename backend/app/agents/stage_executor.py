@@ -131,6 +131,7 @@ class StageExecutor:
         data_gate: DataGate | None = None,
         mcp_source_agent: BaseAgent | None = None,
         git_agent: BaseAgent | None = None,
+        analytics_agent: BaseAgent | None = None,
     ) -> None:
         self._sql = sql_agent
         self._knowledge = knowledge_agent
@@ -140,6 +141,12 @@ class StageExecutor:
         self._data_gate = data_gate or DataGate()
         self._mcp_source = mcp_source_agent
         self._git = git_agent
+        # Unlike every sibling above, this one is normally ``None``: importing
+        # ``analytics_agent`` pulls in the Google client libraries, so the flat
+        # loop's dispatcher builds it lazily at call time (tool_dispatcher.py:33)
+        # and this stage does the same. The parameter exists so a test can
+        # inject a double without paying that import.
+        self._analytics = analytics_agent
         self._staleness_warning: str | None = None
         # ORCH-A01 / T10: shared result-quality gate (C-B).  Built lazily and
         # cached so callers can inject a pre-built instance in tests.  The gate
@@ -496,6 +503,8 @@ class StageExecutor:
                     return await self._run_process_data_stage(stage, stage_ctx, context)
                 case "query_mcp_source":
                     return await self._run_mcp_stage(enriched_q, stage, context)
+                case "query_analytics_source":
+                    return await self._run_analytics_stage(enriched_q, stage, context)
                 case "analyze_git":
                     return await self._run_git_stage(enriched_q, stage, context)
                 case "synthesize":
@@ -982,6 +991,119 @@ class StageExecutor:
                 error=_stage_error_message(exc),
                 error_category=_classify_stage_error(exc),
             )
+
+    async def _run_analytics_stage(
+        self,
+        question: str,
+        stage: PlanStage,
+        context: AgentContext,
+    ) -> StageResult:
+        """Read a connected analytics source's collected fact tables.
+
+        Two things make this stage unlike :meth:`_run_mcp_stage`, which is
+        otherwise its closest sibling.
+
+        It **resolves a connection first**. ``AnalyticsAgent.run`` is not
+        ``BaseAgent.run(ctx, question=…)``: it needs the connection's identity,
+        name and vendor, because its answer says which periods are on file for
+        *that* source. The scope decision belongs to the one shared resolver
+        (``ConnectionService.resolve_analytics_connection``) rather than being
+        re-derived here — #267 was that same check written per entry point.
+
+        It **carries rows forward**. ``AnalyticsResult`` already exposes
+        ``columns``/``rows`` (the viz agent reads them), so populating
+        ``query_result`` lets a downstream ``process_data`` stage align a
+        vendor's daily rows against a daily aggregate from the database. Without
+        it, a two-source question ends as two prose summaries and the synthesis
+        compares them by eye.
+        """
+        from app.models.base import async_session_factory
+        from app.services.connection_service import (
+            AnalyticsConnectionUnavailableError,
+            ConnectionService,
+        )
+
+        # One try over the whole body, like _run_mcp_stage: the specific
+        # ``AnalyticsConnectionUnavailableError`` is a decision the resolver made
+        # and gets its own answer, while everything else is genuinely unexpected
+        # and gets the same classification either side of the resolve — so a
+        # second broad handler would only split one log line into two.
+        try:
+            async with async_session_factory() as session:
+                conn = await ConnectionService().resolve_analytics_connection(
+                    session, project_id=context.project_id
+                )
+                source_type, source_name, resolved_id = conn.source_type, conn.name, conn.id
+
+            agent = self._analytics
+            if agent is None:
+                from app.agents.analytics_agent import AnalyticsAgent
+
+                agent = AnalyticsAgent(llm_router=self._llm)
+
+            result = await agent.run(
+                replace(
+                    context,
+                    chat_history=context.chat_history[-settings.history_tail_messages :]
+                    if context.chat_history
+                    else [],
+                ),
+                connection_id=resolved_id,
+                question=question,
+                source_name=source_name,
+                source_type=source_type,
+            )
+        except AnalyticsConnectionUnavailableError as exc:
+            # Not transient: no retry makes a connection appear, and the
+            # non-retryable category is what short-circuits the retry ladder
+            # instead of spending the plan's budget on it.
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error=f"No analytics source available for this stage ({exc.reason})",
+                error_category="configuration",
+            )
+        except Exception as exc:
+            logger.exception("Analytics stage '%s' failed", stage.stage_id)
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error=_stage_error_message(exc),
+                error_category=_classify_stage_error(exc),
+            )
+
+        answer = getattr(result, "answer", "") or ""
+        status = getattr(result, "status", "")
+        if status != "success":
+            # Mirrors the MCP stage: a "no_result" placeholder is never
+            # surfaced as a real answer. ``no_result`` is data_missing and so
+            # recoverable by replan; an explicit error is the agent's own
+            # classification of a configuration problem.
+            return StageResult(
+                stage_id=stage.stage_id,
+                status="error",
+                error=getattr(result, "error", None) or answer or "Analytics returned no result",
+                error_category="configuration" if status == "error" else "data_missing",
+                token_usage=getattr(result, "token_usage", {}) or {},
+            )
+
+        rows = list(getattr(result, "rows", []) or [])
+        columns = list(getattr(result, "columns", []) or [])
+        query_result: QueryResult | None = None
+        if columns or rows:
+            query_result = QueryResult(
+                columns=columns,
+                rows=rows,
+                row_count=len(rows),
+                truncated=bool(getattr(result, "truncated", False)),
+            )
+        return StageResult(
+            stage_id=stage.stage_id,
+            status="success",
+            summary=answer,
+            query_result=query_result,
+            token_usage=getattr(result, "token_usage", {}) or {},
+        )
 
     @staticmethod
     def _select_process_data_source(

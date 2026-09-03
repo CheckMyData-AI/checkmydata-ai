@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Один агент над всеми источниками — разрыв и план</title>
+<style>
+  :root{
+    --bg:#0e1014; --panel:#171a21; --panel2:#1d222b; --line:#2a3140;
+    --txt:#e7ebf2; --dim:#9aa5b8; --acc:#6ea8ff; --ok:#4ec9a0;
+    --warn:#e0b341; --bad:#ff6b6b; --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:16px/1.62 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+  .wrap{max-width:1180px;margin:0 auto;padding:56px 28px 120px}
+  h1{font-size:2.15rem;line-height:1.18;margin:0 0 8px;letter-spacing:-.02em}
+  .sub{color:var(--dim);font-size:1.02rem;margin:0 0 40px}
+  h2{font-size:1.42rem;margin:56px 0 6px;letter-spacing:-.01em}
+  h2 .n{color:var(--acc);font-family:var(--mono);font-size:.86em;margin-right:.5em}
+  h3{font-size:1.06rem;margin:30px 0 8px}
+  p{margin:10px 0}
+  code{font-family:var(--mono);font-size:.87em;background:#0a0c10;
+    border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#cfe0ff}
+  .lede{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:20px 24px;margin:0 0 8px}
+  .lede p:first-child{margin-top:0}.lede p:last-child{margin-bottom:0}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:.92rem}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.06em}
+  tbody tr:hover{background:var(--panel)}
+  .tw{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+  .tw table{margin:0}
+  .b{display:inline-block;font-family:var(--mono);font-size:.74rem;font-weight:600;
+    padding:2px 7px;border-radius:4px;white-space:nowrap}
+  .b-bad{background:rgba(255,107,107,.14);color:var(--bad);border:1px solid rgba(255,107,107,.35)}
+  .b-warn{background:rgba(224,179,65,.14);color:var(--warn);border:1px solid rgba(224,179,65,.35)}
+  .b-ok{background:rgba(78,201,160,.14);color:var(--ok);border:1px solid rgba(78,201,160,.35)}
+  .b-dim{background:rgba(154,165,184,.12);color:var(--dim);border:1px solid var(--line)}
+  .ev{font-family:var(--mono);font-size:.8rem;color:var(--dim)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px 22px;margin:14px 0}
+  .card.bad{border-left:3px solid var(--bad)}
+  .card.warn{border-left:3px solid var(--warn)}
+  .card.ok{border-left:3px solid var(--ok)}
+  .card h4{margin:0 0 6px;font-size:1rem}
+  .g{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+  .kpi{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
+  .kpi .v{font-family:var(--mono);font-size:1.7rem;font-weight:700;letter-spacing:-.02em}
+  .kpi .l{color:var(--dim);font-size:.82rem;margin-top:2px}
+  ul,ol{margin:10px 0;padding-left:24px}
+  li{margin:5px 0}
+  hr{border:0;border-top:1px solid var(--line);margin:48px 0}
+  .foot{color:var(--dim);font-size:.86rem;margin-top:64px;border-top:1px solid var(--line);padding-top:20px}
+  .quote{border-left:3px solid var(--line);padding:2px 0 2px 16px;color:var(--dim);margin:14px 0;font-style:italic}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Один агент над всеми источниками</h1>
+<p class="sub">Разрыв между целью и реализацией, совместимость с Fabric Agent Contract, и один
+приоритезированный план. checkmydata-ai · 2026-09-03 · HEAD <code>db6ee22</code></p>
+
+<div class="lede">
+<p><strong>Главный вывод.</strong> Цель — «любой вопрос по данным проекта решается агентом» —
+блокируется не архитектурой, а <strong>двумя строками</strong>. В мультистейджевом пайплайне
+(Path B) нет ветки для аналитики, и в словаре планировщика нет её инструмента. Path B берётся
+ровно тогда, когда вопрос требует <em>нескольких</em> источников — то есть аналитика недоступна
+именно в тех вопросах, для которых она и нужна.</p>
+<p>Плагинная архитектура источников уже есть и она правильная. Слабое место не в ней, а в трёх
+местах: аналитика физически не входит в мультиисточниковый путь, граф связей DB-образный
+(аналитика в него не помещается), а лексическая нога поиска по коду до сих пор индексирует
+LLM-прозу вместо тел символов.</p>
+</div>
+
+<div class="card ok" style="margin-top:18px">
+<h4>Обновление того же дня — A1 закрыт</h4>
+<p>Ветка <code>query_analytics_source</code> в <code>stage_executor</code>, инструмент в
+словаре планировщика, строка доступных источников в оба промпт-билдера, один общий резолвер
+подключения, снятый обход T13 и ветка аналитики в лестнице <code>_fallback_tool</code> —
+PR&nbsp;#281. 45 новых тестов, 28 красных до; полный прогон 7469 passed. Сквозное поведение
+на живом проекте <strong>не наблюдалось</strong> — для этого нужны GA4-креды и база на одном
+проекте; проверено юнитами.</p>
+<p><strong>И постановка оказалась резче, чем сказано ниже.</strong>
+<code>_run_complex_pipeline</code> уже знал про пробел, документировал его как T13 и обходил:
+analytics-only проект отбрасывался в плоский цикл. Чего обход не покрывал — смешанный случай,
+аналитика <em>плюс</em> база, то есть ровно целевая фраза. Одиночный источник работал;
+комбинация — нет, и молчала об этом.</p>
+</div>
+
+<div class="g" style="margin-top:26px">
+  <div class="kpi"><div class="v" style="color:var(--ok)">6 / 7</div><div class="l">источников подключаются <span class="ev">db×5 + mcp</span></div></div>
+  <div class="kpi"><div class="v" style="color:var(--warn)">1 / 4+</div><div class="l">вендоров аналитики реализовано <span class="ev">только GA4</span></div></div>
+  <div class="kpi"><div class="v" style="color:var(--bad)">0</div><div class="l">кросс-источниковых связей кроме code↔DB</div></div>
+  <div class="kpi"><div class="v">14 / 38</div><div class="l">строк леджера закрыто <span class="ev">P0 закрыт кроме 0.4</span></div></div>
+</div>
+
+<hr>
+
+<h2><span class="n">1</span>Fabric: что это и что нужно сделать</h2>
+
+<p>«Фабрика» в нашем окружении — это <strong>Fabric Agent Contract</strong> от passioncode-ai,
+закреплённый на версии <code>0.1.0</code>, коммит
+<code>20a818e648a4c09a60df0126d11626922e8b9094</code>. Проект-адаптер стоит плагином
+<code>fabric-agent-adapter@0.3.1</code>; сам контракт живёт в приватном репозитории, которого
+у нас на машине нет.</p>
+
+<p>Fabric — это не транспорт и не ещё один MCP. Это <em>контракт провайдера</em>: стабильная
+идентичность (URI + ревизия + хеш содержимого), объявленные эффекты и класс данных, один
+профиль на способность, и — самое важное для нас — <strong>нормализованный конверт
+результата</strong>: атомарное <code>done</code>, разрешаемый <code>proof</code>, закреплённый
+<code>scope</code>, явный <code>notVerified</code>, неизменяемые артефакты.</p>
+
+<h3>Профиль — по способности, а не по проекту</h3>
+
+<p>Дерево решений скила даёт нам <strong>два разных профиля</strong>, и это разрешено:</p>
+
+<div class="tw"><table>
+<thead><tr><th>Способность</th><th>Профиль</th><th>Почему именно он</th></tr></thead>
+<tbody>
+<tr>
+  <td><code>query_database</code>, <code>get_schema</code>, <code>search_codebase</code>,
+      <code>list_projects/connections</code></td>
+  <td><span class="b b-ok">MCP 2026-07-28</span></td>
+  <td>Ограниченные операции, планирование остаётся у вызывающего. У нас это уже <em>нативно</em>
+      — <span class="ev">app/mcp_server/</span>, ASGI-монтирование на <code>/mcp</code>,
+      принципал разрешается per-request через ContextVar.</td>
+</tr>
+<tr>
+  <td>«Спроси агента» — полный вопрос с планом, replan-ами, шагами, графиками</td>
+  <td><span class="b b-warn">A2A 1.0</span></td>
+  <td>Здесь жизненным циклом владеем <strong>мы</strong>: свой цикл, свой бюджет шагов, свои
+      терминальные состояния (<code>step_limit_reached</code>, <code>no_result</code>), свои
+      артефакты. Выдавать это за MCP-инструмент — соврать про владение задачей.</td>
+</tr>
+<tr>
+  <td>—</td>
+  <td><span class="b b-dim">local-runner</span></td>
+  <td>Не наш случай: Fabric не запускает наш процесс.</td>
+</tr>
+</tbody>
+</table></div>
+
+<p class="quote">Инспектор скила выдал <code>recommendedProfile: mcp</code>, но его доказательства —
+это файлы из <code>.mypy_cache</code> с «mcp» в имени. Эвристика по именам файлов; скил сам
+пишет, что код и документация её перебивают. Вывод верен, обоснование мусорное — я взял вывод
+из <span class="ev">app/mcp_server/server.py</span>, а не из его списка.</p>
+
+<h3>Таблица гейтов — как она выглядит сегодня</h3>
+
+<div class="tw"><table>
+<thead><tr><th>Гейт</th><th>Статус</th><th>Что мешает</th></tr></thead>
+<tbody>
+<tr><td>Локальная структура</td><td><span class="b b-bad">FAIL</span></td>
+    <td>Бандла нет вообще: ни <code>fabric-agent.json</code>, ни <code>fabric-contract.lock.json</code>,
+        ни <code>fabric/</code>. Первый шаг — скаффолд.</td></tr>
+<tr><td>Форма декларации</td><td><span class="b b-dim">NOT_RUN</span></td>
+    <td>Валидатор живёт в приватном <code>fabric-agent-contract</code>. Нет доступа — нет точной
+        схемной проверки. <strong>Человеческий шаг.</strong></td></tr>
+<tr><td>Согласование протокола</td><td><span class="b b-dim">NOT_RUN</span></td>
+    <td>Fabric требует ровно ревизию MCP <code>2026-07-28</code>. Какую ревизию говорит наш
+        сервер — <em>не измерено</em>; это задача, а не утверждение.</td></tr>
+<tr><td>Семантические пробы</td><td><span class="b b-bad">FAIL</span></td>
+    <td>Ограниченной фикстуры нет. Но материал есть и он хороший: демо-путь на SQLite
+        (<span class="ev">app/services/demo_data.py</span>) — это ровно «повторяемо, не мутирует
+        прод, не платит, не пишет никому».</td></tr>
+<tr><td>Готовность к биндингу</td><td><span class="b b-dim">NOT_VERIFIED</span></td>
+    <td>Хоста/реестра Fabric 0.1.0 не существует. Никто это не пройдёт сегодня — и это не наша
+        вина, а состояние контракта.</td></tr>
+</tbody>
+</table></div>
+
+<h3>Что реально придётся построить</h3>
+
+<div class="card bad">
+<h4>Конверта результата нет ни на одной поверхности</h4>
+<p>Fabric нормализует любой исход в <code>done</code> / <code>proof</code> / <code>scope</code> /
+<code>notVerified</code>. Мы отдаём прозу плюс необязательные таблицы и графики. Сырьё под это
+уже лежит и в этом хорошая новость: <code>RequestTrace</code> + <code>TraceSpan</code> — это
+<code>proof</code>; печати AnswerQualityGate и свежести — это <code>notVerified</code>;
+connection + project + индексированный SHA — это <code>scope</code>. Не хватает <em>типизированного
+конверта</em>, который это собирает. Это самая крупная работа во всём Fabric-треке и единственная,
+которая полезна нам <strong>независимо</strong> от Fabric — она же нужна для API, вебхуков и
+воспроизводимости отчётов.</p>
+</div>
+
+<div class="card warn">
+<h4>Идентичности и эффектов не объявлено</h4>
+<p>Нужны стабильный URI провайдера, монотонная ревизия и неизменяемый хеш содержимого — то есть
+генератор манифеста на релизе, а не файл, который правят руками. Плюс класс эффекта на каждый
+инструмент: <code>query_database</code> идемпотентен, <code>execute_raw_query</code> защищён
+read-only-гардом но эффект не <em>объявлен</em>, а сбор аналитики <strong>мутирует</strong> —
+пишет в fact-таблицы. Сейчас всё три выглядят одинаково.</p>
+</div>
+
+<div class="card ok">
+<h4>Что уже в нашу пользу</h4>
+<p>Нативный MCP с per-request принципалом; кросс-тенантный скоуп закрыт (#267); read-only
+принуждается на уровне СУБД, а не только регуляркой; типизированные частичные исходы уже
+существуют (<code>step_limit_reached</code>, <code>no_result</code>) — Fabric требует именно
+их сохранять при таймауте и отмене; трассировка уже персистится. Проект ближе к контракту, чем
+типичный HTTP-сервис.</p>
+</div>
+
+<hr>
+
+<h2><span class="n">2</span>Цель против реализации — по способностям</h2>
+
+<h3 style="color:var(--bad)">2.1 Один агент над всеми источниками — сломано</h3>
+
+<div class="card bad">
+<h4>В пайплайне нет ветки аналитики</h4>
+<p><span class="ev">app/agents/stage_executor.py:488-508</span> — <code>match stage.tool</code>
+знает шесть инструментов: <code>query_database</code>, <code>search_codebase</code>,
+<code>analyze_results</code>, <code>process_data</code>, <code>query_mcp_source</code>,
+<code>analyze_git</code>, <code>synthesize</code>. Ветки <code>query_analytics_source</code> нет —
+<code>case _</code> вернул бы <code>Unknown tool</code> с категорией <code>fatal</code>.</p>
+<p><span class="ev">app/agents/prompts/planner_prompt.py:30-68</span> — словарь планировщика тоже
+её не содержит, поэтому до <code>fatal</code> дело не доходит: планировщик просто <em>никогда не
+знает</em>, что аналитика существует, и строит план из БД и кода.</p>
+<p><strong>Почему это ровно та цель, которую вы описали.</strong> Path B выбирается по
+<code>complexity=complex</code> <em>или</em> <code>needs_multiple_data_sources</code> <em>или</em>
+<code>estimated_queries≥3</code>. Вопрос «сравни трафик из GA4 с регистрациями в базе» — это по
+определению <code>needs_multiple_data_sources</code>. Аналитика доступна только в одиночном
+tool-loop (Path A), то есть только в вопросах <em>про одну</em> аналитику. Продукт умеет
+«спроси GA4» и «спроси базу», но не «спроси и то и другое», и молчит об этом.</p>
+</div>
+
+<h3 style="color:var(--bad)">2.2 «Индексирует все связи» — только одна связь из шести</h3>
+
+<div class="tw"><table>
+<thead><tr><th>Связь</th><th>Есть?</th><th>Где</th></tr></thead>
+<tbody>
+<tr><td>code ↔ DB</td><td><span class="b b-ok">да</span></td>
+    <td><code>code_db_sync</code>, точные состояния свежести, арифметика колонок; за последние
+        недели вычищена от ложных таблиц</td></tr>
+<tr><td>code ↔ code</td><td><span class="b b-ok">да</span></td>
+    <td><code>code_graph_symbols</code> / <code>code_graph_edges</code>, IMPORTS теперь резолвится
+        по суффиксу пути</td></tr>
+<tr><td>DB ↔ DB (между подключениями)</td><td><span class="b b-warn">частично</span></td>
+    <td><code>metric_relationships</code> + reconciliation, но обе метрики обязаны быть
+        DB-метриками</td></tr>
+<tr><td>DB ↔ аналитика</td><td><span class="b b-bad">нет</span></td><td rowspan="3">
+    <span class="ev">app/models/metric_definition.py:34-35</span> — у метрики есть
+    <code>source_table</code> и <code>source_column</code> и <strong>нет</strong>
+    <code>source_type</code>. Граф данных DB-образный по схеме: метрика GA4 в него не помещается,
+    значит и связи с ней построить нельзя.</td></tr>
+<tr><td>code ↔ аналитика</td><td><span class="b b-bad">нет</span></td></tr>
+<tr><td>аналитика ↔ аналитика</td><td><span class="b b-bad">нет</span></td></tr>
+</tbody>
+</table></div>
+
+<p>Отдельно: единого индекса нет — четыре независимых хранилища (pgvector/Chroma для кода, BM25
+для прозы, <code>db_index</code> для схем, <code>ga4_*</code> для аналитики) и никакого
+разрешения сущностей между ними. «Агент в любой момент найдёт любую информацию» сегодня означает
+«агент знает, в какое из четырёх хранилищ пойти» — и в пятое (аналитику) он не пойдёт вообще,
+если вопрос сложный.</p>
+
+<h3 style="color:var(--warn)">2.3 Векторный поиск по репозиториям — работает, но лексическая нога пустая</h3>
+
+<p>Две критические поломки закрыты за последние дни и это надо сказать прямо:
+<code>hybrid_min_score</code> опущен до <code>0.0</code> с проверкой на буте, которая
+<em>падает</em> на значении выше потолка RRF (<span class="ev">config.py:801-810, 1253-1258</span>,
+#269), и номинальный <code>isinstance</code>, который опустошал RAG-ногу на продовом бэкенде,
+удалён (#274). Поиск перестал быть AND-гейтом.</p>
+
+<p>Но остаётся то, из-за чего код всё ещё плохо находится по идентификатору: тела символов
+уходят только в векторное хранилище, а BM25-корпус собирается из LLM-прозы — строки 2.2 и 2.3
+леджера. Запрос <code>UserRepository::findByEmail</code> лексической ноге не по чему совпасть.</p>
+
+<h3 style="color:var(--warn)">2.4 Аналитика — один вендор из четырёх названных</h3>
+
+<div class="tw"><table>
+<thead><tr><th>Вендор</th><th>Состояние</th><th>Что это значит</th></tr></thead>
+<tbody>
+<tr><td>Google Analytics 4</td><td><span class="b b-ok">работает</span></td>
+    <td>Адаптер, пагинация по <code>offset</code>, <code>keep_empty_rows</code>, чтение квоты,
+        журнал импортов, 5 fact-таблиц, агент с гейтами честности</td></tr>
+<tr><td>App Store Connect</td><td><span class="b b-warn">зарезервирован</span></td>
+    <td>В <code>ANALYTICS_SOURCE_TYPES</code> есть, создание подключения отвечает 422</td></tr>
+<tr><td>Google Play</td><td><span class="b b-warn">зарезервирован</span></td>
+    <td>То же</td></tr>
+<tr><td>Google Search Console</td><td><span class="b b-bad">отсутствует</span></td>
+    <td>Ни строки. Проверено: единственное совпадение по <code>gsc</code> в <code>app/</code> —
+        это подстрока в <code>SettingsConfigDict</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="card warn">
+<h4>Абстракция вендора чистая, хранилище — нет. Это и есть стена масштабирования</h4>
+<p><span class="ev">app/analytics/base.py</span> — хороший контракт: каталог отчётов, один отчёт
+на один период, <code>truncated</code>/<code>degraded</code> рядом со строками. Добавить вендора
+на этом уровне дёшево.</p>
+<p><span class="ev">app/services/analytics_collect_service.py:118-134</span> —
+<code>FACT_TABLES_BY_SOURCE = {"ga4": GA4_FACT_TABLES}</code>, и таблицы описаны руками, по одной
+на отчёт, с позиционным маппингом колонок. Плюс
+<span class="ev">app/agents/tools/analytics_tools.py:55-62</span> — описание инструмента
+<em>перечисляет пять отчётов GA4 буквально</em>, одним глобальным определением на весь продукт.</p>
+<p>Итог: вендор стоит <strong>адаптер + миграция + ORM-таблицы + правка описания инструмента</strong>.
+Три вендора — три миграции и три правки одного и того же текста. «Можно подумать о расширении на
+другие коннекторы» упирается сюда.</p>
+</div>
+
+<h3 style="color:var(--ok)">2.5 Отчёты и графики — есть</h3>
+<p>VizAgent, несколько графиков на один ответ, дашборды, публичный просмотр, расписания с
+алертами. Аналитический ответ рисует график (SCN-118). Эта часть цели закрыта.</p>
+
+<hr>
+
+<h2><span class="n">3</span>План — один порядок, старое и новое вместе</h2>
+
+<p>Существующий леджер — <code>docs/AUDIT_REMEDIATION_2026-09.md</code>: 38 строк, 14 закрыто,
+P0 закрыт весь кроме 0.4. Ниже он не переписан, а <strong>продолжен</strong>: остаток P1
+идёт первым, потом четыре новых трека. Каждая строка — узел для task-pipeline.</p>
+
+<h3>Сначала: остаток P1 из леджера <span class="b b-dim">5 строк, все S</span></h3>
+<p>1.7 <code>step_limit_reached</code> на 216-секундном отрезе · 1.9 <code>tracker</code> в три
+точки <code>HybridRetriever</code> · 1.10 скоуп <code>semantic_layer</code>/<code>data_graph</code>/<code>feed</code>
+по проекту подключения · 1.11 скоуп записи data-validation · 1.12 MCP JWT должен уважать
+<code>token_version</code>. Три из пяти — дыры в изоляции тенантов того же вида, что закрытая
+#267. Они идут первыми не по важности для цели, а потому что это открытые дыры.</p>
+
+<h3>Трек A — «один агент над всеми источниками» <span class="b b-bad">блокирует цель</span></h3>
+
+<div class="tw"><table>
+<thead><tr><th>#</th><th>Задача</th><th>Размер</th><th>Почему здесь</th></tr></thead>
+<tbody>
+<tr><td><strong>A1</strong></td>
+    <td>Ветка <code>query_analytics_source</code> в <code>stage_executor</code> + инструмент в
+        словаре планировщика</td>
+    <td><span class="b b-ok">S</span></td>
+    <td>Одна ветка <code>match</code> и один абзац промпта снимают главный блокер цели. Тест:
+        вопрос про два источника строит план, где есть и аналитика, и БД</td></tr>
+<tr><td><strong>A2</strong></td>
+    <td>Каталог отчётов в описание инструмента — из подключения, а не из захардкоженной пятёрки GA4</td>
+    <td><span class="b b-ok">S</span></td>
+    <td>Иначе каждый новый вендор правит один и тот же текст, и модель видит отчёты, которых у
+        этого подключения нет</td></tr>
+<tr><td><strong>A3</strong></td>
+    <td>Примитив выравнивания по периоду в <code>process_data</code> — соединить дневные строки
+        аналитики с дневным агрегатом из БД</td>
+    <td><span class="b b-warn">M</span></td>
+    <td>Без него A1 даёт две таблицы рядом и синтез «на глаз». <code>cohort_window</code> —
+        готовый образец такой операции</td></tr>
+<tr><td><strong>A4</strong></td>
+    <td><code>source_type</code> + <code>source_ref</code> на <code>metric_definitions</code>;
+        связи между метриками разных источников</td>
+    <td><span class="b b-warn">M</span></td>
+    <td>Это и есть «индексирует все связи». Пока граф DB-образный, аналитика в него не входит</td></tr>
+</tbody>
+</table></div>
+
+<h3>Трек B — ширина коннекторов</h3>
+
+<div class="tw"><table>
+<thead><tr><th>#</th><th>Задача</th><th>Размер</th><th>Замечание</th></tr></thead>
+<tbody>
+<tr><td><strong>B1</strong></td>
+    <td>Общее fact-хранилище: одна широкая таблица
+        <code>(connection, report, period, dims JSONB)</code> + типизированные метрики</td>
+    <td><span class="b b-bad">L</span></td>
+    <td><strong>Нужно решение:</strong> оставить <code>ga4_*</code> как есть и вести два
+        хранилища, или перевезти GA4 внутрь. Второе дороже сейчас и дешевле на каждом следующем
+        вендоре</td></tr>
+<tr><td><strong>B2</strong></td>
+    <td>Google Search Console</td>
+    <td><span class="b b-warn">M</span></td>
+    <td>Ближайший к GA4: та же Google-авторизация, тот же vendor-credential store. Вы его назвали,
+        а его нет вообще — это самый дешёвый прирост охвата</td></tr>
+<tr><td><strong>B3</strong></td>
+    <td>App Store Connect · Google Play</td>
+    <td><span class="b b-warn">M×2</span></td>
+    <td>Уже зарезервированы в семье типов; сейчас честно отвечают 422</td></tr>
+<tr><td><strong>B4</strong></td>
+    <td>BigQuery · Snowflake (из ROADMAP)</td>
+    <td><span class="b b-warn">M×2</span></td>
+    <td><code>ADAPTER_REGISTRY</code> к этому готов — SQLite добавился одной строкой</td></tr>
+</tbody>
+</table></div>
+
+<h3>Трек C — качество поиска, на котором продукт продаётся</h3>
+<p>Это строки 2.2, 2.3, 2.5, 2.10 леджера, и они относятся к цели напрямую: «векторный поиск по
+репозиториям, чтобы находить части кода».</p>
+<ul>
+<li><strong>C1</strong> (=2.2, M) — тела символов в BM25-корпус. Сейчас там LLM-проза.</li>
+<li><strong>C2</strong> (=2.3, S) — целые идентификаторы как термы BM25.</li>
+<li><strong>C3</strong> (=2.5, L) — <strong>настоящий ретривер в CI-эвал.</strong> Сегодняшний
+гейт оценивает оракула, которому выдали ответы; поэтому ни одна из двух критических поломок
+поиска его не покраснила. Пока это так, любой регресс в поиске проходит CI.</li>
+<li><strong>C4</strong> (=2.10, M) — префиксное совпадение при удалении: чанки символов не
+вычищаются.</li>
+</ul>
+
+<h3>Трек D — Fabric</h3>
+
+<div class="tw"><table>
+<thead><tr><th>#</th><th>Задача</th><th>Размер</th><th>Блокировка</th></tr></thead>
+<tbody>
+<tr><td><strong>D1</strong></td><td>Измерить ревизию MCP, которую говорит наш сервер, против
+    требуемой <code>2026-07-28</code></td><td><span class="b b-ok">S</span></td>
+    <td>Ничем. Делается первым: если ревизия не та, весь трек меняет форму</td></tr>
+<tr><td><strong>D2</strong></td><td>Типизированный конверт результата
+    (<code>done</code>/<code>proof</code>/<code>scope</code>/<code>notVerified</code>)</td>
+    <td><span class="b b-bad">L</span></td>
+    <td>Ничем. <strong>Полезен без Fabric</strong> — это же основа для API, вебхуков и
+        воспроизводимых отчётов</td></tr>
+<tr><td><strong>D3</strong></td><td>Скаффолд бандла провайдера + декларации эффектов и классов
+    данных на каждый инструмент</td><td><span class="b b-warn">M</span></td>
+    <td>Точная схемная валидация — <code>NOT_RUN</code> без приватного чекаута</td></tr>
+<tr><td><strong>D4</strong></td><td>Ограниченные пробы на демо-пути SQLite + семантические
+    ассерты</td><td><span class="b b-warn">M</span></td><td>D3</td></tr>
+<tr><td><strong>D5</strong></td><td><code>FABRIC-CONFORMANCE.md</code> с расписками и явными
+    непроверенными гейтами</td><td><span class="b b-ok">S</span></td>
+    <td>Последние два гейта останутся <code>NOT_VERIFIED</code>: хоста Fabric 0.1.0 не
+        существует</td></tr>
+</tbody>
+</table></div>
+
+<p><strong>Почему Fabric не первым.</strong> Контракт 0.1.0 не имеет реестра и рантайма — пройти
+допуск сегодня физически нельзя ни одному провайдеру. Готовый бандл — это готовность, а не
+подключение. Треки A и C двигают продукт, который вы описали; трек D двигает его совместимость с
+хостом, которого пока нет. Единственное исключение — D2: конверт результата нужен нам самим.</p>
+
+<h3>Шаги, которые может сделать только человек</h3>
+<ul>
+<li><strong>0.4</strong> — живые ключи Stripe и три <code>STRIPE_PRICE_*</code>. Обе причины,
+по которым строка была загейчена, уже снял код (0.6 и 1.4). Остались только креды.</li>
+<li><strong>Fabric</strong> — доступ к приватному <code>fabric-agent-contract</code>. Без него
+схемная валидация остаётся <code>NOT_RUN</code>, и восстанавливать нормативные правила по памяти
+скил прямо запрещает.</li>
+<li><strong>Sentry</strong> — <code>heroku labs:enable runtime-dyno-metadata</code>: сейчас
+<code>release</code> в проде <code>None</code>, ни один трейс не называет коммит.</li>
+</ul>
+
+<hr>
+
+<h2><span class="n">4</span>Что я измерил, а что нет</h2>
+
+<p><strong>Прочитано в коде:</strong> отсутствие ветки аналитики в <code>stage_executor.py:488-508</code>;
+отсутствие инструмента в словаре <code>planner_prompt.py:30-68</code>; DB-образная схема
+<code>metric_definition.py:34-35</code>; <code>FACT_TABLES_BY_SOURCE</code> с единственным ключом;
+захардкоженные пять отчётов GA4 в описании инструмента; семь MCP-инструментов; полное отсутствие
+Search Console; <code>hybrid_min_score = 0.0</code> с проверкой на буте.</p>
+
+<p><strong>Не измерено — и я не буду это утверждать:</strong> какую ревизию MCP говорит наш сервер
+(это задача D1); что именно вернёт продовый агент на кросс-источниковый вопрос — я вывел это из
+кода, а не наблюдал; сколько стоит перевоз GA4 в общее хранилище (B1).</p>
+
+<p><strong>Мусор, который я отбросил:</strong> вывод Fabric-инспектора. Его 20 «доказательств» —
+файлы <code>.mypy_cache</code> с «mcp» в имени. Рекомендация совпала с правильным ответом
+случайно.</p>
+
+<div class="foot">
+checkmydata-ai · разрыв цели и план · 2026-09-03 · HEAD <code>db6ee22</code><br>
+Леджер: <code>docs/AUDIT_REMEDIATION_2026-09.md</code> · полный аудит:
+<code>docs/reports/audit-2026-09-01.html</code> · Fabric-контракт закреплён на
+<code>0.1.0 / 20a818e6</code>
+</div>
+
+</div>
+</body>
+</html>

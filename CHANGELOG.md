@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — analytics could not be reached by the pipeline that runs every multi-source question
+
+The product is sold on one agent over every connected source. Asking about a database and
+an analytics source at once did not work, and nothing said so.
+
+`StageExecutor` dispatched six tools and `query_analytics_source` was not among them
+(`stage_executor.py`'s `match stage.tool`), while `PLANNER_SYSTEM_PROMPT` — the constant
+listing what a stage may name — did not mention it either. The second absence hid the
+first: the planner never emitted an analytics stage, so the missing branch was never
+reached and produced no error to notice.
+
+The orchestrator **knew**. `_run_complex_pipeline` carried a documented T13 workaround
+that bounced an analytics-*only* project to the flat loop, where the tool is offered. What
+that could never cover is the case the feature exists for: analytics **plus** a database,
+where `use_complex_pipeline` is true precisely because the question needs more than one
+source. Those ran, silently, without the source they asked about.
+
+Now: the stage is dispatched, and it **carries rows forward**. `AnalyticsResult` already
+exposed `columns`/`rows` for the viz agent, so `StageResult.query_result` is populated from
+them and a following `process_data` or `analyze_results` stage can align a vendor's daily
+numbers against a daily aggregate from the database — instead of the synthesis comparing
+two prose summaries by eye. The bounce is removed, because the pipeline can execute those
+stages now.
+
+**The tenant check did not get copied.** `AnalyticsAgent.run` needs the resolved
+connection's identity, so the stage has to resolve one — and #267 was that same check
+written once per entry point with one entry point missing it. The decision moved into
+`ConnectionService.resolve_analytics_connection`, which both callers now ask; the
+dispatcher renders its machine-readable `reason` into the exact strings it used before, so
+no learning trained on that text goes stale.
+
+**Availability is per project, and that is a fix to `query_mcp_source` too.** The system
+prompt is a constant, so every tool it names is offered to every project — and a stage
+naming a source that is not connected fails `configuration`, which is deliberately
+non-retryable and ends the run. `build_planner_user_prompt` and `build_replan_prompt` now
+carry a `Connected sources:` line beside `Database type` and `Available tables`, where
+per-project facts already lived. An empty list renders **nothing** rather than "none": the
+probes degrade to `False` on error, and a probe that failed must not be reported to the
+model as the fact that nothing is connected. The pipeline's *resume* path passes nothing,
+deliberately — it has no probes in scope, and a partial list is a false statement where an
+absent one is silence.
+
+Also fixed while in that function: `_fallback_tool`'s ladder ended at `query_mcp_source`
+unconditionally, so an analytics-only project's last-resort quick plan named a tool it had
+no source for.
+
+45 new tests, 28 red before. Two negative controls executed rather than assumed: deleting
+the dispatch case turns 12 red, deleting the tenant comparison turns 1 red.
+`test_analytics_only_pipeline_bounces_to_the_flat_loop` was **inverted** — it pinned the
+workaround as the requirement, the sixth time that pattern has appeared in this
+programme. Scenario SCN-128 covers the behaviour; `docs/AUDIT_REMEDIATION_2026-09.md`
+opens Track A and records three carry-over rows, including the unprotected resume replan.
+
+
 ### Fixed — freshness had two states where it needed three, and no signal for the failure it exists to warn about
 
 **"We could not check" read as "we checked and it is fresh."** `ContextLoader.check_staleness`
