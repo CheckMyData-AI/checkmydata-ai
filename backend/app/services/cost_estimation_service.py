@@ -3,9 +3,11 @@
 Pulled out of ``app/api/routes/chat.py`` so the router can focus on HTTP
 concerns and so these helpers can be unit-tested in isolation.
 
-Nothing here touches the database or the HTTP layer — the functions are
-pure utilities over SQL strings, token counts, and the cached OpenRouter
-pricing table.
+Nothing here touches the database. The two SQL/token helpers are pure;
+``estimate_cost_async`` delegates the price table to
+:mod:`app.services.model_pricing_service`, which owns the fetch and its cache —
+this module used to read a route module's private dict instead, which is why
+the cost was NULL on every row ever written.
 """
 
 from __future__ import annotations
@@ -50,33 +52,33 @@ def estimate_tokens(text: str, *, chars_per_token: int = _CHARS_PER_TOKEN) -> in
     return max(0, len(text) // max(1, chars_per_token))
 
 
-def estimate_cost(
+async def estimate_cost_async(
     model: str | None,
     prompt_tokens: int,
     completion_tokens: int,
-) -> float | None:
-    """Estimate USD cost using cached OpenRouter pricing data when available.
+) -> tuple[float | None, str]:
+    """Cost for one call, and where the price came from.
 
-    Returns ``None`` when pricing data is missing or the model is unknown.
+    Returns ``(None, "none")`` when the model is not in the price table — never
+    zero, because zero is a claim about money and "unknown" is the truth.
+
+    Replaces a synchronous ``estimate_cost`` that read
+    ``app.api.routes.models._cache``: a dict populated only as a side effect of
+    an HTTP request to ``GET /api/models``. The worker serves no HTTP, so its
+    copy was always empty, and production carried NULL costs on **all 7 664**
+    ``token_usage`` rows and **all 222** traces (measured 2026-09-04). Awaiting
+    the fetch instead of peeking at its cache is the whole fix; see
+    :mod:`app.services.model_pricing_service`.
     """
-    if not model:
-        return None
-    try:
-        from app.api.routes.models import _cache
+    from app.services.model_pricing_service import get_price
 
-        cached = _cache.get("openrouter")
-        if not cached:
-            return None
-        _, models_list = cached
-        for m in models_list:
-            if m["id"] == model:
-                pricing = m.get("pricing", {})
-                prompt_price = float(pricing.get("prompt", "0"))
-                completion_price = float(pricing.get("completion", "0"))
-                return round(
-                    prompt_tokens * prompt_price + completion_tokens * completion_price,
-                    8,
-                )
-    except Exception:
-        logger.debug("Cost computation failed", exc_info=True)
-    return None
+    price = await get_price(model)
+    if price is None:
+        return None, "none"
+    return (
+        round(
+            prompt_tokens * price.prompt_per_token + completion_tokens * price.completion_per_token,
+            8,
+        ),
+        price.source,
+    )
