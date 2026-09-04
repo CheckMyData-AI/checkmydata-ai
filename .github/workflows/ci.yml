@@ -167,8 +167,43 @@ jobs:
       # answer is to record the decision — the way `scripts/config_drift.py` records a
       # deliberate divergence — not to soften the gate, because a gate that yields to
       # the first inconvenient advisory protects nothing after that.
+      #
+      # 2026-09-04: the gate went red on `main`'s successor with **no advisory
+      # involved**. `npm audit` exits 1 on a TRANSPORT failure too, so a
+      # registry outage is indistinguishable from a finding:
+      #
+      #   npm warn audit 503 Service Unavailable - POST …/security/audits/quick
+      #   npm error audit endpoint returned an error
+      #   Process completed with exit code 1
+      #
+      # The `npm ci` step in the same job had reported "1 moderate severity
+      # vulnerability" ninety seconds earlier, so the data existed — the
+      # dedicated call hit a blip. A red build then reads as "we introduced a
+      # vulnerability", which is the worst possible misreading of a gate.
+      #
+      # Retried three times with backoff, so a short outage never reaches a
+      # human. It still FAILS if the endpoint stays down, and the message says
+      # the gate could not be evaluated rather than claiming a finding. It does
+      # not pass on an unevaluated check: "could not run" reported as a pass is
+      # the substitution this whole file exists to refuse.
       - name: Audit dependencies
-        run: npm audit --audit-level=high
+        run: |
+          for attempt in 1 2 3; do
+            if out=$(npm audit --audit-level=high 2>&1); then
+              echo "$out"
+              exit 0
+            fi
+            if grep -qE "audit endpoint returned an error|Service Unavailable|ENOTFOUND|ETIMEDOUT|socket hang up" <<< "$out"; then
+              echo "::warning::npm audit endpoint unreachable (attempt $attempt/3) — retrying"
+              sleep $((attempt * 20))
+              continue
+            fi
+            # A real finding: print it and fail.
+            echo "$out"
+            exit 1
+          done
+          echo "::error::npm audit could NOT BE EVALUATED — the registry audit endpoint was unreachable after 3 attempts. This is not a vulnerability report; it is an unrun check. Re-run the job."
+          exit 1
 
       - name: Type check
         run: npx tsc --noEmit
