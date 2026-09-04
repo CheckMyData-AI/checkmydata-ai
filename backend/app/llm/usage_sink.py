@@ -30,16 +30,22 @@ from app.services.usage_service import UsageService
 logger = logging.getLogger(__name__)
 
 
-def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
+async def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
     """Cost for this call, or None when the model is not in the price table.
+
+    Async since Ш0b: the price table is fetched, not peeked at. It used to read
+    an in-process dict that only an HTTP handler filled, so the worker — which
+    writes most of these rows — recorded NULL on every one of 7 664.
 
     Deliberately UNGUARDED. `observe` already wraps its whole body in a broad handler,
     and the router wraps the `observe` call in another — a third would be a suppression
     that suppresses nothing, and the silent-degradation ratchet is right to count it.
+    The fetch itself degrades to an empty table rather than raising.
     """
-    from app.services.cost_estimation_service import estimate_cost
+    from app.services.cost_estimation_service import estimate_cost_async
 
-    return estimate_cost(model, prompt_tokens, completion_tokens)
+    cost, _source = await estimate_cost_async(model, prompt_tokens, completion_tokens)
+    return cost
 
 
 @runtime_checkable
@@ -166,7 +172,9 @@ class DbUsageSink:
                     # The estimator already existed and was only wired into the four
                     # `chat.py` call sites, which cover the request but not the
                     # per-LLM-call sink that fires far more often.
-                    estimated_cost_usd=_estimate_cost(model, prompt_tokens, completion_tokens),
+                    estimated_cost_usd=await _estimate_cost(
+                        model, prompt_tokens, completion_tokens
+                    ),
                 )
                 if self._gate:
                     # Skipped entirely, not merely ignored: this runs once per LLM call and

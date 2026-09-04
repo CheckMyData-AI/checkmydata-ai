@@ -4,8 +4,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.deps import get_current_user
-from app.api.routes.models import _cache, _sort_openrouter_models
+from app.api.routes.models import _sort_openrouter_models
 from app.main import app
+from app.services.model_pricing_service import _cache
 
 _FAKE_USER = {"user_id": "test-user-1", "email": "unit@test.local"}
 
@@ -118,7 +119,7 @@ class TestModelsEndpoint:
     def test_openrouter_returns_sorted(self, client):
         instance = self._make_mock_client(MOCK_OPENROUTER_RESPONSE)
 
-        with patch("app.api.routes.models.httpx.AsyncClient", return_value=instance):
+        with patch("app.services.model_pricing_service.httpx.AsyncClient", return_value=instance):
             resp = client.get("/api/models?provider=openrouter")
             assert resp.status_code == 200
             data = resp.json()
@@ -130,7 +131,7 @@ class TestModelsEndpoint:
     def test_openrouter_uses_cache(self, client):
         instance = self._make_mock_client(MOCK_OPENROUTER_RESPONSE)
 
-        with patch("app.api.routes.models.httpx.AsyncClient", return_value=instance):
+        with patch("app.services.model_pricing_service.httpx.AsyncClient", return_value=instance):
             resp1 = client.get("/api/models?provider=openrouter")
             assert resp1.status_code == 200
 
@@ -161,7 +162,7 @@ class TestModelsEndpoint:
     def test_default_provider_is_openrouter(self, client):
         instance = self._make_mock_client({"data": []})
 
-        with patch("app.api.routes.models.httpx.AsyncClient", return_value=instance):
+        with patch("app.services.model_pricing_service.httpx.AsyncClient", return_value=instance):
             resp = client.get("/api/models")
             assert resp.status_code == 200
 
@@ -173,7 +174,7 @@ class TestModelsEndpoint:
         instance.__aenter__ = AsyncMock(return_value=instance)
         instance.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.api.routes.models.httpx.AsyncClient", return_value=instance):
+        with patch("app.services.model_pricing_service.httpx.AsyncClient", return_value=instance):
             resp = client.get("/api/models?provider=openrouter")
             assert resp.status_code == 200
             data = resp.json()

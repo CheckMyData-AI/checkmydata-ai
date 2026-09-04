@@ -118,15 +118,14 @@ async def _safe_to_config(db: AsyncSession, conn_model) -> "ConnectionConfig":
         ) from exc
 
 
-def _trace_meta(response: object, *, cost_usd: float | None = None) -> TraceMeta:
+def _trace_meta(response: object, *, priced: tuple[float | None, str] | None = None) -> TraceMeta:
     """Ш0 · REQ-2/3: the routing and cost facts of a run that produced a response.
 
-    ``price_source="process_cache"`` because that is literally where
-    :func:`_estimate_cost` reads a price from — an in-process dict populated only
-    by a request to ``GET /api/models``. Naming it is the point: the worker
-    serves no HTTP, so on that side the dict is always empty and the cost is
-    ``None`` with source ``"none"``. Ш0b replaces the store; this records which
-    one answered so a cost figure can be audited either way.
+    ``priced`` is the ``(cost, source)`` pair :func:`_estimate_cost` returns —
+    the source is carried rather than assumed, because the same number means
+    different things from a live price and from an empty table. Ш0b made the
+    price table something a process FETCHES instead of something an HTTP handler
+    happened to fill, which is why every cost in production was NULL.
 
     A response carrying an error is marked ``fatal``, which is **coarse and
     deliberate**: nothing today classifies an ``AgentResponse.error`` string, and
@@ -137,14 +136,19 @@ def _trace_meta(response: object, *, cost_usd: float | None = None) -> TraceMeta
         response,
         failure_kind=fk.FATAL if getattr(response, "error", None) else None,
     )
-    return meta if cost_usd is None else meta.with_cost(cost_usd, "process_cache")
+    if priced is None:
+        return meta
+    cost_usd, source = priced
+    return meta.with_cost(cost_usd, source)
 
 
-def _estimate_cost(model: str | None, prompt_tokens: int, completion_tokens: int) -> float | None:
-    """Thin wrapper — see :mod:`cost_estimation_service`."""
-    from app.services.cost_estimation_service import estimate_cost
+async def _estimate_cost(
+    model: str | None, prompt_tokens: int, completion_tokens: int
+) -> tuple[float | None, str]:
+    """Thin wrapper — see :mod:`cost_estimation_service`. Async since Ш0b."""
+    from app.services.cost_estimation_service import estimate_cost_async
 
-    return estimate_cost(model, prompt_tokens, completion_tokens)
+    return await estimate_cost_async(model, prompt_tokens, completion_tokens)
 
 
 class ChatRequest(BaseModel):
@@ -451,7 +455,7 @@ async def ask(
         )
 
         ask_usage = result.token_usage or {}
-        ask_cost = _estimate_cost(
+        ask_cost, _ = await _estimate_cost(
             result.llm_model,
             ask_usage.get("prompt_tokens", 0),
             ask_usage.get("completion_tokens", 0),
@@ -545,11 +549,13 @@ async def ask(
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
                 total_tokens=usage.get("total_tokens", 0),
-                estimated_cost_usd=_estimate_cost(
-                    result.llm_model,
-                    usage.get("prompt_tokens", 0),
-                    usage.get("completion_tokens", 0),
-                ),
+                estimated_cost_usd=(
+                    await _estimate_cost(
+                        result.llm_model,
+                        usage.get("prompt_tokens", 0),
+                        usage.get("completion_tokens", 0),
+                    )
+                )[0],
             )
         except Exception:
             logger.warning("Failed to record token usage", exc_info=True)
@@ -576,7 +582,7 @@ async def ask(
                         or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)),
                         meta=_trace_meta(
                             result,
-                            cost_usd=_estimate_cost(
+                            priced=await _estimate_cost(
                                 result.llm_model,
                                 usage.get("prompt_tokens", 0),
                                 usage.get("completion_tokens", 0),
@@ -855,7 +861,7 @@ async def ask_stream(
                 else None
             )
             bg_usage = bg_result.token_usage or {}
-            bg_cost = _estimate_cost(
+            bg_priced = await _estimate_cost(
                 bg_result.llm_model,
                 bg_usage.get("prompt_tokens", 0),
                 bg_usage.get("completion_tokens", 0),
@@ -865,7 +871,7 @@ async def ask_stream(
                     **(bg_result.token_usage or {}),
                     "provider": bg_result.llm_provider or "unknown",
                     "model": bg_result.llm_model or "unknown",
-                    "estimated_cost_usd": bg_cost,
+                    "estimated_cost_usd": bg_priced[0],
                     "prompt_version": bg_result.prompt_version,
                 }
                 if bg_result.token_usage
@@ -932,7 +938,7 @@ async def ask_stream(
                         prompt_tokens=bg_usage.get("prompt_tokens", 0),
                         completion_tokens=bg_usage.get("completion_tokens", 0),
                         total_tokens=bg_usage.get("total_tokens", 0),
-                        estimated_cost_usd=bg_cost,
+                        estimated_cost_usd=bg_priced[0],
                     )
                 except Exception:
                     logger.warning("Background finalize: failed to record usage", exc_info=True)
@@ -949,7 +955,7 @@ async def ask_stream(
                                 message_id=bg_user_message_id,
                                 assistant_message_id=bg_assistant_msg.id,
                                 question=bg_body.message,
-                                meta=_trace_meta(bg_result, cost_usd=bg_cost),
+                                meta=_trace_meta(bg_result, priced=bg_priced),
                                 response_type=bg_result.response_type or "text",
                                 status="failed" if bg_result.error else "completed",
                                 error_message=bg_result.error,
@@ -1208,7 +1214,7 @@ async def ask_stream(
             )
 
             s_usage = result.token_usage or {}
-            s_cost = _estimate_cost(
+            s_cost, _ = await _estimate_cost(
                 result.llm_model,
                 s_usage.get("prompt_tokens", 0),
                 s_usage.get("completion_tokens", 0),
@@ -1299,11 +1305,13 @@ async def ask_stream(
                         prompt_tokens=stream_usage.get("prompt_tokens", 0),
                         completion_tokens=stream_usage.get("completion_tokens", 0),
                         total_tokens=stream_usage.get("total_tokens", 0),
-                        estimated_cost_usd=_estimate_cost(
-                            result.llm_model,
-                            stream_usage.get("prompt_tokens", 0),
-                            stream_usage.get("completion_tokens", 0),
-                        ),
+                        estimated_cost_usd=(
+                            await _estimate_cost(
+                                result.llm_model,
+                                stream_usage.get("prompt_tokens", 0),
+                                stream_usage.get("completion_tokens", 0),
+                            )
+                        )[0],
                     )
                 except Exception:
                     logger.warning("Failed to record token usage", exc_info=True)
@@ -1333,7 +1341,7 @@ async def ask_stream(
                                 ),
                                 meta=_trace_meta(
                                     result,
-                                    cost_usd=_estimate_cost(
+                                    priced=await _estimate_cost(
                                         result.llm_model,
                                         stream_usage.get("prompt_tokens", 0),
                                         stream_usage.get("completion_tokens", 0),
@@ -1861,11 +1869,13 @@ async def chat_websocket(
                             prompt_tokens=ws_usage.get("prompt_tokens", 0),
                             completion_tokens=ws_usage.get("completion_tokens", 0),
                             total_tokens=ws_usage.get("total_tokens", 0),
-                            estimated_cost_usd=_estimate_cost(
-                                result.llm_model,
-                                ws_usage.get("prompt_tokens", 0),
-                                ws_usage.get("completion_tokens", 0),
-                            ),
+                            estimated_cost_usd=(
+                                await _estimate_cost(
+                                    result.llm_model,
+                                    ws_usage.get("prompt_tokens", 0),
+                                    ws_usage.get("completion_tokens", 0),
+                                )
+                            )[0],
                         )
                     except Exception:
                         logger.warning("WS: Failed to record token usage", exc_info=True)
@@ -1897,7 +1907,7 @@ async def chat_websocket(
                                     ),
                                     meta=_trace_meta(
                                         result,
-                                        cost_usd=_estimate_cost(
+                                        priced=await _estimate_cost(
                                             result.llm_model,
                                             ws_usage.get("prompt_tokens", 0),
                                             ws_usage.get("completion_tokens", 0),

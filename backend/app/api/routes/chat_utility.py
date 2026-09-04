@@ -43,11 +43,14 @@ def _compute_sql_complexity(sql: str) -> str:
     return compute_sql_complexity(sql)
 
 
-def _estimate_cost(model: str | None, prompt_tokens: int, completion_tokens: int) -> float | None:
-    """Thin wrapper — see :mod:`cost_estimation_service`."""
-    from app.services.cost_estimation_service import estimate_cost
+async def _estimate_cost(
+    model: str | None, prompt_tokens: int, completion_tokens: int
+) -> float | None:
+    """Thin wrapper — see :mod:`cost_estimation_service`. Async since Ш0b."""
+    from app.services.cost_estimation_service import estimate_cost_async
 
-    return estimate_cost(model, prompt_tokens, completion_tokens)
+    cost, _source = await estimate_cost_async(model, prompt_tokens, completion_tokens)
+    return cost
 
 
 def _estimate_tokens(text: str) -> int:
@@ -190,7 +193,7 @@ async def estimate_cost(
 
     project = await _project_svc.get(db, project_id)
     model = (project.agent_llm_model if project else None) or None
-    cost = _estimate_cost(model, total_prompt, avg_completion)
+    cost = await _estimate_cost(model, total_prompt, avg_completion)
 
     rotation_threshold = app_settings.session_rotation_threshold_pct
     rotation_imminent = (

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.services.cost_estimation_service import (
     compute_sql_complexity,
-    estimate_cost,
+    estimate_cost_async,
     estimate_tokens,
 )
 
@@ -44,28 +44,43 @@ class TestEstimateTokens:
 
 
 class TestEstimateCost:
-    def test_no_model_returns_none(self):
-        assert estimate_cost(None, 100, 100) is None
+    """Rewritten by Ш0b, and the rewrite is the finding.
 
-    def test_missing_cache_returns_none(self):
-        with patch("app.api.routes.models._cache") as mock_cache:
-            mock_cache.get.return_value = None
-            assert estimate_cost("m", 100, 100) is None
+    These tests patched ``app.api.routes.models._cache`` and asserted that a
+    missing cache returns ``None``. That is not a requirement — it is the defect:
+    the cache was populated only as a side effect of an HTTP request to
+    ``GET /api/models``, so the worker's copy was always empty and production
+    carried NULL costs on **all 7 664** ``token_usage`` rows and **all 222**
+    traces (measured 2026-09-04). A test that pins "no cache ⇒ no cost" makes
+    the empty cache acceptable, and it was the **eighth** time in this programme
+    that a test held the defect in place.
 
-    def test_known_model_returns_cost(self):
-        fake_cache = [
-            (
-                0,
-                [
-                    {
-                        "id": "openai/gpt-x",
-                        "pricing": {"prompt": "0.0001", "completion": "0.0002"},
-                    }
-                ],
-            )
-        ]
-        with patch("app.api.routes.models._cache") as mock_cache:
-            mock_cache.get.return_value = fake_cache[0]
-            cost = estimate_cost("openai/gpt-x", 100, 50)
-        assert cost is not None
-        assert cost > 0
+    The price table is now fetched by whichever process needs it, so the
+    interesting cases are: a cold process still gets a price, and a model absent
+    from the catalogue has no price rather than a zero one.
+    """
+
+    async def test_no_model_returns_none_with_a_reason(self):
+        assert await estimate_cost_async(None, 100, 100) == (None, "none")
+
+    async def test_a_cold_process_still_gets_a_price(self):
+        """The inversion of `test_missing_cache_returns_none`: nothing has served
+        an HTTP request, and a cost comes back anyway."""
+        fake = [{"id": "openai/gpt-x", "pricing": {"prompt": "0.0001", "completion": "0.0002"}}]
+        with patch(
+            "app.services.model_pricing_service._fetch_openrouter_models",
+            new=AsyncMock(return_value=fake),
+        ):
+            cost, source = await estimate_cost_async("openai/gpt-x", 100, 50)
+
+        # 100 * 0.0001 + 50 * 0.0002 = 0.01 + 0.01
+        assert cost == 0.02
+        assert source == "process_cache"
+
+    async def test_a_model_outside_the_catalogue_has_no_price_not_a_zero_one(self):
+        fake = [{"id": "openai/gpt-x", "pricing": {"prompt": "0.0001", "completion": "0.0002"}}]
+        with patch(
+            "app.services.model_pricing_service._fetch_openrouter_models",
+            new=AsyncMock(return_value=fake),
+        ):
+            assert await estimate_cost_async("someone/else", 100, 50) == (None, "none")

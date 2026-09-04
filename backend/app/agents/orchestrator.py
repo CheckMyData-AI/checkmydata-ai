@@ -2747,19 +2747,43 @@ class OrchestratorAgent(BaseAgent):
             )
 
             completed = exec_result.stage_ctx.results
-            new_plan = await adaptive.replan(
-                context.user_question,
-                completed_stages=completed,
-                failed_stage=failed,
-                error=error_msg,
-                table_map=table_map,
-                db_type=db_type,
-                preferred_provider=context.preferred_provider,
-                model=context.model,
-                replan_history=replan_history,
-                staleness_warning=staleness_warning,
-                available_sources=available_sources,
-            )
+            # Ш0b · REQ-6: a span, not only the in-memory counter.
+            # `MetricsCollector` counts `orchestrator_replans_total` and every
+            # dyno restart resets it, so "how often does the pipeline replan,
+            # and does it help" was unanswerable over history — measured
+            # 2026-09-03: 48 distinct span names in production and not one
+            # matching `replan`. A span carries WHEN and AGAINST WHICH failed
+            # stage, which is what makes the second half of that question
+            # answerable; a bare count cannot.
+            _sd_replan: dict[str, Any] = {
+                "input_preview": (
+                    f"attempt {replan_count}/{max_replans} after stage "
+                    f"'{failed.stage_id}' ({failed.tool}): {error_msg[:200]}"
+                )[:_PREVIEW_MAX],
+            }
+            async with self._tracker.step(
+                wf_id,
+                "orchestrator:replan",
+                f"Replanning after '{failed.stage_id}' (attempt {replan_count}/{max_replans})",
+                step_data=_sd_replan,
+                span_type="llm_call",
+            ):
+                new_plan = await adaptive.replan(
+                    context.user_question,
+                    completed_stages=completed,
+                    failed_stage=failed,
+                    error=error_msg,
+                    table_map=table_map,
+                    db_type=db_type,
+                    preferred_provider=context.preferred_provider,
+                    model=context.model,
+                    replan_history=replan_history,
+                    staleness_warning=staleness_warning,
+                    available_sources=available_sources,
+                )
+                _sd_replan["output_preview"] = (
+                    f"{len(new_plan.stages)} stage(s)" if new_plan else "no plan — giving up"
+                )
             if not new_plan:
                 logger.warning("Replanning returned no plan — giving up")
                 await self._tracker.emit(
