@@ -345,6 +345,16 @@ class DataGraphService:
         """Extract potential metrics from the DB index entries for a connection."""
         from app.models.db_index import DbIndex
 
+        # Row 1.10. `project_id` was accepted here and never used, while the query
+        # below filtered on `connection_id` alone — so an owner of one project could
+        # name another's connection and read its schema index, sampled values
+        # included. Resolved through the project-scoped getter #267 created for
+        # exactly this, and it RAISES: returning None is still ignorable by a caller
+        # who forgets to check, which is how the scope went missing here.
+        from app.services.connection_service import ConnectionService
+
+        await ConnectionService().require_in_project(session, connection_id, project_id)
+
         result = await session.execute(
             select(DbIndex).where(
                 DbIndex.connection_id == connection_id,

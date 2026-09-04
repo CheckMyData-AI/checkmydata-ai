@@ -34,6 +34,20 @@ PENDING_SAMPLE_LIMIT = 10
 ANALYTICS_UNAVAILABLE_REASONS = ("not_found", "wrong_project", "none_connected")
 
 
+class ConnectionOutOfProjectError(Exception):
+    """The named connection does not belong to the project that asked for it.
+
+    Raised for an ABSENT connection as well as an out-of-project one, and
+    deliberately so: two different errors would let a caller in project A confirm
+    that a connection id in project B exists.
+    """
+
+    def __init__(self, connection_id: str, project_id: str) -> None:
+        self.connection_id = connection_id
+        self.project_id = project_id
+        super().__init__(f"connection {connection_id!r} is not in project {project_id!r}")
+
+
 class AnalyticsConnectionUnavailableError(Exception):
     """No analytics connection this project may read matches the request."""
 
@@ -291,6 +305,25 @@ class ConnectionService:
             )
         )
         return result.scalar_one_or_none()
+
+    async def require_in_project(
+        self, session: AsyncSession, connection_id: str, project_id: str
+    ) -> Connection:
+        """:meth:`get_in_project`, but raising instead of returning ``None``.
+
+        The nullable getter was added by #267 and its docstring predicted this:
+        *"a getter that cannot be called without a project cannot be forgotten at
+        a fourth entry point."* The fourth entry point forgot it anyway — the
+        semantic-layer and data-graph services took a ``project_id``, never used
+        it, and queried ``DbIndex`` by ``connection_id`` alone.
+
+        Returning ``None`` is still ignorable by a caller who does not check.
+        This raises, so the scope cannot be dropped by omission.
+        """
+        conn = await self.get_in_project(session, connection_id, project_id)
+        if conn is None:
+            raise ConnectionOutOfProjectError(connection_id, project_id)
+        return conn
 
     async def resolve_analytics_connection(
         self,
