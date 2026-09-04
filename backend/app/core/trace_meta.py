@@ -63,6 +63,11 @@ class TraceMeta:
     #: Where ``cost_usd`` came from. ``"none"`` when no price was available —
     #: which is honest, and distinct from a cost of zero.
     price_source: str = "none"
+    #: The multi-stage plan that executed, verbatim, or ``None`` for the single
+    #: tool loop. Carried here rather than joined later because ``PipelineRun``
+    #: has no ``workflow_id`` to join on, and its own rows are swept after seven
+    #: days — see :class:`~app.models.request_trace.RequestTrace.plan_json`.
+    plan_json: str | None = None
 
     def __post_init__(self) -> None:
         if self.price_source not in PRICE_SOURCES:
@@ -100,6 +105,7 @@ class TraceMeta:
             ),
             cost_usd=getattr(response, "cost_usd", None),
             price_source=str(getattr(response, "price_source", "") or "none"),
+            plan_json=getattr(response, "plan_json", None) or None,
         )
 
     @classmethod

@@ -54,6 +54,14 @@ class RequestTrace(Base):
     route: Mapped[str] = mapped_column(String(30), nullable=False, server_default="unknown")
     complexity: Mapped[str] = mapped_column(String(20), nullable=False, server_default="unknown")
     estimated_queries: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    #: The multi-stage plan this request executed, verbatim, or ``None`` when it
+    #: took the single tool loop. Ш0b · REQ-9: it lived only in
+    #: ``pipeline_runs``, which is a RESUME BUFFER swept at start-up after
+    #: ``pipeline_run_ttl_days`` (7) — production held zero rows on 2026-09-03.
+    #: A plan is part of what happened, so it belongs with the trace's 90-day
+    #: retention. Nullable because 86% of requests have no plan, and ``{}``
+    #: would read as "an empty plan ran".
+    plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

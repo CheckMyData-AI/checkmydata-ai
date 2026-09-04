@@ -352,6 +352,11 @@ class AgentResponse:
     route: str = "unknown"
     complexity: str = "unknown"
     estimated_queries: int = 0
+    #: Ш0b · REQ-9: the plan this request executed, verbatim, or ``None`` for the
+    #: single tool loop. Carried out because ``pipeline_runs`` — the only place a
+    #: plan has ever lived — is a resume buffer swept after seven days, and
+    #: production held zero rows.
+    plan_json: str | None = None
 
 
 class OrchestratorAgent(BaseAgent):
@@ -410,6 +415,9 @@ class OrchestratorAgent(BaseAgent):
         # while the counter beside them was right. Same drain-after-the-run
         # shape as ``_wf_suspicious`` directly above.
         self._wf_routing: dict[str, tuple[str, str, int]] = {}
+        # Ш0b · REQ-9: the executed plan, drained by :meth:`pop_plan_json`.
+        # Same shape and same reason as ``_wf_routing`` above.
+        self._wf_plan: dict[str, str] = {}
         self._parallel_tool_sem = asyncio.Semaphore(settings.max_parallel_tool_calls)
         self._mcp_cache: dict[str, tuple[bool, float]] = {}
         self._MCP_CACHE_TTL = 60.0
@@ -516,6 +524,15 @@ class OrchestratorAgent(BaseAgent):
             self._wf_correction_counts.pop(wid, None)
             self._wf_suspicious.pop(wid, None)
             self._wf_routing.pop(wid, None)
+            self._wf_plan.pop(wid, None)
+
+    def pop_plan_json(self, wf_id: str) -> str | None:
+        """Ш0b: drain the plan this workflow executed, if it had one.
+
+        ``None`` for the single tool loop, which is most requests — and that is a
+        statement, not a gap: 86% of production traffic never plans.
+        """
+        return self._wf_plan.pop(wf_id, None)
 
     def pop_routing(self, wf_id: str) -> tuple[str, str, int] | None:
         """Ш0: drain the router's ``(route, complexity, estimated_queries)``.
@@ -2452,6 +2469,14 @@ class OrchestratorAgent(BaseAgent):
         except Exception as exc:
             logger.exception("Failed to create pipeline run record")
             raise AgentFatalError("Pipeline initialisation failed") from exc
+
+        # Ш0b · REQ-9: keep the plan reachable by the caller, so the trace can
+        # store it. `_create_pipeline_run` writes it to `pipeline_runs`, which is
+        # swept after `pipeline_run_ttl_days` — history needs its own home.
+        try:
+            self._wf_plan[wf_id] = plan.to_json()
+        except Exception:
+            logger.warning("could not serialise the plan for the trace", exc_info=True)
 
         data_gate = DataGate()
         executor = StageExecutor(

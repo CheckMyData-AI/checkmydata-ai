@@ -108,6 +108,9 @@ class ConversationalAgent:
                 routing = pop_routing(wf_id)
                 if routing:
                     response.route, response.complexity, response.estimated_queries = routing
+            pop_plan = getattr(self._orchestrator, "pop_plan_json", None)
+            if callable(pop_plan):
+                response.plan_json = pop_plan(wf_id)
             return response
         except Exception as exc:
             if not self._tracker.has_ended(wf_id):
