@@ -14,6 +14,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.core.trace_meta import TraceMeta
 from app.core.workflow_tracker import WorkflowEvent, WorkflowTracker
 from app.models.base import async_session_factory
 from app.models.request_trace import RequestTrace, TraceSpan
@@ -205,23 +206,31 @@ class TracePersistenceService:
         response_type: str = "text",
         status: str = "completed",
         error_message: str | None = None,
-        failure_kind: str | None = None,
+        meta: TraceMeta,
         total_duration_ms: float | None = None,
         total_tokens: int = 0,
-        estimated_cost_usd: float | None = None,
         llm_provider: str = "unknown",
         llm_model: str = "unknown",
         steps_used: int = 0,
         steps_total: int = 0,
-        route: str = "unknown",
-        complexity: str = "unknown",
-        estimated_queries: int = 0,
         tool_call_log: list[dict] | None = None,
     ) -> None:
         """Attach chat-route metadata to the trace and persist if buffer was already flushed.
 
         Called from chat.py after the assistant message is saved.
+
+        ``meta`` has **no default**, and that is the whole point of Ш0. The four
+        values it carries used to be loose keyword arguments with defaults, and
+        production measured **zero of twelve call sites** supplying any of them —
+        222 traces out of 222 read ``route = "unknown"`` while ``CLAUDE.md``
+        claimed routing metrics were always populated. A parameter with a default
+        is a parameter every caller can forget, and every caller did.
         """
+        route = meta.route
+        complexity = meta.complexity
+        estimated_queries = meta.estimated_queries
+        failure_kind = meta.failure_kind
+        estimated_cost_usd = meta.cost_usd
         try:
             async with async_session_factory() as session:
                 from sqlalchemy import select, update
@@ -248,8 +257,12 @@ class TracePersistenceService:
                         "session_id": session_id,
                         "message_id": message_id,
                         "assistant_message_id": assistant_message_id,
-                        "error_message": _truncate(error_message),
+                        # Additive like its neighbours: a clean run's ``None``
+                        # must not erase a kind the buffer flush already wrote.
+                        # It sat in the unconditional dict above, which is the
+                        # same shape that erased 323 s of duration once.
                         "failure_kind": failure_kind,
+                        "error_message": _truncate(error_message),
                         "total_duration_ms": total_duration_ms,
                         "estimated_cost_usd": estimated_cost_usd,
                     }

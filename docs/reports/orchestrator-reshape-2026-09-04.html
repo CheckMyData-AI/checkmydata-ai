@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Оркестратор: перестроить или переформовать</title>
+<style>
+  :root{
+    --bg:#0d0f13; --panel:#161a21; --panel2:#1c212a; --line:#2a3140;
+    --txt:#e7ebf2; --dim:#98a3b6; --acc:#6ea8ff; --ok:#4ec9a0;
+    --warn:#e0b341; --bad:#ff6b6b; --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:16px/1.62 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+  .wrap{max-width:1180px;margin:0 auto;padding:56px 28px 120px}
+  h1{font-size:2.05rem;line-height:1.18;margin:0 0 8px;letter-spacing:-.02em}
+  .sub{color:var(--dim);font-size:1rem;margin:0 0 34px}
+  h2{font-size:1.36rem;margin:52px 0 6px;letter-spacing:-.01em}
+  h2 .n{color:var(--acc);font-family:var(--mono);font-size:.84em;margin-right:.5em}
+  h3{font-size:1.03rem;margin:26px 0 8px}
+  p{margin:10px 0}
+  code{font-family:var(--mono);font-size:.87em;background:#080a0e;
+    border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#cfe0ff}
+  pre{background:#080a0e;border:1px solid var(--line);border-radius:8px;padding:16px 18px;
+    overflow-x:auto;font-family:var(--mono);font-size:.83rem;line-height:1.5;color:#cfe0ff}
+  .lede{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:20px 24px;margin:0}
+  .lede p:first-child{margin-top:0}.lede p:last-child{margin-bottom:0}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:.9rem}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:.77rem;text-transform:uppercase;letter-spacing:.06em}
+  tbody tr:hover{background:var(--panel)}
+  td.num{font-family:var(--mono);white-space:nowrap}
+  .tw{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+  .tw table{margin:0}
+  .b{display:inline-block;font-family:var(--mono);font-size:.72rem;font-weight:600;
+    padding:2px 7px;border-radius:4px;white-space:nowrap}
+  .b-bad{background:rgba(255,107,107,.14);color:var(--bad);border:1px solid rgba(255,107,107,.35)}
+  .b-warn{background:rgba(224,179,65,.14);color:var(--warn);border:1px solid rgba(224,179,65,.35)}
+  .b-ok{background:rgba(78,201,160,.14);color:var(--ok);border:1px solid rgba(78,201,160,.35)}
+  .b-dim{background:rgba(152,163,182,.12);color:var(--dim);border:1px solid var(--line)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px 22px;margin:14px 0}
+  .card.bad{border-left:3px solid var(--bad)}
+  .card.warn{border-left:3px solid var(--warn)}
+  .card.ok{border-left:3px solid var(--ok)}
+  .card h4{margin:0 0 6px;font-size:1rem}
+  .g{display:grid;gap:13px;grid-template-columns:repeat(auto-fit,minmax(215px,1fr))}
+  .kpi{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:15px 17px}
+  .kpi .v{font-family:var(--mono);font-size:1.55rem;font-weight:700;letter-spacing:-.02em}
+  .kpi .l{color:var(--dim);font-size:.8rem;margin-top:2px;line-height:1.4}
+  ul,ol{margin:10px 0;padding-left:24px}
+  li{margin:5px 0}
+  hr{border:0;border-top:1px solid var(--line);margin:44px 0}
+  .foot{color:var(--dim);font-size:.85rem;margin-top:60px;border-top:1px solid var(--line);padding-top:20px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Оркестратор: перестроить или переформовать</h1>
+<p class="sub">Ответ на предложение «построить всё с нуля и взять PI-агента за основу».
+Разобрано по доктрине <code>agent-orchestrator</code> и <code>claude-api</code>,
+проверено продовой телеметрией. checkmydata-ai · 2026-09-04</p>
+
+<div class="lede">
+<p><strong>Короткий ответ.</strong> PI за основу — нет, это переворот слоёв: PI это TUI-агент
+для кодинга, то есть <em>провайдер</em>, которого хост запускает, а не хост, который обслуживает
+арендаторов. С нуля — тоже нет, и не из осторожности: измерения говорят, что архитектура не
+там, где болит.</p>
+<p><strong>Но вы правы в одном, и это самое важное в документе.</strong> Один настоящий
+архитектурный дефект есть, доктрина называет его прямо, и он же — причина того дефекта,
+который я починил вчера: <strong>два пути исполнения, и каждый гейт надо проводить дважды.</strong>
+Именно так пропала ветка аналитики. Именно поэтому DataGate за всю историю сработал 16 раз,
+а SQL-валидация — 5148.</p>
+<p><strong>И есть третье, о чём никто не спрашивал: 78 вызовов сожгли 43% всех токенов
+проекта.</strong> Дорогое здесь не цикл.</p>
+</div>
+
+<div class="g" style="margin-top:24px">
+  <div class="kpi"><div class="v">32 / 222</div><div class="l">запросов идут вторым путём <span style="color:var(--dim)">14%</span></div></div>
+  <div class="kpi"><div class="v" style="color:var(--warn)">10</div><div class="l">чекпойнтов за всю историю — уникальная ценность второго пути</div></div>
+  <div class="kpi"><div class="v" style="color:var(--bad)">16</div><div class="l">наблюдений DataGate против 5148 у SQL-валидации</div></div>
+  <div class="kpi"><div class="v" style="color:var(--bad)">6630/7662</div><div class="l">вызовов — <code>openai/gpt-4o</code>, не Claude</div></div>
+  <div class="kpi"><div class="v" style="color:var(--bad)">43%</div><div class="l">всех токенов — на 78 вызовах</div></div>
+</div>
+
+<hr>
+
+<h2><span class="n">1</span>PI за основу — переворот слоёв</h2>
+
+<p><strong>Что такое PI, измерено, а не предположено.</strong>
+<code>~/.pi/agent/extensions/*.ts</code> — три TypeScript-расширения, менеджер сессий с
+<code>getSessionId()</code>/<code>getSessionFile()</code>, 367 скилов, и комментарий в самом
+коде: «<em>чтобы повторяющаяся ошибка парсинга не спамила stderr внутри pi TUI</em>».
+Локальный интерактивный агент для кодинга с файловой системой.</p>
+
+<p>Таксономия из <code>claude-api</code> ставит это на место точно. Четыре способа построить
+агента, и они различаются двумя независимыми вопросами: <em>кто даёт харнесс</em> и
+<em>кто даёт деплой</em>.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Подход</th><th>Харнесс / деплой</th><th>Где здесь PI</th></tr></thead>
+<tbody>
+<tr><td>1 · Ручной цикл</td><td>ваш / ваш</td><td>это то, что у checkmydata сейчас</td></tr>
+<tr><td>2 · Tool Runner <code>client.beta.messages.tool_runner</code></td>
+    <td>SDK даёт цикл, деплой ваш</td><td>единственный реальный кандидат — см. §2</td></tr>
+<tr><td>3 · Managed Agents</td><td>Anthropic даёт и цикл, и песочницу на сессию</td>
+    <td>не наш случай: свои коннекторы, свой тенант, свой воркер</td></tr>
+<tr><td>4 · Claude Agent SDK</td><td>харнесс Claude Code как библиотека, деплой ваш</td>
+    <td><strong>PI — эта категория</strong></td></tr>
+</tbody>
+</table></div>
+
+<div class="card bad">
+<h4>Чего PI-образный харнесс не даёт, и всё это обязательно</h4>
+<ul>
+<li><strong>Принципал арендатора на каждый запрос</strong> — ровно тот класс дефекта, что был
+#267: любой аутентифицированный пользователь ходил в чужую БД.</li>
+<li><strong>Read-only на уровне СУБД</strong> плюс <code>SafetyGuard</code> над SQL, который
+написал пользователь.</li>
+<li><strong>Учёт токенов на пользователя против тарифа</strong> — то самое, что вчера
+заблокировало <code>code_db_sync</code>.</li>
+<li><strong>Долговечные трейсы и возобновление пайплайна</strong> между двумя сообщениями
+пользователя.</li>
+<li><strong>Работа внутри 512 MiB воркера</strong> и жизненного цикла FastAPI/SSE/WS.</li>
+</ul>
+<p>Всё это пришлось бы обернуть вокруг PI заново. А по дереву решений Fabric
+(<code>fabric-local-runner/0.1</code>) терминальный CLI — это профиль <em>провайдера</em>,
+которого хост <strong>запускает</strong>. Взять его за основу хоста — поменять слои местами.</p>
+</div>
+
+<h2><span class="n">2</span>Tool Runner — и почему измерение его тоже отклоняет</h2>
+
+<p>Ваш инстинкт нацелен верно: перестать писать цикл руками и отдать его проверенному
+харнессу, оставив себе инструменты. Правильная цель для этого — не PI, а <strong>Tool
+Runner</strong>: он крутит цикл над инструментами, которые определяете вы, и его
+per-turn-хуки — это ровно те места, где живут гейт согласования, перехват ошибок,
+модификация результата и ретраи. То есть все наши гейты стали бы хуками.</p>
+
+<div class="card bad">
+<h4>И тут телеметрия закрывает вопрос</h4>
+<p>Я собирался возразить «мы мультипровайдерные, а Tool Runner — Anthropic». Измерил —
+и возражение оказалось другим, сильнее.</p>
+<div class="tw"><table>
+<thead><tr><th>Провайдер / модель</th><th class="num">Вызовов</th><th class="num">Токенов</th></tr></thead>
+<tbody>
+<tr><td><code>openrouter</code> · <code>openai/gpt-4o</code></td><td class="num">6630</td><td class="num">18 361 505</td></tr>
+<tr><td><code>openrouter</code> · <code>qwen/qwen3.7-plus</code></td><td class="num">893</td><td class="num">2 008 722</td></tr>
+<tr><td><code>openrouter</code> · <code>anthropic/claude-4.6-opus</code></td><td class="num">78</td><td class="num"><strong>25 807 508</strong></td></tr>
+<tr><td><code>openrouter</code> · <code>anthropic/claude-4.7-opus</code></td><td class="num">23</td><td class="num">8 235 362</td></tr>
+<tr><td><code>openrouter</code> · <code>anthropic/claude-4.8-opus</code></td><td class="num">10</td><td class="num">2 738 318</td></tr>
+<tr><td><code>unknown</code></td><td class="num">26</td><td class="num">2 003 764</td></tr>
+</tbody>
+</table></div>
+<p><strong>Модель, которая делает основную работу, — <code>openai/gpt-4o</code>: 6630 вызовов
+из 7662.</strong> Цикл на Anthropic-SDK означал бы либо отказаться от неё, либо держать два
+цикла. Tool Runner отклоняется не «на всякий случай», а потому что трафик преимущественно
+не Anthropic.</p>
+</div>
+
+<div class="card warn">
+<h4>Зато обнаружилось, что переусложнено на самом деле</h4>
+<p><strong>Все без исключения вызовы идут через OpenRouter.</strong> Ни одного напрямую в
+OpenAI или Anthropic. То есть трёхпровайдерный роутер с цепочкой фолбэков, ретраями на
+провайдера и health-пробами реализован — и в проде это <em>один</em> провайдер, который сам
+является агрегатором и сам делает роутинг моделей.</p>
+<p>Доктрина (§6) предупреждает про умножение: «три провайдера по три ретрая — девять вызовов
+на один промпт». У нас цена другая: ветки, которых никто не проходил, и поэтому никто не
+знает, работают ли они. Это <strong>кандидат на упрощение №1</strong>, и он не архитектурный
+риск, а удаление неисполняемого кода.</p>
+</div>
+
+<h2><span class="n">3</span>Что действительно сломано в форме работы</h2>
+
+<h3>3.1 Два пути — и это причина вчерашнего дефекта</h3>
+
+<p>Доктрина §5 говорит, когда второй путь оправдан: несколько зависимых шагов данных,
+человек, утверждающий что-то посередине, или прогон, который должен пережить паузу между
+двумя сообщениями. Измерено:</p>
+
+<div class="tw"><table>
+<thead><tr><th>Свойство второго пути</th><th class="num">Наблюдений</th><th>Доля</th></tr></thead>
+<tbody>
+<tr><td>Запросы, ушедшие в пайплайн (<code>orchestrator:planning</code>)</td><td class="num">32</td><td>14% от 222</td></tr>
+<tr><td><strong>Чекпойнты</strong> — то, чего одиночный цикл не умеет</td><td class="num">10</td><td>4,5%</td></tr>
+<tr><td><code>pipeline_complete</code></td><td class="num">1</td><td>0,5%</td></tr>
+<tr><td>DataGate — гейт, живущий только на этом пути</td><td class="num">16</td><td>против 5148 у SQL-валидации</td></tr>
+</tbody>
+</table></div>
+
+<p><strong>Цена: каждый гейт надо провести дважды.</strong> Вчерашний A1 — ровно этот счёт:
+<code>query_analytics_source</code> существовал в одиночном цикле и отсутствовал в
+<code>match stage.tool</code>, а планировщик о нём не знал. Никто не заметил, потому что
+вторая ветвь просто не называла инструмент.</p>
+
+<div class="card ok">
+<h4>Упрощение: один цикл, а планируемый путь — инструмент внутри него</h4>
+<p>Не «удалить пайплайн», а перестать держать его <em>вторым путём исполнения</em>.
+Планирование становится инструментом, который один цикл может вызвать; исполнение стадий
+остаётся; гейты живут в одном месте, потому что путь один.</p>
+<p>Это уже наполовину записано на доске как W3 «single-loop/pipeline path unification» —
+то есть решение принималось, но не доехало.</p>
+</div>
+
+<h3>3.2 Перед сходимостью нет кросс-элементного чекера</h3>
+
+<p><code>StageExecutor</code> — топологический планировщик, до трёх стадий параллельно. Это
+верно по §13. Но доктрина требует того, чего здесь нет: <strong>между параллельным слоем и
+узлом, который его потребляет, стоит чекер, и потребитель зависит от чекера, а не от
+ветвей.</strong></p>
+
+<p>Измерено: <code>stage_validation</code> — постадийная, <code>data_gate</code> —
+постадийный. Кросс-элементного гейта нет, синтез берёт рёбра прямо у стадий. Это и есть
+тихий отказ ромба: <em>сходимость доверяет входам, потому что они пришли.</em> Три ветви
+сходятся, одна вернула галлюцинацию, синтез не может это увидеть.</p>
+
+<p>Контракт чекера — шесть пунктов, и <strong>четыре из шести это код, а не модель</strong>,
+то есть стоят нуля:</p>
+
+<pre>1 missing        — ветвь не вернулась вовсе (нужен счётчик ожидаемых)   код
+2 empty          — пришла, но пустая                                    код
+3 unevidenced    — утверждение без расписки: ни цитаты, ни file:line     код
+4 malformed      — форма, которая сломает парсинг сходимости             код
+5 contradictory  — два результата, которые не могут быть верны разом     модель
+6 off-topic      — ответ на другой вопрос                                модель</pre>
+
+<h3>3.3 Ни один гейт не проходит собственный тест доктрины</h3>
+
+<p>Правило: «<em>чекер, который никогда ничего не отверг, — это находка, а не успокоение</em>»,
+и «<em>подсадите ему заведомо плохой вход и посмотрите, как он откажет</em>». Против этого:</p>
+
+<ul>
+<li><code>data_gate</code> — <strong>16 наблюдений</strong>. Утверждение «блокирует невозможные
+проценты и даты» опирается на выборку, из которой ничего не следует.</li>
+<li><code>result_gate</code> — 3 наблюдения, все <code>retrying</code>.</li>
+<li><code>stage_validation</code> — 7 отказов из 19; единственный гейт с наблюдаемой
+частотой отказа.</li>
+<li>CI-эвал <strong>оценивает оракула, которому выдали ответы</strong> (строка 2.5 доски).
+Поэтому обе критические поломки поиска прошли CI зелёными.</li>
+</ul>
+
+<h2><span class="n">4</span>Что нельзя проверить, и это тоже вывод</h2>
+
+<div class="card warn">
+<h4>Тест на фальшивые рёбра прогнать не на чем</h4>
+<p>Самая дешёвая и самая доходная процедура доктрины — выписать шаги коробками и спросить у
+каждой стрелки, входят ли в B данные из A. Ожидаемый выход — две-три фальшивые стрелки на
+воркфлоу.</p>
+<p>Прогнать его на <em>настоящих</em> планах нельзя: <code>pipeline_runs</code> хранит
+<code>plan_json</code> ровно <code>pipeline_run_ttl_days = 7</code>, и
+<code>_cleanup_pipeline_runs()</code> сметает остальное на загрузке. Сейчас там ноль строк —
+их удалил мой же деплой v321.</p>
+<p><strong>Значит первый шаг любой перестройки — начать хранить планы дольше семи дней.</strong>
+Иначе решение о форме работы принимается без единого примера той формы, которая реально
+исполнялась.</p>
+</div>
+
+<h2><span class="n">5</span>Порядок, который я предлагаю</h2>
+
+<p>Не перестройка. Переформовка в четыре шага, и каждый следующий имеет смысл только после
+предыдущего.</p>
+
+<div class="tw"><table>
+<thead><tr><th>#</th><th>Шаг</th><th>Почему именно в этом порядке</th><th>Размер</th></tr></thead>
+<tbody>
+<tr><td><strong>Ш0</strong></td>
+    <td>Сделать систему наблюдаемой до того, как её менять: писать <code>route</code>/<code>complexity</code>,
+        писать <code>failure_kind</code>, спан или колонка для переплanирования,
+        считать <code>estimated_cost_usd</code>, хранить планы дольше 7 дней</td>
+    <td>Нельзя судить новый оркестратор против старого, чья телеметрия сломана в четырёх
+        местах. Доктрина: <em>наблюдаемое раньше реализации</em>. Это ~5 маленьких правок</td>
+    <td><span class="b b-ok">S×5</span></td></tr>
+<tr><td><strong>Ш1</strong></td>
+    <td>Эвал, который гоняет настоящий ретривер и настоящий цикл, а не оракула</td>
+    <td>Иначе «упростили и стало лучше» — это фольклор. Доктрина: <em>эвал раньше
+        подкрутки промпта</em>. Это строка 2.5, уже на доске</td>
+    <td><span class="b b-warn">L</span></td></tr>
+<tr><td><strong>Ш2</strong></td>
+    <td>Один цикл: планирование становится инструментом, второй путь исполнения исчезает</td>
+    <td>Снимает удвоение поверхности гейтов — причину вчерашнего дефекта. 14% трафика и 10
+        чекпойнтов не оправдывают второй набор гейтов</td>
+    <td><span class="b b-bad">L</span></td></tr>
+<tr><td><strong>Ш3</strong></td>
+    <td>Один чекер между параллельным слоем и сходимостью, шесть пунктов, четыре из них код;
+        подсаженный плохой вход, вердикты пишутся как оценки</td>
+    <td>Закрывает тихий отказ ромба. Самое высокое отношение ценности к размеру во всём
+        списке</td>
+    <td><span class="b b-warn">M</span></td></tr>
+<tr><td><strong>Ш4</strong></td>
+    <td>Слой инструментов заново и сознательно: один инструмент на источник, закрытые enum-схемы,
+        <code>strict: true</code>, объявленный класс эффекта, тест завершения на каждый</td>
+    <td><strong>Это та часть вашего запроса, которая верна целиком.</strong> И она же —
+        вход в Fabric-совместимость: объявленные эффекты и типизированный конверт результата
+        нужны там же</td>
+    <td><span class="b b-bad">L</span></td></tr>
+</tbody>
+</table></div>
+
+<h3>Что удаляется по дороге, а не строится</h3>
+<ul>
+<li>Неисполняемые ветки роутера: три провайдера реализованы, один используется.</li>
+<li>Пять копий <code>execute_stored_query()</code> — строка 3.2 доски.</li>
+<li>Тела джобов в <code>api/routes/</code> — строка 3.1.</li>
+<li>867 функциональных импортов — строка 3.3. Их наличие и есть причина, по которой
+    «просто добавить ветку» каждый раз оказывается правкой в пяти файлах.</li>
+</ul>
+
+<h2><span class="n">6</span>Чего перестройка с нуля стоила бы</h2>
+
+<p>Это не аргумент «страшно», это счёт того, что пришлось бы заново заслужить:</p>
+
+<div class="tw"><table>
+<thead><tr><th>Что уже работает и подтверждено</th><th class="num">Наблюдений</th></tr></thead>
+<tbody>
+<tr><td>Слой валидации SQL: <code>pre</code>/<code>post</code>/<code>safety</code>/<code>explain</code></td><td class="num">5148</td></tr>
+<tr><td>Починка запросов, доводящая до ответа</td><td class="num">27 из 50</td></tr>
+<tr><td>Артефакты индексации: символы / рёбра / эмбеддинги</td><td class="num">25 638 / 67 922 / 46 911</td></tr>
+<tr><td>Память агента: обучения, предъявления</td><td class="num">81 / 2100</td></tr>
+<tr><td>Тесты</td><td class="num">7471</td></tr>
+<tr><td>Многослойный read-only: коннектор + гард + лексер комментариев с учётом диалекта</td><td class="num">27 кейсов лексера</td></tr>
+</tbody>
+</table></div>
+
+<p>Ни одна из измеренных сегодня проблем не звучит как «архитектура оркестратора неверна».
+Они звучат как: телеметрия не пишется, тариф блокирует свой же джоб, жнец убивает живые
+прогоны, 63% запросов идут через починку, гейт второго пути не исполняется. Первое, второе и
+третье — обвязка и ops. Четвёртое — качество схемы и промпта. Пятое — <strong>следствие
+двух путей</strong>, и это единственное архитектурное, что здесь есть.</p>
+
+<h2><span class="n">7</span>И то, о чём никто не спрашивал</h2>
+
+<div class="card bad">
+<h4>78 вызовов сожгли 43% всех токенов проекта</h4>
+<p><code>anthropic/claude-4.6-opus</code>: <strong>78 вызовов, 25 807 508 токенов</strong> —
+это ~331 тысяча токенов на вызов. Против <code>openai/gpt-4o</code>: 6630 вызовов на 18,4 млн,
+то есть ~2,8 тысячи на вызов.</p>
+<p>Из 60,2 млн токенов за всё время: 43% на 78 вызовах, 31% на 6630. <strong>Дорогое здесь —
+не цикл и не количество шагов, а горстка вызовов с гигантским контекстом</strong> (по форме —
+<code>generate_docs</code> в индексации кода). Любая «оптимизация оркестратора», не трогающая
+эти 78 вызовов, работает с третью счёта.</p>
+<p>И это же объясняет блокировку тарифом: 2 млн токенов за текущий месяц против потолка в 1 млн
+набираются не чатом, которого 17 сообщений, а фоновой индексацией.</p>
+</div>
+
+<div class="foot">
+Переформовка оркестратора · checkmydata-ai · 2026-09-04 ·
+доктрина: <code>agent-stack/agent-orchestrator</code> (§5, §6, §13),
+<code>claude-api</code> (четыре подхода к агенту) ·
+все числа — запросы к продовой БД, выполненные внутри дино<br>
+Смежное: <code>docs/reports/subsystem-check-2026-09-03.html</code> ·
+<code>docs/reports/target-gap-2026-09-03.html</code> ·
+<code>docs/AUDIT_REMEDIATION_2026-09.md</code>
+</div>
+
+</div>
+</body>
+</html>

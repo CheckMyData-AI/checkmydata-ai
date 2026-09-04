@@ -33,10 +33,12 @@ from app.api.routes.chat_feedback import (
     credit_validated_learnings,
     maybe_auto_investigate,
 )
+from app.core import failure_kind as fk
 from app.core.agent import ConversationalAgent
 from app.core.agent_limiter import agent_limiter
 from app.core.context_budget import CHARS_PER_TOKEN
 from app.core.rate_limit import limiter
+from app.core.trace_meta import TraceMeta
 from app.core.workflow_tracker import WorkflowEvent, tracker
 from app.core.ws_tickets import ws_ticket_store
 from app.services.chat_service import ChatService, SessionBusyError, session_processing_lock
@@ -114,6 +116,28 @@ async def _safe_to_config(db: AsyncSession, conn_model) -> "ConnectionConfig":
                 "Please re-enter the password in Settings → Connections."
             ),
         ) from exc
+
+
+def _trace_meta(response: object, *, cost_usd: float | None = None) -> TraceMeta:
+    """Ш0 · REQ-2/3: the routing and cost facts of a run that produced a response.
+
+    ``price_source="process_cache"`` because that is literally where
+    :func:`_estimate_cost` reads a price from — an in-process dict populated only
+    by a request to ``GET /api/models``. Naming it is the point: the worker
+    serves no HTTP, so on that side the dict is always empty and the cost is
+    ``None`` with source ``"none"``. Ш0b replaces the store; this records which
+    one answered so a cost figure can be audited either way.
+
+    A response carrying an error is marked ``fatal``, which is **coarse and
+    deliberate**: nothing today classifies an ``AgentResponse.error`` string, and
+    the alternative is the NULL that 56 failed production traces already had.
+    Proper classification is carried over.
+    """
+    meta = TraceMeta.from_response(
+        response,
+        failure_kind=fk.FATAL if getattr(response, "error", None) else None,
+    )
+    return meta if cost_usd is None else meta.with_cost(cost_usd, "process_cache")
 
 
 def _estimate_cost(model: str | None, prompt_tokens: int, completion_tokens: int) -> float | None:
@@ -369,7 +393,7 @@ async def ask(
                         response_type="error",
                         status="failed",
                         error_message="Agent run timed out",
-                        failure_kind="transient",
+                        meta=TraceMeta.aborted(fk.TRANSIENT),
                     )
             except Exception:
                 logger.warning("Failed to finalize trace after agent timeout", exc_info=True)
@@ -393,7 +417,7 @@ async def ask(
                         response_type="error",
                         status="failed",
                         error_message=_exc_msg,
-                        failure_kind="fatal",
+                        meta=TraceMeta.aborted(fk.FATAL),
                     )
             except Exception:
                 logger.warning("Failed to finalize trace after agent crash", exc_info=True)
@@ -550,10 +574,13 @@ async def ask(
                         ),
                         total_tokens=usage.get("total_tokens", 0)
                         or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)),
-                        estimated_cost_usd=_estimate_cost(
-                            result.llm_model,
-                            usage.get("prompt_tokens", 0),
-                            usage.get("completion_tokens", 0),
+                        meta=_trace_meta(
+                            result,
+                            cost_usd=_estimate_cost(
+                                result.llm_model,
+                                usage.get("prompt_tokens", 0),
+                                usage.get("completion_tokens", 0),
+                            ),
                         ),
                         llm_provider=result.llm_provider or "unknown",
                         llm_model=result.llm_model or "unknown",
@@ -922,6 +949,7 @@ async def ask_stream(
                                 message_id=bg_user_message_id,
                                 assistant_message_id=bg_assistant_msg.id,
                                 question=bg_body.message,
+                                meta=_trace_meta(bg_result, cost_usd=bg_cost),
                                 response_type=bg_result.response_type or "text",
                                 status="failed" if bg_result.error else "completed",
                                 error_message=bg_result.error,
@@ -1017,6 +1045,9 @@ async def ask_stream(
                         session_id=session_id,
                         message_id=user_message_id,
                         question=body.message,
+                        # A stream that errored has no response to read routing
+                        # from: the failure may predate the router entirely.
+                        meta=TraceMeta.aborted(fk.FATAL),
                         response_type="error",
                         status="failed",
                         error_message=error_msg[:500],
@@ -1300,10 +1331,13 @@ async def ask_stream(
                                     stream_usage.get("prompt_tokens", 0)
                                     + stream_usage.get("completion_tokens", 0)
                                 ),
-                                estimated_cost_usd=_estimate_cost(
-                                    result.llm_model,
-                                    stream_usage.get("prompt_tokens", 0),
-                                    stream_usage.get("completion_tokens", 0),
+                                meta=_trace_meta(
+                                    result,
+                                    cost_usd=_estimate_cost(
+                                        result.llm_model,
+                                        stream_usage.get("prompt_tokens", 0),
+                                        stream_usage.get("completion_tokens", 0),
+                                    ),
                                 ),
                                 llm_provider=result.llm_provider or "unknown",
                                 llm_model=result.llm_model or "unknown",
@@ -1861,10 +1895,13 @@ async def chat_websocket(
                                         ws_usage.get("prompt_tokens", 0)
                                         + ws_usage.get("completion_tokens", 0)
                                     ),
-                                    estimated_cost_usd=_estimate_cost(
-                                        result.llm_model,
-                                        ws_usage.get("prompt_tokens", 0),
-                                        ws_usage.get("completion_tokens", 0),
+                                    meta=_trace_meta(
+                                        result,
+                                        cost_usd=_estimate_cost(
+                                            result.llm_model,
+                                            ws_usage.get("prompt_tokens", 0),
+                                            ws_usage.get("completion_tokens", 0),
+                                        ),
                                     ),
                                     llm_provider=result.llm_provider or "unknown",
                                     llm_model=result.llm_model or "unknown",
