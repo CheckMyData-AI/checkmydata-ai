@@ -345,6 +345,13 @@ class AgentResponse:
     # result to the investigation ("Wrong Data") agent.
     suspicious_result: bool = False
     suspicious_reason: str | None = None
+    # Ш0 · REQ-2: the router's decision, carried out so the persisted trace can
+    # record it. Defaults are the honest answer when the router never ran (a
+    # direct response, or a crash before routing) — not a placeholder nobody
+    # filled, which is what 222 production traces contained.
+    route: str = "unknown"
+    complexity: str = "unknown"
+    estimated_queries: int = 0
 
 
 class OrchestratorAgent(BaseAgent):
@@ -394,6 +401,15 @@ class OrchestratorAgent(BaseAgent):
         # :meth:`pop_suspicious_reason` after the run so the response can carry
         # the auto-investigation signal.
         self._wf_suspicious: dict[str, str] = {}
+        # Ш0 · REQ-2: the router's three signals, kept per workflow and drained
+        # by :meth:`pop_routing` so the response — and therefore the persisted
+        # trace — carries what actually happened. ORCH-A03 already wrote them
+        # into ``context.extra`` for the in-memory metrics, but `replace()`
+        # returns a COPY, so the caller holding the original context never sees
+        # them: that is why 222 production traces out of 222 read "unknown"
+        # while the counter beside them was right. Same drain-after-the-run
+        # shape as ``_wf_suspicious`` directly above.
+        self._wf_routing: dict[str, tuple[str, str, int]] = {}
         self._parallel_tool_sem = asyncio.Semaphore(settings.max_parallel_tool_calls)
         self._mcp_cache: dict[str, tuple[bool, float]] = {}
         self._MCP_CACHE_TTL = 60.0
@@ -499,6 +515,16 @@ class OrchestratorAgent(BaseAgent):
             self._wf_sql_results.pop(wid, None)
             self._wf_correction_counts.pop(wid, None)
             self._wf_suspicious.pop(wid, None)
+            self._wf_routing.pop(wid, None)
+
+    def pop_routing(self, wf_id: str) -> tuple[str, str, int] | None:
+        """Ш0: drain the router's ``(route, complexity, estimated_queries)``.
+
+        ``None`` when the router never ran — a direct answer, or a crash before
+        routing. The caller keeps ``"unknown"`` in that case, which is then a
+        true statement rather than the default nobody supplied.
+        """
+        return self._wf_routing.pop(wf_id, None)
 
     def pop_suspicious_reason(self, wf_id: str) -> str | None:
         """R5-7: drain the suspicious-result reason captured for *wf_id*.
@@ -762,6 +788,13 @@ class OrchestratorAgent(BaseAgent):
                     "complexity": route_result.complexity,
                     "estimated_queries": route_result.estimated_queries,
                 },
+            )
+            # ...and again where the *caller* can reach it: the line above
+            # rebinds a local copy, so nothing outside this method sees it.
+            self._wf_routing[wf_id] = (
+                route_result.route,
+                route_result.complexity,
+                route_result.estimated_queries,
             )
 
             logger.info(

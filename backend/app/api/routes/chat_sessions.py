@@ -12,7 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core import failure_kind as fk
 from app.core.rate_limit import limiter
+from app.core.trace_meta import TraceMeta
 from app.core.workflow_tracker import tracker
 from app.services.chat_service import ChatService
 from app.services.membership_service import MembershipService
@@ -220,6 +222,9 @@ async def generate_session_title(
                     project_id=_gt_project_id,
                     user_id=user["user_id"],
                     question=f"[generate-title] {first_user[:100]}",
+                    meta=TraceMeta.utility(
+                        "generate_title", failure_kind=fk.FATAL if _gt_error else None
+                    ),
                     response_type="generate_title",
                     status="failed" if _gt_error else "completed",
                     error_message=_gt_error,

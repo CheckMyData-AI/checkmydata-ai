@@ -11,24 +11,48 @@ from __future__ import annotations
 import inspect
 from unittest.mock import MagicMock
 
+from app.core.trace_meta import TraceMeta
 from app.services.trace_persistence_service import TracePersistenceService
 
 
-def test_finalize_trace_accepts_a_failure_kind():
+def test_the_failure_kind_travels_inside_a_required_record():
+    """Inverted by Ш0, and the inversion is the finding.
+
+    This asserted that `failure_kind` is a parameter defaulting to None. That
+    default is exactly what let 10 of 12 call sites omit it and leave the column
+    NULL in all 56 failed production traces. It now travels inside `TraceMeta`,
+    which `finalize_trace` requires — a call that cannot be made without the
+    value cannot forget it at a thirteenth entry point (#267's shape).
+    """
     sig = inspect.signature(TracePersistenceService.finalize_trace)
-    assert "failure_kind" in sig.parameters, (
-        "without this parameter the column can never be set from the route"
+    assert "failure_kind" not in sig.parameters, (
+        "a loose kwarg beside meta would let a caller set one and not the other"
     )
-    assert sig.parameters["failure_kind"].default is None
+    assert sig.parameters["meta"].default is inspect.Parameter.empty
 
 
 def test_both_abnormal_rest_paths_pass_a_kind_from_the_shared_vocabulary():
-    """`transient | configuration | data_missing | fatal` — stage_executor.py's set."""
+    """`transient | configuration | data_missing | fatal` — now defined in ONE place.
+
+    This test's own docstring named that set before `app/core/failure_kind.py`
+    existed, and it enforced it by asserting the string literals at the call
+    sites. That is why the vocabularies drifted: the knowledge lived in a test
+    rather than in a module, so `chat.py` could write two of the four values and
+    `stage_executor` could act on all four with nothing comparing them. The set
+    was never unknown — it was unenforced.
+
+    The literals are gone; the constants are what the call sites now name.
+    """
     import app.api.routes.chat as chat
+    from app.core.failure_kind import FAILURE_KINDS
 
     source = inspect.getsource(chat)
-    assert 'failure_kind="transient"' in source, "the timeout path must say transient"
-    assert 'failure_kind="fatal"' in source, "the crash path must say fatal"
+    assert "meta=TraceMeta.aborted(fk.TRANSIENT)" in source, "the timeout path must say transient"
+    assert "meta=TraceMeta.aborted(fk.FATAL)" in source, "the crash path must say fatal"
+    assert 'failure_kind="' not in source, (
+        "a literal at the call site is what let the two vocabularies drift"
+    )
+    assert set(FAILURE_KINDS) == {"transient", "configuration", "data_missing", "fatal"}
     assert 'f"unknown-{session_id}"' not in source.replace('return f"unknown-{session_id}"', ""), (
         "the synthetic id must only be produced by the logged fallback helper"
     )
@@ -84,7 +108,7 @@ async def test_finalize_does_not_overwrite_real_values_with_its_own_defaults(mon
         user_id="u",
         response_type="error",
         status="failed",
-        failure_kind="transient",
+        meta=TraceMeta.aborted("transient"),
     )
 
     written = captured["values"]

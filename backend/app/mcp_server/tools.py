@@ -27,7 +27,9 @@ from mcp.server.fastmcp.exceptions import ToolError
 from app.agents.base import AgentContext
 from app.agents.orchestrator import AgentResponse, OrchestratorAgent
 from app.connectors.base import QueryResult
+from app.core import failure_kind as fk
 from app.core.agent_limiter import agent_limiter
+from app.core.trace_meta import TraceMeta
 from app.core.workflow_tracker import tracker as _singleton_tracker
 from app.llm.router import LLMRouter
 from app.llm.usage_sink import DbUsageSink
@@ -329,6 +331,7 @@ async def query_database(
                     project_id=project_id,
                     user_id=user_id,
                     question=question,
+                    meta=_mcp_trace_meta(orchestrator, wf_id, resp),
                     response_type=resp.response_type or "text",
                     status="failed" if resp.error else "completed",
                     error_message=resp.error,
@@ -339,6 +342,21 @@ async def query_database(
         return _agent_response_to_dict(resp)
     finally:
         await agent_limiter.release(user_id)
+
+
+def _mcp_trace_meta(orchestrator: OrchestratorAgent, wf_id: str, resp: AgentResponse) -> TraceMeta:
+    """Ш0 · REQ-2: routing for a trace on the MCP path.
+
+    This path calls ``OrchestratorAgent.run`` directly rather than going through
+    ``ConversationalAgent``, so the wrapper that drains ``pop_routing`` for the
+    chat path never runs here. Draining it explicitly keeps the MCP trace as
+    honest as the chat one; the alternative — ``TraceMeta.utility("mcp")`` —
+    would have been a false statement, because this path really does route.
+    """
+    routing = orchestrator.pop_routing(wf_id)
+    if routing:
+        resp.route, resp.complexity, resp.estimated_queries = routing
+    return TraceMeta.from_response(resp, failure_kind=fk.FATAL if resp.error else None)
 
 
 async def search_codebase(principal: Principal, project_id: str, question: str) -> dict[str, Any]:
@@ -397,6 +415,7 @@ async def search_codebase(principal: Principal, project_id: str, question: str) 
                     project_id=project_id,
                     user_id=user_id,
                     question=question,
+                    meta=_mcp_trace_meta(orchestrator, wf_id, resp),
                     response_type=resp.response_type or "text",
                     status="failed" if resp.error else "completed",
                     error_message=resp.error,

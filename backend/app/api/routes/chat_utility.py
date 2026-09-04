@@ -16,8 +16,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core import failure_kind as fk
 from app.core.context_budget import CHARS_PER_TOKEN
 from app.core.rate_limit import limiter
+from app.core.trace_meta import TraceMeta
 from app.core.workflow_tracker import tracker
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
@@ -399,6 +401,9 @@ async def explain_sql(
                     project_id=body.project_id,
                     user_id=user["user_id"],
                     question=f"[explain-sql] {body.sql[:100]}",
+                    meta=TraceMeta.utility(
+                        "explain_sql", failure_kind=fk.FATAL if _es_error else None
+                    ),
                     response_type="explain_sql",
                     status="failed" if _es_error else "completed",
                     error_message=_es_error,
@@ -529,6 +534,9 @@ async def summarize_message(
                     project_id=body.project_id,
                     user_id=user["user_id"],
                     question=f"[summarize] {question[:100]}",
+                    meta=TraceMeta.utility(
+                        "summarize", failure_kind=fk.FATAL if _sm_error else None
+                    ),
                     response_type="summarize",
                     status="failed" if _sm_error else "completed",
                     error_message=_sm_error,

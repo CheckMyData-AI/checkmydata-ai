@@ -100,6 +100,14 @@ class ConversationalAgent:
                 if reason and not response.error:
                     response.suspicious_result = True
                     response.suspicious_reason = reason
+            # Ш0 · REQ-2: the router's signals, drained here for the same reason
+            # `suspicious_result` is — the orchestrator has many exit points and
+            # this is the one place every response passes through.
+            pop_routing = getattr(self._orchestrator, "pop_routing", None)
+            if callable(pop_routing):
+                routing = pop_routing(wf_id)
+                if routing:
+                    response.route, response.complexity, response.estimated_queries = routing
             return response
         except Exception as exc:
             if not self._tracker.has_ended(wf_id):
