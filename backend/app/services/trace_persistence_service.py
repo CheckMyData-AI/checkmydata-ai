@@ -231,6 +231,7 @@ class TracePersistenceService:
         estimated_queries = meta.estimated_queries
         failure_kind = meta.failure_kind
         estimated_cost_usd = meta.cost_usd
+        plan_json = meta.plan_json
         try:
             async with async_session_factory() as session:
                 from sqlalchemy import select, update
@@ -262,6 +263,7 @@ class TracePersistenceService:
                         # It sat in the unconditional dict above, which is the
                         # same shape that erased 323 s of duration once.
                         "failure_kind": failure_kind,
+                        "plan_json": plan_json,
                         "error_message": _truncate(error_message),
                         "total_duration_ms": total_duration_ms,
                         "estimated_cost_usd": estimated_cost_usd,
@@ -317,6 +319,7 @@ class TracePersistenceService:
                         route=route,
                         complexity=complexity,
                         estimated_queries=estimated_queries,
+                        plan_json=plan_json,
                     )
                     session.add(trace)
                     await session.flush()

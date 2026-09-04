@@ -177,6 +177,63 @@ operator's behalf without asking is how a plan stops being theirs.
 | post-deploy 0.1 | `HEROKU_SLUG_COMMIT` is unset on `checkmydata-api`, so Sentry's `release` is `None` in production and no stack trace names the commit that caused it. `CLAUDE.md` already records the requirement (`heroku labs:enable runtime-dyno-metadata`); nobody ran it. One command, and it restarts the dynos. | backlog — ops, needs its own moment |
 | 0.1 | A `;` inside a string literal still trips the read-only multi-statement refusal (`SELECT * FROM t WHERE name = 'a;b'` is refused). Pre-existing, unchanged by this fix, and a false refusal rather than a false pass. | backlog — needs literal-aware `;` detection, which is a behaviour change to read-only mode |
 
+## Track O — the orchestrator reshape (Ш0 … Ш4)
+
+Opened 2026-09-04 by `docs/reports/orchestrator-reshape-2026-09-04.html`, after the
+operator proposed rebuilding the orchestrator from scratch on a TUI coding agent. Both
+halves of that were answered from measurement: PI is a layer inversion (it is the
+`local-runner` **provider** shape by Fabric's own decision tree), and the Tool Runner is
+rejected because production's workhorse model is `openai/gpt-4o` — 6630 calls of 7662,
+all through OpenRouter. The route chosen was **reshape, not rebuild**.
+
+| # | Task | Size | Status | Evidence |
+|---|---|---|---|---|
+| Ш0a | The trace records the routing and the failure kind | M | done | `TraceMeta` required by `finalize_trace`; `app/core/failure_kind.py` defines the four values once; 27 tests, three inverted; #283 |
+| Ш0b.1 | Replanning is observable | S | done | `orchestrator:replan` span with the attempt and the failed stage; #285 |
+| Ш0b.2 | Cost is actually computed | M | done | `app/services/model_pricing_service.py`; the route now consumes it; #285 |
+| Ш0b.3 | The executed plan outlives the resume buffer | S | in review | `plan_json` on `RequestTrace`, migration `d4e5f6a7b8c9`; TTL deliberately unchanged; #286 |
+| Ш1 | An eval that runs the real retriever instead of scoring an oracle | L | **next** | folds in P2 row 2.5 — the current gate handed the oracle the answer key, which is why both critical retrieval defects passed CI green |
+| Ш2 | One loop: planning becomes a tool, the second execution path goes | L | todo | 14% of requests take Path B; its unique capability (checkpoint) fired **10 times** in the whole history; DataGate, which lives only there, has 16 observations against SQL validation's 5148 |
+| Ш3 | One cross-item checker before convergence, six-item contract, four of them code | M | todo | synthesis takes edges straight from the stages, so the diamond trusts its inputs because they arrived |
+| Ш4 | The tool layer rebuilt deliberately: strict schemas, closed enums, declared effects, a completion test each | L | todo | the half of the operator's request that was right in full; also the entry to Fabric's declaration gate |
+
+### What Ш0 measured that the audit had not
+
+| | |
+|---|---|
+| `route` / `complexity` in `request_traces` | `"unknown"` in **222 of 222** |
+| `failure_kind` | NULL in **all 56** failed traces and **all 50** query failures |
+| Spans matching `replan` | **0** of 48 distinct names |
+| `estimated_cost_usd` | NULL on **all 7 664** `token_usage` rows and all 222 traces, every month since April |
+| `pipeline_runs` rows holding a plan | **0** — swept at start-up after 7 days, the last four by this session's own deploy |
+
+**ORCH-A03 was not the culprit**, and `CLAUDE.md` needed a correction rather than a
+retraction: it does write the router's signals into `context.extra` for the in-memory
+collector, but `replace(context, …)` returns a copy, so the caller holding the original
+never saw them. The counter was right and the row beside it was empty.
+
+### Carry-over from Ш0
+
+| Finding | Homed |
+|---|---|
+| An `AgentResponse.error` string is classified coarsely as `fatal` at three trace sites. Nothing today reads that string, and the alternative was the NULL the column already had — but `transient` and `configuration` failures are now indistinguishable from defects on the flat loop. | backlog — needs the error classifier the SQL path already has |
+| A pre-existing invalid `# noqa` at `test_suppression_debt_ratchet.py:240` (warning, not error). Untouched deliberately across two runs now. | backlog — trivial |
+| The npm audit gate could not tell a registry 503 from a finding, and a red build on a step named *Audit dependencies* reads as "we introduced a vulnerability". Fixed in #284; recorded here because the **class** recurs — a check whose failure mode is indistinguishable from the thing it checks for. | closed (#284) |
+
+### Working rules this track earned
+
+- **Three blunt-instrument edits in one build, and the third was caught by an assertion on
+  the match count before anything was written.** `estimated_cost_usd=` contains
+  `cost_usd=` as a substring; an import anchor that also exists indented lands inside a
+  function body; a regex that opens two parens must close two. Assert the count, then
+  read each site — the count alone is not enough, and the intention is worth nothing.
+- **A watcher's exit condition must name what it watches.** A deploy monitor keyed on
+  "a completed `Deploy to Heroku` exists in the last six runs" reported success one minute
+  after a merge, matching *yesterday's* deploy while CI was still running.
+- **Distinguish a test that pins a defect from a test whose subject relocated.** The first
+  is now at eight occurrences and is a finding; the second is ordinary maintenance, and
+  counting them together inflates the first.
+
 ## Track A — one agent over all sources
 
 Opened 2026-09-03 by `docs/reports/target-gap-2026-09-03.html`. The audit's P0–P3 rows
