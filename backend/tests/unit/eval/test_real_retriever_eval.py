@@ -345,8 +345,9 @@ class TestNoConstructionSiteHidesAFailure:
             for path in Path("app").rglob("*.py")
             if "HybridRetriever(" in path.read_text(encoding="utf-8")
         }
-        assert {str(p) for p in found} == set(self._SITES), (
-            f"the set of HybridRetriever construction sites changed: {sorted(str(p) for p in found)}"
+        sites = sorted(str(p) for p in found)
+        assert set(sites) == set(self._SITES), (
+            f"the set of HybridRetriever construction sites changed: {sites}"
         )
 
 
