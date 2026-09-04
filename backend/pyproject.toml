@@ -135,7 +135,15 @@ markers = [
     "unit: unit tests (deselect with '-m \"not unit\"')",
     "integration: integration tests (deselect with '-m \"not integration\"')",
     "smoke: fast deterministic startup smoke tests (run with 'pytest -m smoke')",
+    # Ш1: the retrieval eval through the REAL embedder. Deselected by default and
+    # NOT run in CI — the model is ~90 MB and the backend job already takes
+    # 15-16 minutes. The cost of that choice is stated in the test file rather
+    # than left implicit: an embedder regression reaches `main` and is caught by
+    # whoever next runs `pytest -m slow_eval`, not by the gate.
+    "slow_eval: retrieval eval through the real embedder (run with 'pytest -m slow_eval')",
 ]
+# Deselected unless asked for by name. `-m slow_eval` overrides this.
+addopts = "-m 'not slow_eval'"
 
 [tool.coverage.run]
 source = ["app"]

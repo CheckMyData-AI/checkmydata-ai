@@ -35,8 +35,27 @@ async def _dispose_app_engine():
     await base_mod.engine.dispose()
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Auto-apply 'unit' or 'integration' markers based on test file location."""
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Auto-apply 'unit' or 'integration' markers based on test file location, and
+    keep ``slow_eval`` genuinely opt-in.
+
+    ``addopts`` carries ``-m 'not slow_eval'``, which is **not enough on its own**:
+    a command-line ``-m`` REPLACES addopts' expression rather than combining with
+    it. So ``pytest -m unit`` — which ``make test`` runs — selected the slow eval,
+    because the loop below had just marked it ``unit`` for living under
+    ``tests/unit/``. Measured rather than reasoned about: 18 items collected with
+    ``-m unit`` against 15 without, the three extras being the embedder tests that
+    download a ~90 MB model.
+
+    So the skip is decided here, from whether ``slow_eval`` was actually asked
+    for, and the marker's meaning no longer depends on which ``-m`` a caller
+    happened to type.
+    """
+    requested = config.getoption("-m", default="") or ""
+    slow_requested = "slow_eval" in requested and "not slow_eval" not in requested
+    skip_slow = pytest.mark.skip(
+        reason="opt-in: run with `pytest -m slow_eval` (embeds with the real model)"
+    )
     for item in items:
         path = Path(item.fspath)
         parts = path.parts
@@ -44,6 +63,8 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(pytest.mark.unit)
         elif "integration" in parts:
             item.add_marker(pytest.mark.integration)
+        if "slow_eval" in item.keywords and not slow_requested:
+            item.add_marker(skip_slow)
 
 
 @pytest.fixture(autouse=True)

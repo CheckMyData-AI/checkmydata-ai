@@ -103,10 +103,28 @@ jobs:
       - name: Retrieval eval gate (golden-set / RAGAS-style metrics)
         # Phase 3 regression gate: runs the deterministic golden-set harness
         # (app.eval) so a retrieval-quality regression fails CI. LLM-free and
-        # network-free — validates the golden set, metric math, and that an
-        # oracle retriever clears the thresholds.
+        # network-free.
+        #
+        # `test_retrieval_eval.py` validates the golden set, the metric math, and
+        # that an ORACLE retriever clears the thresholds — which proves the
+        # harness works and says nothing about the product's retrieval. That was
+        # always what this step claimed; the gap was that nobody wired the real
+        # one, which is why both retrieval defects of 2026-09 passed CI green.
+        #
+        # Ш1 added `tests/unit/eval/test_real_retriever_eval.py`: the production
+        # `HybridRetriever` with a REAL BM25 leg over a fixture corpus and a stub
+        # dense leg, so RRF, `min_score`, `max_rank` and the degradation labels
+        # are the shipped ones. Verified by planting a defect — killing the real
+        # BM25 leg turns the golden-set assertion red, which the first version of
+        # the fixture did NOT do because the stub was strong enough to carry it.
+        #
+        # The embedder itself is not covered here: that is `-m slow_eval`, opt-in,
+        # because the model is a ~90 MB cold download in CI. The RUN is 4.5 s
+        # measured locally, so a cached model would make this affordable — worth
+        # revisiting rather than assuming it is expensive forever.
         run: |
-          pytest tests/unit/test_retrieval_eval.py tests/unit/test_reranker.py -q
+          pytest tests/unit/test_retrieval_eval.py tests/unit/test_reranker.py \
+                 tests/unit/eval/test_real_retriever_eval.py -q
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           MASTER_ENCRYPTION_KEY: ${{ env.MASTER_ENCRYPTION_KEY }}

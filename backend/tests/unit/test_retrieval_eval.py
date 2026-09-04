@@ -6,7 +6,14 @@ Covers three things:
    gate — a malformed dataset must fail loudly).
 2. The deterministic IR metrics compute correct values on known inputs.
 3. The harness runs end-to-end: an oracle retriever passes the thresholds and a
-   broken retriever fails them. This is the regression gate that runs in CI.
+   broken retriever fails them. This proves the HARNESS works — it is not a
+   measurement of the product's retrieval, and calling it "the regression gate"
+   (as this docstring did until 2026-09-04) is what made the absence of a real
+   one invisible. Both retrieval defects of 2026-09 passed CI green.
+
+   The real gate is ``tests/unit/eval/test_real_retriever_eval.py`` (Ш1): the
+   production ``HybridRetriever``, a real BM25 leg, real fusion. The embedder is
+   covered separately under ``-m slow_eval``.
 """
 
 from __future__ import annotations
