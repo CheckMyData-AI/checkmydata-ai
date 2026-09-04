@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.auth_cookies import CSRF_COOKIE, CSRF_HEADER, SAFE_METHODS, SESSION_COOKIE
+from app.core.identity import RevokedTokenError, assert_token_not_revoked
 from app.models.base import async_session_factory
 
 _SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
@@ -72,11 +73,16 @@ async def get_current_user(
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
 
-    # Token revocation: a JWT carries the user's token_version at mint time. Bumping
-    # the column (password change, "sign out everywhere") invalidates all prior tokens.
-    # ``ver`` defaults to 0 for tokens minted before this claim existed (no forced logout).
-    if payload.get("ver", 0) != user.token_version:
-        raise HTTPException(status_code=401, detail="Session expired, please sign in again")
+    # Token revocation. The comparison itself lives in `app.core.identity` because
+    # it used to live ONLY here: the MCP server's JWT path resolved a principal
+    # from a token the user had already revoked, so "sign out everywhere" killed
+    # HTTP access and left `/mcp` open until the token expired on its own.
+    try:
+        assert_token_not_revoked(payload, user)
+    except RevokedTokenError as exc:
+        raise HTTPException(
+            status_code=401, detail="Session expired, please sign in again"
+        ) from exc
 
     return {"user_id": user.id, "email": user.email}
 

@@ -66,6 +66,10 @@ class TestMCPAuth:
             patch("app.mcp_server.auth._auth_svc") as mock_auth,
             patch("app.models.base.async_session_factory") as mock_sf,
         ):
+            # `token_version` is now read by the revocation check (board row
+            # 1.12), so the stub has to model it: a bare MagicMock presents a Mock
+            # there, which is unreadable and correctly refused.
+            mock_user.token_version = 0
             mock_auth.decode_token.return_value = {"sub": "user-1", "email": "a@b.com"}
             mock_auth.get_by_id = AsyncMock(return_value=mock_user)
             mock_session = AsyncMock()

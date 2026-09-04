@@ -24,6 +24,7 @@ import logging
 import os
 
 from app.config import settings
+from app.core.identity import RevokedTokenError, assert_token_not_revoked
 from app.mcp_server.runtime import Principal
 from app.models.base import async_session_factory
 from app.services.auth_service import AuthService
@@ -132,6 +133,20 @@ async def resolve_user_from_jwt(token: str) -> Principal:
         if not user or not user.is_active:
             logger.warning("MCP auth: JWT subject %s not found or inactive", payload.get("sub"))
             raise MCPAuthError("User not found or inactive")
+
+        # Board row 1.12. This check was absent here while `app/api/deps.py` had
+        # it, so revoking a user's sessions invalidated their HTTP tokens and NOT
+        # their MCP access — a stolen or deliberately-revoked JWT kept working
+        # against `/mcp` until it expired. Asked of the one shared function
+        # rather than copied, because the copy is what went missing.
+        try:
+            assert_token_not_revoked(payload, user)
+        except RevokedTokenError as exc:
+            logger.warning(
+                "MCP auth: JWT for %s was revoked (minted before the current token_version)",
+                payload.get("sub"),
+            )
+            raise MCPAuthError("Session expired, please sign in again") from exc
 
     logger.info("MCP auth: JWT resolved to user %s", payload["sub"])
     return {"user_id": payload["sub"], "email": payload.get("email", "")}
