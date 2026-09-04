@@ -13,6 +13,7 @@ from typing import Any
 from app.agents.base import AgentContext, BaseAgent
 from app.agents.data_gate import DataGate, DataGateOutcome
 from app.agents.errors import AgentError, AgentFatalError, AgentRetryableError
+from app.agents.layer_checker import LayerChecker, LayerVerdict
 from app.agents.result_validation import ResultValidation
 from app.agents.sql_result_reconciliation import build_reconciliation_note
 from app.agents.stage_context import (
@@ -24,6 +25,7 @@ from app.agents.stage_context import (
 from app.agents.stage_validator import StageValidationOutcome, StageValidator
 from app.config import settings
 from app.connectors.base import QueryResult
+from app.core.metrics import get_metrics_collector
 from app.core.workflow_tracker import WorkflowTracker
 from app.llm.base import Message
 from app.llm.errors import LLMError
@@ -132,6 +134,7 @@ class StageExecutor:
         mcp_source_agent: BaseAgent | None = None,
         git_agent: BaseAgent | None = None,
         analytics_agent: BaseAgent | None = None,
+        layer_checker: LayerChecker | None = None,
     ) -> None:
         self._sql = sql_agent
         self._knowledge = knowledge_agent
@@ -147,6 +150,11 @@ class StageExecutor:
         # and this stage does the same. The parameter exists so a test can
         # inject a double without paying that import.
         self._analytics = analytics_agent
+        # Ш3: the cross-item gate between a parallel layer and the node that
+        # consumes it. Every check before this one was PER STAGE, so three
+        # branches could converge with one hallucination among them and the
+        # synthesis node could not tell. Injectable so a test can watch it refuse.
+        self._layer_checker = layer_checker or LayerChecker()
         self._staleness_warning: str | None = None
         # ORCH-A01 / T10: shared result-quality gate (C-B).  Built lazily and
         # cached so callers can inject a pre-built instance in tests.  The gate
@@ -339,6 +347,30 @@ class StageExecutor:
             for stage, outcome in zip(batch, outcomes):
                 if outcome is not None and outcome.status == "stage_failed":
                     return outcome
+
+            # Ш3: the cross-item gate. Placed AFTER the per-stage short-circuit
+            # and BEFORE the checkpoint, because a checkpoint is a human
+            # consuming the layer and nothing downstream may consume a flagged
+            # one. Only for a batch of more than one: a single stage has no
+            # siblings to compare, and a barrier on a one-item layer is the cost
+            # the doctrine says most convergences do not need.
+            if len(batch) > 1:
+                verdict = self._layer_checker.check(
+                    expected=len(batch),
+                    batch=list(batch),
+                    results=[stage_ctx.get_result(s.stage_id) for s in batch],
+                )
+                await self._emit_layer_verdict(wf_id, batch, verdict)
+                if not verdict.passed:
+                    return _StageExecutorResult(
+                        status="stage_failed",
+                        stage_ctx=stage_ctx,
+                        failed_stage=batch[0],
+                        failed_validation=StageValidationOutcome(
+                            passed=False, errors=verdict.failures
+                        ),
+                        replan_eligible=any(s.replan_on_failure for s in batch),
+                    )
 
             for stage, outcome in zip(batch, outcomes):
                 if outcome is not None and outcome.status == "checkpoint":
@@ -991,6 +1023,46 @@ class StageExecutor:
                 error=_stage_error_message(exc),
                 error_category=_classify_stage_error(exc),
             )
+
+    async def _emit_layer_verdict(
+        self,
+        wf_id: str,
+        batch: list[PlanStage],
+        verdict: LayerVerdict,
+    ) -> None:
+        """Record the verdict as a score with a source.
+
+        *"A checker that has never rejected anything is a finding"* is only an
+        answerable question if the verdicts are stored. It emits on a PASS too:
+        a counter that only moves on rejection cannot distinguish "never fired"
+        from "never ran".
+        """
+        # Called bare, like the other fifteen `tracker.emit` sites in this file.
+        # A handler here was the first version, and the suppression ratchet was
+        # right to refuse it: `emit` is not something a caller guards, so the
+        # handler could only have hidden a wrong call — which is exactly what it
+        # did one function below, where a metric call with the wrong signature sat
+        # inside one.
+        await self._tracker.emit(
+            wf_id,
+            "layer_check",
+            "passed" if verdict.passed else "failed",
+            (
+                f"{len(batch)} parallel stage(s): "
+                + ("usable" if verdict.passed else "; ".join(verdict.failures))
+            ),
+            span_type="validation",
+            stage_id=",".join(s.stage_id for s in batch),
+        )
+        # No try/except around this on purpose. `MetricsCollector.inc` already
+        # swallows its own failures, so a handler here would only hide a WRONG
+        # CALL — which is what the first version of this block was: it reached for
+        # a module-level `metrics` and an `increment(name, dict)` signature that
+        # do not exist, and the handler would have made the counter silently never
+        # record. `test_the_reject_counter_actually_records` is what caught it.
+        collector = get_metrics_collector()
+        for item in verdict.rejected_items:
+            collector.inc("layer_checker_reject_total", item=item)
 
     async def _run_analytics_stage(
         self,
