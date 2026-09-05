@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CheckMyData — сводный план работ, 2026-09-05</title>
+<style>
+:root{--bg:#0f1115;--panel:#171a21;--line:#262b36;--tx:#e6e9ef;--dim:#9aa4b8;--acc:#7dd3fc;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--mut:#64748b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:40px 24px}
+.wrap{max-width:1080px;margin:0 auto}
+h1{font-size:27px;margin:0 0 6px;letter-spacing:-.02em}
+h2{font-size:19px;margin:38px 0 12px;padding-bottom:7px;border-bottom:1px solid var(--line)}
+h3{font-size:15px;margin:22px 0 8px;color:var(--acc)}
+.sub{color:var(--dim);margin:0 0 26px;font-size:14px}
+code{background:#20242e;padding:1px 5px;border-radius:3px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+tr:hover td{background:#141821}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:16px 18px;margin:14px 0}
+.tier{border-left:3px solid var(--acc);padding-left:14px;margin:20px 0}
+.tier.t1{border-color:var(--bad)}.tier.t2{border-color:var(--warn)}.tier.t3{border-color:var(--acc)}
+.tier.t4{border-color:var(--ok)}.tier.t5{border-color:var(--mut)}
+.why{color:var(--dim);font-size:13.5px;margin:4px 0 10px}
+.pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;border:1px solid var(--line);color:var(--dim);margin-left:6px}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.dim{color:var(--dim)}
+ul{margin:8px 0;padding-left:20px}li{margin:5px 0}
+.metric{display:flex;gap:26px;flex-wrap:wrap;margin:10px 0}
+.metric div{min-width:120px}.metric b{display:block;font-size:21px;color:var(--acc)}
+.metric span{font-size:12px;color:var(--dim)}
+footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);color:var(--mut);font-size:12px}
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>Сводный план работ</h1>
+<p class="sub">CheckMyData · 2026-09-05 · после аудита кода. Каждая строка плана несёт своё основание; порядок выведен из измерения, а не из ощущения важности.</p>
+
+<h2>Что нашёл аудит 5 сентября</h2>
+<p class="why">Пять форм дефекта, каждую из которых репозиторий уже демонстрировал: параметр принят и не использован; ресурс не проверен на принадлежность; обработчик, глотающий неверный вызов; дефолт, позволяющий забыть; тест, закрепляющий дефект. Все совпадения прочитаны глазами — флаг сканера это кандидат, а не приговор.</p>
+
+<table>
+<tr><th>Форма</th><th>Найдено</th><th>Подтверждено</th><th>Итог</th></tr>
+<tr><td>Параметр принят и не использован</td><td>1</td><td class="bad">1</td><td><code>insight_feed_agent._analyze_table</code> → привело к утечке ниже</td></tr>
+<tr><td>Ресурс не проверен на принадлежность</td><td>11 роутов</td><td class="bad">1</td><td>2 — ложные (охранник в сервисе, роут его не видит), 8 проскоуплены верно</td></tr>
+<tr><td>Обработчик, глотающий неверный вызов</td><td>82 вызова</td><td class="ok">0</td><td>267 связываний чисто; проверка закреплена тестом</td></tr>
+<tr><td>Дефолт, позволяющий забыть</td><td>56 сигнатур</td><td class="ok">0</td><td>все 5 HTTP-границ передают владельца; безфильтровые — доверенные внутренние</td></tr>
+<tr><td>Тест, закрепляющий дефект</td><td>19 пропусков</td><td class="bad">1</td><td>саморазоружающийся тест арендаторства; xfail оказался честным</td></tr>
+</table>
+
+<div class="panel">
+<h3>Самое неудобное — не в коде, а в леджере</h3>
+<p>Строка доски 1.10 называла <b>три</b> цели: <code>semantic_layer</code>, <code>data_graph</code>, <code>feed</code>. PR #290 закрыл две. Третью не тронул никто, и строка осталась <code>todo</code> — «сделано наполовину» и «не начато» выглядели одинаково. <code>feed</code> нашёлся заново через сутки, полным сканом, за полную цену.</p>
+<p class="why">Правка структурная, а не «быть внимательнее»: тест строки теперь параметризован по трём целям, и недостающая — красная, а не отсутствующая. <b>Строка, называющая N целей, требует N утверждений, иначе она не может сказать, что ещё должна.</b></p>
+</div>
+
+<h2>Из чего выведен порядок</h2>
+<p class="why">Цель заявлена: один агент над многими источниками, любой вопрос о данных проекта отвечаем. Продакшн измерен внутри дино, чтобы креды не покидали Heroku:</p>
+<div class="metric">
+<div><b>1</b><span>подтверждённый пользователь из 9</span></div>
+<div><b>3</b><span>соединения, все <code>database</code></span></div>
+<div><b>0</b><span>аналитических источников</span></div>
+<div><b>17</b><span>сообщений чата за 30 дней</span></div>
+<div><b>4</b><span>прогона пайплайна</span></div>
+<div><b>43%</b><span>всех токенов — 78 вызовов</span></div>
+</div>
+<p>Отсюда правило приоритета, и оно одно: <b>сначала путь, который реально исполняется; затем то, что снимает блок с заявленной цели; расширение на источники, у которых сегодня ноль пользователей, — после того как путь над одним источником стал заслуживающим доверия.</b> Обратный порядок даёт продукт, который подключает четыре вендора и ошибается в каждом.</p>
+
+<div class="tier t1">
+<h3>Ярус 1 — честность пути, который исполняется <span class="pill">86% трафика</span></h3>
+<p class="why">Плоский цикл над базой данных. Здесь дефект виден пользователю немедленно и стоит доверия ко всему продукту.</p>
+<table>
+<tr><th>#</th><th>Задача</th><th>Почему сейчас</th></tr>
+<tr><td>1.7</td><td>Отдавать <code>step_limit_reached</code>, когда срабатывает отсечка 216 с</td><td>Сейчас ответ на исчерпанном бюджете неотличим от полного — это ровно тот случай, ради которого писался инвариант «любой ответ прослеживаем»</td></tr>
+<tr><td>2.9</td><td>Гейт ответа пайплайна должен падать закрыто, как плоский цикл</td><td>Два пути, две разные политики отказа — расхождение, которое не видно ни в одном тесте</td></tr>
+<tr><td>2.4</td><td>DataGate до возврата по усечению; расширить жёсткие проверки за 21 ключевое слово</td><td>Усечённый результат сегодня минует ворота, то есть проверяется не то, что показано</td></tr>
+<tr><td>2.8</td><td>Алиас-биндинг <code>check_required_filters</code></td><td>159 предикатов настроено, 1 применялся верно (измерено 31 августа); сюда же сложена carry-over 0.1 по <code>sql_parser</code></td></tr>
+<tr><td>2.7</td><td><code>Decimal</code> в детекторах потерь и возможностей</td><td>Деньги во float — та же ошибка, что уже исправлена в фактовых таблицах аналитики</td></tr>
+</table>
+</div>
+
+<div class="tier t2">
+<h3>Ярус 2 — «любой вопрос отвечаем» упирается сюда</h3>
+<p class="why">Ретривал решает, будет ли вопрос вообще найден. Цель без этого яруса недостижима арифметически: агент не ответит о том, чего не нашёл.</p>
+<table>
+<tr><th>#</th><th>Задача</th><th>Почему сейчас</th></tr>
+<tr><td>2.2</td><td>Подавать символьные чанки в корпус BM25</td><td>Лексическая нога слепа к именам символов — половина вопросов о коде именно про них</td></tr>
+<tr><td>2.3</td><td>Выдавать целые идентификаторы как термы BM25</td><td>Разбитый на части идентификатор не совпадёт с тем, что пишет пользователь</td></tr>
+<tr><td>2.10</td><td>Префиксный матч при удалении: символьные чанки не вычищаются никогда</td><td>Индекс копит мусор, и ранжирование деградирует молча</td></tr>
+<tr><td>1.9</td><td>Передать <code>tracker</code> в трёх местах <code>HybridRetriever</code></td><td>Без него деградация ретривала не попадает в трейс — чиним вслепую</td></tr>
+<tr><td>2.6</td><td><code>to_thread</code> для загрузки схемного BM25 с пути запроса</td><td>Синхронный I/O на async-пути; правило проекта нарушено буквально</td></tr>
+<tr><td>2.1</td><td>Рендерить <code>Artifact.title</code>; дедуп по <code>(title, summary)</code></td><td>Дубли в выдаче читаются как разные находки</td></tr>
+</table>
+</div>
+
+<div class="tier t3">
+<h3>Ярус 3 — слой инструментов <span class="pill">Ш4, снимает блок с цели</span></h3>
+<p class="why">Объявленные эффекты, строгие схемы, закрытые перечисления, тест завершаемости на каждый инструмент. Это одновременно вход в декларационный гейт Fabric и то, что делает добавление источника дешёвым. Пока слоя нет, каждый новый вендор — отдельная ручная обвязка, и цель «многие источники» стоит N ручных интеграций.</p>
+</div>
+
+<div class="tier t4">
+<h3>Ярус 4 — расширение на источники <span class="pill">сегодня 0 пользователей</span></h3>
+<p class="why">App Store, Google Play, Search Console. Заявленная цель — здесь; и именно поэтому ярус стоит после трёх предыдущих, а не первым. Строить второй источник поверх пути, который ещё ошибается на первом, значит удвоить ошибку. GA4 уже прошёл этот путь и дал форму: адаптер → журнал → фактовые таблицы → агент.</p>
+<table>
+<tr><th>#</th><th>Задача</th><th>Почему в этом ярусе</th></tr>
+<tr><td>2.11</td><td>Nullability и FK для Mongo; первичные ключи ClickHouse</td><td>Глубина схемы решает, поймёт ли агент связь между таблицами</td></tr>
+<tr><td>2.12</td><td>Диалектные подсказки SQLite — у демо-пути их нет</td><td>Демо — первое, что видит новый пользователь, и оно идёт по коннектору без подсказок</td></tr>
+</table>
+</div>
+
+<div class="tier t5">
+<h3>Ярус 5 — структура <span class="pill">платить, когда мешает</span></h3>
+<p class="why">3.1–3.7: тела задач из роутов в сервисы, один <code>execute_stored_query()</code> вместо пяти копий, подъём 867 функциональных импортов, генерация <code>types.ts</code> из OpenAPI, разделение <code>ConnectionSelector</code>, heartbeat дневной синхронизации, расширение храповика на пустые контейнеры. Ни одна из них не видна пользователю. Берутся тогда, когда блокируют строку из ярусов выше, — не по расписанию.</p>
+</div>
+
+<div class="panel">
+<h3>Отдельно: два решения, а не задачи</h3>
+<ul>
+<li><b>Ш2 (единый цикл) отложен намеренно.</b> Его проверка требует трафика, которого нет: 4 прогона пайплайна в месяц не отличат улучшение от шума. Возобновить, когда путь B станет измерим.</li>
+<li><b>0.4 — шаг оператора, и он потолок для всего остального.</b> Живые ключи Stripe и три <code>STRIPE_PRICE_*</code>. Ключи не вводятся и не хранятся мной по вашему же требованию; команду <code>heroku config:set</code> запускаете вы. Пока он открыт, продавать нечего, чем бы ни был занят план.</li>
+</ul>
+</div>
+
+<footer>Основания: <code>docs/AUDIT_REMEDIATION_2026-09.md</code> (доска, таблицы P0–P3: <b>41 строка — 20 закрыто, 20 открыто, 1 заблокирована оператором</b>; плюс 9 строк carry-over, расписанных по доске и бэклогу) · измерение прода 2026-09-03 внутри дино · аудит кода 2026-09-05.</footer>
+
+</div></body></html>

@@ -75,6 +75,20 @@ class InsightFeedAgent:
         4. Use LLM to generate deeper analysis if available
         5. Store findings in the Memory Layer
         """
+        # Row 1.10, third target. `require_role(project_id)` at the route proves
+        # membership of the CALLER's project and says nothing about whose
+        # connection this is; `_load_db_index` below then filters on
+        # `connection_id` alone. So an owner of A could scan B's connection and
+        # read B's schema index — `sample_data_json` and `column_notes_json` are
+        # sampled values from their data — with the insights written into A.
+        #
+        # Resolved through the project-scoped getter, and it RAISES: returning
+        # None is ignorable by a caller who forgets to check, which is how the
+        # scope went missing at all three of this row's targets.
+        from app.services.connection_service import ConnectionService
+
+        await ConnectionService().require_in_project(session, connection_id, project_id)
+
         result = FeedScanResult()
 
         tables = db_index_entries or []
