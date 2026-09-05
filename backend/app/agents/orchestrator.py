@@ -1974,11 +1974,6 @@ class OrchestratorAgent(BaseAgent):
             step_limit_hit = True
 
         if step_limit_hit or wall_clock_timeout_hit:
-            has_meaningful_data = (
-                last_sql_result is not None
-                and last_sql_result.results is not None
-                and last_sql_result.results.rows
-            )
             _step_row_count = (
                 last_sql_result.results.row_count
                 if last_sql_result is not None and last_sql_result.results is not None
@@ -1989,7 +1984,11 @@ class OrchestratorAgent(BaseAgent):
                 and last_sql_result.results is not None
                 and last_sql_result.results.truncated
             )
-            answer_addresses_question = await self._validate_partial_answer(
+            # Still called, and NOT for the response type: when the partial answer
+            # does not address the question it catalogs a validation failure to the
+            # errors screen (`_validate_partial_answer` -> `upsert_validation_failure`).
+            # Dropping the call would remove that signal silently.
+            await self._validate_partial_answer(
                 final_text,
                 question=question,
                 sql_results=all_sql_results,
@@ -1999,12 +1998,25 @@ class OrchestratorAgent(BaseAgent):
                 row_count=_step_row_count,
                 truncated=_step_truncated,
             )
-            if has_meaningful_data and answer_addresses_question:
-                response_type = ResponseBuilder.determine_response_type(
-                    last_sql_result, knowledge_sources, has_mcp_result
-                )
-            else:
-                response_type = "step_limit_reached"
+            # Row 1.7. This branch used to return the ORDINARY type whenever the
+            # partial answer had rows and the validator approved it — so a run the
+            # budget cut short was typed `sql_result`, and `sealStateFor`
+            # (`components/ui/Seal.tsx:73-91`) sealed it **Verified**.
+            #
+            # `docs/ux/scenarios.md:2159` says the opposite, and gives the reason:
+            # "a failed or budget-exhausted run seals Unverified even when a query
+            # is attached to it, because a partial run's evidence proves nothing
+            # about the answer."
+            #
+            # The validator could not have settled it either way. It is asked
+            # whether the answer addresses the question; it sees the answer and the
+            # question, never the data the run did not reach. A partial answer
+            # judged against itself is not evidence that the cut-off did not matter.
+            #
+            # The answer text stays honest separately: the synthesis prompt already
+            # names what the run did not reach, and adds no caveat when the data
+            # does answer the question (scenarios.md:1090).
+            response_type = "step_limit_reached"
         else:
             response_type = ResponseBuilder.determine_response_type(
                 last_sql_result, knowledge_sources, has_mcp_result
