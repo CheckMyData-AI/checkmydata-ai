@@ -1158,6 +1158,7 @@ class OrchestratorAgent(BaseAgent):
                 has_repo=has_repo,
                 estimated_queries=route_result.estimated_queries,
                 needs_multiple_data_sources=route_result.needs_multiple_data_sources,
+                wf_id=wf_id,
             )
             if relevant_knowledge:
                 recent_learnings = (

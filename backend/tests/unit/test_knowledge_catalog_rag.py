@@ -161,7 +161,12 @@ class TestRagArtifactsAsyncHybridEnabled:
                 project_id="myproj", question="find users by email", n_results=5
             )
 
-        mock_retriever.query.assert_called_once_with("myproj", "find users by email", k=10)
+        # Row 1.9 added the per-call `tracker`/`workflow_id`. Asserted rather than
+        # loosened to `assert_called_once`: this test exists to pin what the RAG
+        # leg asks the retriever for, and the tracker is now part of that.
+        mock_retriever.query.assert_called_once_with(
+            "myproj", "find users by email", k=10, tracker=None, workflow_id=""
+        )
 
     @pytest.mark.asyncio
     async def test_filters_empty_document_hits(self):
@@ -320,7 +325,9 @@ class TestGetContextPackUsesHybridRag:
                 question="show doc",
             )
 
-        mock_rag.assert_called_once_with(project_id="p1", question="show doc", n_results=3)
+        mock_rag.assert_called_once_with(
+            project_id="p1", question="show doc", n_results=3, tracker=None, wf_id=""
+        )
         assert len(pack.rag_chunks) == 1
         assert pack.rag_chunks[0].id == "rag:p1::c1"
         assert "rag" in pack.sources_used

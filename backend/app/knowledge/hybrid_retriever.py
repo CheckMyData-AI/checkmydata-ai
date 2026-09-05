@@ -125,6 +125,8 @@ class HybridRetriever:
         k: int = 20,
         where: dict[str, Any] | None = None,
         n_per_retriever: int | None = None,
+        tracker: Any = None,
+        workflow_id: str | None = None,
     ) -> list[HybridResult]:
         """Run both retrievers in parallel and fuse the result lists.
 
@@ -156,12 +158,22 @@ class HybridRetriever:
         # made `retrieval_degraded_total` unreadable: a non-zero value proved
         # nothing, so nobody could tell whether the snapshot had survived the last
         # restart. `no_match` and `no_query_tokens` are therefore not degradation.
+        # Per-CALL tracker, falling back to the constructor's. The three
+        # production sites cache this retriever lazily on `self`, and
+        # `chat.py:62` builds `ConversationalAgent()` at module scope — a
+        # process-wide singleton. A tracker handed to the constructor there would
+        # bind the FIRST request's event stream to every later request. So the
+        # tracker travels with the call; the constructor's is for standalone
+        # callers (the eval harness) that build one retriever per run.
+        emit_tracker = tracker if tracker is not None else self._tracker
+        emit_wf = workflow_id if workflow_id is not None else self._workflow_id
+
         bm25_empty = len(bm25_results) == 0
         chroma_empty = len(chroma_results) == 0
         if bm25_empty and not chroma_empty and bm25_reason in BM25_DEGRADED_REASONS:
             await emit_retrieval_degraded(
-                self._tracker,
-                self._workflow_id,
+                emit_tracker,
+                emit_wf,
                 leg="bm25",
                 reason=bm25_reason,
             )
@@ -170,8 +182,8 @@ class HybridRetriever:
             # query that matched nothing both surface as `[]`), so the label says
             # what is known rather than borrowing the precision BM25 now has.
             await emit_retrieval_degraded(
-                self._tracker,
-                self._workflow_id,
+                emit_tracker,
+                emit_wf,
                 leg="dense",
                 reason="empty_cause_unknown",
             )

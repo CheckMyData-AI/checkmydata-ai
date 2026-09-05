@@ -81,7 +81,9 @@ class TestAssembleKnowledgeBlockLegacyPath:
                 needs_multiple_data_sources=False,
             )
 
-        loader.load_relevant_knowledge.assert_awaited_once_with("proj-1", "how many rows?")
+        loader.load_relevant_knowledge.assert_awaited_once_with(
+            "proj-1", "how many rows?", wf_id=""
+        )
         loader.build_context_pack.assert_not_called()
         assert result == legacy_result
 
@@ -166,7 +168,7 @@ class TestAssembleKnowledgeBlockPackPath:
                 needs_multiple_data_sources=False,
             )
 
-        loader.load_relevant_knowledge.assert_awaited_once_with("proj-1", "q")
+        loader.load_relevant_knowledge.assert_awaited_once_with("proj-1", "q", wf_id="")
         assert result == legacy_result
 
     async def test_flag_on_pack_none_falls_back_to_legacy(self):
@@ -189,7 +191,7 @@ class TestAssembleKnowledgeBlockPackPath:
                 needs_multiple_data_sources=False,
             )
 
-        loader.load_relevant_knowledge.assert_awaited_once_with("proj-1", "q")
+        loader.load_relevant_knowledge.assert_awaited_once_with("proj-1", "q", wf_id="")
         assert result == legacy_result
 
     async def test_flag_on_passes_correct_args_to_build(self):

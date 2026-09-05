@@ -154,6 +154,8 @@ class KnowledgeCatalogService:
         rag_results: int = 3,
         repo_clone_dir: Path | None = None,
         plan: ContextPlan | None = None,
+        tracker: Any = None,
+        wf_id: str = "",
     ) -> ContextPack:
         """Assemble the unified, traceable context bundle for the orchestrator.
 
@@ -231,6 +233,8 @@ class KnowledgeCatalogService:
                 project_id=project_id,
                 question=question,
                 n_results=_limit(ContextNeed.RAG, rag_results),
+                tracker=tracker,
+                wf_id=wf_id,
             )
             if pack.rag_chunks:
                 sources.add("rag")
@@ -525,7 +529,13 @@ class KnowledgeCatalogService:
         return artifacts
 
     async def _rag_artifacts_async(
-        self, *, project_id: str, question: str, n_results: int
+        self,
+        *,
+        project_id: str,
+        question: str,
+        n_results: int,
+        tracker: Any = None,
+        wf_id: str = "",
     ) -> list[Artifact]:
         """Async RAG leg — routes through :class:`HybridRetriever` (RET-R2).
 
@@ -545,6 +555,11 @@ class KnowledgeCatalogService:
                     project_id,
                     question,
                     k=max(n_results, _settings.hybrid_k),
+                    # Row 1.9 — this service sits on the ContextPack path, so its
+                    # degraded leg was as invisible as the other two. It holds no
+                    # tracker of its own; both arrive from `get_context_pack`.
+                    tracker=tracker,
+                    workflow_id=wf_id,
                 )
                 # Normalise HybridResult → the dict shape _rag_artifacts expects.
                 chunks: list[Any] = [
