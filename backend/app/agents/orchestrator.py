@@ -3335,6 +3335,30 @@ class OrchestratorAgent(BaseAgent):
             return directive
         except Exception:
             logger.debug("Pipeline answer gate failed (non-critical)", exc_info=True)
+            # Row 2.9. This used to `return None` unconditionally, and
+            # `build_pipeline_response` reads None as *accept* — so a crashed
+            # validator published an unverified answer here while the flat loop
+            # (`_validate_partial_answer`) consulted `answer_validator_fail_closed`
+            # and downgraded the same answer. One question, two safety postures,
+            # decided by a router the user cannot see.
+            #
+            # The old behaviour was documented — "fail-open to avoid blocking a
+            # successful pipeline" — and the fear does not match the mechanism:
+            # a non-accept directive maps to `step_limit_reached`
+            # (`response_builder.py:104-109`), which PRESERVES the answer text and
+            # adds the "Continue analysis" CTA. Nothing is blocked. So the
+            # fail-open was paying an unverified answer for a cost that does not
+            # exist.
+            #
+            # `warn`, not `block`: parity with the flat loop is about labelling
+            # honestly, not about withholding.
+            if settings.answer_validator_fail_closed:
+                from app.agents.result_validation import ResultDirective
+
+                return ResultDirective(
+                    action="warn",
+                    reason="answer quality gate could not be evaluated",
+                )
             return None
 
     async def _validate_partial_answer(
