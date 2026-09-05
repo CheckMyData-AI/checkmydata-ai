@@ -156,7 +156,14 @@ def connector_key(cfg: ConnectionConfig) -> str:
 class ColumnInfo:
     name: str
     data_type: str
-    is_nullable: bool = True
+    #: ``None`` means UNKNOWN, and it is the default because the four sites that
+    #: omit this field cannot know: MongoDB has no schema to read it from, and
+    #: the entity extractor is reading source code. A `bool` default of ``True``
+    #: made every one of them assert "nullable" — and
+    #: `schema_context_builder` printed it beside the column as fact, so a Mongo
+    #: customer was told every field is nullable. Same gap this codebase closed
+    #: for `reltuples < 0` (D14) and `CallerRef.depth_estimated` (L12).
+    is_nullable: bool | None = None
     is_primary_key: bool = False
     default: str | None = None
     comment: str | None = None
