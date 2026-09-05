@@ -128,12 +128,12 @@ operator's behalf without asking is how a plan stops being theirs.
 | 1.4 | Wire `provision()`/`revoke()` into `_sync_subscription` | M | done | `billing_service.py` (`_provision_key` on active/trialing, `_revoke_key` on delete, both allowed to raise), `tests/unit/test_subscription_provisions_the_key.py` (10 cases, 6 red before). **Unblocks 0.4** — the dollar ceiling now exists per account |
 | 1.5 | Learning decay: stop exposure resetting the staleness clock | S | done | `agent_learning_service.expose_learning` pins `updated_at`, `tests/unit/test_learning_decay_clock.py` (4 cases, 2 red before); measured in prod — exposed learnings capped at 14 days' staleness against 5-month-old rows, 0 of 74 eligible to decay |
 | 1.6 | Freshness: empty-vector-store signal; stop swallowing checks to "fresh" | S | done | `knowledge_freshness_service.py` (4th signal `vector_store`, `_unknown()` on all five checks), `VectorStore.count`, `get_vector_store()`; `tests/unit/test_freshness_is_honest_about_unknown.py` (7 cases, 5 red before) |
-| 1.7 | Force `step_limit_reached` when the 216 s cutoff fires | S | todo | |
+| 1.7 | Force `step_limit_reached` when the 216 s cutoff fires | S | todo | Re-verified open 2026-09-05, with the site: `orchestrator.py:1976` enters the exhausted-budget branch on `step_limit_hit or wall_clock_timeout_hit`, and `:2003-2007` then returns the **ordinary** response type whenever the partial answer `has_meaningful_data and answer_addresses_question`. So a cut-off answer that merely looks complete is typed as complete, and the reader cannot tell. `step_limit_reached` is reached only when the partial answer already looks bad — i.e. exactly when the type adds least |
 | 1.8 | Freshness failure must downgrade the seal, not certify the answer | S | done | `context_loader.check_staleness` returns `STALENESS_UNKNOWN_TEXT` instead of `None`, log DEBUG→WARNING; shipped with 1.6 — same seam |
-| 1.9 | Pass `tracker` at the three `HybridRetriever` sites | S | todo | |
-| 1.10 | Scope `semantic_layer` / `data_graph` / `feed` by the connection's own project | S | todo | |
-| 1.11 | Scope data-validation writes | S | todo | |
-| 1.12 | MCP JWT must honour `token_version` | S | todo | |
+| 1.9 | Pass `tracker` at the three `HybridRetriever` sites | S | todo | Re-verified open 2026-09-05: `hybrid_retriever.py:92-93` already accepts `tracker`/`workflow_id`, and `knowledge_agent.py:66`, `context_loader.py:78`, `knowledge_catalog_service.py:99` all omit both. **Same shape as the forgettable-default sweep, on telemetry rather than tenancy** — the sweep missed it because it keyed on ownership params only, and the consequence is that `retrieval_degraded_total` reads as absent rather than broken |
+| 1.10 | Scope `semantic_layer` / `data_graph` / `feed` by the connection's own project | S | done | **Three targets; #290 shipped two.** `feed` was left behind and the row recorded nothing, so "partly done" and "not started" read identically — found again from scratch by the 2026-09-05 AST sweep. `insight_feed_agent.py::run_scan` now guards; `tests/unit/services/test_catalog_scope_is_the_connections_project.py` carries **one assertion per named target** (10 cases, 2 red before) |
+| 1.11 | Scope data-validation writes | S | done | #291; `data_validation_service.py`, `benchmark_service.py` (`project_id` keyword-only at the end so no positional caller shifts), `tests/unit/services/test_validation_scope_is_the_connections_project.py` |
+| 1.12 | MCP JWT must honour `token_version` | S | done | #289; `app/core/identity.py` (stdlib-only leaf both entry points import), `tests/unit/test_revocation_reaches_every_entry_point.py` |
 
 ## P2 — core quality · the layer the product is sold on
 
@@ -143,14 +143,16 @@ operator's behalf without asking is how a plan stops being theirs.
 | 2.2 | Feed symbol chunks into the BM25 corpus | M | todo | |
 | 2.3 | Emit whole identifiers as BM25 terms | S | todo | |
 | 2.4 | Run DataGate before the truncation return; widen hard checks past 21 keywords | M | todo | |
-| 2.5 | Wire the real retriever into the CI eval; stop calling the oracle a gate | L | todo | |
+| 2.5 | Wire the real retriever into the CI eval; stop calling the oracle a gate | L | done | #287; `tests/unit/eval/test_real_retriever_eval.py` in the CI gate, slow variant behind the `slow_eval` marker. **The first fixture reproduced the defect it fixes** — it fed the dense stub every labelled id, so killing the BM25 leg left the gate green |
 | 2.6 | `to_thread` the schema BM25 load off the request path | S | todo | |
 | 2.7 | Decimal in the loss/opportunity detectors | S | todo | |
 | 2.8 | Alias-bind `check_required_filters` | M | todo | |
-| 2.9 | Pipeline answer gate must fail closed like the flat loop | S | todo | |
+| 2.9 | Pipeline answer gate must fail closed like the flat loop | S | todo | Re-verified open 2026-09-05 with both sites side by side: the flat loop's `orchestrator.py:3410` answers a validator crash with `if settings.answer_validator_fail_closed: return False`; the pipeline gate's outer handler at `:3324-3326` answers the same crash with a bare `return None` and never consults the setting. **The divergence only shows when the validator itself throws** — so one path refuses the answer and the other publishes it, and no test compares the two |
 | 2.10 | Prefix-match on delete; symbol chunks are never pruned | M | todo | |
 | 2.11 | Mongo nullability and FKs; ClickHouse primary keys | M | todo | |
 | 2.12 | SQLite dialect hints — the demo path has none | S | todo | |
+| 2.13 | A test that skips when the subsystem it guards is broken | S | done | `tests/integration/test_demo_routes.py` guarded a tenancy invariant and called `pytest.skip` on a non-200 from `/api/demo/setup` — disarming itself exactly when the demo path had failed. Now asserts. The `import uuid` went with it: it existed only to feed an `assert uuid.UUID` keeping the import used "if the skip fires" |
+| 2.14 | Bind telemetry calls statically — a wrong call under a broad `except` is invisible forever | S | done | `tests/unit/test_fire_and_forget_calls_bind.py`, 156 sites bound. Watched fail against the planted original (`result_validation.py:174`, `.inc` → `.increment`). Receivers resolved only where unambiguous: a first pass keyed on bare `tracker`/`metrics` and all three hits were false |
 
 ## P3 — structure · what lets the same decision be implemented twice
 
@@ -170,11 +172,12 @@ operator's behalf without asking is how a plan stops being theirs.
 |---|---|---|
 | 0.1 | `core/sql_parser.py:10-11` strips comments and then string literals with the same quoting-blind regexes. It is **not** a guard — it feeds `extract_tables` for pre-validation and the required-filter guard — so its failure mode is a wrong table list, not an executed statement. Same defect shape, different blast radius. | folded into 2.8 (`Alias-bind check_required_filters`), which already edits that seam |
 | 0.6 | `OpenRouterCreditService.provision` has no caller anywhere, so `llm_credit` — the two-pocket dollar ceiling the billing model was designed around (`b48fcfc1524b`) — has never been armed for a single account, and every request runs on one shared operator key. | P1 1.4 (`Wire provision()/revoke() into _sync_subscription`) — now load-bearing for 0.4 |
-| 0.6 | `estimated_cost_usd` is NULL on all 6 771 production rows: `estimate_cost` reads `app.api.routes.models._cache`, an in-process cache of the `/api/models` HTTP response, which the worker (serving no HTTP) never populates. The operator has no cost figure for any request ever made. | backlog — new row, not in the audit |
+| 0.6 | `estimated_cost_usd` is NULL on all 6 771 production rows: `estimate_cost` reads `app.api.routes.models._cache`, an in-process cache of the `/api/models` HTTP response, which the worker (serving no HTTP) never populates. The operator has no cost figure for any request ever made. | **closed 2026-09-05.** #285 moved the price fetch into `app/services/model_pricing_service.py`, so the worker no longer reads a cache only the web process holds, and `TraceMeta` carries `cost_usd` beside a `price_source` — a figure without its provenance cannot be audited |
 | 0.5 | The migration docstring says "no code path could ever set the column True". True of the code; production shows **2 accounts already `true` while unverified**, so someone granted them by hand through the database. The backfill only touched verified users, so it is unaffected — but read the claim as "no path in code", not "never by anyone". | recorded; no action |
 | 1.3 | A retention **setting** — letting an operator switch off storing the result table with a message — is the other half of the audit's suggestion. The pages are now true without it; a customer who wants nothing stored still has no switch. | backlog — product decision, needs UX |
 | 1.4 | An **upgrade** (base → scale) does not raise the included grant until the next `subscription_cycle` invoice: `provision` returns the existing key before touching `included_grant_usd`, and a proration invoice is deliberately excluded from `_renew_credit`. The customer pays the higher price and keeps the lower allowance for the rest of that month. | backlog — needs a deliberate decision, since granting immediately also double-grants a month already partly consumed |
 | post-deploy 0.1 | `HEROKU_SLUG_COMMIT` is unset on `checkmydata-api`, so Sentry's `release` is `None` in production and no stack trace names the commit that caused it. `CLAUDE.md` already records the requirement (`heroku labs:enable runtime-dyno-metadata`); nobody ran it. One command, and it restarts the dynos. | backlog — ops, needs its own moment |
+| audit 2026-09-05 | CODEIDX-C20 (Louvain over-merge threshold) and C21 (cluster staleness on re-index) existed as two **empty** `@pytest.mark.skip` placeholders in `test_w2_low_batch.py` — no body, so unskipping them yields a vacuous pass, and meanwhile they counted toward the suite total. Deleted; the behaviours remain unverified and now say so. | backlog — `clustering_enabled` is off by default, so neither is exercised; raise with the flag |
 | 0.1 | A `;` inside a string literal still trips the read-only multi-statement refusal (`SELECT * FROM t WHERE name = 'a;b'` is refused). Pre-existing, unchanged by this fix, and a false refusal rather than a false pass. | backlog — needs literal-aware `;` detection, which is a behaviour change to read-only mode |
 
 ## Track O — the orchestrator reshape (Ш0 … Ш4)
@@ -233,6 +236,22 @@ never saw them. The counter was right and the row beside it was empty.
 - **Distinguish a test that pins a defect from a test whose subject relocated.** The first
   is now at eight occurrences and is a finding; the second is ordinary maintenance, and
   counting them together inflates the first.
+- **A board row naming N targets needs N assertions, or it cannot say what it still
+  owes.** Row 1.10 named `semantic_layer`, `data_graph` and `feed`; #290 shipped two and
+  the row stayed `todo`, so "partly done" and "not started" looked identical. `feed` was
+  found again from scratch a day later by an AST sweep, at full cost. The fix is
+  structural, not diligence: the row's test now parametrises over its three targets, so
+  the missing one is red rather than absent.
+- **A skip decided at runtime disarms the test exactly when its subject is broken.**
+  `test_demo_routes.py` guarded a tenancy invariant and skipped on a non-200 from the
+  endpoint whose failure it exists to catch. The tell was in the file: an
+  `assert uuid.UUID` kept an import used "if the skip fires" — a test written around its
+  own escape hatch.
+- **Grade a scan's hits before believing them; a flag is a candidate.** The route-scope
+  sweep flagged 11, of which one was real, two were the detector failing to see a guard
+  that lives in the service, and eight were correctly scoped. The telemetry-binding sweep
+  flagged 3, and all three were the receiver-name map calling a dict `metrics` and a
+  `GitTracker` `tracker`. Both numbers are honest only because every hit was read.
 
 ## Track A — one agent over all sources
 

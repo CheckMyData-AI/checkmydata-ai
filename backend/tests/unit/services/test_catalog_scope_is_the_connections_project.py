@@ -1,13 +1,22 @@
 """A project's own membership is not permission to read another's index (row 1.10).
 
-`POST /semantic-layer/{project_id}/build/{connection_id}` and
-`POST /data-graph/{project_id}/discover/{connection_id}` both check membership of
-`project_id` with `require_role`, and both validate the *shape* of
-`connection_id` with `validate_safe_id`. Neither established that the connection
+Board row 1.10 named THREE targets — `semantic_layer`, `data_graph` and `feed`.
+The first two were fixed and the third was not, and nothing recorded the gap: the
+row stayed `todo`, so "partly done" and "not started" looked identical. It was
+found again from scratch by an AST sweep for parameters accepted and never used,
+which is the only reason it is here. **A row that names N targets needs N
+assertions, or the row cannot tell you which ones it still owes** — hence the
+parametrised test at the bottom of this file, now with three entries.
+
+`POST /semantic-layer/{project_id}/build/{connection_id}`,
+`POST /data-graph/{project_id}/discover/{connection_id}` and
+`POST /feed/{project_id}/scan/{connection_id}` all check membership of
+`project_id` with `require_role`, and all validate the *shape* of
+`connection_id` with `validate_safe_id`. None established that the connection
 **belongs** to that project.
 
-`SemanticLayerService.build_catalog` and `DataGraphService.auto_discover_from_db_index`
-then queried:
+`SemanticLayerService.build_catalog`, `DataGraphService.auto_discover_from_db_index`
+and `InsightFeedAgent._load_db_index` then queried:
 
     select(DbIndex).where(DbIndex.connection_id == connection_id, ...)
 
@@ -107,6 +116,29 @@ class TestDataGraphDiscover:
             await DataGraphService().auto_discover_from_db_index(session, _MINE, _THEIR_CONN)
 
 
+class TestFeedScan:
+    """The third target of row 1.10, left behind when the first two were fixed.
+
+    `run_scan` reaches `_load_db_index`, which filters on `connection_id` alone.
+    The route passes no connector, so no query reaches the other tenant's
+    database — but `db_index` carries `sample_data_json` and `column_notes_json`,
+    i.e. sampled values from their data, and the insights derived from them are
+    written into the CALLER's project.
+    """
+
+    async def test_it_scans_a_connection_in_its_own_project(self, session):
+        from app.agents.insight_feed_agent import InsightFeedAgent
+
+        result = await InsightFeedAgent().run_scan(session, _MINE, _MY_CONN)
+        assert result is not None, "the ordinary path must keep working"
+
+    async def test_another_project_s_connection_is_refused(self, session):
+        from app.agents.insight_feed_agent import InsightFeedAgent
+
+        with pytest.raises(ConnectionOutOfProjectError):
+            await InsightFeedAgent().run_scan(session, _MINE, _THEIR_CONN)
+
+
 class TestTheScopeIsInTheQueryNotAnIf:
     """#267's own lesson, applied at the fourth entry point it predicted."""
 
@@ -115,6 +147,7 @@ class TestTheScopeIsInTheQueryNotAnIf:
         [
             ("app/core/semantic_layer.py", "build_catalog"),
             ("app/core/data_graph.py", "auto_discover_from_db_index"),
+            ("app/agents/insight_feed_agent.py", "run_scan"),
         ],
     )
     def test_the_service_uses_the_project_it_is_given(self, module, func):
