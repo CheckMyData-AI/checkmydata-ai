@@ -143,6 +143,7 @@ class TestATotalGetsTheNumberCard:
         result = VizAgent._edge_case_fallback(self._single_cell(True))
         assert result is not None and result.viz_type == "text"
 
+
 class TestTheNegativeValueRuleActuallyFires:
     """A validation rule that reports itself as checked while checking nothing.
 
