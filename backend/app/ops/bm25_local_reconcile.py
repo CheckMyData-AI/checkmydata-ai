@@ -36,8 +36,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import settings
+from app.knowledge.bm25_corpus import corpus_entries_for_docs
 from app.knowledge.bm25_index import BM25Index
-from app.knowledge.chunker import chunk_document
 from app.models.base import async_session_factory
 from app.models.knowledge_doc import KnowledgeDoc
 from app.models.project import Project
@@ -63,17 +63,7 @@ async def _build_one(session: AsyncSession, project_id: str, bm25: BM25Index) ->
             await session.scalars(select(KnowledgeDoc).where(KnowledgeDoc.project_id == project_id))
         ).all()
     )
-    entries: list[tuple[str, str, dict]] = []
-    for doc in docs:
-        for chunk in chunk_document(
-            content=doc.content, file_path=doc.source_path, doc_type=doc.doc_type
-        ):
-            meta = dict(chunk.metadata)
-            meta.setdefault("source_path", doc.source_path)
-            meta.setdefault("doc_type", doc.doc_type)
-            entries.append(
-                (f"{doc.id}:{chunk.metadata.get('chunk_index', '0')}", chunk.content, meta)
-            )
+    entries = corpus_entries_for_docs(docs)
     if not entries:
         return 0
 

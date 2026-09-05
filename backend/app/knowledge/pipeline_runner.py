@@ -21,6 +21,7 @@ from app.config import settings
 from app.core.heartbeat import heartbeat
 from app.core.workflow_tracker import tracker
 from app.knowledge.ast_parser import ASTParser, ParsedFile
+from app.knowledge.bm25_corpus import corpus_entries_for_docs
 from app.knowledge.bm25_index import BM25Index
 from app.knowledge.chunker import chunk_document
 from app.knowledge.code_graph import CodeGraph, CodeGraphBuilder
@@ -1399,21 +1400,11 @@ class IndexingPipelineRunner:
         """
         try:
             docs = await self._doc_store.get_docs_for_project(db, project_id)
-            bm25_docs: list[tuple[str, str, dict]] = []
-            for doc in docs:
-                chunks = chunk_document(
-                    content=doc.content,
-                    file_path=doc.source_path,
-                    doc_type=doc.doc_type,
-                )
-                if not chunks:
-                    chunks = []
-                for chunk in chunks:
-                    chunk_id = f"{doc.id}:{chunk.metadata.get('chunk_index', '0')}"
-                    meta = dict(chunk.metadata)
-                    meta.setdefault("source_path", doc.source_path)
-                    meta.setdefault("doc_type", doc.doc_type)
-                    bm25_docs.append((chunk_id, chunk.content, meta))
+            # S1: the corpus definition lives in one place, because the boot
+            # reconcile on the web dyno builds the very snapshot this worker
+            # writes, and a definition edited here alone would make the reader's
+            # corpus differ from the writer's.
+            bm25_docs = corpus_entries_for_docs(docs)
             bm25 = BM25Index(settings.bm25_data_dir)
             await asyncio.to_thread(bm25.build, project_id, head_sha, bm25_docs)
             logger.info(
