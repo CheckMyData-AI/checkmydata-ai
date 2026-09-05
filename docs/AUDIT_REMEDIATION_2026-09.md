@@ -140,19 +140,20 @@ operator's behalf without asking is how a plan stops being theirs.
 | # | Task | Size | Status | Evidence |
 |---|---|---|---|---|
 | 2.1 | Render `Artifact.title`; dedup on `(title, summary)` | S | todo | |
-| 2.2 | Feed symbol chunks into the BM25 corpus | M | todo | |
-| 2.3 | Emit whole identifiers as BM25 terms | S | todo | |
+| 2.2 | Feed symbol chunks into the BM25 corpus | M | todo | Re-verified open 2026-09-05 with both sides: `_run_bm25_build` (`pipeline_runner.py:1392`) rebuilds the snapshot **from `KnowledgeDoc` rows**, while `code_symbol_chunker.py:218` writes symbol chunks under `sym:` ids into the **vector store only** — and says so in its own comment, that BM25 docs are "built separately by the bm25_build stage from the same underlying documents". They are not the same documents. **The two legs of the hybrid retriever index different corpora**, so a query naming a function or class — the natural way to ask about code — reaches the lexical leg only through prose. Directly on the stated target: vector search over a repository to find parts of an implementation |
+| 2.3 | Emit whole identifiers as BM25 terms | S | todo | Re-verified open 2026-09-05: `tokenize_code` (`bm25_index.py:109-145`) splits `camelCase` and `snake_case` and appends **only the components** — `resolve_sync_status` is indexed as `resolve`, `sync`, `status` and the identifier itself is never a term. The query passes through the same tokenizer, so the search still matches; what is lost is **precision** — a document where those three words co-occur by chance ranks alongside the one that defines the symbol. Pairs with 2.2: that row decides whether symbols are in the lexical corpus at all, this one whether naming one finds it |
 | 2.4 | Run DataGate before the truncation return; widen hard checks past 21 keywords | M | todo | |
 | 2.5 | Wire the real retriever into the CI eval; stop calling the oracle a gate | L | done | #287; `tests/unit/eval/test_real_retriever_eval.py` in the CI gate, slow variant behind the `slow_eval` marker. **The first fixture reproduced the defect it fixes** — it fed the dense stub every labelled id, so killing the BM25 leg left the gate green |
 | 2.6 | `to_thread` the schema BM25 load off the request path | S | todo | |
-| 2.7 | Decimal in the loss/opportunity detectors | S | todo | |
+| 2.7 | Decimal in the loss/opportunity detectors | S | done | **The row's premise was the smaller half.** Precision was never the problem — the detectors compare aggregates the database already summed and render through `:,.0f`. `isinstance(val, (int, float))` is **False for `Decimal`**, which is what asyncpg returns for a Postgres `NUMERIC` and what `connectors/mongodb.py:134` converts `Decimal128` into on purpose, so a revenue column contained no numbers at all. The same guard is **True** for `bool`, so a flag averaged as a measurement. Fixed at five sites through one leaf (`app/core/numeric.py`): both detectors, `viz_agent.py:75` (`SELECT count(*)` got the number card, `SELECT sum(revenue)` fell through to prose) and `stage_validator.py:322`, where the business rule *no negative values* never fired on a NUMERIC column **while reporting itself as checked**. `tests/unit/test_money_is_not_invisible.py` (30 cases, 8 red before; the stage-validator case verified red by restoring the old guard, because it was written after the fix). SCN-057 updated |
 | 2.8 | Alias-bind `check_required_filters` | M | todo | |
 | 2.9 | Pipeline answer gate must fail closed like the flat loop | S | done | `orchestrator.py::_evaluate_pipeline_answer` — a crashed gate returned `None`, which `build_pipeline_response` reads as **accept**, while the flat loop's `:3410` consulted `answer_validator_fail_closed` and downgraded. One question, two safety postures, and **only the crashing case differed**, which is why no test compared them. **The fail-open was documented** — "to avoid blocking a successful pipeline" — and the fear does not match the mechanism: any non-accept directive maps to `step_limit_reached`, which preserves the answer text and adds the CTA. Nothing was blocked, so the fail-open bought nothing. Returns `warn`, not `block`: parity is about labelling honestly. `tests/unit/test_pipeline_gate_fails_the_same_way.py` (5 cases, 1 red before). SCN-055 updated |
-| 2.10 | Prefix-match on delete; symbol chunks are never pruned | M | todo | |
+| 2.10 | Prefix-match on delete; symbol chunks are never pruned | M | todo | Re-verified open 2026-09-05, and the mechanism is sharper than the title: it is **two metadata keys for one concept**, not a missing prefix match. `chunker.py:98` gives a prose chunk `source_path`; `code_symbol_chunker.py:87-94` gives a symbol chunk `path` (`REQUIRED_CHUNK_METADATA_KEYS` does not contain `source_path` at all). Both `delete_by_source_path` implementations — `vector_store.py:295` and `pgvector_store.py:283` — filter on `metadata.source_path`, so a re-index replaces a file's prose chunks and its symbol chunks **accumulate forever**. The store ends up holding symbols for code that no longer exists, and dense retrieval returns them: the agent can cite a function deleted months ago. Pairs with 2.2 and 2.3 — all three are the symbol-chunk seam and should ship together |
 | 2.11 | Mongo nullability and FKs; ClickHouse primary keys | M | todo | |
 | 2.12 | SQLite dialect hints — the demo path has none | S | todo | |
 | 2.13 | A test that skips when the subsystem it guards is broken | S | done | `tests/integration/test_demo_routes.py` guarded a tenancy invariant and called `pytest.skip` on a non-200 from `/api/demo/setup` — disarming itself exactly when the demo path had failed. Now asserts. The `import uuid` went with it: it existed only to feed an `assert uuid.UUID` keeping the import used "if the skip fires" |
 | 2.14 | Bind telemetry calls statically — a wrong call under a broad `except` is invisible forever | S | done | `tests/unit/test_fire_and_forget_calls_bind.py`, 156 sites bound. Watched fail against the planted original (`result_validation.py:174`, `.inc` → `.increment`). Receivers resolved only where unambiguous: a first pass keyed on bare `tracker`/`metrics` and all three hits were false |
+| 2.15 | One answer to "is this a number?" — 23 guards remain in five variants | M | todo | Measured 2026-09-05 after 2.7: `isinstance(x, (int, float))` and its relatives appear **23** more times across `app/`, in five mutually inconsistent forms, of which exactly one is fully correct (`data_gate.py:448`). **Not all are defects and this row must not pretend otherwise** — `llm/router.py:30` reads config, `ga4/adapter.py:119` reads vendor JSON where `Decimal` never occurs, `chart.py:178` has a separate `Decimal` branch two lines below, and `sql_result_reconciliation.py:52` falls through to a string parse that handles it. Each remaining site needs its own reading; the candidates on the DB-value path are `anomaly_intelligence` (4), `data_sanity_checker` (4), `insight_generator` (2), `semantic_layer.py:385`, `data_gate.py:118` (bool) and `chart.py:86`/`:202` (bool). The leaf to route them through now exists |
 
 ## P3 — structure · what lets the same decision be implemented twice
 
@@ -252,6 +253,25 @@ never saw them. The counter was right and the row beside it was empty.
   that lives in the service, and eight were correctly scoped. The telemetry-binding sweep
   flagged 3, and all three were the receiver-name map calling a dict `metrics` and a
   `GitTracker` `tracker`. Both numbers are honest only because every hit was read.
+- **This board conflicts on every parallel branch, and that is a property of the file.**
+  Three PRs in one day each edited it; two hit a merge conflict, resolved the same way
+  both times — take main's version, re-apply the single row. It is one dense table that
+  every change touches, so branching two features off the same commit guarantees it.
+  The cheap remedy is order, not tooling: **merge before branching the next row**, and
+  where two are already in flight, rebase the later one before opening its PR. Worth
+  saying because the conflict looks like a mistake each time and is not — it is the file
+  working as designed, and a resolution done from memory rather than from main's version
+  is how a closed row silently reverts to `todo`.
+- **The suppression ratchet caught its author, and the answer was to delete the
+  suppression.** `app/core/numeric.py` shipped a `value == value` NaN test with a PLR0124
+  directive beside it — the idiom every existing call site uses — and the full suite went
+  red on `test_suppression_debt_has_not_grown`. The suppression was avoidable
+  (`math.isnan` accepts int and float, and the Decimal case already had its own branch),
+  and raising a ceiling to keep an avoidable one is how a ratchet stops meaning anything.
+  Second-order, worth knowing before writing the explanation: **spelling the directive out
+  in a comment re-arms it** — ruff parses a mention as a directive and warns that it is
+  malformed. The ratchet itself is not fooled; that was fixed earlier in this programme
+  and its regression tests hold. The two tools disagree about what a mention is.
 
 ## Track A — one agent over all sources
 

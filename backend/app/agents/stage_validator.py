@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.agents.stage_context import PlanStage, StageContext, StageResult
+from app.core.numeric import to_number
 
 if TYPE_CHECKING:
     from app.llm.router import LLMRouter
@@ -319,7 +320,12 @@ class StageValidator:
                 try:
                     for row in qr.rows[:100]:
                         val = row[col_idx]
-                        if isinstance(val, (int, float)) and val < 0:
+                        # Row 2.7. `(int, float)` is False for `Decimal`, so this
+                        # rule never fired on a Postgres NUMERIC column — while
+                        # still reporting itself as checked. A negative amount is
+                        # exactly what a money column is guarded for.
+                        num = to_number(val)
+                        if num is not None and num < 0:
                             outcome.warn(
                                 f"Business rule '{rule}' violated: "
                                 f"negative value {val} in column '{col}'"

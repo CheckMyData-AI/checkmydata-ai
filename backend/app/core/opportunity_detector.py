@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core.numeric import to_number
+
 logger = logging.getLogger(__name__)
 
 
@@ -543,16 +545,14 @@ class OpportunityDetector:
     def _extract_numeric(rows: list[dict[str, Any]], col: str) -> list[float]:
         result: list[float] = []
         for r in rows:
-            val = r.get(col)
-            if isinstance(val, (int, float)) and val == val:
-                result.append(float(val))
+            num = to_number(r.get(col))
+            if num is not None:
+                result.append(num)
         return result
 
     @staticmethod
     def _to_number(val: Any) -> float | None:
-        if isinstance(val, (int, float)) and val == val:
-            return float(val)
-        return None
+        return to_number(val)
 
     @staticmethod
     def _calc_confidence(sample_size: int, gap_magnitude: float) -> float:
