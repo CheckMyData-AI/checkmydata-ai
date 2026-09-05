@@ -271,7 +271,13 @@ class KnowledgeAgent(BaseAgent):
 
         raw_counter: list[int] = []
         if settings.hybrid_retrieval_enabled:
-            filtered = await self._hybrid_search(ctx.project_id, query, max_results)
+            filtered = await self._hybrid_search(
+                ctx.project_id,
+                query,
+                max_results,
+                tracker=ctx.tracker,
+                wf_id=ctx.workflow_id,
+            )
         else:
             filtered = await self._dense_only_search(
                 ctx.project_id,
@@ -365,6 +371,9 @@ class KnowledgeAgent(BaseAgent):
         project_id: str,
         query: str,
         max_results: int,
+        *,
+        tracker: Any = None,
+        wf_id: str = "",
     ) -> list[dict[str, Any]]:
         """BM25 + Chroma + RRF retrieval (M3).
 
@@ -377,6 +386,12 @@ class KnowledgeAgent(BaseAgent):
             project_id=project_id,
             query_text=query,
             k=max_results,
+            # Row 1.9: the degradation event is what renders the reader-facing
+            # "keyword search is unavailable" line, and it only fires when a
+            # tracker is present. Per CALL, because the retriever is cached on a
+            # process-wide singleton while `wf_id` names one request's stream.
+            tracker=tracker,
+            workflow_id=wf_id,
         )
         if not results:
             # Graceful fallback: maybe the BM25 index hasn't been built yet.

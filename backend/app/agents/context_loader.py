@@ -100,6 +100,7 @@ class ContextLoader:
         has_repo: bool = True,
         estimated_queries: int = 1,
         needs_multiple_data_sources: bool = False,
+        wf_id: str = "",
     ):
         """Phase 4: plan + assemble a single traceable ``ContextPack``.
 
@@ -133,6 +134,8 @@ class ContextLoader:
                     connection_id=connection_id,
                     question=question,
                     plan=plan,
+                    tracker=self._tracker,
+                    wf_id=wf_id,
                 )
         except Exception:
             logger.warning("build_context_pack failed — falling back to lazy loads", exc_info=True)
@@ -391,6 +394,7 @@ class ContextLoader:
         *,
         n_results: int = 3,
         max_chars: int = 1500,
+        wf_id: str = "",
     ) -> str | None:
         """Run a RAG query against the project's knowledge base for ``question``.
 
@@ -414,6 +418,12 @@ class ContextLoader:
                     project_id,
                     question,
                     k=max(n_results, _settings.hybrid_k),
+                    # Row 1.9. `wf_id` follows this class's own idiom (see
+                    # `has_mcp_sources`): a parameter, never a field, because the
+                    # loader is built once in `OrchestratorAgent.__init__` and
+                    # the id names one request.
+                    tracker=self._tracker,
+                    workflow_id=wf_id,
                 )
                 chunks = [
                     {"document": r.document, "metadata": r.metadata} for r in fused[:n_results]
@@ -453,6 +463,7 @@ class ContextLoader:
         has_repo: bool = False,
         estimated_queries: int = 1,
         needs_multiple_data_sources: bool = False,
+        wf_id: str = "",
     ) -> str | None:
         """Knowledge-assembly seam for the orchestrator (RET-R1).
 
@@ -483,6 +494,7 @@ class ContextLoader:
                     has_repo=has_repo,
                     estimated_queries=estimated_queries,
                     needs_multiple_data_sources=needs_multiple_data_sources,
+                    wf_id=wf_id,
                 )
                 if pack is not None and not pack.is_empty():
                     from app.knowledge.context_pack_renderer import (
@@ -501,7 +513,7 @@ class ContextLoader:
                 )
             # Fallthrough: pack unavailable or empty → legacy
 
-        return await self.load_relevant_knowledge(project_id, question)
+        return await self.load_relevant_knowledge(project_id, question, wf_id=wf_id)
 
     #: What ``check_staleness`` returns when it could not run. Deliberately a sentence a
     #: reader can act on rather than a code, because it reaches the prompt and the UI
