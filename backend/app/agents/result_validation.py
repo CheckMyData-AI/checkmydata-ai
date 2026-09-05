@@ -9,13 +9,19 @@ Decision table for :meth:`ResultValidation.evaluate`:
 1. ``qr.error`` is set        → **block**   (DB-level error, non-retryable)
 2. ``validate_sql_result`` fails → **requery** (hints = gate error messages)
 3. zero rows + ``query_empty_result_retry`` flag → **requery**
-4. ``qr.truncated`` or ``truncated`` kwarg  → **warn**  (partial data)
-5. :class:`DataGate` hard-checks (impossible values) → **block**
+4. :class:`DataGate` hard-checks (impossible values) → **block**
+5. ``qr.truncated`` or ``truncated`` kwarg  → **warn**  (partial data)
 6. otherwise                  → **accept**
 
-:class:`DataGate` is invoked in branch 5 (not held for W3); the
-:attr:`reconcile` callable is available for multi-result cross-checking at
-the call-site level.
+Steps 4 and 5 were the other way round until 2026-09-05, and this table called
+that intentional. It was backwards: a capped result is the case most likely to
+carry a broken aggregate — a percentage over 100 against a partial denominator —
+so the truncation flag was making the gate skip exactly the results that most
+needed it. When both fire, the block wins and its reason names the truncation
+too, because a re-query needs both facts.
+
+:attr:`reconcile` is available for multi-result cross-checking at the call-site
+level.
 """
 
 from __future__ import annotations
@@ -147,38 +153,46 @@ class ResultValidation:
                 hints=["Verify table/column names and filter values against the schema."],
             )
 
-        # 4. Truncated data — not an error, but callers should note the
-        #    incompleteness in their answer.
-        if qr.truncated or bool(truncated):
-            return ResultDirective(
-                action="warn",
-                reason=(
-                    f"PARTIAL DATA: query capped at {qr.row_count} rows — totals are incomplete."
-                ),
-                hints=["Push aggregation into SQL (GROUP BY / aggregate functions)."],
-            )
+        is_truncated = bool(qr.truncated or truncated)
+        truncation_note = (
+            f"PARTIAL DATA: query capped at {qr.row_count} rows — totals are incomplete."
+        )
+        truncation_hint = "Push aggregation into SQL (GROUP BY / aggregate functions)."
 
-        # 5. DataGate value-range hard-checks — catch impossible values
-        #    (150% conversion, negative counts) that the structural gate above
-        #    doesn't cover.  Runs only when hard checks are enabled (config
+        # 4. DataGate value-range hard-checks — catch impossible values (150%
+        #    conversion, negative counts) that the structural gate above doesn't
+        #    cover. Runs only when hard checks are enabled (config
         #    data_gate_hard_checks_enabled=True, the default).
+        #
+        #    **This used to run AFTER the truncation branch below, which returned
+        #    first** — and the decision table called that order intentional. It is
+        #    backwards: a capped result is the case most likely to carry a broken
+        #    aggregate, a percentage over 100 against a partial denominator. The
+        #    truncation flag was making the gate skip exactly the results that
+        #    most needed it.
+        #
         #    Skipped when ``skip_data_gate=True`` (pipeline path) because
-        #    ``_process_one_stage`` already runs ``DataGate.check()`` on the
-        #    full ``StageResult`` — invoking it here too would double-fire.
-        if skip_data_gate:
-            return ResultDirective(action="accept", reason="ok", hints=[])
-
-        dg_outcome = self._data_gate.check_query_result(qr, question=question)
-        if not dg_outcome.passed:
-            try:
+        #    ``_process_one_stage`` already runs ``DataGate.check()`` on the full
+        #    ``StageResult`` — invoking it here too would double-fire. Note the
+        #    shape: the skip does not return, or reordering would have dropped
+        #    the truncation warning on that path along with the gate.
+        if not skip_data_gate:
+            dg_outcome = self._data_gate.check_query_result(qr, question=question)
+            if not dg_outcome.passed:
                 get_metrics_collector().inc("datagate_block_total", check="value_range")
-            except Exception:
-                pass
-            return ResultDirective(
-                action="block",
-                reason=dg_outcome.error_summary or "impossible data value detected",
-                hints=list(dg_outcome.suggestions),
-            )
+                reason = dg_outcome.error_summary or "impossible data value detected"
+                hints = list(dg_outcome.suggestions)
+                if is_truncated:
+                    # Both facts, because a re-query needs both: the number is
+                    # wrong AND the set it came from was incomplete.
+                    reason = f"{reason} — and {truncation_note}"
+                    hints.append(truncation_hint)
+                return ResultDirective(action="block", reason=reason, hints=hints)
+
+        # 5. Truncated but otherwise sound — not an error, but callers should note
+        #    the incompleteness in their answer.
+        if is_truncated:
+            return ResultDirective(action="warn", reason=truncation_note, hints=[truncation_hint])
 
         # 6. All checks passed.
         return ResultDirective(action="accept", reason="ok", hints=[])
