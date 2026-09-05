@@ -971,6 +971,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   1. User sees "No database connection configured."
   2. User clicks "Chat with Knowledge Base"
 - **Expected result:** chat switches to knowledge-only mode; codebase/doc Q&A works
+- **"Codebase Q&A" was answered from a summary of the code, not the code (row 2.2, 2026-09-05):** the lexical half of hybrid retrieval was built from `KnowledgeDoc` rows, and their content is the LLM's **generated documentation** of each file. So asking about a function reached the keyword leg only if the model happened to name it in a summary, while the dense leg held the real bodies — two legs, two corpora. Symbol documents (name, signature, decorators, docstring, path, from `code_graph_symbols`) are now in the lexical corpus under the **same ids** the vector store uses, so the legs reinforce one symbol instead of ranking two documents for it. Bodies stay out deliberately: the snapshot must be rebuildable on the web dyno from Postgres alone, with no clone. Paired with row 2.10, without which changing those ids would have orphaned every stored symbol chunk permanently.
 - **UI elements:** no-connection message, "Chat with Knowledge Base" button
 - **States covered:** empty, success
 - **Errors & recovery:** as SCN-041/046 for the stream itself

@@ -50,16 +50,20 @@ async def _add_projects(sf, n):
 
 def test_fingerprint_format():
     # The shape, asserted where it belongs: the model, the token window, the symbol-UID
-    # schema, and the graph-extraction schema — each one a reason a stored index needs
-    # rebuilding, and each bumpable without lying about which one moved.
+    # schema, the graph-extraction schema, and the symbol-CHUNK-ID schema — each one a
+    # reason a stored index needs rebuilding, and each bumpable without lying about
+    # which one moved. The fifth joined on 2026-09-05: a symbol can keep its identity
+    # and its edges while the id addressing its stored chunks changes shape, and without
+    # a rebuild every stored chunk keeps an id nothing will ever look up again.
     fp = recon.embedding_fingerprint()
     assert fp == (
         f"{settings.chroma_embedding_model}"
         f"|{settings.embedder_max_tokens}"
         f"|uid{recon.SYMBOL_UID_SCHEMA}"
         f"|gx{recon.GRAPH_EXTRACTION_SCHEMA}"
+        f"|cid{recon.SYMBOL_CHUNK_ID_SCHEMA}"
     )
-    assert fp.count("|") == 3
+    assert fp.count("|") == 4
 
 
 async def test_unchanged_no_reindex(session_factory, monkeypatch):

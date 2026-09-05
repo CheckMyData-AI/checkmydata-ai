@@ -36,12 +36,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import settings
-from app.knowledge.bm25_corpus import corpus_entries_for_docs
+from app.knowledge.bm25_corpus import corpus_entries_for_docs, corpus_entries_for_symbols
 from app.knowledge.bm25_index import BM25Index
 from app.models.base import async_session_factory
 from app.models.knowledge_doc import KnowledgeDoc
 from app.models.project import Project
 from app.models.repository import ProjectRepository
+from app.services.code_graph_service import CodeGraphService
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,11 @@ async def _build_one(session: AsyncSession, project_id: str, bm25: BM25Index) ->
         ).all()
     )
     entries = corpus_entries_for_docs(docs)
+    # Same corpus as the worker builds, or the reader and the writer disagree —
+    # see `bm25_corpus`. Symbols come from Postgres, which is all this process has.
+    entries += corpus_entries_for_symbols(
+        await CodeGraphService().list_symbols(session, project_id)
+    )
     if not entries:
         return 0
 
