@@ -8,6 +8,7 @@ tenancy rule the MCP tools enforce (F-SEC-1).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -137,9 +138,15 @@ async def get_project_knowledge(principal: Principal, project_id: str) -> str:
     try:
         from app.knowledge.vector_store import make_vector_store
 
-        vs = make_vector_store()
-        collection = vs.get_or_create_collection(project_id)
-        count = collection.count()
+        # Row 2.20: all three of these block. `make_vector_store()` opens a
+        # psycopg pool on the pgvector backend, and the collection handle and its
+        # count reach chromadb / psycopg directly. One hop off the loop rather
+        # than three, because they are one logical read.
+        def _count() -> int:
+            vs = make_vector_store()
+            return vs.get_or_create_collection(project_id).count()
+
+        count = await asyncio.to_thread(_count)
         return json.dumps(
             {
                 "project_id": project_id,

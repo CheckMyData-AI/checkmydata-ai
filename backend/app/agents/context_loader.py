@@ -7,6 +7,7 @@ staleness warnings, and project overviews.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -429,7 +430,15 @@ class ContextLoader:
                     {"document": r.document, "metadata": r.metadata} for r in fused[:n_results]
                 ]
             else:
-                chunks = self._vector_store.query(project_id, question, n_results=n_results)
+                # Row 2.20: the store is synchronous (chromadb / psycopg), and
+                # this is the dense-only fallback — the documented
+                # graceful-degradation path. Called bare it froze the event loop
+                # for every concurrent request, and embedded the question through
+                # the bundled ONNX model while holding it. `HybridRetriever` wraps
+                # the same calls; these did not.
+                chunks = await asyncio.to_thread(
+                    self._vector_store.query, project_id, question, n_results=n_results
+                )
             if not chunks:
                 return None
             lines = ["RELEVANT KNOWLEDGE (top documentation snippets):"]
