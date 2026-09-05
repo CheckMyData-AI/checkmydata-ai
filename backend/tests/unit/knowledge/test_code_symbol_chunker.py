@@ -83,7 +83,7 @@ class TestBuildCodeChunks:
         validate_chunk_metadata(c.metadata)
 
         meta = c.metadata
-        assert meta["path"] == "app/foo.py"
+        assert meta["source_path"] == "app/foo.py"
         assert meta["symbol"] == "my_func"
         assert meta["language"] == "python"
         assert meta["start_line"] == 1
@@ -98,7 +98,7 @@ class TestBuildCodeChunks:
         chunks = build_code_chunks(sym, source, tk, max_tokens=512)
         for c in chunks:
             ccm = CodeChunkMetadata(
-                path=c.metadata["path"],
+                source_path=c.metadata["source_path"],
                 symbol=c.metadata["symbol"],
                 language=c.metadata["language"],
                 start_line=int(c.metadata["start_line"]),
@@ -123,7 +123,7 @@ class TestBuildCodeChunks:
             validate_chunk_metadata(c.metadata)
             # All chunks inherit the symbol's path/name/kind
             assert c.metadata["symbol"] == "big_func"
-            assert c.metadata["path"] == "app/foo.py"
+            assert c.metadata["source_path"] == "app/foo.py"
 
     def test_empty_source_returns_no_chunks(self) -> None:
         sym = _make_symbol("empty_func", start_line=1, end_line=1)

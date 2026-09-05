@@ -279,9 +279,14 @@ class PgVectorStore:
         """Remove every chunk of one file. Returns how many rows went."""
         with self._pool.connection() as conn:
             cur = conn.execute(
+                # Both keys — see `vector_store.delete_by_source_path`. This is
+                # the backend production actually runs (`VECTOR_STORE_BACKEND=auto`
+                # resolves to pgvector on Postgres), so a fix reaching only Chroma
+                # would have fixed only development.
                 "DELETE FROM doc_embeddings "
-                "WHERE project_id = %s AND metadata ->> 'source_path' = %s",
-                (project_id, source_path),
+                "WHERE project_id = %s AND ("
+                "metadata ->> 'source_path' = %s OR metadata ->> 'path' = %s)",
+                (project_id, source_path, source_path),
             )
             return cur.rowcount or 0
 

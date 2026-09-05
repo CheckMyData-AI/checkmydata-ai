@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.config import settings
 from app.knowledge.ast_parser import GRAPH_EXTRACTION_SCHEMA, SYMBOL_UID_SCHEMA
+from app.knowledge.chunk_metadata import SYMBOL_CHUNK_ID_SCHEMA
 from app.models.base import async_session_factory
 from app.models.deploy_state import DeployState
 from app.models.project import Project
@@ -36,10 +37,18 @@ def embedding_fingerprint() -> str:
     them dangle until a clean rebuild. Riding this fingerprint means the rebuild
     is enqueued by `reconcile_embeddings` at startup — idempotent, advisory-locked
     across dynos, `force_full=True` — instead of being owed to an operator.
+
+    The symbol-CHUNK-ID schema joined it on 2026-09-05, and it is a third axis
+    rather than a rename of the first two: a symbol can keep its identity
+    (`SYMBOL_UID_SCHEMA`) and its edges (`GRAPH_EXTRACTION_SCHEMA`) while the id
+    addressing its stored chunks changes shape. Without the rebuild, every stored
+    chunk keeps an id nothing will ever look up again — and, before board row
+    2.10 landed in the same change, nothing could have deleted them either.
     """
     return (
         f"{settings.chroma_embedding_model}|{settings.embedder_max_tokens}"
         f"|uid{SYMBOL_UID_SCHEMA}|gx{GRAPH_EXTRACTION_SCHEMA}"
+        f"|cid{SYMBOL_CHUNK_ID_SCHEMA}"
     )
 
 
