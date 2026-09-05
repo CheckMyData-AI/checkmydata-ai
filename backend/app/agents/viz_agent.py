@@ -17,6 +17,7 @@ from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.viz_prompt import build_viz_system_prompt
 from app.agents.tools.viz_tools import RECOMMEND_VISUALIZATION_TOOL
 from app.connectors.base import QueryResult
+from app.core.numeric import is_measurement
 from app.llm.base import Message
 from app.viz.chart import _auto_detect_columns, _resolve_col_idx
 from app.viz.chart_rules import apply_chart_rules
@@ -72,7 +73,10 @@ class VizAgent(BaseAgent):
 
         if len(cols) == 1 and len(rows) == 1:
             val = rows[0][0]
-            if isinstance(val, (int, float)):
+            # Row 2.7: `(int, float)` is False for `Decimal`, which is what a
+            # Postgres NUMERIC arrives as — so `SELECT count(*)` got the number
+            # card and `SELECT sum(revenue)` fell through to prose below.
+            if is_measurement(val):
                 return VizResult(
                     viz_type="number",
                     viz_config={"value_column": cols[0], "label": cols[0]},

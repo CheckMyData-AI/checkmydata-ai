@@ -24,7 +24,8 @@ tr:hover td{background:#141821}
 .tier.t4{border-color:var(--ok)}.tier.t5{border-color:var(--mut)}
 .why{color:var(--dim);font-size:13.5px;margin:4px 0 10px}
 .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;border:1px solid var(--line);color:var(--dim);margin-left:6px}
-.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.dim{color:var(--dim)}
+.ok{color:var(--ok)}
+.pill.done{color:var(--ok);border-color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.dim{color:var(--dim)}
 ul{margin:8px 0;padding-left:20px}li{margin:5px 0}
 .metric{display:flex;gap:26px;flex-wrap:wrap;margin:10px 0}
 .metric div{min-width:120px}.metric b{display:block;font-size:21px;color:var(--acc)}
@@ -69,14 +70,14 @@ footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);color:v
 
 <div class="tier t1">
 <h3>Ярус 1 — честность пути, который исполняется <span class="pill">86% трафика</span></h3>
-<p class="why">Плоский цикл над базой данных. Здесь дефект виден пользователю немедленно и стоит доверия ко всему продукту.</p>
+<p class="why">Плоский цикл над базой данных. Здесь дефект виден пользователю немедленно и стоит доверия ко всему продукту.</p><p class="why">Две из пяти закрыты в тот же день, и обе оказались не тем, чем значились на доске: 1.7 — нарушением уже записанного контракта, 2.7 — слепотой к типу, а не потерей точности. <b>Строка доски описывает симптом; форму задачи задаёт чтение места.</b></p>
 <table>
 <tr><th>#</th><th>Задача</th><th>Почему сейчас</th></tr>
-<tr><td>1.7</td><td>Отдавать <code>step_limit_reached</code>, когда срабатывает отсечка 216 с</td><td>Сейчас ответ на исчерпанном бюджете неотличим от полного — это ровно тот случай, ради которого писался инвариант «любой ответ прослеживаем»</td></tr>
+<tr><td>1.7 <span class="pill done">сделано</span></td><td>Отдавать <code>step_limit_reached</code>, когда срабатывает отсечка</td><td class="dim">Оказалось нарушением контракта, а не пробелом: SCN-122 требует печать <b>Unverified</b> для прогона с исчерпанным бюджетом, фронтенд это реализует — а бэкенд не отдавал нужный тип ровно тем прогонам, где печать и важна. Ветку не исполнял ни один тест. <b>PR #293</b></td></tr>
 <tr><td>2.9</td><td>Гейт ответа пайплайна должен падать закрыто, как плоский цикл</td><td>Два пути, две разные политики отказа — расхождение, которое не видно ни в одном тесте</td></tr>
 <tr><td>2.4</td><td>DataGate до возврата по усечению; расширить жёсткие проверки за 21 ключевое слово</td><td>Усечённый результат сегодня минует ворота, то есть проверяется не то, что показано</td></tr>
 <tr><td>2.8</td><td>Алиас-биндинг <code>check_required_filters</code></td><td>159 предикатов настроено, 1 применялся верно (измерено 31 августа); сюда же сложена carry-over 0.1 по <code>sql_parser</code></td></tr>
-<tr><td>2.7</td><td><code>Decimal</code> в детекторах потерь и возможностей</td><td>Деньги во float — та же ошибка, что уже исправлена в фактовых таблицах аналитики</td></tr>
+<tr><td>2.7 <span class="pill done">сделано</span></td><td>Деньги невидимы: <code>Decimal</code> не проходит охранник «это число?»</td><td class="dim">Посылка строки была меньшей половиной — точность ни при чём. <code>isinstance(x, (int, float))</code> <b>ложно для <code>Decimal</code></b>, которым asyncpg отдаёт <code>NUMERIC</code>. Пять площадок: оба детектора, карточка числа (<code>count(*)</code> её получал, <code>sum(revenue)</code> — нет) и правило «нет отрицательных», не срабатывавшее на денежной колонке <b>при этом отчитываясь как проверенное</b></td></tr>
 </table>
 </div>
 
