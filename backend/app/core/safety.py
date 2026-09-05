@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
+from app.core.sql_text import strip_sql_comments
+
 logger = logging.getLogger(__name__)
 
 
@@ -81,79 +83,11 @@ _LEADING_TOKEN = re.compile(r"^[\s(]*([A-Za-z]+)")
 # Syntax" (``#`` to end of line; ``--`` requires a following whitespace or control
 # character), ClickHouse "Syntax" (``--``, ``#``, ``#!``, ``//``).
 
-_SQL_DIALECT_BY_DB_TYPE = {
-    "postgres": "postgres",
-    "postgresql": "postgres",
-    "mysql": "mysql",
-    "mariadb": "mysql",
-    "clickhouse": "clickhouse",
-}
-
-# Quoting forms, per dialect. ``dollar`` is PostgreSQL-only on purpose: MySQL and
-# SQLite allow ``$`` inside identifiers and placeholders, so reading ``$x$…$x$``
-# as a literal there would hide whatever sits between the two markers.
-_QUOTE_BRANCHES = {
-    "postgres": [
-        r"(?P<sq>'(?:[^']|'')*')",
-        r"(?P<dq>\"(?:[^\"]|\"\")*\")",
-        r"(?P<dollar>\$(?P<tag>[A-Za-z_][A-Za-z0-9_]*|)\$.*?\$(?P=tag)\$)",
-    ],
-    "mysql": [
-        r"(?P<sq>'(?:[^']|'')*')",
-        r"(?P<dq>\"(?:[^\"]|\"\")*\")",
-        r"(?P<bq>`(?:[^`]|``)*`)",
-    ],
-    "clickhouse": [
-        r"(?P<sq>'(?:[^']|'')*')",
-        r"(?P<dq>\"(?:[^\"]|\"\")*\")",
-        r"(?P<bq>`(?:[^`]|``)*`)",
-    ],
-    "default": [
-        r"(?P<sq>'(?:[^']|'')*')",
-        r"(?P<dq>\"(?:[^\"]|\"\")*\")",
-        r"(?P<bq>`(?:[^`]|``)*`)",
-    ],
-}
-
-# Line-comment forms, per dialect. A form the engine honours and we do not is an
-# evasion (``DROP#\nTABLE`` on MySQL); a form we strip and the engine executes is
-# a blind spot (``SELECT 1--2; DROP TABLE t`` on MySQL, where ``--2`` is
-# arithmetic, and ``#`` on PostgreSQL, where it is an operator character).
-_LINE_COMMENT_FORMS = {
-    "postgres": [r"--[^\n]*"],
-    "mysql": [r"--(?![^\s\x00-\x1f])[^\n]*", r"\#[^\n]*"],
-    "clickhouse": [r"--[^\n]*", r"\#[^\n]*", r"//[^\n]*"],
-    "default": [r"--[^\n]*"],
-}
-
-
-def _build_scanner(dialect: str) -> re.Pattern[str]:
-    line = "|".join(_LINE_COMMENT_FORMS[dialect])
-    branches = [r"(?P<block>/\*.*?\*/)", f"(?P<line>{line})"]
-    branches.extend(_QUOTE_BRANCHES[dialect])
-    return re.compile("|".join(branches), re.DOTALL)
-
-
-_SCANNERS = {d: _build_scanner(d) for d in _LINE_COMMENT_FORMS}
-
-
-def _blank_comment(match: re.Match[str]) -> str:
-    """A space for a comment, the original text for anything else."""
-    if match.group("block") is not None or match.group("line") is not None:
-        return " "
-    return match.group(0)
-
-
-def sql_dialect_for(db_type: str) -> str:
-    """Map a connection's ``db_type`` onto a lexing dialect."""
-    return _SQL_DIALECT_BY_DB_TYPE.get((db_type or "").lower(), "default")
-
-
-def _strip_sql_comments(query: str, db_type: str = "") -> str:
-    """Replace SQL comments with a space so they cannot be used as token
-    separators to evade keyword detection (e.g. ``DELETE/**/FROM``), without
-    ever reaching inside a string literal or a quoted identifier to do it."""
-    return _SCANNERS[sql_dialect_for(db_type)].sub(_blank_comment, query)
+# The dialect-aware comment/literal scanner moved to `core/sql_text.py` on
+# 2026-09-05: `core/sql_parser.py` and `core/required_filter_guard.py` needed the
+# same lexing, and only this implementation was right. Behaviour here is
+# unchanged — the aliases below keep this module's own vocabulary.
+_strip_sql_comments = strip_sql_comments
 
 
 @dataclass

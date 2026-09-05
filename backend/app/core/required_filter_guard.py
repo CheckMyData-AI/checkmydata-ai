@@ -38,7 +38,8 @@ import re
 from typing import TYPE_CHECKING
 
 from app.core.query_validation import QueryError, QueryErrorType, ValidationResult
-from app.core.sql_parser import extract_tables
+from app.core.sql_parser import extract_table_aliases, extract_tables
+from app.core.sql_text import masked_spans, starts_inside_masked
 
 if TYPE_CHECKING:
     pass
@@ -67,8 +68,19 @@ _OPERAND = r"'[^']*'|\"[^\"]*\"|[\w.:+-]+"
 _ANY_COMPARISON = r"\s*(?:!=|<>|>=|<=|=|>|<|(?:NOT\s+)?IN\b|BETWEEN\b)"
 
 
-def _col_atom(col: str) -> str:
-    return rf"(?<!\w){_Q_OPEN}{re.escape(col)}{_Q_CLOSE}"
+def _col_atom(col: str, qualifiers: frozenset[str] | None = None) -> str:
+    """The column, optionally required to carry a table qualifier.
+
+    Without ``qualifiers`` a bare ``deleted_at`` matches — correct when the query
+    names one table, where nothing else it could belong to. With them, only
+    ``o.deleted_at`` / ``orders.deleted_at`` matches, which is what stops a
+    predicate on one side of a join from satisfying the other side's requirement.
+    """
+    bare = rf"{_Q_OPEN}{re.escape(col)}{_Q_CLOSE}"
+    if not qualifiers:
+        return rf"(?<!\w){bare}"
+    alts = "|".join(re.escape(q) for q in sorted(qualifiers))
+    return rf"(?<!\w){_Q_OPEN}(?:{alts}){_Q_CLOSE}\s*\.\s*{bare}"
 
 
 def _tail_is_commentary(tail: str) -> bool:
@@ -103,7 +115,9 @@ def _value_alternatives(raw: str) -> str:
     return "(?:" + "|".join(alts) + ")"
 
 
-def parse_predicate(col: str, predicate: str) -> str | None:
+def parse_predicate(
+    col: str, predicate: str, qualifiers: frozenset[str] | None = None
+) -> str | None:
     """Compile a stored predicate into a regex fragment, or ``None`` if it is not a
     predicate at all.
 
@@ -119,7 +133,7 @@ def parse_predicate(col: str, predicate: str) -> str | None:
     if lead:
         p = p[lead.end() :].strip()
 
-    c = _col_atom(col)
+    c = _col_atom(col, qualifiers)
 
     m = re.match(r"^IS\s+NOT\s+NULL(?P<tail>.*)$", p, re.IGNORECASE | re.DOTALL)
     if m and _tail_is_commentary(m.group("tail")):
@@ -154,14 +168,16 @@ def parse_predicate(col: str, predicate: str) -> str | None:
     return None
 
 
-def compile_filter_check(col: str, predicate: str) -> re.Pattern[str] | None:
+def compile_filter_check(
+    col: str, predicate: str, qualifiers: frozenset[str] | None = None
+) -> re.Pattern[str] | None:
     """Compile a required predicate into a pattern that must appear in the query.
 
     Returns ``None`` when the stored text is not a predicate (an instruction such as
     "must filter by specific type"). Callers must skip those: the previous behaviour —
     a bare column-presence check — reported a pass it had not performed.
     """
-    fragment = parse_predicate(col, predicate)
+    fragment = parse_predicate(col, predicate, qualifiers)
     return re.compile(fragment, re.IGNORECASE) if fragment else None
 
 
@@ -282,20 +298,46 @@ def check_required_filters(
     if not tables:
         return ValidationResult(is_valid=True)
 
+    # Positional masking, not blanking. Until 2026-09-05 this searched the raw
+    # text, so a required predicate was satisfied by the same characters sitting
+    # in a comment or a string literal. The first fix blanked literals outright
+    # and broke four existing tests at once: a required predicate usually
+    # CONTAINS one — `status = 'active'` — so erasing them made every such
+    # requirement unsatisfiable, which is what
+    # `test_every_shape_is_satisfiable_by_some_query` exists to catch. The
+    # distinction is where the match STARTS: inside a literal it is text, outside
+    # it the literal may be its operand.
+    masked = masked_spans(query, db_type)
+
+    # Bind each predicate to its table when there is more than one to confuse it
+    # with. A two-table join requiring `deleted_at IS NULL` on both passed when
+    # only one side was filtered, because nothing tied the occurrence to a table.
+    # With a single table a bare column is unambiguous, and demanding
+    # `orders.deleted_at` there would false-block most correct SQL — which costs
+    # an unsatisfiable repair loop, measured at ~23 s per query.
+    alias_map = extract_table_aliases(query, db_type) if len(tables) > 1 else {}
+
     missing: list[str] = []
     for table in tables:
         preds = normalized.get(table)
         if not preds:
             continue
         for col, predicate in sorted(preds.items()):
-            pattern = compile_filter_check(col, predicate or "")
+            qualifiers = (
+                frozenset(a for a, t in alias_map.items() if t == table) or None
+                if alias_map
+                else None
+            )
+            pattern = compile_filter_check(col, predicate or "", qualifiers)
             if pattern is None:
                 # Not a predicate — an instruction, a disjunction, or empty. It reaches
                 # the model as prompt context; it is not a check, and is not counted as
                 # one in either direction.
                 _inc("required_filter_unenforceable_total", db_type=db_type.lower())
                 continue
-            if not pattern.search(query):
+            if not any(
+                not starts_inside_masked(m.start(), masked) for m in pattern.finditer(query)
+            ):
                 missing.append(f"{table}.{col}")
 
     if not missing:
