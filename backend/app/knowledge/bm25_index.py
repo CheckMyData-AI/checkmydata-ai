@@ -87,7 +87,7 @@ _STOPWORDS: frozenset[str] = frozenset(
 
 # Snapshot format version. Bump on breaking changes; older snapshots will be
 # treated as "missing" and rebuilt on next index run.
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 
 @dataclass
@@ -120,13 +120,29 @@ def tokenize_code(text: str) -> list[str]:
     # Split on any non-alphanumeric/underscore.
     raw = re.split(r"[^A-Za-z0-9_]+", text)
     out: list[str] = []
+
+    def _emit(token: str) -> bool:
+        """Append one token. Returns False when the per-document cap is reached."""
+        if len(token) < _MIN_TOKEN_LEN or token in _STOPWORDS:
+            return True
+        out.append(token)
+        if len(out) >= _MAX_TOKENS_PER_DOC:
+            # RET-R17: log when a document hits the cap so operators
+            # know schema/source docs are being silently truncated.
+            logger.debug(
+                "bm25_index: doc truncated at %d-token cap (text len=%d chars)",
+                _MAX_TOKENS_PER_DOC,
+                len(text),
+            )
+            return False
+        return True
+
     for chunk in raw:
         if not chunk:
             continue
         # Split snake_case and kebab-case first.
-        for sub in chunk.replace("__", "_").split("_"):
-            if not sub:
-                continue
+        subs = [s for s in chunk.replace("__", "_").split("_") if s]
+        for sub in subs:
             # Split camelCase / PascalCase.
             parts = re.findall(
                 r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z0-9]+|[A-Z]+|[0-9]+",
@@ -135,21 +151,19 @@ def tokenize_code(text: str) -> list[str]:
             if not parts:
                 parts = [sub]
             for p in parts:
-                lower = p.lower()
-                if len(lower) < _MIN_TOKEN_LEN:
-                    continue
-                if lower in _STOPWORDS:
-                    continue
-                out.append(lower)
-                if len(out) >= _MAX_TOKENS_PER_DOC:
-                    # RET-R17: log when a document hits the cap so operators
-                    # know schema/source docs are being silently truncated.
-                    logger.debug(
-                        "bm25_index: doc truncated at %d-token cap (text len=%d chars)",
-                        _MAX_TOKENS_PER_DOC,
-                        len(text),
-                    )
+                if not _emit(p.lower()):
                     return out
+            # RET row 2.3: the compound itself, beside its parts. `getUserName`
+            # was indexed as three ordinary words and the name a person types
+            # existed nowhere in the corpus. BM25 ranks by IDF, so the whole
+            # identifier — a rare term — is exactly the signal the parts cannot
+            # carry. Only when it actually splits: emitting a plain word twice
+            # would double its term frequency and bias the ranking silently.
+            if len(parts) > 1 and not _emit(sub.lower()):
+                return out
+        # The snake_case identifier as one term, same reasoning one level up.
+        if len(subs) > 1 and not _emit("_".join(s.lower() for s in subs)):
+            return out
     return out
 
 
