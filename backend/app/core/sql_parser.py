@@ -7,8 +7,7 @@ from __future__ import annotations
 
 import re
 
-_STRIP_STRINGS = re.compile(r"'[^']*'|\"[^\"]*\"")
-_STRIP_COMMENTS = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
+from app.core.sql_text import strip_sql_comments_and_literals
 
 _FROM_JOIN = re.compile(
     r"\b(?:FROM|JOIN|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|CROSS\s+JOIN"
@@ -37,14 +36,59 @@ _ALIAS_PATTERN = re.compile(
 )
 
 
-def _clean(sql: str) -> str:
-    sql = _STRIP_COMMENTS.sub(" ", sql)
-    sql = _STRIP_STRINGS.sub("''", sql)
-    return sql
+def _clean(sql: str, db_type: str = "") -> str:
+    """Comments and string literals out, through the one dialect-aware scanner.
+
+    This was two regexes that did not know about quoting — a `--` inside a string
+    literal took the rest of the line with it, and a `'` inside a comment
+    unbalanced everything after. They fed `extract_tables`, which feeds the
+    required-filter guard and the pre-validation path, so a mis-lexed query
+    produced a table list nobody could trust. `core/sql_text` already had the
+    correct scan; keeping a second one here was how two of three implementations
+    stayed wrong.
+    """
+    return strip_sql_comments_and_literals(sql, db_type)
 
 
 def _unquote(name: str) -> str:
     return name.strip("`").strip('"').strip("'")
+
+
+_ALIAS_AFTER_TABLE = re.compile(
+    r"\b(?:FROM|JOIN)\s+(?P<table>[\w.\"`\[\]]+)\s*"
+    r"(?:AS\s+)?(?P<alias>(?!ON\b|WHERE\b|GROUP\b|ORDER\b|LEFT\b|RIGHT\b|INNER\b"
+    r"|OUTER\b|CROSS\b|FULL\b|JOIN\b|USING\b|LIMIT\b|HAVING\b|UNION\b)[A-Za-z_]\w*)?",
+    re.IGNORECASE,
+)
+
+
+def extract_table_aliases(query: str, db_type: str = "") -> dict[str, str]:
+    """Map every name a table can be addressed by onto that table.
+
+    Both the alias and the table's own name are keys, because SQL accepts either
+    — ``FROM orders o`` may be filtered as ``o.deleted_at`` or
+    ``orders.deleted_at``.
+
+    Used by the required-filter guard to bind a predicate to the table it is
+    required on. Before this, the guard searched the raw query for the predicate
+    and a two-table join requiring `deleted_at IS NULL` on both passed when only
+    one side was filtered.
+
+    Conservative by construction: a name this cannot resolve is simply absent,
+    and the caller treats an unbindable predicate as unenforceable rather than
+    guessing which table it belongs to.
+    """
+    cleaned = _clean(query, db_type)
+    out: dict[str, str] = {}
+    for match in _ALIAS_AFTER_TABLE.finditer(cleaned):
+        table = _unquote(match.group("table").split(".")[-1])
+        if not table:
+            continue
+        out[table.lower()] = table.lower()
+        alias = match.group("alias")
+        if alias:
+            out[alias.lower()] = table.lower()
+    return out
 
 
 def extract_tables(query: str) -> list[str]:
