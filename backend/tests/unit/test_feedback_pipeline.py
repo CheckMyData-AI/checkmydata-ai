@@ -91,6 +91,7 @@ class TestConfirmedVerdict:
         fb = await validation_svc.record_validation(
             db,
             connection_id=conn.id,
+            project_id=proj.id,
             session_id=sess.id,
             message_id=str(uuid.uuid4()),
             query="SELECT count(*) FROM orders",
@@ -117,6 +118,7 @@ class TestApproximateVerdict:
         fb = await validation_svc.record_validation(
             db,
             connection_id=conn.id,
+            project_id=proj.id,
             session_id=sess.id,
             message_id=str(uuid.uuid4()),
             query="SELECT sum(amount) FROM payments",
@@ -140,6 +142,7 @@ class TestApproximateVerdict:
         fb = await validation_svc.record_validation(
             db,
             connection_id=conn.id,
+            project_id=proj.id,
             session_id=sess.id,
             message_id=str(uuid.uuid4()),
             query="SELECT count(*) FROM users",
@@ -163,6 +166,7 @@ class TestRejectedVerdict:
         fb = await validation_svc.record_validation(
             db,
             connection_id=conn.id,
+            project_id=proj.id,
             session_id=sess.id,
             message_id=str(uuid.uuid4()),
             query="SELECT sum(amount) FROM transactions",
@@ -187,6 +191,7 @@ class TestRejectedVerdict:
         fb = await validation_svc.record_validation(
             db,
             connection_id=conn.id,
+            project_id=proj.id,
             session_id=sess.id,
             message_id=str(uuid.uuid4()),
             query="SELECT count(*) FROM payments",
@@ -211,6 +216,7 @@ class TestUnknownVerdict:
         fb = await validation_svc.record_validation(
             db,
             connection_id=conn.id,
+            project_id=proj.id,
             session_id=sess.id,
             message_id=str(uuid.uuid4()),
             query="SELECT 1",

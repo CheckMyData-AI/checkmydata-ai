@@ -31,7 +31,17 @@ class DataValidationService:
         user_expected_value: str | None = None,
         deviation_pct: float | None = None,
         rejection_reason: str | None = None,
+        *,
+        project_id: str,
     ) -> DataValidationFeedback:
+        # Row 1.11, and this is the WRITE of the three. The route checked
+        # membership of `project_id` and handed `connection_id` on untouched, so
+        # a member of one project could record validation feedback against
+        # another tenant's connection. In the service, and raising.
+        from app.services.connection_service import ConnectionService
+
+        await ConnectionService().require_in_project(session, connection_id, project_id)
+
         entry = DataValidationFeedback(
             connection_id=connection_id,
             session_id=session_id,
@@ -98,7 +108,18 @@ class DataValidationService:
         self,
         session: AsyncSession,
         connection_id: str,
+        *,
+        project_id: str,
     ) -> dict:
+        # Row 1.11. The route checked membership of `project_id` and handed
+        # `connection_id` on untouched, so a member of one project could name
+        # another tenant's connection. In the service, because the route that
+        # forgets is the one that has not been written yet — and raising, because
+        # a nullable getter is ignorable by omission.
+        from app.services.connection_service import ConnectionService
+
+        await ConnectionService().require_in_project(session, connection_id, project_id)
+
         total = await session.execute(
             select(func.count(DataValidationFeedback.id)).where(
                 DataValidationFeedback.connection_id == connection_id

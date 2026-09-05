@@ -1229,6 +1229,7 @@ class SQLAgent(BaseAgent):
                 benchmarks = await svc.get_all_for_connection(
                     session,
                     cfg.connection_id,
+                    project_id=ctx.project_id,
                 )
 
             if not benchmarks:

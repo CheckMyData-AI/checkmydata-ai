@@ -89,6 +89,7 @@ class TestRecordValidation:
         fb = await svc.record_validation(
             db,
             connection_id=conn.id,
+            project_id=proj.id,
             session_id=sess.id,
             message_id=str(uuid.uuid4()),
             query="SELECT count(*) FROM orders",
@@ -107,6 +108,7 @@ class TestRecordValidation:
         fb = await svc.record_validation(
             db,
             connection_id=conn.id,
+            project_id=proj.id,
             session_id=sess.id,
             message_id=str(uuid.uuid4()),
             query="SELECT sum(amount) FROM payments",
@@ -127,7 +129,7 @@ class TestGetMethods:
         sess = await _make_session(db, proj.id)
 
         fb = await svc.record_validation(
-            db, conn.id, sess.id, str(uuid.uuid4()), "SELECT 1", "confirmed"
+            db, conn.id, sess.id, str(uuid.uuid4()), "SELECT 1", "confirmed", project_id=proj.id
         )
         fetched = await svc.get_by_id(db, fb.id)
         assert fetched is not None
@@ -145,7 +147,9 @@ class TestGetMethods:
         sess = await _make_session(db, proj.id)
         msg_id = str(uuid.uuid4())
 
-        await svc.record_validation(db, conn.id, sess.id, msg_id, "SELECT 1", "confirmed")
+        await svc.record_validation(
+            db, conn.id, sess.id, msg_id, "SELECT 1", "confirmed", project_id=proj.id
+        )
         result = await svc.get_by_message_id(db, msg_id)
         assert result is not None
         assert result.message_id == msg_id
@@ -159,10 +163,10 @@ class TestGetUnresolved:
         sess = await _make_session(db, proj.id)
 
         fb1 = await svc.record_validation(
-            db, conn.id, sess.id, str(uuid.uuid4()), "SELECT 1", "rejected"
+            db, conn.id, sess.id, str(uuid.uuid4()), "SELECT 1", "rejected", project_id=proj.id
         )
         await svc.record_validation(
-            db, conn.id, sess.id, str(uuid.uuid4()), "SELECT 2", "confirmed"
+            db, conn.id, sess.id, str(uuid.uuid4()), "SELECT 2", "confirmed", project_id=proj.id
         )
         await svc.resolve(db, fb1.id, "Fixed")
 
@@ -179,7 +183,7 @@ class TestResolve:
         sess = await _make_session(db, proj.id)
 
         fb = await svc.record_validation(
-            db, conn.id, sess.id, str(uuid.uuid4()), "SELECT 1", "rejected"
+            db, conn.id, sess.id, str(uuid.uuid4()), "SELECT 1", "rejected", project_id=proj.id
         )
         resolved = await svc.resolve(db, fb.id, "Learning created")
         assert resolved is not None
@@ -198,7 +202,7 @@ class TestAccuracyStats:
         proj = await _make_project(db)
         conn = await _make_connection(db, proj.id)
 
-        stats = await svc.get_accuracy_stats(db, conn.id)
+        stats = await svc.get_accuracy_stats(db, conn.id, project_id=proj.id)
         assert stats["total"] == 0
         assert stats["confirmation_rate"] is None
 
@@ -208,11 +212,17 @@ class TestAccuracyStats:
         conn = await _make_connection(db, proj.id)
         sess = await _make_session(db, proj.id)
 
-        await svc.record_validation(db, conn.id, sess.id, str(uuid.uuid4()), "q1", "confirmed")
-        await svc.record_validation(db, conn.id, sess.id, str(uuid.uuid4()), "q2", "confirmed")
-        await svc.record_validation(db, conn.id, sess.id, str(uuid.uuid4()), "q3", "rejected")
+        await svc.record_validation(
+            db, conn.id, sess.id, str(uuid.uuid4()), "q1", "confirmed", project_id=proj.id
+        )
+        await svc.record_validation(
+            db, conn.id, sess.id, str(uuid.uuid4()), "q2", "confirmed", project_id=proj.id
+        )
+        await svc.record_validation(
+            db, conn.id, sess.id, str(uuid.uuid4()), "q3", "rejected", project_id=proj.id
+        )
 
-        stats = await svc.get_accuracy_stats(db, conn.id)
+        stats = await svc.get_accuracy_stats(db, conn.id, project_id=proj.id)
         assert stats["total"] == 3
         assert stats["confirmed"] == 2
         assert stats["rejected"] == 1
