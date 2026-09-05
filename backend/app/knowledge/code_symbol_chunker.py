@@ -28,7 +28,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from app.knowledge.chunk_metadata import CodeChunkMetadata, validate_chunk_metadata
+from app.knowledge.chunk_metadata import (
+    CodeChunkMetadata,
+    dedupe_chunk_id,
+    symbol_chunk_id,
+    validate_chunk_metadata,
+)
 from app.knowledge.chunker import Chunk, _split_large_section
 
 if TYPE_CHECKING:
@@ -85,7 +90,7 @@ def build_code_chunks(
 
     # Build the base C-E metadata dict for this symbol.
     base_meta: dict[str, str | int] = CodeChunkMetadata(
-        path=symbol.file_path,
+        source_path=symbol.file_path,
         symbol=symbol.name,
         language=symbol.language or "",
         start_line=symbol.start_line,
@@ -177,7 +182,10 @@ class CodeSymbolChunker:
         # only a WARNING behind it. The id is therefore made unique by
         # construction. The first occurrence keeps its historical id verbatim so
         # a deploy does not churn every existing vector.
-        uid_occurrences: dict[str, int] = {}
+        # Uniqueness within this run, not identity. The id itself is now a pure
+        # function of the symbol (`symbol_chunk_id`); this only catches a
+        # collision that should be impossible, and says so out loud when it does.
+        emitted_ids: dict[str, int] = {}
 
         for rel_path, parsed_file in parsed_files.items():
             if not parsed_file.symbols:
@@ -190,9 +198,6 @@ class CodeSymbolChunker:
                 continue
 
             for symbol in parsed_file.symbols:
-                seen = uid_occurrences.get(symbol.uid, 0)
-                uid_occurrences[symbol.uid] = seen + 1
-                uid_suffix = "" if seen == 0 else f"#{seen}"
                 try:
                     chunks = build_code_chunks(
                         symbol=symbol,
@@ -216,7 +221,19 @@ class CodeSymbolChunker:
                     # doc DB id as a prefix) and can be filtered/audited
                     # independently of BM25 docs (which are built separately by
                     # the bm25_build stage from the same underlying documents).
-                    doc_id = f"sym:{rel_path}:{symbol.uid}{uid_suffix}:{chunk_idx}"
+                    doc_id = dedupe_chunk_id(
+                        symbol_chunk_id(
+                            # `symbol.file_path`, not the dict key: this is the
+                            # column `code_graph_symbols` stores, and board row
+                            # 2.2 rebuilds the same id from it. Deriving the two
+                            # sides from one field is what keeps them equal.
+                            source_path=symbol.file_path,
+                            uid=symbol.uid,
+                            start_line=symbol.start_line,
+                            chunk_index=chunk_idx,
+                        ),
+                        emitted_ids,
+                    )
                     batch_ids.append(doc_id)
                     batch_docs.append(chunk.content)
                     batch_metas.append(chunk.metadata)

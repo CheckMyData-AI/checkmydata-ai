@@ -292,7 +292,14 @@ class VectorStore:
         try:
             collection = self.get_or_create_collection(project_id)
             existing = collection.get(
-                where={"source_path": source_path},
+                # Both keys, deliberately. Symbol chunks were written under
+                # `path` until 2026-09-05 and prose chunks under `source_path`,
+                # so a filter on one key alone leaves the other's chunks
+                # unreachable — which is how ~25 000 symbol chunks for deleted
+                # code survived every re-index. The legacy arm sweeps them on the
+                # next run and needs no migration; it can go once no store holds
+                # a `path` chunk.
+                where={"$or": [{"source_path": source_path}, {"path": source_path}]},
                 include=[],
             )
             ids_to_delete = existing["ids"]

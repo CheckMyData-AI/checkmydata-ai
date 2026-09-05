@@ -21,7 +21,7 @@ from app.config import settings
 from app.core.heartbeat import heartbeat
 from app.core.workflow_tracker import tracker
 from app.knowledge.ast_parser import ASTParser, ParsedFile
-from app.knowledge.bm25_corpus import corpus_entries_for_docs
+from app.knowledge.bm25_corpus import corpus_entries_for_docs, corpus_entries_for_symbols
 from app.knowledge.bm25_index import BM25Index
 from app.knowledge.chunker import chunk_document
 from app.knowledge.code_graph import CodeGraph, CodeGraphBuilder
@@ -1405,6 +1405,13 @@ class IndexingPipelineRunner:
             # writes, and a definition edited here alone would make the reader's
             # corpus differ from the writer's.
             bm25_docs = corpus_entries_for_docs(docs)
+            # Board row 2.2: the lexical leg had never indexed a line of code —
+            # `KnowledgeDoc.content` is the LLM's summary of a file, not the file.
+            # Symbol documents come from Postgres (no clone, no body), under the
+            # chunker's own ids so the two retrieval legs fuse instead of
+            # splitting one symbol's rank across two documents.
+            symbols = await CodeGraphService().list_symbols(db, project_id)
+            bm25_docs = bm25_docs + corpus_entries_for_symbols(symbols)
             bm25 = BM25Index(settings.bm25_data_dir)
             await asyncio.to_thread(bm25.build, project_id, head_sha, bm25_docs)
             logger.info(

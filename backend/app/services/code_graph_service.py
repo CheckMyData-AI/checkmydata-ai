@@ -210,6 +210,20 @@ class CodeGraphService:
     # Read path
     # ------------------------------------------------------------------
 
+    async def list_symbols(self, session: AsyncSession, project_id: str) -> list[CodeGraphSymbol]:
+        """Every persisted symbol of a project, for the BM25 corpus.
+
+        Lives here rather than in `bm25_corpus` so that module stays duck-typed
+        and testable without a database — and so this table has one access point
+        rather than a second query copied into two builders in two processes.
+        """
+        result = await session.execute(
+            select(CodeGraphSymbol)
+            .where(CodeGraphSymbol.project_id == project_id)
+            .order_by(CodeGraphSymbol.file_path, CodeGraphSymbol.start_line)
+        )
+        return list(result.scalars().all())
+
     async def get_callers(
         self,
         session: AsyncSession,
