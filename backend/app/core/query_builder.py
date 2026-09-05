@@ -2,12 +2,28 @@ import json
 import logging
 
 from app.config import settings
+from app.connectors.registry import canonical_dialect
 from app.llm.base import Message, Tool, ToolParameter
 from app.llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
 DIALECT_HINTS = {
+    "sqlite": (
+        "- SQLite. It is the demo database, and it is missing things the other\n"
+        "  dialects have — reaching for them produces a syntax error, not a\n"
+        "  slower query.\n"
+        "- No NOW() / CURDATE(). Use datetime('now'), date('now'), or\n"
+        "  strftime('%Y-%m', col) for grouping by period.\n"
+        "- No ILIKE. LIKE is already case-insensitive for ASCII; use\n"
+        "  LOWER(col) LIKE LOWER(?) when the data may not be.\n"
+        "- No `::` casts and no CAST to Postgres type names. Use\n"
+        "  CAST(x AS INTEGER / REAL / TEXT).\n"
+        "- Dates are TEXT, not a date type: compare ISO strings, and use\n"
+        "  julianday(a) - julianday(b) for differences in days.\n"
+        "- No RIGHT JOIN or FULL OUTER JOIN before 3.39; prefer LEFT JOIN.\n"
+        '- Quote identifiers with double quotes: "table"."column".\n'
+    ),
     "mysql": (
         "- Use backtick quoting for identifiers: `table`.`column`\n"
         "- Date functions: DATE_FORMAT(), NOW(), CURDATE(), DATE_SUB()\n"
@@ -55,7 +71,10 @@ When you have enough context, call the `execute_query` tool with the generated q
 
 
 def _build_system_prompt(db_type: str) -> str:
-    hints = DIALECT_HINTS.get(db_type, "- Standard SQL dialect")
+    # Row 2.12: an accepted alias (`postgresql`, `mongo`) used to fall through
+    # to the generic fallback silently. The registry decides what a caller may
+    # say; `canonical_dialect` decides what it means.
+    hints = DIALECT_HINTS.get(canonical_dialect(db_type), "- Standard SQL dialect")
     return SYSTEM_PROMPT_TEMPLATE.format(db_type=db_type, dialect_hints=hints)
 
 

@@ -8,6 +8,7 @@ hints, schema conventions, safety rules, and any pre-loaded context
 from __future__ import annotations
 
 from app.agents.prompts.untrusted_data import untrusted_data_section
+from app.connectors.registry import canonical_dialect
 
 SQL_CORRECTNESS_RULES = (
     "SQL CORRECTNESS RULES (avoid confidently-wrong numbers):\n"
@@ -30,6 +31,21 @@ SQL_CORRECTNESS_RULES = (
 )
 
 DIALECT_HINTS: dict[str, str] = {
+    "sqlite": (
+        "- SQLite. It is the demo database, and it is missing things the other\n"
+        "  dialects have — reaching for them produces a syntax error, not a\n"
+        "  slower query.\n"
+        "- No NOW() / CURDATE(). Use datetime('now'), date('now'), or\n"
+        "  strftime('%Y-%m', col) for grouping by period.\n"
+        "- No ILIKE. LIKE is already case-insensitive for ASCII; use\n"
+        "  LOWER(col) LIKE LOWER(?) when the data may not be.\n"
+        "- No `::` casts and no CAST to Postgres type names. Use\n"
+        "  CAST(x AS INTEGER / REAL / TEXT).\n"
+        "- Dates are TEXT, not a date type: compare ISO strings, and use\n"
+        "  julianday(a) - julianday(b) for differences in days.\n"
+        "- No RIGHT JOIN or FULL OUTER JOIN before 3.39; prefer LEFT JOIN.\n"
+        '- Quote identifiers with double quotes: "table"."column".\n'
+    ),
     "mysql": (
         "- Use backtick quoting for identifiers: `table`.`column`\n"
         "- Date functions: DATE_FORMAT(), NOW(), CURDATE(), DATE_SUB()\n"
@@ -195,7 +211,11 @@ def build_sql_system_prompt(
         sections.append(notes_prompt)
 
     if db_type:
-        hints = DIALECT_HINTS.get(db_type)
+        # Row 2.12: the registry accepts eight names and this map is keyed on the
+        # engines, so `postgresql`, `mongo` and `sqlite` reached here and matched
+        # nothing — silently, since a missing dialect section looks like a short
+        # prompt rather than an error. `sqlite` is what the demo creates.
+        hints = DIALECT_HINTS.get(canonical_dialect(db_type))
         if hints:
             sections.append("")
             sections.append(f"SQL DIALECT ({db_type}):")

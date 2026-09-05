@@ -21,6 +21,32 @@ ADAPTER_REGISTRY: dict[str, type[DataSourceAdapter]] = {
     "mcp": MCPClientAdapter,
 }
 
+#: Accepted names that mean the same engine. The registry decides what a caller
+#: may say; this decides what those sayings mean, so a lookup keyed on the engine
+#: does not have to repeat the vocabulary.
+#:
+#: Row 2.12: `DIALECT_HINTS` was keyed on four names while the registry accepted
+#: eight, and its lookup fell through silently — so `sqlite` (which is what the
+#: demo creates), `postgresql` and `mongo` all reached the agent with no dialect
+#: guidance at all.
+_DIALECT_ALIASES = {
+    "postgresql": "postgres",
+    "mongo": "mongodb",
+    "mariadb": "mysql",
+}
+
+
+def canonical_dialect(db_type: str) -> str:
+    """The engine a `db_type` names, lower-cased and de-aliased.
+
+    An unregistered name is returned unchanged rather than guessed at: a caller
+    that invented one should reach the generic fallback, not somebody else's
+    dialect.
+    """
+    key = (db_type or "").strip().lower()
+    return _DIALECT_ALIASES.get(key, key)
+
+
 # Backward compatibility
 CONNECTOR_REGISTRY: dict[str, type[BaseConnector]] = ADAPTER_REGISTRY  # type: ignore[assignment]
 
