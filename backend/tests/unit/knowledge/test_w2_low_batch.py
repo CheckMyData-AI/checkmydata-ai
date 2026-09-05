@@ -543,15 +543,12 @@ def test_codeidx_c19_symbol_ids_prefixed_sym(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# CODEIDX-C20/C21: Louvain over-merge / cluster staleness — W6 scope
+# CODEIDX-C20/C21 were two skipped placeholder tests here, with no body: a
+# Louvain over-merge threshold and cluster staleness on re-index. Deleted
+# 2026-09-05 rather than kept, because an empty test is not parked coverage —
+# unskip it and it passes, asserting nothing, which is the same green-that-
+# proves-nothing shape as a retrieval eval whose second leg was never wired.
+# They also counted toward the suite total, so the project claimed two tests it
+# did not have. Homed on the board instead; `clustering_enabled` is off by
+# default, so nothing is exercising either behaviour today.
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.skip(reason="W6 clustering scope — Louvain/cluster staleness is out of W2 scope")
-def test_codeidx_c20_louvain_over_merge() -> None:
-    """Placeholder: Louvain community merge threshold (C20) is a W6 clustering concern."""
-
-
-@pytest.mark.skip(reason="W6 clustering scope — cluster staleness is out of W2 scope")
-def test_codeidx_c21_cluster_staleness() -> None:
-    """Placeholder: cluster invalidation on re-index (C21) is a W6 clustering concern."""

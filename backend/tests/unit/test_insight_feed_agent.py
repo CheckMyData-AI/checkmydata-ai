@@ -14,6 +14,31 @@ from app.agents.insight_feed_agent import FeedScanResult, InsightFeedAgent
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _scope_check_is_not_the_subject_here(monkeypatch):
+    """Every test below drives `run_scan` with a bare ``AsyncMock`` session.
+
+    `run_scan` opens with the row-1.10 project-scope guard, which queries the
+    session for the connection. Against an ``AsyncMock`` that query answers with
+    an un-awaited coroutine — truthy, so the guard passed, and it emitted a
+    ``RuntimeWarning`` on the guard's own line. Both are bad: these tests were
+    passing a security check that never ran, and a warning parked on a guard
+    teaches a reader to ignore warnings exactly there.
+
+    So the guard is stubbed OUT here, deliberately and visibly. The scope itself
+    is covered against a real in-memory database in
+    `tests/unit/services/test_catalog_scope_is_the_connections_project.py`; the
+    subject of this file is what the scan does once it is allowed to run.
+    """
+    from app.models.connection import Connection
+    from app.services.connection_service import ConnectionService
+
+    async def _allow(_self, _session, connection_id, project_id):
+        return Connection(id=connection_id, project_id=project_id, name="stub")
+
+    monkeypatch.setattr(ConnectionService, "require_in_project", _allow)
+
+
 class TestFeedScanResult:
     def test_defaults(self):
         result = FeedScanResult()

@@ -10,7 +10,6 @@
 """
 
 import sqlite3
-import uuid
 
 import pytest
 from httpx import AsyncClient
@@ -189,13 +188,18 @@ async def test_a_second_user_gets_their_own_sample_database(client: AsyncClient,
     for _ in range(2):
         reg = await register_user(client)
         resp = await client.post("/api/demo/setup", headers=auth_headers(reg["token"]))
-        if resp.status_code != 200:
-            pytest.skip(f"registration path unavailable: {resp.status_code}")
+        # Not a skip. This test guards a tenancy invariant, and the demo path
+        # breaking is precisely when it must speak: skipping on a non-200 meant
+        # the one check on "two users must not share a database" disarmed itself
+        # exactly when the subsystem it guards had failed. A check that cannot
+        # detect the failure it exists to detect is not a check.
+        assert resp.status_code == 200, (
+            f"demo setup failed with {resp.status_code}: {resp.text[:200]}"
+        )
         conn = await _connection(db_session, resp.json()["connection_id"])
         paths.append(conn.db_name)
 
     assert paths[0] != paths[1], f"two users share one demo database: {paths[0]}"
-    assert uuid.UUID  # keep the import meaningful if the skip fires
 
 
 @pytest.mark.asyncio
