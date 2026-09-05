@@ -416,6 +416,43 @@ class DataGate:
                 classified[col] = "other"
         return classified
 
+    @staticmethod
+    def _flag_non_finite(
+        scan_rows: list, col_idx: int, col_name: str, outcome: DataGateOutcome
+    ) -> bool:
+        """Fail on the first ``NaN``/``Infinity`` in one column. True if it fired.
+
+        Restricted to real ``float``/``Decimal`` values on purpose. A text column
+        holding the word "Nan" is a name, not a broken number, and a check that
+        blocks an answer must not guess.
+        """
+        for row in scan_rows:
+            try:
+                val = row[col_idx]
+            except (IndexError, TypeError):
+                continue
+            if isinstance(val, bool) or val is None:
+                continue
+            non_finite = (isinstance(val, float) and not math.isfinite(val)) or (
+                isinstance(val, Decimal) and (val.is_nan() or val.is_infinite())
+            )
+            if not non_finite:
+                continue
+            if settings.data_gate_hard_checks_enabled:
+                outcome.fail(
+                    f"Column '{col_name}' contains {val}, which is not a usable "
+                    "number — it comes from a division by zero, an overflow or a "
+                    "bad cast.",
+                    suggestion=(
+                        f"Guard the expression behind '{col_name}' (NULLIF on the "
+                        "divisor, or a CASE for the zero branch)."
+                    ),
+                )
+            else:
+                outcome.warn(f"Column '{col_name}' contains a non-finite value ({val}).")
+            return True
+        return False
+
     def _check_value_ranges(self, qr: QueryResult, outcome: DataGateOutcome) -> None:
         """Sanity-check obviously out-of-range values."""
         if not qr.rows:
@@ -435,6 +472,28 @@ class DataGate:
         pct_bounded_max = settings.data_gate_percent_bounded_max
 
         for col_idx, col_name in enumerate(qr.columns):
+            # Non-finite values first, and DELIBERATELY before the classifier.
+            #
+            # Everything below this point only looks at columns the model named
+            # with one of 21 keywords; every other column is `other` and skipped
+            # entirely, so "no impossible numbers" was enforced against naming
+            # habits rather than against data. A `NaN` or an `Infinity` needs no
+            # classification to be wrong: it arrives through a 0/0, an overflow
+            # or a bad cast, and it is not a measure whatever the column is
+            # called. Today it is worse than unchecked — `_check_nulls` counts a
+            # NaN as a null and `_as_float` turns one into None, so the single
+            # value that is impossible by construction is the one nothing reports.
+            #
+            # What is NOT added here, deliberately: a money kind with a sign
+            # rule. A negative revenue is a refund, a chargeback or an
+            # adjustment, and `fail` is a hard refusal to use the result — a gate
+            # that blocks it is a product that cannot answer "how much did we
+            # refund". The keyword list is already subtler than it looks:
+            # `_DELTA_KEYWORDS` demotes `percent_change` to `rate` for exactly
+            # this reason.
+            if self._flag_non_finite(scan_rows, col_idx, col_name, outcome):
+                continue
+
             kind = kinds.get(col_name, "other")
             if kind not in ("percent", "rate", "count", "date"):
                 continue
