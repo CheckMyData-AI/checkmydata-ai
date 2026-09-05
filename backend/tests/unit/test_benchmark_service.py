@@ -244,12 +244,17 @@ class TestGetAllForConnection:
     @pytest.mark.asyncio
     async def test_returns_list(self, svc):
         items = [_make_benchmark(), _make_benchmark(id="bm2", metric_key="total_users")]
-        session = _mock_session(scalars_all=items)
-        result = await svc.get_all_for_connection(session, "conn-1")
+        # `get_all_for_connection` now resolves the connection in its project first
+        # (row 1.11), so the mocked session has to answer that lookup too — a mock
+        # must model what the code under test actually asks of it. The guard's own
+        # behaviour is covered against a REAL session in
+        # `test_validation_scope_is_the_connections_project.py`.
+        session = _mock_session(scalar_one_or_none=object(), scalars_all=items)
+        result = await svc.get_all_for_connection(session, "conn-1", project_id="proj-1")
         assert len(result) == 2
 
     @pytest.mark.asyncio
     async def test_empty(self, svc):
-        session = _mock_session(scalars_all=[])
-        result = await svc.get_all_for_connection(session, "conn-1")
+        session = _mock_session(scalar_one_or_none=object(), scalars_all=[])
+        result = await svc.get_all_for_connection(session, "conn-1", project_id="proj-1")
         assert result == []

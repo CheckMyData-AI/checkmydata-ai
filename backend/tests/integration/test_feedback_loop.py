@@ -113,6 +113,7 @@ class TestFullFeedbackLoop:
         fb = await validation_svc.record_validation(
             db,
             connection_id=conn.id,
+            project_id=proj.id,
             session_id=sess.id,
             message_id=str(uuid.uuid4()),
             query="SELECT count(*) FROM orders",
@@ -167,6 +168,7 @@ class TestFullFeedbackLoop:
         fb = await validation_svc.record_validation(
             db,
             connection_id=conn.id,
+            project_id=proj.id,
             session_id=sess.id,
             message_id=str(uuid.uuid4()),
             query="SELECT sum(revenue) FROM sales WHERE month = 3",
@@ -198,6 +200,7 @@ class TestFullFeedbackLoop:
             fb = await validation_svc.record_validation(
                 db,
                 connection_id=conn.id,
+                project_id=proj.id,
                 session_id=sess.id,
                 message_id=str(uuid.uuid4()),
                 query=f"SELECT 1 -- {verdict}",
@@ -208,7 +211,7 @@ class TestFullFeedbackLoop:
             )
             await pipeline.process(db, fb, proj.id)
 
-        stats = await validation_svc.get_accuracy_stats(db, conn.id)
+        stats = await validation_svc.get_accuracy_stats(db, conn.id, project_id=proj.id)
         assert stats["total"] == 4
         assert stats["confirmed"] == 2
         assert stats["approximate"] == 1

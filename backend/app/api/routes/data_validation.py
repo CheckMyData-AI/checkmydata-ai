@@ -64,6 +64,7 @@ async def validate_data(
         feedback = await val_svc.record_validation(
             db,
             connection_id=body.connection_id,
+            project_id=body.project_id,
             session_id=body.session_id,
             message_id=body.message_id,
             query=body.query,
@@ -107,7 +108,7 @@ async def get_validation_stats(
     from app.services.data_validation_service import DataValidationService
 
     svc = DataValidationService()
-    stats = await svc.get_accuracy_stats(db, connection_id)
+    stats = await svc.get_accuracy_stats(db, connection_id, project_id=project_id)
     return stats
 
 
@@ -123,7 +124,7 @@ async def get_benchmarks(
     from app.services.benchmark_service import BenchmarkService
 
     svc = BenchmarkService()
-    benchmarks = await svc.get_all_for_connection(db, connection_id)
+    benchmarks = await svc.get_all_for_connection(db, connection_id, project_id=project_id)
 
     return [
         {

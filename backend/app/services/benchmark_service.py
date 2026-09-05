@@ -115,7 +115,18 @@ class BenchmarkService:
         connection_id: str,
         min_confidence: float = 0.3,
         limit: int = 500,
+        *,
+        project_id: str,
     ) -> list[DataBenchmark]:
+        # Row 1.11. The route checked membership of `project_id` and handed
+        # `connection_id` on untouched, so a member of one project could name
+        # another tenant's connection. In the service, because the route that
+        # forgets is the one that has not been written yet — and raising, because
+        # a nullable getter is ignorable by omission.
+        from app.services.connection_service import ConnectionService
+
+        await ConnectionService().require_in_project(session, connection_id, project_id)
+
         result = await session.execute(
             select(DataBenchmark)
             .where(

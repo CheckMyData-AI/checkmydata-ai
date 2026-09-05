@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.benchmark_service import BenchmarkService, normalize_metric_key
-from tests.integration.conftest import make_connection
+from tests.integration.conftest import make_connection, make_project
 
 
 class TestNormalizeMetricKey:
@@ -115,7 +115,12 @@ class TestBenchmarkCRUD:
     async def test_get_all_filters_by_min_confidence(
         self, db_session: AsyncSession, svc: BenchmarkService
     ):
-        conn_id = await make_connection(db_session)
+        # `project_id` is now required by `get_all_for_connection` (row 1.11), and
+        # `make_connection` auto-seeds a project without returning it — so this
+        # test makes the project explicit rather than the helper change shape for
+        # every other caller.
+        project_id = await make_project(db_session)
+        conn_id = await make_connection(db_session, project_id=project_id)
         await svc.create_or_confirm(
             db_session,
             connection_id=conn_id,
@@ -133,6 +138,8 @@ class TestBenchmarkCRUD:
         await svc.flag_stale(db_session, conn_id, "low_conf")
         await svc.flag_stale(db_session, conn_id, "low_conf")
 
-        all_bm = await svc.get_all_for_connection(db_session, conn_id, min_confidence=0.3)
+        all_bm = await svc.get_all_for_connection(
+            db_session, conn_id, min_confidence=0.3, project_id=project_id
+        )
         keys = {b.metric_key for b in all_bm}
         assert "high_conf" in keys
