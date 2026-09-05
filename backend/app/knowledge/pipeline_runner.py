@@ -444,8 +444,15 @@ class IndexingPipelineRunner:
             and not state.deleted_files
         ):
             try:
-                col = self._vector_store.get_or_create_collection(project_id)
-                col_count = col.count()
+                # Row 2.20, and this is the sharp one. `_run_steps` is what
+                # writes `heartbeat_at`, and `StaleRunReaper` kills a run whose
+                # beat stops — production already reaped a live repo index at
+                # 22:07 for exactly that, then started a second copy beside it. A
+                # synchronous `count()` over a large collection is the kind of
+                # pause that produces it.
+                col_count = await asyncio.to_thread(
+                    lambda: self._vector_store.get_or_create_collection(project_id).count()
+                )
             except Exception:
                 logger.warning(
                     "Vector store unreachable — preserving last_sha and skipping "

@@ -19,6 +19,7 @@ Every section is independently guarded so a failing store degrades gracefully
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -567,7 +568,11 @@ class KnowledgeCatalogService:
                     for r in fused[:n_results]
                 ]
             else:
-                chunks = self._vector_store.query(project_id, question, n_results=n_results)
+                # Row 2.20 — see `context_loader`. Same store, same block, and this
+                # one runs while the ContextPack is being assembled for a request.
+                chunks = await asyncio.to_thread(
+                    self._vector_store.query, project_id, question, n_results=n_results
+                )
         except Exception:
             # WARNING, not DEBUG — same reasoning as the sync leg above. This is the
             # branch the `isinstance` assert fell into on every production request, and
