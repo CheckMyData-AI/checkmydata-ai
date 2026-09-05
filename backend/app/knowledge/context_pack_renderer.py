@@ -304,6 +304,12 @@ def _total_tokens(pack: ContextPack, sizer: Callable[[Artifact], int]) -> int:
 _TRACEABLE_HEADER = "RELEVANT KNOWLEDGE (traceable):"
 
 
+#: Artifact kinds that are two views of ONE entity rather than two entities.
+#: RET-R15 collapses these on the summary alone, and their titles differ by
+#: construction — a symbol chunk and the prose chunk about it.
+_RETRIEVAL_VIEWS = frozenset({"code_entity", "rag_chunk"})
+
+
 def render_context_block(artifacts: list[Artifact]) -> str:
     """Render a prompt block with per-artifact provenance annotations (RET-R8).
 
@@ -331,18 +337,47 @@ def render_context_block(artifacts: list[Artifact]) -> str:
         return ""
 
     lines: list[str] = [_TRACEABLE_HEADER]
-    # RET-R15: dedup on identical summaries so symbol chunks and prose chunks
-    # that describe the same entity don't produce duplicate lines.  First
-    # occurrence wins (earlier artifacts tend to be higher confidence).
-    seen_summaries: set[str] = set()
+    # RET-R15 deduped on the summary ALONE, across every kind of artifact. Its
+    # intent is narrower than its key: "symbol chunks and prose chunks that
+    # describe the same entity" — two RETRIEVAL VIEWS of one thing, which do
+    # legitimately collapse even though their titles differ (`test_w2_low_batch`
+    # pins exactly that: "Foo" and "Foo prose", one summary).
+    #
+    # Applied to every kind, that same key destroyed the table list. A table
+    # artifact's summary is `row.business_description or ""` — generated, and
+    # absent on any table nobody has described — so every undescribed table
+    # hashed to `""`: the first was kept and the rest dropped, leaving a project
+    # with one blank line where its tables should be. Two tables that merely
+    # share a description collapsed too, losing a name each time.
+    #
+    # So the key follows the intent rather than the other way round: summary
+    # alone for the retrieval kinds RET-R15 names, the (title, summary) pair for
+    # everything else, which are distinct entities that happen to share prose.
+    # First occurrence wins, as before — earlier artifacts tend to be higher
+    # confidence.
+    seen: set[tuple[str, ...]] = set()
     for a in artifacts:
-        if a.summary in seen_summaries:
+        if a.type in _RETRIEVAL_VIEWS:
+            key: tuple[str, ...] = ("view", a.summary or "")
+        else:
+            key = ("entity", a.title or "", a.summary or "")
+        if key in seen:
             continue
-        seen_summaries.add(a.summary)
+        # A line carrying only provenance names nothing and spends budget doing
+        # it. Nothing to say, no line.
+        if not a.title and not a.summary:
+            continue
+        seen.add(key)
         src = a.provenance.get("source", "unknown") if a.provenance else "unknown"
         sha = (a.provenance.get("commit_sha") or "—") if a.provenance else "—"
         iat = (a.freshness.get("indexed_at") or "—") if a.freshness else "—"
-        lines.append(f"- [{src} @ {sha} · {iat} · conf={a.confidence:.2f}] {a.summary}")
+        # The TITLE is the identifying half — the table name, the rule name, the
+        # source path, the lineage endpoints — and it was dropped here while
+        # `_make_default_sizer` charged the budget for it, calling both "the
+        # fields exposed to the LLM". The model was handed descriptions of
+        # tables without their names and asked which table holds what.
+        body = " · ".join(part for part in (a.title, a.summary) if part)
+        lines.append(f"- [{src} @ {sha} · {iat} · conf={a.confidence:.2f}] {body}")
     return "\n".join(lines)
 
 
