@@ -1120,6 +1120,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   1. User toggles Visual/Text view
   2. User switches chart type (Table/Bar/Line/Pie/Scatter) in the toolbar
 - **Expected result:** the chart re-renders as the chosen type
+- **A money total reached this scenario as prose (row 2.7, 2026-09-05):** the single-cell fast path in `viz_agent.py` chose `viz_type="number"` on `isinstance(val, (int, float))`, which is **False for `Decimal`** — the type asyncpg returns for a Postgres `NUMERIC` and the one `connectors/mongodb.py:134` converts `Decimal128` into deliberately. So `SELECT count(*)` produced a number card and `SELECT sum(revenue)` fell through to `viz_type="text"`: the product rendered counts as numbers and money as prose, on a question ("what is total revenue?") that is among the most common a user asks. A boolean single cell now renders as text rather than the number card, deliberately — `SELECT is_active` is not a metric, and `bool` reached the card only because it subclasses `int`. `tests/unit/test_money_is_not_invisible.py`.
 - **UI elements:** Visual/Text toggle, VizToolbar type buttons (spinner while re-rendering), mobile "Tap to view chart"
 - **States covered:** loading, empty, error, success
 - **Errors & recovery:** re-render fails → toast "Failed to re-render visualization" and type reverts (`SQLResultSection.tsx:85-88`)
