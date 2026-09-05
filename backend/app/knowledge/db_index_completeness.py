@@ -131,7 +131,12 @@ def check_schema_completeness(schema: SchemaInfo) -> list[CompletenessIssue]:
         # Views and materialised views have no PK by definition — skip them.
         if table.object_kind not in ("view", "matview"):
             has_pk = any(col.is_primary_key for col in table.columns)
-            if not has_pk:
+            # A sort key is what ClickHouse has INSTEAD of a primary key, and it
+            # is already captured (W4) and rendered. Without this, every table of
+            # that engine raises `no_pk` forever — an issue nobody can resolve,
+            # which is the noise that teaches a reader to ignore the check.
+            has_ordering = any(getattr(col, "is_sort_key", False) for col in table.columns)
+            if not has_pk and not has_ordering:
                 issues.append(
                     CompletenessIssue(
                         table=tname,

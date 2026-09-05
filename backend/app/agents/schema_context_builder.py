@@ -13,6 +13,17 @@ from typing import Any
 from app.config import settings
 
 
+def nullability_suffix(is_nullable: bool | None) -> str:
+    """The positive claim, or silence.
+
+    This line read `" NULL" if col.is_nullable else ""` and was the ONE reader of
+    four that survived a `None` unharmed — by accident, since `None` is falsy. It
+    is spelled out so the next edit cannot break it silently, and so the other
+    three readers have something to copy.
+    """
+    return " NULL" if is_nullable is True else ""
+
+
 def format_table_context(
     db_entry: Any,
     schema_table: Any,
@@ -34,7 +45,7 @@ def format_table_context(
         cols_lines: list[str] = []
         for col in schema_table.columns:
             pk = " PK" if col.is_primary_key else ""
-            null = " NULL" if col.is_nullable else ""
+            null = nullability_suffix(col.is_nullable)
             sort = " [sort key]" if getattr(col, "is_sort_key", False) else ""
             comment_suffix = f" — {col.comment}" if getattr(col, "comment", None) else ""
             line = f"  {col.name}: {col.data_type}{pk}{null}{sort}{comment_suffix}"

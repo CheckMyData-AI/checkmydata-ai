@@ -7,6 +7,20 @@ import difflib
 from app.connectors.base import SchemaInfo
 
 
+def nullability_label(is_nullable: bool | None) -> str:
+    """``YES`` / ``NO`` / ``UNKNOWN``.
+
+    This was `"YES" if col.is_nullable else "NO"`, so a column whose nullability
+    nobody established was labelled NOT nullable — the opposite assertion, and a
+    second lie rather than a fix.
+    """
+    if is_nullable is True:
+        return "YES"
+    if is_nullable is False:
+        return "NO"
+    return "UNKNOWN"
+
+
 def find_similar_columns(
     target: str,
     schema: SchemaInfo,
@@ -79,7 +93,7 @@ def get_table_detail(table_name: str, schema: SchemaInfo) -> str:
     lines.append("|--------|------|----|----------|---------|")
     for col in table.columns:
         pk = "PK" if col.is_primary_key else ""
-        nullable = "YES" if col.is_nullable else "NO"
+        nullable = nullability_label(col.is_nullable)
         comment = col.comment or ""
         lines.append(f"| {col.name} | {col.data_type} | {pk} | {nullable} | {comment} |")
 

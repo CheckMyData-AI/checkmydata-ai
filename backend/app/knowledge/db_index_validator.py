@@ -19,6 +19,21 @@ logger = logging.getLogger(__name__)
 _VALID_CODE_MATCH = {"matched", "orphan", "mismatch", "no_code_info"}
 
 
+def nullability_suffix(is_nullable: bool | None) -> str:
+    """``" NULL"`` / ``" NOT NULL"`` / silence.
+
+    This read `" NULL" if col.is_nullable else " NOT NULL"`, so a column whose
+    nullability nobody established was written down as NOT NULL — an assertion
+    made from a default. Unlike the prompt builder, this reader states both known
+    cases, so it keeps them and stays quiet on the third.
+    """
+    if is_nullable is True:
+        return " NULL"
+    if is_nullable is False:
+        return " NOT NULL"
+    return ""
+
+
 def _clamp_code_match(raw: str) -> str:
     return raw if raw in _VALID_CODE_MATCH else "no_code_info"
 
@@ -424,7 +439,7 @@ class DbIndexValidator:
         parts.append("\nColumns:")
         for col in columns_to_show:
             pk = " [PK]" if col.is_primary_key else ""
-            nullable = " NULL" if col.is_nullable else " NOT NULL"
+            nullable = nullability_suffix(col.is_nullable)
             default = f" DEFAULT {col.default}" if col.default else ""
             comment = f" — {col.comment}" if col.comment else ""
             parts.append(f"  - {col.name}: {col.data_type}{pk}{nullable}{default}{comment}")
