@@ -359,6 +359,14 @@ A1 and belongs in its own change.
 | Raised and **resolved by measurement**: a planner-set `min_rows` on an analytics stage that answers from coverage alone with no rows. Every data-shape check in `StageValidator` is guarded by `if qr:` (`stage_validator.py:135-181`), so a `query_result=None` success skips all of them. `_ensure_validation_criteria` also injects only for `query_database`/`process_data`, and only `min_rows = 0`. No defect. | closed — no change needed |
 | `except Exception` ceiling 631 → 632, justified in the file. It was **two** on the first pass; the second was removed rather than justified, because both arms classified identically and it only split one log line in half. | closed in this commit |
 
+### Carry-over from the tier change (2026-09-06)
+
+| Finding | Homed |
+|---|---|
+| **The paywall message names a page that may not sell anything.** `UsageService.check_token_budget` appends *"— upgrade your plan at /pricing to continue"* to every budget breach unconditionally (`usage_service.py:140`). When `billing_enabled=False` the billing routes 404 and `/pricing` renders the self-hosted fallback; when billing is on but no Stripe price exists, `list_plans` correctly hides every tier and the same fallback shows. In both states the remediation the message prescribes cannot be carried out. Not fixed inside the tier commit deliberately — after that change an unpaid account resolves to `_no_plan()` with both limits `0`, and `check_token_budget` returns before the message on `if not daily and not monthly`, so the line is currently unreachable for the accounts that hit it. It becomes live again the moment an operator sets `USER_DAILY_TOKEN_LIMIT`. | backlog — S; the message needs to read the billing state it is advising about |
+| **Whether an unpaid project should be blocked is undecided.** `EntitlementService._no_plan()` degrades open: no subscription means no plan-derived ceiling. That is the absence of a decision, recorded as one so it is not mistaken for a policy. The single place the decision belongs when it is made is that method. | open — product decision, not engineering |
+| **Stripe prices for the four tiers do not exist.** `base`/`scale`/`team`/`enterprise` are active in the catalogue with no `stripe_price_id`, so `list_plans` hides all four and the public page shows the self-hosted entry. Purchase is not broken — it is absent. Needs live-mode prices set by the operator, who holds the keys. | open — operator step |
+
 ## P4 — the existing board
 
 The 43 genuinely open rows of `docs/qa-audit/issues.md`, re-ranked by the report.
