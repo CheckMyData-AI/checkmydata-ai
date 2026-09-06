@@ -4,7 +4,9 @@ Spawns a background task that calls *writer* every ``interval_seconds`` for the
 duration of the ``async with`` block. The writer updates ``heartbeat_at`` on the
 run's status row so the stale-run reaper can tell a live run from a crashed one.
 Writer errors are logged and swallowed — a heartbeat failure must never crash
-the run it is monitoring.
+the run it is monitoring. They are logged at WARNING with a consecutive-failure
+count: at DEBUG they were invisible in production, which is how 163 runs came to
+die with `stale run reaped` and no record of what stopped their beat.
 """
 
 from __future__ import annotations
@@ -20,11 +22,34 @@ HeartbeatWriter = Callable[[], Awaitable[None]]
 
 
 async def _beat(writer: HeartbeatWriter, interval_seconds: float) -> None:
+    """Beat until cancelled, and say so when the beat cannot land.
+
+    The failure stays swallowed — a heartbeat must never crash the run it
+    protects — but it stopped being silent on 2026-09-05. Production held 163
+    failed indexing runs and **every one** carried the same error, `stale run
+    reaped`: the reaper's own account of what it did, with nothing about why the
+    beat stopped. This log line is the missing half, and `logger.debug` was why
+    it was missing: production runs at INFO.
+
+    The streak matters more than the individual failure. One missed beat is
+    noise; `stale_running_heartbeat_timeout_seconds / interval_seconds` of them
+    in a row is a run's cause of death, and the count is what makes the two
+    distinguishable in a log afterwards.
+    """
+    consecutive = 0
     while True:
         try:
             await writer()
-        except Exception:
-            logger.debug("heartbeat writer failed", exc_info=True)
+            consecutive = 0
+        except Exception as exc:
+            consecutive += 1
+            logger.warning(
+                "heartbeat writer failed (%d consecutive): %s — the run will be reaped "
+                "if this continues past the stale-run timeout",
+                consecutive,
+                exc,
+                exc_info=consecutive == 1,
+            )
         await asyncio.sleep(interval_seconds)
 
 
