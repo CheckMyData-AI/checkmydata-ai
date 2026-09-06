@@ -166,6 +166,24 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Encryption reconcile failed at startup", exc_info=True)
 
+    # Self-completing deploy: carry the tier ladder in `app/services/plan_catalogue.py`
+    # into the `plans` table. Not a migration, because a migration freezes a price list
+    # at its revision — the code would say $900 while the row a customer resolves against
+    # still said $199. Advisory-locked, idempotent, never blocks boot.
+    try:
+        from app.ops.plan_catalogue_reconcile import reconcile_plan_catalogue
+
+        _cat = await reconcile_plan_catalogue()
+        logger.info(
+            "Plan catalogue reconcile at startup: %s (inserted=%d updated=%d retired=%d)",
+            _cat.status,
+            _cat.inserted,
+            _cat.updated,
+            _cat.retired,
+        )
+    except Exception:
+        logger.warning("Plan catalogue reconcile failed at startup", exc_info=True)
+
     # F-KNOW-12: the BM25 snapshot is written by the repo index in the WORKER and read
     # by the chat path in THIS process, and on Heroku those are separate filesystems —
     # so the reader never had the file. Snapshots are derived from KnowledgeDoc rows,

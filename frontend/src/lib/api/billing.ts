@@ -9,6 +9,8 @@ export interface BillingPlan {
   monthly_token_limit: number | null;
   max_connections: number | null;
   max_projects: number | null;
+  /** Bytes of index allowed per project; null = unlimited. The axis the tiers differ on. */
+  max_index_bytes: number | null;
   seats: number;
   trial_days: number;
 }
@@ -21,6 +23,7 @@ export interface BillingEntitlements {
   monthly_token_limit: number | null;
   max_connections: number | null;
   max_projects: number | null;
+  max_index_bytes: number | null;
   seats: number;
   cancel_at_period_end: boolean;
   current_period_end: string | null;

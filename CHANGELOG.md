@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — four paid tiers priced on data, and no free one under them
+
+An unsubscribed account resolved to the retired `free` plan and inherited its
+100 000-token daily ceiling. `free` was deactivated on 2026-08-31 so it could not be
+bought, but `EntitlementService.get_plan` deliberately does not filter on `is_active` —
+sold subscriptions must keep resolving — so the row kept being the fallback.
+
+Production, 2026-09-06: a full repository index of the one real project burned
+**1 666 411 tokens**, and the code↔DB sync queued behind it was refused with
+`Daily token budget exceeded (1,666,411/100,000) — upgrade your plan at /pricing`. A
+3 h 37 m index completed and the step it exists to feed was turned away, pointing the
+operator at a page that cannot take payment because no Stripe keys are set.
+
+- **No subscription now means no plan.** Resolution leaves the ladder rather than
+  descending it: no subscription, or one that is `canceled`/`unpaid`/`incomplete`,
+  returns `_no_plan()` — plan id `"none"`, every limit `0`, the catalogue not consulted.
+  It degrades **open**, which is the absence of a product decision rather than one;
+  whether an unpaid project should be blocked is still unmade, and the global
+  `USER_DAILY_TOKEN_LIMIT` cap remains the operator's lever.
+- **The ladder is four paid tiers**: `base` $199, `scale` $599, `team` $900,
+  `enterprise` $1500 — differing by `max_index_bytes` per project (1 GB / 2 GB / 5 GB /
+  unlimited). The axis is not new; the tier copy has promised "1 GB index" since
+  2026-08-31 with no column behind it.
+- **One home for the ladder.** `app/services/plan_catalogue.py` holds it, and
+  `app/ops/plan_catalogue_reconcile.py` carries it into `plans` at boot — advisory-locked,
+  idempotent, never blocking. Migration `e5f6a7b8c9d0` adds only the column: seeding a
+  price list in a migration freezes it at that revision, so the code would say $900 while
+  the row a customer resolves against still said $199.
+- The retired `free` and `pro` rows are **deactivated, never deleted** — `BillingService`
+  writes `plan_id="free"` as a foreign-key target on subscription create and on Stripe
+  delete, so removing the row turns a cancellation into an integrity error.
+- `/api/billing/plans` and the pricing table now carry `max_index_bytes`. `list_plans`
+  already hides a tier with no Stripe price, so the public page shows the self-hosted
+  fallback until live prices exist rather than advertising a broken checkout.
+
 ### Added — analytics could not be reached by the pipeline that runs every multi-source question
 
 The product is sold on one agent over every connected source. Asking about a database and

@@ -34,7 +34,12 @@ ACTIVE_STATUSES = {"active", "trialing"}
 # fall back to free.
 GRACE_STATUSES = {"past_due"}
 
-FREE_PLAN_ID = "free"
+#: What an account WITHOUT a subscription resolves to. It is not a catalogue row and
+#: never was meant to be one: `free` was retired from sale on 2026-08-31 but stayed the
+#: fallback, so every unsubscribed user kept inheriting its 100 000-token daily ceiling.
+#: On 2026-09-06 that refused a production code<->DB sync behind a 1 666 411-token index
+#: and told the operator to upgrade at /pricing, which cannot take payment.
+NO_PLAN_ID = "none"
 
 
 @dataclass
@@ -47,6 +52,9 @@ class Entitlements:
     max_connections: int
     max_projects: int
     seats: int
+    #: Bytes of index this plan allows per project; 0 = unlimited. The tier copy has
+    #: promised "1 GB index" since 2026-08-31 with no column to hold it.
+    max_index_bytes: int = 0
     cancel_at_period_end: bool = False
     current_period_end: str | None = None
 
@@ -59,6 +67,7 @@ class Entitlements:
             "monthly_token_limit": self.monthly_token_limit or None,
             "max_connections": self.max_connections or None,
             "max_projects": self.max_projects or None,
+            "max_index_bytes": self.max_index_bytes or None,
             "seats": self.seats,
             "cancel_at_period_end": self.cancel_at_period_end,
             "current_period_end": self.current_period_end,
@@ -84,26 +93,38 @@ class EntitlementService:
         are applied by :meth:`effective_token_limits` regardless.
         """
         if not settings.billing_enabled:
-            return self._fallback()
+            return self._no_plan()
 
         sub = await self.get_subscription(db, user_id)
-        plan_id = FREE_PLAN_ID
-        status = "free"
-        cancel_at_period_end = False
-        period_end: str | None = None
-        if sub is not None:
-            status = sub.status
-            cancel_at_period_end = bool(sub.cancel_at_period_end)
-            if sub.current_period_end is not None:
-                period_end = sub.current_period_end.isoformat()
-            if sub.status in ACTIVE_STATUSES or sub.status in GRACE_STATUSES:
-                plan_id = sub.plan_id
+        if sub is None:
+            # No subscription is NOT the cheapest plan. There is no tier below `base`,
+            # so there is nothing to descend to and the catalogue is not consulted.
+            return self._no_plan()
 
-        plan = await self.get_plan(db, plan_id)
+        status = sub.status
+        cancel_at_period_end = bool(sub.cancel_at_period_end)
+        period_end: str | None = None
+        if sub.current_period_end is not None:
+            period_end = sub.current_period_end.isoformat()
+
+        if status not in ACTIVE_STATUSES and status not in GRACE_STATUSES:
+            # canceled / unpaid / incomplete: the subscription no longer entitles
+            # anything. It used to fall to `free`; with no free tier it leaves the ladder.
+            return self._no_plan(
+                status=status,
+                cancel_at_period_end=cancel_at_period_end,
+                period_end=period_end,
+            )
+
+        plan = await self.get_plan(db, sub.plan_id)
         if plan is None:
             # Catalog missing (e.g. migration not run) — never lock users out.
-            logger.warning("billing: plan %r not found, falling back to config limits", plan_id)
-            return self._fallback(status=status)
+            logger.warning("billing: plan %r not found, falling back to config limits", sub.plan_id)
+            return self._no_plan(
+                status=status,
+                cancel_at_period_end=cancel_at_period_end,
+                period_end=period_end,
+            )
 
         return Entitlements(
             plan_id=plan.id,
@@ -113,6 +134,7 @@ class EntitlementService:
             monthly_token_limit=plan.monthly_token_limit,
             max_connections=plan.max_connections,
             max_projects=plan.max_projects,
+            max_index_bytes=plan.max_index_bytes,
             seats=plan.seats,
             cancel_at_period_end=cancel_at_period_end,
             current_period_end=period_end,
@@ -211,16 +233,36 @@ class EntitlementService:
             )
 
     @staticmethod
-    def _fallback(status: str = "free") -> Entitlements:
+    def _no_plan(
+        status: str = "none",
+        *,
+        cancel_at_period_end: bool = False,
+        period_end: str | None = None,
+    ) -> Entitlements:
+        """Entitlements for an account with no plan behind it.
+
+        Every zero here means UNLIMITED, as it does everywhere else in this service:
+        the quota checks read `if not ent.max_connections: return`. So this degrades
+        OPEN. That is deliberate and it is not a decision about whether an unpaid
+        project should be usable — it is the absence of one. The operator's lever
+        meanwhile is the global `user_daily_token_limit` config cap, which
+        `effective_token_limits` applies on top of whatever this returns.
+
+        Blocking an unpaid project outright is a product decision; when it is made,
+        this is the one place it belongs.
+        """
         return Entitlements(
-            plan_id=FREE_PLAN_ID,
-            plan_name="Free",
+            plan_id=NO_PLAN_ID,
+            plan_name="No plan",
             status=status,
             daily_token_limit=0,
             monthly_token_limit=0,
             max_connections=0,
             max_projects=0,
+            max_index_bytes=0,
             seats=1,
+            cancel_at_period_end=cancel_at_period_end,
+            current_period_end=period_end,
         )
 
 

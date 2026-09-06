@@ -59,15 +59,22 @@ def test_the_migration_deactivates_rather_than_deletes() -> None:
 
 
 def test_the_fallback_is_a_lockout_and_therefore_must_stay_unreachable() -> None:
-    """Naming what `_fallback` actually means, because its zeros read like "unlimited"
+    """Naming what `_no_plan` actually means, because its zeros read like "unlimited"
     elsewhere in this codebase and here they mean the opposite.
 
     `0` is unlimited for TOKEN limits. For `max_connections` / `max_projects` the quota
     check reads `if not ent.max_connections: return` — so 0 is unlimited there too. The
     fallback is therefore permissive, not a lockout, and this test records that reading so
     the next person does not have to re-derive it.
+
+    Renamed from `_fallback` on 2026-09-06. The name was the smaller half of the problem:
+    it also RESOLVED the retired `free` row for every unsubscribed user, so the permissive
+    degrade documented here was reached only when the catalogue was missing entirely. In
+    the ordinary case the user inherited free's 100 000-token ceiling instead, which is
+    what refused a production code<->DB sync. See
+    `test_four_tiers_priced_by_data_volume.py`.
     """
-    ent = EntitlementService._fallback()
+    ent = EntitlementService._no_plan()
     assert ent.max_connections == 0
     assert ent.max_projects == 0
 

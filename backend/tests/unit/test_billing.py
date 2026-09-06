@@ -114,7 +114,9 @@ class TestEntitlements:
         with patch("app.services.entitlement_service.settings") as s:
             s.billing_enabled = False
             ent = await EntitlementService().get_entitlements(AsyncMock(), "u1")
-        assert ent.plan_id == "free"
+        # "none", not "free": there is no free tier, and calling the billing-disabled
+        # state by the name of a retired plan is what let it acquire that plan's ceiling.
+        assert ent.plan_id == "none"
         assert ent.daily_token_limit == 0  # unlimited; config caps applied separately
 
     @pytest.mark.asyncio
@@ -129,14 +131,19 @@ class TestEntitlements:
         assert ent.max_connections == 5
 
     @pytest.mark.asyncio
-    async def test_canceled_subscription_falls_to_free_plan(self):
+    async def test_canceled_subscription_leaves_the_ladder(self):
+        """It used to fall to `free`. With no free tier there is nothing below `base`,
+        so a cancellation leaves the catalogue rather than descending it — and the
+        catalogue is not consulted at all, which is why the plan row handed to the
+        mock below is never read."""
         svc = EntitlementService()
         free = _plan(id="free", name="Free", daily_token_limit=100_000, max_connections=1)
         db = _db_returning(_sub(status="canceled"), free)
         with patch("app.services.entitlement_service.settings") as s:
             s.billing_enabled = True
             ent = await svc.get_entitlements(db, "u1")
-        assert ent.plan_id == "free"
+        assert ent.plan_id == "none"
+        assert ent.daily_token_limit == 0
         assert ent.status == "canceled"
 
     @pytest.mark.asyncio
