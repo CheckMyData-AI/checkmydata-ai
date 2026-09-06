@@ -1499,7 +1499,14 @@ class SQLAgent(BaseAgent):
                 ),
                 rerank_candidates=settings.reranker_candidates,
             )
-            if not retriever.has_index(connection_id):
+            # Row 2.6: threaded, like `bm25_local_reconcile.py:120` does with the
+            # identical call. This probe is the EXPENSIVE half — it resolves
+            # through `BM25Index.indexed_sha` to `load()`, which gunzips the
+            # snapshot and rebuilds the index — while the `aquery` two branches
+            # below, already threaded to keep BM25 off the loop, then finds it
+            # cached. Right after a deploy nothing is cached, so every project's
+            # first question paid the deserialisation with the loop held.
+            if not await asyncio.to_thread(retriever.has_index, connection_id):
                 # F-KNOW-07: the schema snapshot lives on the dyno's ephemeral
                 # disk, so on a restart this branch becomes the normal path while
                 # `schema_retrieval_enabled` still reads as on. The fallback is
