@@ -58,6 +58,7 @@ async def list_plans(db: AsyncSession = Depends(get_db)) -> dict:
                 "monthly_token_limit": p.monthly_token_limit or None,
                 "max_connections": p.max_connections or None,
                 "max_projects": p.max_projects or None,
+                "max_index_bytes": p.max_index_bytes or None,
                 "seats": p.seats,
                 "trial_days": p.trial_days,
             }

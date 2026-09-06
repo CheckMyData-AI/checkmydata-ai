@@ -28,11 +28,20 @@ const FALLBACK_PLANS: BillingPlan[] = [
     monthly_token_limit: null,
     max_connections: null,
     max_projects: null,
+    max_index_bytes: null,
     // 0 = unlimited, the convention used for every other limit here.
     seats: 0,
     trial_days: 0,
   },
 ];
+
+/** Bytes as the tier table quotes them. `null` is unlimited, as everywhere else here. */
+function fmtBytes(n: number | null): string {
+  if (n == null) return "Unlimited";
+  const GB = 1024 ** 3;
+  if (n >= GB) return `${Math.round((n / GB) * 10) / 10} GB`;
+  return `${Math.round(n / 1024 ** 2)} MB`;
+}
 
 function fmtTokens(n: number | null): string {
   if (n == null) return "Unlimited";
@@ -45,6 +54,7 @@ function planFeatures(p: BillingPlan): string[] {
   return [
     `${p.max_projects ?? "Unlimited"} project${(p.max_projects ?? 2) === 1 ? "" : "s"}`,
     `${p.max_connections ?? "Unlimited"} database connection${(p.max_connections ?? 2) === 1 ? "" : "s"}`,
+    `${fmtBytes(p.max_index_bytes)} index per project`,
     `${fmtTokens(p.monthly_token_limit)} LLM tokens / month`,
     // `0` is unlimited here as it is for every other limit in this codebase. Rendered
     // literally it says "0 seats", which reads as a plan you cannot use — and the

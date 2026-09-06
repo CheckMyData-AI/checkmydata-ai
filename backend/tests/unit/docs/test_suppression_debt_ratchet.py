@@ -190,7 +190,12 @@ CEILINGS: dict[str, int] = {
     # Worth recording that this was TWO on the first pass, one either side of the
     # connection resolve. The second was removed rather than justified: both arms
     # classified identically, so it only split one log line in half.
-    "except Exception": 632,
+    # 2026-09-06: 632 -> 633. `app/ops/plan_catalogue_reconcile.py` carries the tier
+    # ladder into the `plans` table at boot and must never block it — the same
+    # best-effort contract `embedding_reconcile` and `encryption_reconcile` already
+    # hold, and for the same reason: a catalogue that failed to reconcile leaves the
+    # previous rows in place, while a raise here costs the whole dyno.
+    "except Exception": 633,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

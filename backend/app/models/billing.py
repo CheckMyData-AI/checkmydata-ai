@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -24,7 +25,12 @@ from app.models.base import Base
 
 
 class Plan(Base):
-    """Plan catalog row. ``id`` is a stable slug ("free", "pro", "team")."""
+    """Plan catalog row. ``id`` is a stable slug ("base", "scale", "team", "enterprise").
+
+    Retired slugs ("free", "pro") keep their rows so already-sold subscriptions still
+    resolve; `is_active` governs only what can be BOUGHT. See
+    `app/services/plan_catalogue.py` for the live ladder.
+    """
 
     __tablename__ = "plans"
 
@@ -39,6 +45,9 @@ class Plan(Base):
     monthly_token_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_connections: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_projects: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Bytes of index allowed per project; 0 = unlimited. The tier axis the catalogue
+    # copy promised ("1 GB index") from 2026-08-31 with no column behind it.
+    max_index_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     seats: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     trial_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

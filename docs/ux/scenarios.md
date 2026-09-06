@@ -143,6 +143,7 @@ it is what moves it.
 | SCN-099 | Manage billing (Stripe portal) | billing | owner | implemented | 2026-07-19 PASS |
 | SCN-100 | Hit token / quota limit (HTTP 402) | billing | analyst | implemented | 2026-07-19 PASS |
 | SCN-101 | Billing disabled (self-hosted) degradation | billing | owner | implemented | 2026-07-19 PASS |
+| SCN-101a | Billing on, no subscription (unpaid account) | billing | owner | implemented | 2026-09-06 PASS |
 | SCN-102 | View usage stats | usage | owner | implemented | 2026-07-19 PASS |
 | SCN-103 | Mint & copy an MCP token | mcp-tokens | api-consumer | implemented | 2026-07-19 PASS |
 | SCN-104 | Revoke an MCP token | mcp-tokens | api-consumer | implemented | 2026-07-19 PASS |
@@ -1800,6 +1801,21 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Errors & recovery:** subscription 404 caught → panel renders nothing (`BillingPanel.tsx:79-81,87`)
 - **Status:** implemented
 - **Coverage:** components/billing/BillingPanel.tsx:79-87; components/marketing/PricingTable.tsx:73-102
+
+### SCN-101a: Billing on, no subscription (unpaid account)
+- **Persona:** owner
+- **Feature:** billing
+- **Entry point:** any product surface while `billing_enabled=True` and the account has no subscription row, or one that is `canceled` / `unpaid` / `incomplete`
+- **Preconditions:** billing enabled; no active or grace-period subscription
+- **Steps:**
+  1. User asks a question, indexes a repository, or adds a connection
+- **Expected result:** the work proceeds. There is **no free tier to fall to**, so entitlements resolve to plan id `"none"` with every limit `0` (unlimited by this codebase's convention) and the plan catalogue is not consulted. The only ceiling that applies is the deployment-wide `USER_DAILY_TOKEN_LIMIT` / `USER_MONTHLY_TOKEN_LIMIT`.
+- **UI elements:** no paywall, no 402; `/pricing` shows only tiers that have a live Stripe price, otherwise the self-hosted fallback
+- **States covered:** success, empty (no plan)
+- **Errors & recovery:** none by design — this state degrades **open**. Before 2026-09-06 it resolved to the retired `free` plan and inherited its 100 000-token daily ceiling, which on production refused a code↔DB sync behind a 1 666 411-token index and pointed the operator at `/pricing`, a page that cannot take payment while no Stripe keys are set.
+- **Open decision:** whether an unpaid project should be *blocked* rather than served is a product call that has not been made. `EntitlementService._no_plan()` is the single place it belongs when it is.
+- **Status:** implemented
+- **Coverage:** backend/app/services/entitlement_service.py (`_no_plan`); backend/tests/unit/test_four_tiers_priced_by_data_volume.py
 
 ## usage
 
