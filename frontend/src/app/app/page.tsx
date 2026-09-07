@@ -10,6 +10,8 @@ import { EmailVerifyBanner } from "@/components/auth/EmailVerifyBanner";
 import { ProjectOverview } from "@/components/projects/ProjectOverview";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ConnectionsPanel } from "@/components/connections/ConnectionsPanel";
+import { KnowledgePanel } from "@/components/knowledge/KnowledgePanel";
+import { DashboardsPanel } from "@/components/dashboards/DashboardsPanel";
 import { useAppStore } from "@/stores/app-store";
 import { useAppPanel } from "@/hooks/useAppPanel";
 import { connectionSourceIcon, connectionSourceLabel } from "@/lib/connection-source";
@@ -90,11 +92,14 @@ function AppPageContent() {
   useRefreshOnFocus(!!user);
 
   const effectivePanel = useMemo(() => {
-    if (panel === "logs") return "logs";
-    if (panel === "settings") return "settings";
-    if (panel === "connections") return "connections";
-    if (panel === "overview") return "overview";
-    if (panel === "chat") return "chat";
+    // Any panel the URL declares is honoured as-is. This was an explicit list of five
+    // while `APP_PANELS` held eight, so `?panel=knowledge` and `?panel=insights` were
+    // validated as legal by `useAppPanel` and then silently rewritten to overview or
+    // chat right here — a route that renders a plausible other screen, which teaches
+    // the user nothing, unlike a 404. `panel` is already narrowed to `AppPanel | null`
+    // by `isAppPanel`, so passing it through is the whole check; enumerating again is
+    // what let the two lists drift apart.
+    if (panel) return panel;
 
     if (!activeProject) return null;
     // Deterministic default: honour the remembered view for this project first
@@ -154,6 +159,23 @@ function AppPageContent() {
       return (
         <SectionErrorBoundary sectionName="Connections">
           <ConnectionsPanel />
+        </SectionErrorBoundary>
+      );
+    }
+    if (effectivePanel === "knowledge" || effectivePanel === "insights") {
+      // Two declared routes, one screen. `insights` lands on the insights tab rather
+      // than on docs: it is a URL somebody can be sent, so it has to arrive where its
+      // name says. Both used to fall through to the chat.
+      return (
+        <SectionErrorBoundary sectionName="Knowledge">
+          <KnowledgePanel initialTab={effectivePanel === "insights" ? "insights" : "docs"} />
+        </SectionErrorBoundary>
+      );
+    }
+    if (effectivePanel === "dashboards") {
+      return (
+        <SectionErrorBoundary sectionName="Dashboards">
+          <DashboardsPanel />
         </SectionErrorBoundary>
       );
     }

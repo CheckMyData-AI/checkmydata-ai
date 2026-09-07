@@ -525,6 +525,43 @@ async def project_sync_history(
     return {"runs": runs}
 
 
+@router.get("/{project_id}/attention")
+async def project_attention(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """What needs the user in this project, shortest-true-list first (SCN-150).
+
+    Aggregated server-side rather than by three frontend calls: the ordering is a
+    product decision about what a returning user sees first, and it belongs in one
+    place rather than in whichever component renders last.
+
+    ``degraded`` names sources that could not be read. It exists so the rail can say
+    "could not check" instead of "nothing needs you" — the two must never render the
+    same, and a dropped source makes them identical.
+    """
+    from app.services.attention_service import AttentionService
+
+    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    report = await AttentionService().for_project(db, project_id)
+    return {
+        "items": [
+            {
+                "kind": i.kind,
+                "subject": i.subject,
+                "what": i.what,
+                "severity": i.severity,
+                "route": i.route,
+                "at": i.at.isoformat() if i.at else None,
+            }
+            for i in report.items
+        ],
+        "more": report.more,
+        "degraded": report.degraded,
+    }
+
+
 class SyncScheduleBody(BaseModel):
     enabled: bool | None = None
     hour: int | None = Field(default=None, ge=0, le=23)

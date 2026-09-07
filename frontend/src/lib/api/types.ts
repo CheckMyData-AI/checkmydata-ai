@@ -1008,6 +1008,27 @@ export interface SyncHistoryRun {
   steps: Record<string, unknown> | null;
 }
 
+export type AttentionSeverity = "critical" | "warning" | "info";
+
+export interface AttentionItem {
+  kind: string;
+  subject: string;
+  what: string;
+  severity: AttentionSeverity;
+  /** A `panel=<name>` query fragment: where the remedy for this item lives. */
+  route: string;
+  at: string | null;
+}
+
+export interface AttentionResponse {
+  items: AttentionItem[];
+  /** How many were dropped by the cap. A silent truncation reads as "that is everything". */
+  more: number;
+  /** Sources that could not be read. Non-empty means "could not check", which is NOT
+   *  the same as "nothing needs you" and must never render as it. */
+  degraded: string[];
+}
+
 export interface SyncHistoryResponse {
   runs: SyncHistoryRun[];
 }

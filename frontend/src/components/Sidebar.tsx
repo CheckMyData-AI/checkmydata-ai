@@ -1,20 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { SshKeyManager } from "./ssh/SshKeyManager";
-import { VendorCredentialsPanel } from "./settings/VendorCredentialsPanel";
 import { ProjectSelector } from "./projects/ProjectSelector";
 import { ConnectionSelector } from "./connections/ConnectionSelector";
 import { SyncStatusIndicator } from "./connections/SyncStatusIndicator";
 import { ChatSessionList } from "./chat/ChatSessionList";
 import { ChatSearch } from "./chat/ChatSearch";
-import { RulesManager } from "./rules/RulesManager";
-import { KnowledgeHub } from "./knowledge/KnowledgeHub";
 import { SidebarGroup, useSidebarGroupCollapse } from "./ui/SidebarGroup";
 import { SidebarNavLauncher } from "./ui/SidebarNavLauncher";
 import { useAppPanel } from "@/hooks/useAppPanel";
 import { WorkflowProgress } from "./workflow/WorkflowProgress";
 import { PendingInvites } from "./invites/PendingInvites";
+import { AttentionGroup } from "./attention/AttentionGroup";
 import { useAppStore } from "@/stores/app-store";
 import { useBackgroundTasks } from "@/stores/background-tasks-store";
 import { useAuthStore } from "@/stores/auth-store";
@@ -27,11 +24,7 @@ import { SidebarSection, useSectionCollapse } from "./ui/SidebarSection";
 import { useLogStore } from "@/stores/log-store";
 import { toast } from "@/stores/toast-store";
 import { AccountMenu } from "./auth/AccountMenu";
-import { UsageStatsPanel } from "./usage/UsageStatsPanel";
-import { BillingPanel } from "./billing/BillingPanel";
-import { FeedbackAnalyticsPanel } from "./analytics/FeedbackAnalyticsPanel";
 import { ScheduleManager } from "./schedules/ScheduleManager";
-import { DashboardList } from "./dashboards/DashboardList";
 import { NotificationBell } from "./ui/NotificationBell";
 import { usePermission } from "@/hooks/usePermission";
 
@@ -211,23 +204,15 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
 
   const showOnboarding = projects.length === 0;
 
-  const sshCollapse = useSectionCollapse("ssh-keys");
-  const vendorCredsCollapse = useSectionCollapse("vendor-credentials");
   const projectsCollapse = useSectionCollapse("projects");
   const repoCollapse = useSectionCollapse("repository");
   const connCollapse = useSectionCollapse("connections");
   const chatCollapse = useSectionCollapse("chat-history");
-  const rulesCollapse = useSectionCollapse("rules", false);
   const schedulesCollapse = useSectionCollapse("schedules", false);
-  const dashboardsCollapse = useSectionCollapse("dashboards", false);
-  const knowledgeCollapse = useSectionCollapse("knowledge", false);
-  const usageCollapse = useSectionCollapse("usage", false);
-  const analyticsCollapse = useSectionCollapse("analytics", false);
 
   const { setPanel } = useAppPanel();
   const setupGroup = useSidebarGroupCollapse("setup");
   const workspaceGroup = useSidebarGroupCollapse("workspace");
-  const operationsGroup = useSidebarGroupCollapse("operations");
 
   const openRequestHistory = useCallback(() => {
     setPanel("logs");
@@ -237,16 +222,12 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
   const [projCreateReq, setProjCreateReq] = useState(false);
   const [connCreateReq, setConnCreateReq] = useState(false);
   const [chatCreateReq, setChatCreateReq] = useState(false);
-  const [rulesCreateReq, setRulesCreateReq] = useState(false);
   const [schedCreateReq, setSchedCreateReq] = useState(false);
-  const [dashCreateReq, setDashCreateReq] = useState(false);
 
   const onProjCreated = useCallback(() => setProjCreateReq(false), []);
   const onConnCreated = useCallback(() => setConnCreateReq(false), []);
   const onChatCreated = useCallback(() => setChatCreateReq(false), []);
-  const onRulesCreated = useCallback(() => setRulesCreateReq(false), []);
   const onSchedCreated = useCallback(() => setSchedCreateReq(false), []);
-  const onDashCreated = useCallback(() => setDashCreateReq(false), []);
 
   const projectsRef = useRef<HTMLDivElement>(null);
   const repoRef = useRef<HTMLDivElement>(null);
@@ -478,6 +459,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
           {/* Scrollable body */}
           <div className="flex-1 overflow-y-auto overflow-x-hidden sidebar-scroll py-2 space-y-1">
             <PendingInvites />
+            <AttentionGroup />
 
             {showOnboarding && (
               <div className="mx-3 p-3 bg-accent-muted border border-accent/20 rounded-lg space-y-2.5 animate-slide-in-left">
@@ -508,13 +490,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               collapsed={setupGroup.collapsed}
               onToggle={setupGroup.toggle}
             >
-              <SidebarSection icon="key" title="SSH Keys" open={sshCollapse.open} onToggle={sshCollapse.toggle} count={sshKeys.length} collapsed={false}>
-                <SshKeyManager />
-              </SidebarSection>
 
-              <SidebarSection icon="lock" title="Vendor Credentials" open={vendorCredsCollapse.open} onToggle={vendorCredsCollapse.toggle} collapsed={false}>
-                <VendorCredentialsPanel />
-              </SidebarSection>
 
               <div ref={projectsRef}>
                 <SidebarSection icon="folder-git" title="Projects" open={projectsCollapse.open} onToggle={projectsCollapse.toggle} count={projects.length} collapsed={false} action={{ label: "New project", onClick: () => setProjCreateReq(true) }}>
@@ -560,46 +536,35 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                     )}
                   </SidebarSection>
 
-                  <SidebarSection icon="book-open" title="Knowledge" open={knowledgeCollapse.open} onToggle={knowledgeCollapse.toggle} collapsed={false}>
-                    <KnowledgeHub />
-                  </SidebarSection>
 
-                  <SidebarSection icon="file-text" title="Custom Rules" open={rulesCollapse.open} onToggle={rulesCollapse.toggle} collapsed={false} action={canEdit ? { label: "New rule", onClick: () => setRulesCreateReq(true) } : undefined}>
-                    <RulesManager createRequested={rulesCreateReq} onCreateHandled={onRulesCreated} />
-                  </SidebarSection>
 
                   <SidebarSection icon="clock" title="Schedules" open={schedulesCollapse.open} onToggle={schedulesCollapse.toggle} collapsed={false} action={isOwner ? { label: "New schedule", onClick: () => setSchedCreateReq(true) } : undefined}>
                     <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
                   </SidebarSection>
 
-                  <SidebarSection icon="layout" title="Dashboards" open={dashboardsCollapse.open} onToggle={dashboardsCollapse.toggle} collapsed={false} action={canEdit ? { label: "New dashboard", onClick: () => setDashCreateReq(true) } : undefined}>
-                    <DashboardList createRequested={dashCreateReq} onCreateHandled={onDashCreated} />
-                  </SidebarSection>
                 </SidebarGroup>
 
-                {isOwner && (
-                  <SidebarGroup
-                    label="Operations"
-                    collapsed={operationsGroup.collapsed}
-                    onToggle={operationsGroup.toggle}
-                  >
-                    <SidebarSection icon="activity" title="Usage" open={usageCollapse.open} onToggle={usageCollapse.toggle} collapsed={false}>
-                      <BillingPanel />
-                      <UsageStatsPanel />
-                    </SidebarSection>
-
-                    <SidebarSection icon="bar-chart-2" title="Analytics" open={analyticsCollapse.open} onToggle={analyticsCollapse.toggle} collapsed={false}>
-                      <FeedbackAnalyticsPanel projectId={activeProject.id} />
-                    </SidebarSection>
-
+                <div className="mb-1">
+                  <SidebarNavLauncher
+                    icon="book-open"
+                    title="Knowledge"
+                    subtitle="Docs, insights, rules"
+                    onClick={() => setPanel("knowledge")}
+                  />
+                  <SidebarNavLauncher
+                    icon="layout"
+                    title="Dashboards"
+                    onClick={() => setPanel("dashboards")}
+                  />
+                  {isOwner && (
                     <SidebarNavLauncher
                       icon="terminal"
-                      title="Request History"
-                      subtitle="Traces"
+                      title="Activity"
+                      subtitle="Runs, errors and traces"
                       onClick={openRequestHistory}
                     />
-                  </SidebarGroup>
-                )}
+                  )}
+                </div>
               </>
             )}
           </div>
@@ -673,6 +638,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
       {/* Scrollable body */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden sidebar-scroll py-2 space-y-1">
         {!collapsed && <PendingInvites />}
+        {!collapsed && <AttentionGroup />}
 
         {/* Onboarding guide */}
         {showOnboarding && !collapsed && (
@@ -733,29 +699,10 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
           onToggle={setupGroup.toggle}
           sidebarCollapsed={collapsed}
         >
-          <SidebarSection
-            icon="key"
-            title="SSH Keys"
-            open={sshCollapse.open}
-            onToggle={sshCollapse.toggle}
-            count={sshKeys.length}
-            collapsed={collapsed}
-          >
-            <SshKeyManager />
-          </SidebarSection>
 
           {/* Owner-scoped analytics-vendor secrets (GA4 service accounts &c.) —
               same list/add/delete rhythm as SSH Keys, and the only place a
               credential can be reviewed or removed once a connection exists. */}
-          <SidebarSection
-            icon="lock"
-            title="Vendor Credentials"
-            open={vendorCredsCollapse.open}
-            onToggle={vendorCredsCollapse.toggle}
-            collapsed={collapsed}
-          >
-            <VendorCredentialsPanel />
-          </SidebarSection>
 
           <div ref={projectsRef}>
             <SidebarSection
@@ -774,6 +721,34 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
 
         {activeProject && (
           <>
+            {/* Destinations, flat. These three used to be collapsible sections in this
+                rail and are screens now — see SCN-151. Flat and not grouped on purpose:
+                a thing you go to should cost one click, not an expand and a click. */}
+            <div className="mb-1">
+              <SidebarNavLauncher
+                icon="book-open"
+                title="Knowledge"
+                subtitle="Docs, insights, rules"
+                onClick={() => setPanel("knowledge")}
+                collapsed={collapsed}
+              />
+              <SidebarNavLauncher
+                icon="layout"
+                title="Dashboards"
+                onClick={() => setPanel("dashboards")}
+                collapsed={collapsed}
+              />
+              {isOwner && (
+                <SidebarNavLauncher
+                  icon="terminal"
+                  title="Activity"
+                  subtitle="Runs, errors and traces"
+                  onClick={openRequestHistory}
+                  collapsed={collapsed}
+                />
+              )}
+            </div>
+
             <SidebarGroup
               label="Workspace"
               collapsed={workspaceGroup.collapsed}
@@ -831,26 +806,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                 )}
               </SidebarSection>
 
-              <SidebarSection
-                icon="book-open"
-                title="Knowledge"
-                open={knowledgeCollapse.open}
-                onToggle={knowledgeCollapse.toggle}
-                collapsed={collapsed}
-              >
-                <KnowledgeHub />
-              </SidebarSection>
 
-              <SidebarSection
-                icon="file-text"
-                title="Custom Rules"
-                open={rulesCollapse.open}
-                onToggle={rulesCollapse.toggle}
-                collapsed={collapsed}
-                action={canEdit ? { label: "New rule", onClick: () => setRulesCreateReq(true) } : undefined}
-              >
-                <RulesManager createRequested={rulesCreateReq} onCreateHandled={onRulesCreated} />
-              </SidebarSection>
 
               <SidebarSection
                 icon="clock"
@@ -863,55 +819,8 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                 <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
               </SidebarSection>
 
-              <SidebarSection
-                icon="layout"
-                title="Dashboards"
-                open={dashboardsCollapse.open}
-                onToggle={dashboardsCollapse.toggle}
-                collapsed={collapsed}
-                action={canEdit ? { label: "New dashboard", onClick: () => setDashCreateReq(true) } : undefined}
-              >
-                <DashboardList createRequested={dashCreateReq} onCreateHandled={onDashCreated} />
-              </SidebarSection>
             </SidebarGroup>
 
-            {isOwner && (
-              <SidebarGroup
-                label="Operations"
-                collapsed={operationsGroup.collapsed}
-                onToggle={operationsGroup.toggle}
-                sidebarCollapsed={collapsed}
-              >
-                <SidebarSection
-                  icon="activity"
-                  title="Usage"
-                  open={usageCollapse.open}
-                  onToggle={usageCollapse.toggle}
-                  collapsed={collapsed}
-                >
-                  <BillingPanel />
-                  <UsageStatsPanel />
-                </SidebarSection>
-
-                <SidebarSection
-                  icon="bar-chart-2"
-                  title="Analytics"
-                  open={analyticsCollapse.open}
-                  onToggle={analyticsCollapse.toggle}
-                  collapsed={collapsed}
-                >
-                  <FeedbackAnalyticsPanel projectId={activeProject.id} />
-                </SidebarSection>
-
-                <SidebarNavLauncher
-                  icon="terminal"
-                  title="Request History"
-                  subtitle="Traces"
-                  onClick={openRequestHistory}
-                  collapsed={collapsed}
-                />
-              </SidebarGroup>
-            )}
           </>
         )}
       </div>

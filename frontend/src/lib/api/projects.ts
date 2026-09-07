@@ -1,5 +1,5 @@
 import { request } from "./_client";
-import type { KnowledgeHealth, PipelineStatusResponse, Project, ProjectReadiness, SyncHistoryResponse } from "./types";
+import type { AttentionResponse, KnowledgeHealth, PipelineStatusResponse, Project, ProjectReadiness, SyncHistoryResponse } from "./types";
 
 export const projects = {
   list: () => request<Project[]>("/projects"),
@@ -21,6 +21,7 @@ export const projects = {
     request<PipelineStatusResponse>(`/projects/${id}/pipeline-status`),
   syncHistory: (id: string, limit = 20) =>
     request<SyncHistoryResponse>(`/projects/${id}/sync-history?limit=${limit}`),
+  attention: (id: string) => request<AttentionResponse>(`/projects/${id}/attention`),
   requestAccess: (data: { email: string; description: string; message: string }) =>
     request<{ ok: boolean }>("/projects/access-requests", {
       method: "POST",

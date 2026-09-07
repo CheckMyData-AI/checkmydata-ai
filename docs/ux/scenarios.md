@@ -12,7 +12,7 @@ human review moves them to `validated`.
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-09-07 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-09-08 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -21,13 +21,13 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 
 | | |
 |---|---|
-| Scenarios | **151** |
-| Status | draft × 20, implemented × 131 |
-| Last verdict | PARTIAL × 2, PASS × 129, no verdict × 20 |
-| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 3, undated × 20 |
-| **Verified >30 days ago** | **95 of 151** (oldest 50 days) |
-| Never verified (no date) | 20 |
-| Referenced from code or tests | **23 of 151** |
+| Scenarios | **152** |
+| Status | draft × 19, implemented × 133 |
+| Last verdict | PARTIAL × 2, PASS × 131, no verdict × 19 |
+| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 1, undated × 19 |
+| **Verified >30 days ago** | **95 of 152** (oldest 51 days) |
+| Never verified (no date) | 19 |
+| Referenced from code or tests | **27 of 152** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -192,7 +192,8 @@ it is what moves it.
 | SCN-147 | The schedule says why it is off and what turns it on | billing | owner | draft | — |
 | SCN-148 | A granted account behaves exactly as its plan | billing | owner | implemented | 2026-09-07 PASS |
 | SCN-149 | The sidebar answers "where was I, and what needs me" | workspace | analyst | draft | — |
-| SCN-150 | The sidebar surfaces what needs attention and routes to the fix | workspace | analyst | draft | — |
+| SCN-150 | The sidebar surfaces what needs attention and routes to the fix | workspace | analyst | implemented | 2026-09-08 PASS |
+| SCN-151 | A panel link opens the panel it names | workspace | analyst | implemented | 2026-09-07 PASS |
 
 ## Personas
 
@@ -2542,7 +2543,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Errors & recovery:** the recent list fails -> that block shows an inline retry and the navigation still works, because a rail that cannot navigate is worse than one with a stale list; the project list fails -> the switcher says so and keeps the last known active project rather than emptying the screen
 > **What leaves the rail, and where it goes.** Thirteen collapsible sections is the defect, and it is a structural one: account configuration, project management, work and reports were stacked in one column at equal weight, so the rail had no answer to either question above. SSH Keys and Vendor Credentials → Settings → Credentials. Projects → the switcher, with its management in the workspace. Repository and Connections → the workspace (SCN-129). Custom Rules → the Knowledge panel, where the rest of the project's knowledge already lives. Schedules → the workspace, beside the sources they automate. Usage and Analytics → Settings. Request History → Activity. Chat History stays, shortened, as `Recent`.
 - **Status:** draft
-- **Coverage:** none yet; planned: frontend/src/components/Sidebar.tsx (976 lines and thirteen `SidebarSection`s today), planned: frontend/src/components/ui/SidebarSection.tsx
+> **Partly delivered 2026-09-08.** Seven of the thirteen collapsible sections are gone — SSH Keys and Vendor Credentials to Settings → Credentials, Knowledge and Custom Rules to the Knowledge screen, Dashboards to its own, Usage and Analytics to Settings — and the rail gained the `Needs you` group of SCN-150 plus flat entries for the three destinations that were sections. **Not yet done:** Projects, Repository, Connections, Chat History and Schedules are still collapsible sections, so the rail is five sections rather than a switcher and a recent list, and the full five-entry navigation waits on the data workspace of SCN-129 to receive the source management (SCN-133). Sequenced this way on purpose: a section cannot leave the rail before its destination exists, which is the ordering error this scenario's first attempt made.
+- **Coverage:** frontend/src/components/Sidebar.tsx; frontend/src/components/settings/SettingsPanel.tsx; frontend/src/__tests__/components/SettingsVendorCredentials.test.tsx; planned: frontend/src/components/workspace/DataWorkspace.tsx (the destination the rest of the rail is waiting for)
 
 ### SCN-150: The sidebar surfaces what needs attention and routes to the fix
 - **Persona:** analyst
@@ -2561,8 +2563,29 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** empty (absent), loading, error, success
 - **Errors & recovery:** the attention query fails -> the group shows one line saying it could not check, which is different from "nothing needs you" and must never render as it; a routed-to item no longer exists -> the target surface says it was removed and the entry clears
 > **Why this earns the space it takes.** Every input already exists and none of it is surfaced on return: failed and reaped runs are catalogued in `error_log` and `/api/logs`, freshness states are computed by `KnowledgeFreshnessService`, a schedule that did not run is in `sync-history`, and unresolved insights are the feed of SCN-065. Production ran 143 failed runs and `index_repo` completed 16 times in 94 runs; a user could learn none of that from the interface without going looking.
-- **Status:** draft
-- **Coverage:** none yet; planned: frontend/src/components/Sidebar.tsx, planned: backend/app/services/knowledge_freshness_service.py, backend/app/api/routes/logs.py, backend/app/api/routes/projects.py (`sync-history`)
+> **Delivered 2026-09-08 with three of the five sources**: a failed or reaped index, a source configured and never indexed, and a schedule withheld for want of a plan. Stale-but-indexed knowledge and unresolved insights are not yet in it — both are real signals, and both were left out because they are maintenance questions rather than "this needs you now", which is the line the group is drawn on.
+- **Status:** implemented
+- **Coverage:** backend/app/services/attention_service.py; backend/app/api/routes/projects.py (`GET /{project_id}/attention`); backend/tests/unit/test_attention_service.py; frontend/src/components/attention/AttentionGroup.tsx; frontend/src/components/Sidebar.tsx; frontend/src/__tests__/components/AttentionGroup.test.tsx
+
+### SCN-151: A panel link opens the panel it names
+- **Persona:** analyst
+- **Feature:** workspace
+- **Traces:** FLW-01
+- **Entry point:** any `/app?panel=<name>` URL — a bookmark, a shared link, or a route the product hands out itself
+- **Preconditions:** signed in; a project is active
+- **Steps:**
+  1. User opens `/app?panel=knowledge` -> system shows the Knowledge screen: the project's documents, insights and metrics, with its custom rules beneath them
+  2. User opens `/app?panel=insights` -> system shows the same screen already on the insights tab, rather than on docs with the user hunting for it
+  3. User opens `/app?panel=dashboards` -> system shows the project's dashboards
+  4. User opens a name the product does not define -> system falls back to the default view, as it always did
+- **Expected result:** a declared panel link arrives where its name says; nothing silently substitutes a different screen
+- **Alt paths:** no project active -> each screen says "Select a project first" rather than rendering an empty shell
+- **UI elements:** Knowledge screen (docs / insights / metrics tabs, custom rules section), Dashboards screen, the per-screen "Select a project first" state
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** a screen's own fetch fails -> it renders its inline error and the surrounding navigation still works; each panel is wrapped in a section error boundary, so one broken screen does not take the page down
+> **What this fixed.** `knowledge` and `insights` were in `APP_PANELS` — validated as legal URLs — and both rendered the **chat**. Two gates dropped them: the panel resolver kept its own enumeration of five names while the list held eight, and the render switch had no case for them behind an unconditional chat fallback. A route that 404s teaches the user immediately; one that renders a plausible other screen teaches them nothing. The resolver now passes any declared panel through rather than re-deciding it by name, which is the shape that stops the two lists drifting apart again.
+- **Status:** implemented
+- **Coverage:** frontend/src/app/app/page.tsx; frontend/src/hooks/useAppPanel.ts; frontend/src/components/knowledge/KnowledgePanel.tsx; frontend/src/components/dashboards/DashboardsPanel.tsx; frontend/src/__tests__/app-panels-have-destinations.test.ts
 
 ## repos
 

@@ -212,7 +212,13 @@ CEILINGS: dict[str, int] = {
     #
     # None returns a value that reads as success, and each logs what it swallowed — the
     # shape this ratchet exists to catch.
-    "except Exception": 636,
+    # 636 -> 637 on 2026-09-07. One, in `AttentionService.for_project`, and it is the
+    # mechanism rather than a swallow: a source that raises is recorded in
+    # `degraded` and named to the caller, so the rail can say "could not check"
+    # instead of "nothing needs you". Letting it propagate would blank a panel that
+    # exists to report state; dropping it silently would make the two sentences
+    # identical, which is the defect the service was written to prevent.
+    "except Exception": 637,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

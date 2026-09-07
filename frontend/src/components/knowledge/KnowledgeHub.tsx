@@ -11,7 +11,13 @@ import {
   type CatalogMetric,
 } from "@/components/insights/MetricCatalogPanel";
 
-type KnowledgeTab = "docs" | "insights" | "metrics";
+export type KnowledgeTab = "docs" | "insights" | "metrics";
+
+interface KnowledgeHubProps {
+  /** Which tab to open on. `?panel=insights` is a real URL, so it has to land on
+   *  the insights tab rather than on docs with the user hunting for it. */
+  initialTab?: KnowledgeTab;
+}
 
 function toCatalogMetric(dto: CatalogMetricDTO): CatalogMetric {
   return {
@@ -33,10 +39,10 @@ function toCatalogMetric(dto: CatalogMetricDTO): CatalogMetric {
   };
 }
 
-export function KnowledgeHub() {
+export function KnowledgeHub({ initialTab = "docs" }: KnowledgeHubProps = {}) {
   const activeProject = useAppStore((s) => s.activeProject);
   const activeConnection = useAppStore((s) => s.activeConnection);
-  const [tab, setTab] = useState<KnowledgeTab>("docs");
+  const [tab, setTab] = useState<KnowledgeTab>(initialTab);
   const [metrics, setMetrics] = useState<CatalogMetric[]>([]);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
