@@ -27,7 +27,7 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 | Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 1, undated × 19 |
 | **Verified >30 days ago** | **95 of 152** (oldest 51 days) |
 | Never verified (no date) | 19 |
-| Referenced from code or tests | **27 of 152** |
+| Referenced from code or tests | **28 of 152** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -863,7 +863,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** empty, loading, error, success
 - **Errors & recovery:** over the cap -> counter turns warning, Save refused with "N characters over the limit", text preserved; save fails -> toast "Could not save the description" and the field keeps the text so nothing is retyped; the field is user-authored text that reaches a prompt, so it is injected as data under its own heading and never as instructions the agent must obey
 - **Status:** draft
-- **Coverage:** none yet; planned: backend/app/models/connection.py (a description column and its migration), planned: backend/app/knowledge/custom_rules.py (the budgeted-injection precedent at `rules_to_context`), planned: frontend/src/components/connections/ConnectionSelector.tsx (the form that hosts it)
+> **Backend delivered 2026-09-08; the interface is not.** The column, the API contract (create AND update, capped identically), the migration and the prompt injection all exist and are tested: a described connection now reaches the SQL agent as `## What the user says these sources are for` — **data under its own heading, attributed, never framed as an instruction**, because a free-text field presented as a rule is an injection channel with a text input attached. The budget drops whole descriptions and names the omitted ones. What is missing is the place to type it: the Describe affordance lives on the source card of `SCR-01`, so this scenario finishes with the data workspace.
+- **Coverage:** backend/app/models/connection.py; backend/app/agents/source_purpose.py; backend/app/agents/sql_agent.py (`_load_source_purposes`); backend/app/agents/prompts/sql_prompt.py; backend/app/api/routes/connections.py; backend/alembic/versions/f6a7b8c9d0e1_add_connection_purpose.py; backend/tests/unit/test_source_purpose.py; planned: frontend/src/components/workspace/DataWorkspace.tsx (the Describe affordance)
 
 ### SCN-135: The answer shows which source context it was given
 - **Persona:** analyst

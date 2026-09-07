@@ -47,6 +47,11 @@ class Connection(Base):
     connection_string_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # SSH exec mode (run queries via CLI command over SSH instead of port forwarding)
+    # What this source is FOR, in the owner's own words (SCN-134). A schema cannot say
+    # that only `settled` rows are revenue or that money is in minor units; somebody
+    # knows, and this is where it goes. Free text by decision D3 — nothing about it is
+    # validated beyond its length, which is the accepted cost of shipping it.
+    purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
     ssh_exec_mode: Mapped[bool] = mapped_column(Boolean, default=False)
     ssh_command_template: Mapped[str | None] = mapped_column(Text, nullable=True)
     ssh_pre_commands: Mapped[str | None] = mapped_column(Text, nullable=True)

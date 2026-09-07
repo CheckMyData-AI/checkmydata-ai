@@ -389,6 +389,10 @@ class ConnectionCreate(_ConnectionFieldRules):
     source_config: dict[str, Any] | None = None
     collection_enabled: bool = True
     collection_hour: int = Field(default=3, ge=0, le=23)
+    # What this source is for, in the owner's words (SCN-134). Capped here as well as
+    # on update: guarded on create and free on PATCH is a shape this file has been
+    # bitten by before.
+    purpose: str | None = Field(None, max_length=2000)
     # H6: opt-out of sending DB sample data to the LLM (default True = send)
     send_sample_data_to_llm: bool = True
 
@@ -436,6 +440,9 @@ class ConnectionCreate(_ConnectionFieldRules):
 
 class ConnectionUpdate(_ConnectionFieldRules):
     name: str | None = Field(None, max_length=200)
+    # Same cap as ConnectionCreate. Guarded on create and free on PATCH is the
+    # exact shape that let an unvalidated branch reach `git checkout` as argv.
+    purpose: str | None = Field(None, max_length=2000)
     db_type: str | None = Field(None, max_length=50)
     source_type: str | None = Field(None, max_length=50)
     ssh_host: str | None = Field(None, max_length=255)
@@ -486,6 +493,7 @@ class ConnectionResponse(BaseModel):
     db_user: str | None
     is_read_only: bool
     is_active: bool
+    purpose: str | None = None
     send_sample_data_to_llm: bool
     ssh_exec_mode: bool
     ssh_command_template: str | None

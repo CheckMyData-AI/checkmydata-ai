@@ -218,7 +218,13 @@ CEILINGS: dict[str, int] = {
     # instead of "nothing needs you". Letting it propagate would blank a panel that
     # exists to report state; dropping it silently would make the two sentences
     # identical, which is the defect the service was written to prevent.
-    "except Exception": 637,
+    # 637 -> 638 on 2026-09-08. One, `SQLAgent._load_source_purposes`, and it joins a
+    # family this file already contains: every prompt loader in that class degrades
+    # to an empty string rather than failing a question, and every one of them
+    # reports it at WARNING naming the section that will be empty. The first draft
+    # logged at debug and `test_prompt_loaders_report_their_failures_at_warning`
+    # caught it — which is the ratchet beside this one doing its job.
+    "except Exception": 638,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

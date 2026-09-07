@@ -78,7 +78,7 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 | POST | `/api/connections` | Create connection (database, MCP, or analytics source) |
 | GET | `/api/connections/project/{project_id}` | List connections for a project |
 | GET | `/api/connections/{id}` | Get connection |
-| PATCH | `/api/connections/{id}` | Update connection |
+| PATCH | `/api/connections/{id}` | Update connection. Includes `purpose` — free text, max 2000 chars, what this source is FOR in the owner's words (SCN-134). It reaches the SQL agent's prompt as **data under its own heading**, attributed to the user and never framed as an instruction; the block is budgeted and drops whole descriptions, naming the ones it omitted. |
 | DELETE | `/api/connections/{id}` | Delete connection |
 | POST | `/api/connections/{id}/test` | Test connectivity (analytics sources are probed with the vendor adapter) |
 | POST | `/api/connections/{id}/refresh-schema` | Refresh schema cache |

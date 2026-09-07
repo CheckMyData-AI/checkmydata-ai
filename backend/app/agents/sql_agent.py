@@ -224,6 +224,7 @@ class SQLAgent(BaseAgent):
             notes_prompt = await self._load_notes_prompt(cfg.connection_id)
 
         custom_rules_text = await self._load_rules_for_prompt(context.project_id)
+        source_purposes_text = await self._load_source_purposes(cfg.connection_id)
 
         system_prompt = build_sql_system_prompt(
             db_type=cfg.db_type,
@@ -243,6 +244,7 @@ class SQLAgent(BaseAgent):
             required_filters=required_filters_text,
             column_value_mappings=column_value_mappings_text,
             custom_rules=custom_rules_text,
+            source_purposes=source_purposes_text,
         )
 
         tools = get_sql_agent_tools(
@@ -1981,6 +1983,44 @@ class SQLAgent(BaseAgent):
                 exc_info=True,
             )
             return "", ""
+
+    async def _load_source_purposes(self, connection_id: str | None) -> str:
+        """What the owner said this source is for (SCN-134), rendered for the prompt.
+
+        Absence and failure are different, and only one of them is quiet. No description
+        is the normal case and returns "" without a word. A CRASH also returns "", and
+        that degradation is invisible to the agent — an empty section reads exactly like
+        "nobody described this source" — so it is reported at WARNING, the rule
+        `test_prompt_loaders_report_their_failures_at_warning` holds every loader here to.
+        The first draft of this method logged at debug and that ratchet caught it.
+        """
+        if not connection_id:
+            return ""
+        try:
+            from sqlalchemy import select
+
+            from app.agents.source_purpose import SourcePurpose, purposes_to_context
+            from app.models.base import async_session_factory
+            from app.models.connection import Connection
+
+            async with async_session_factory() as session:
+                row = (
+                    await session.execute(
+                        select(Connection.name, Connection.purpose).where(
+                            Connection.id == connection_id
+                        )
+                    )
+                ).first()
+            if not row or not (row[1] or "").strip():
+                return ""
+            return purposes_to_context([SourcePurpose(name=row[0], purpose=row[1])])
+        except Exception:
+            logger.warning(
+                "_load_source_purposes failed — the source-description section will be "
+                "EMPTY, which the agent cannot tell from 'nobody described this source'",
+                exc_info=True,
+            )
+            return ""
 
     async def _load_rules_for_repair(self, project_id: str) -> str:
         try:
