@@ -9,6 +9,11 @@ import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
 import { InviteManager } from "@/components/projects/InviteManager";
 import { McpTokenManager } from "@/components/mcp/McpTokenManager";
+import { SshKeyManager } from "@/components/ssh/SshKeyManager";
+import { VendorCredentialsPanel } from "@/components/settings/VendorCredentialsPanel";
+import { UsageStatsPanel } from "@/components/usage/UsageStatsPanel";
+import { BillingPanel } from "@/components/billing/BillingPanel";
+import { FeedbackAnalyticsPanel } from "@/components/analytics/FeedbackAnalyticsPanel";
 import { usePermission } from "@/hooks/usePermission";
 import type { AppPanel } from "@/hooks/useAppPanel";
 
@@ -177,6 +182,54 @@ export function SettingsPanel({ onClose, onNavigate }: SettingsPanelProps) {
                 <InviteManager projectId={activeProject.id} onClose={() => setShowInvites(false)} />
               </div>
             )}
+          </section>
+        )}
+
+        {/* Credentials the ACCOUNT owns, not any one project — which is why they sit
+            here rather than in the rail, where they were two of thirteen collapsible
+            sections competing with the day's work for attention. */}
+        <section className="rounded-card border border-border bg-panel overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-border-subtle">
+            <h3 className="text-xs font-medium text-text-secondary uppercase tracking-wider">
+              Credentials
+            </h3>
+          </div>
+          <div className="p-4 space-y-4">
+            <div>
+              <p className="text-meta text-text-muted mb-2">SSH keys</p>
+              <SshKeyManager />
+            </div>
+            <div className="border-t border-border-subtle pt-4">
+              <p className="text-meta text-text-muted mb-2">Vendor credentials</p>
+              <VendorCredentialsPanel />
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-card border border-border bg-panel overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-border-subtle">
+            <h3 className="text-xs font-medium text-text-secondary uppercase tracking-wider">
+              Usage
+            </h3>
+          </div>
+          <div className="p-4 space-y-4">
+            <UsageStatsPanel />
+            <div className="border-t border-border-subtle pt-4">
+              <BillingPanel />
+            </div>
+          </div>
+        </section>
+
+        {isOwner && activeProject && (
+          <section className="rounded-card border border-border bg-panel overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-border-subtle">
+              <h3 className="text-xs font-medium text-text-secondary uppercase tracking-wider">
+                Answer feedback
+              </h3>
+            </div>
+            <div className="p-4">
+              <FeedbackAnalyticsPanel projectId={activeProject.id} />
+            </div>
           </section>
         )}
 

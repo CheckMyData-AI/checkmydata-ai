@@ -8,7 +8,12 @@ vi.mock("@/lib/api", () => ({
   api: {
     sshKeys: { list: vi.fn().mockResolvedValue([]) },
     repos: { status: vi.fn().mockResolvedValue(null), checkUpdates: vi.fn(), index: vi.fn() },
-    projects: { list: vi.fn().mockResolvedValue([]) },
+    projects: {
+      list: vi.fn().mockResolvedValue([]),
+      // The rail asks what needs the user (SCN-150). An empty, non-degraded answer
+      // is the "nothing to say" case, in which the group renders nothing at all.
+      attention: vi.fn().mockResolvedValue({ items: [], more: 0, degraded: [] }),
+    },
     connections: { listByProject: vi.fn().mockResolvedValue([]) },
     chat: { listSessions: vi.fn().mockResolvedValue([]) },
     rules: { list: vi.fn().mockResolvedValue([]) },
@@ -124,10 +129,12 @@ describe("Sidebar", () => {
     expect(screen.getByText("DB Agent")).toBeInTheDocument();
   });
 
-  it("has navigation sections (SSH Keys, Projects)", async () => {
+  it("has navigation sections (Projects)", async () => {
     await renderSidebar();
     await waitFor(() => {
-      expect(screen.getByText("SSH Keys")).toBeInTheDocument();
+      // SSH Keys moved to Settings -> Credentials: they belong to the ACCOUNT, not
+      // to any one project, and they were two of the thirteen collapsible sections
+      // that made this rail unreadable. SCN-149.
       expect(screen.getByText("Projects")).toBeInTheDocument();
     });
   });
