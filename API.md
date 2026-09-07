@@ -69,6 +69,7 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 | GET | `/api/projects/{project_id}/sync-schedule` | Effective schedule for a project — its override, else the global setting |
 | PUT | `/api/projects/{project_id}/sync-schedule` | Set a per-project daily-sync override (editor) |
 | GET | `/api/projects/{project_id}/runs` | Background-run history for a project (viewer) |
+| GET | `/api/projects/{project_id}/attention` | What needs the user in this project (viewer). Returns `{"items": [{kind, subject, what, severity, route, at}], "more": N, "degraded": [source]}`. `severity` is `critical|warning|info` and the list is ordered by it, capped at 5 with the remainder in `more`. `degraded` names sources that could not be read — an empty `items` with a non-empty `degraded` means "could not check", which is not the same as "nothing needs you" and must not render as it. |
 
 ## Connections
 

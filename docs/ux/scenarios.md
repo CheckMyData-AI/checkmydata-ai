@@ -27,7 +27,7 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 | Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 3, undated × 20 |
 | **Verified >30 days ago** | **95 of 151** (oldest 50 days) |
 | Never verified (no date) | 20 |
-| Referenced from code or tests | **23 of 151** |
+| Referenced from code or tests | **24 of 151** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -2562,7 +2562,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Errors & recovery:** the attention query fails -> the group shows one line saying it could not check, which is different from "nothing needs you" and must never render as it; a routed-to item no longer exists -> the target surface says it was removed and the entry clears
 > **Why this earns the space it takes.** Every input already exists and none of it is surfaced on return: failed and reaped runs are catalogued in `error_log` and `/api/logs`, freshness states are computed by `KnowledgeFreshnessService`, a schedule that did not run is in `sync-history`, and unresolved insights are the feed of SCN-065. Production ran 143 failed runs and `index_repo` completed 16 times in 94 runs; a user could learn none of that from the interface without going looking.
 - **Status:** draft
-- **Coverage:** none yet; planned: frontend/src/components/Sidebar.tsx, planned: backend/app/services/knowledge_freshness_service.py, backend/app/api/routes/logs.py, backend/app/api/routes/projects.py (`sync-history`)
+- **Coverage:** backend/app/services/attention_service.py; backend/app/api/routes/projects.py (`GET /{project_id}/attention`); backend/tests/unit/test_attention_service.py; planned: frontend/src/components/Sidebar.tsx (the rail that renders it)
 
 ## repos
 
