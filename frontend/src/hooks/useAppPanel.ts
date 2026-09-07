@@ -11,7 +11,13 @@ export const APP_PANELS = [
   "settings",
   "insights",
   "knowledge",
+  "dashboards",
 ] as const;
+
+// Every name here is a URL a user can reach and a link the product can hand out, so
+// every one needs a case in the page's panel switch. `knowledge` and `insights` had
+// none and silently rendered the chat; `app-panels-have-destinations.test.ts` is the
+// guard that now asks.
 
 export type AppPanel = (typeof APP_PANELS)[number];
 

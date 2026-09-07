@@ -21,13 +21,13 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 
 | | |
 |---|---|
-| Scenarios | **151** |
-| Status | draft × 20, implemented × 131 |
-| Last verdict | PARTIAL × 2, PASS × 129, no verdict × 20 |
-| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 3, undated × 20 |
-| **Verified >30 days ago** | **95 of 151** (oldest 50 days) |
+| Scenarios | **152** |
+| Status | draft × 20, implemented × 132 |
+| Last verdict | PARTIAL × 2, PASS × 130, no verdict × 20 |
+| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, undated × 20 |
+| **Verified >30 days ago** | **95 of 152** (oldest 50 days) |
 | Never verified (no date) | 20 |
-| Referenced from code or tests | **24 of 151** |
+| Referenced from code or tests | **25 of 152** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -193,6 +193,7 @@ it is what moves it.
 | SCN-148 | A granted account behaves exactly as its plan | billing | owner | implemented | 2026-09-07 PASS |
 | SCN-149 | The sidebar answers "where was I, and what needs me" | workspace | analyst | draft | — |
 | SCN-150 | The sidebar surfaces what needs attention and routes to the fix | workspace | analyst | draft | — |
+| SCN-151 | A panel link opens the panel it names | workspace | analyst | implemented | 2026-09-07 PASS |
 
 ## Personas
 
@@ -2563,6 +2564,26 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 > **Why this earns the space it takes.** Every input already exists and none of it is surfaced on return: failed and reaped runs are catalogued in `error_log` and `/api/logs`, freshness states are computed by `KnowledgeFreshnessService`, a schedule that did not run is in `sync-history`, and unresolved insights are the feed of SCN-065. Production ran 143 failed runs and `index_repo` completed 16 times in 94 runs; a user could learn none of that from the interface without going looking.
 - **Status:** draft
 - **Coverage:** backend/app/services/attention_service.py; backend/app/api/routes/projects.py (`GET /{project_id}/attention`); backend/tests/unit/test_attention_service.py; planned: frontend/src/components/Sidebar.tsx (the rail that renders it)
+
+### SCN-151: A panel link opens the panel it names
+- **Persona:** analyst
+- **Feature:** workspace
+- **Traces:** FLW-01
+- **Entry point:** any `/app?panel=<name>` URL — a bookmark, a shared link, or a route the product hands out itself
+- **Preconditions:** signed in; a project is active
+- **Steps:**
+  1. User opens `/app?panel=knowledge` -> system shows the Knowledge screen: the project's documents, insights and metrics, with its custom rules beneath them
+  2. User opens `/app?panel=insights` -> system shows the same screen already on the insights tab, rather than on docs with the user hunting for it
+  3. User opens `/app?panel=dashboards` -> system shows the project's dashboards
+  4. User opens a name the product does not define -> system falls back to the default view, as it always did
+- **Expected result:** a declared panel link arrives where its name says; nothing silently substitutes a different screen
+- **Alt paths:** no project active -> each screen says "Select a project first" rather than rendering an empty shell
+- **UI elements:** Knowledge screen (docs / insights / metrics tabs, custom rules section), Dashboards screen, the per-screen "Select a project first" state
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** a screen's own fetch fails -> it renders its inline error and the surrounding navigation still works; each panel is wrapped in a section error boundary, so one broken screen does not take the page down
+> **What this fixed.** `knowledge` and `insights` were in `APP_PANELS` — validated as legal URLs — and both rendered the **chat**. Two gates dropped them: the panel resolver kept its own enumeration of five names while the list held eight, and the render switch had no case for them behind an unconditional chat fallback. A route that 404s teaches the user immediately; one that renders a plausible other screen teaches them nothing. The resolver now passes any declared panel through rather than re-deciding it by name, which is the shape that stops the two lists drifting apart again.
+- **Status:** implemented
+- **Coverage:** frontend/src/app/app/page.tsx; frontend/src/hooks/useAppPanel.ts; frontend/src/components/knowledge/KnowledgePanel.tsx; frontend/src/components/dashboards/DashboardsPanel.tsx; frontend/src/__tests__/app-panels-have-destinations.test.ts
 
 ## repos
 
