@@ -42,7 +42,11 @@ END = "<!-- verification-status:end -->"
 #: quoted as if fresh.
 STALE_AFTER_DAYS = 30
 
-_ROW = re.compile(r"^\|\s*(SCN-\d+)\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|", re.M)
+#: The id may carry a lowercase suffix (`SCN-101a`). Without it that row matched
+#: nothing here and was absent from every number this script prints — which stayed
+#: invisible while it read `implemented` like its neighbours, and became a wrong
+#: status the moment it changed to `draft`.
+_ROW = re.compile(r"^\|\s*(SCN-\d+[a-z]?)\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|", re.M)
 
 
 def rows(text: str) -> list[tuple[str, str, str]]:
@@ -170,7 +174,7 @@ def audit_backlog(text: str, *, since: str) -> list[tuple[str, str, int, list[st
 
     titles = {
         m.group(1): m.group(2).strip()
-        for m in re.finditer(r"^\|\s*(SCN-\d+)\s*\|([^|]*)\|", text, re.M)
+        for m in re.finditer(r"^\|\s*(SCN-\d+[a-z]?)\s*\|([^|]*)\|", text, re.M)
     }
     stale_ids = {
         m.group(1)

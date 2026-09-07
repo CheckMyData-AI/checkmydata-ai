@@ -88,16 +88,37 @@ class TestACommercialProviderCanTakeOver:
 
 
 class TestTheSurfaceIsExactlyWhatTheCallSitesNeed:
-    """Three methods, because four call sites ask two questions and the meter asks one.
-    A wider protocol is a wider thing to reimplement and to keep in step."""
+    """Four methods, and the fourth was a decision on 2026-09-07 rather than a drift.
 
-    def test_it_has_three_methods_and_no_more(self) -> None:
+    Three of them are ceilings — may I create another project, another connection, how
+    many tokens. `may_run_scheduled_work` is a **capability**, and it could not be
+    expressed by any of the three: an unpaid account has no limits at all (`0` everywhere,
+    which means unlimited here) and must still not have a cron burning LLM tokens for it
+    overnight. Widening a protocol whose whole point is that a private package satisfies
+    it without importing this repository is a real cost, paid deliberately — and the
+    module helper `may_run_scheduled_work` is what keeps a provider built against the
+    older three-method surface working.
+
+    A fifth needs the same argument made in writing.
+    """
+
+    def test_it_has_four_methods_and_no_more(self) -> None:
         surface = {m for m in dir(Entitlements) if not m.startswith("_")}
         assert surface == {
             "enforce_project_quota",
             "enforce_connection_quota",
             "effective_token_limits",
+            "may_run_scheduled_work",
         }, surface
+
+    def test_the_registered_service_satisfies_the_widened_protocol(self) -> None:
+        """The guard that would have caught the half-done version of this change: a
+        protocol method nothing implements is a `getattr` fallback firing forever, which
+        looks exactly like "everyone is entitled"."""
+        from app.services.entitlement_service import EntitlementService
+
+        assert isinstance(EntitlementService(), Entitlements)
+        assert isinstance(UnlimitedEntitlements(), Entitlements)
 
 
 def test_metering_does_not_move() -> None:

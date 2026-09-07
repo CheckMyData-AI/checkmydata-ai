@@ -277,7 +277,14 @@ Stripe-backed subscriptions when `billing_enabled=True`: Checkout, Customer Port
 
 **The catalogue reaches the database by reconcile, not by a seed.** `app/ops/plan_catalogue_reconcile.py` upserts the tiers in the FastAPI `lifespan` — advisory-locked, idempotent, never blocks boot — and migration `e5f6a7b8c9d0` adds only the column. Seeding a price list inside a migration freezes it at that revision: the code would say $900 while the row a customer resolves against still said $199, and nothing would compare them.
 
-**No subscription is not the cheapest plan.** `free` was retired from sale on 2026-08-31, but `get_plan` deliberately does not filter on `is_active` (sold subscriptions must keep resolving), so every unsubscribed user still resolved to `free` and inherited its 100 000-token daily ceiling. Measured on production 2026-09-06: the owner burned 1 666 411 tokens on a full repository index, and the code↔DB sync queued behind it was refused with *"upgrade your plan at /pricing"* — a page that cannot take payment because no Stripe keys are set. A 3 h 37 m index completed and the step it exists to feed was turned away. Resolution now leaves the ladder instead of descending it: no subscription, or a `canceled`/`unpaid` one, returns `_no_plan()` — plan id `"none"`, every limit `0`, the catalogue not consulted at all. **That degrades OPEN, and it is the absence of a decision rather than one**: whether an unpaid project should be blocked outright is a product call nobody has made, and the operator's lever meanwhile is the global config cap. The retired `free` row must still EXIST — `BillingService` writes `plan_id="free"` as a foreign-key target when a subscription is created and when Stripe reports one deleted.
+**No subscription is not the cheapest plan.** `free` was retired from sale on 2026-08-31, but `get_plan` deliberately does not filter on `is_active` (sold subscriptions must keep resolving), so every unsubscribed user still resolved to `free` and inherited its 100 000-token daily ceiling. Measured on production 2026-09-06: the owner burned 1 666 411 tokens on a full repository index, and the code↔DB sync queued behind it was refused with *"upgrade your plan at /pricing"* — a page that cannot take payment because no Stripe keys are set. A 3 h 37 m index completed and the step it exists to feed was turned away. Resolution now leaves the ladder instead of descending it: no subscription, or a `canceled`/`unpaid` one, returns `_no_plan()` — plan id `"none"`, every limit `0`, the catalogue not consulted at all. **That degrades OPEN, and until 2026-09-07 it was the absence of a decision rather than one.** The decision has now been taken, and it is neither of the two options that were on the table: an unpaid project is **not** blocked and **not** fully served — setup and hand-driven use stay open, and **scheduled** work needs a subscription. Blocking makes the product unevaluable; serving unattended nightly LLM work to accounts that pay nothing is the cost the tier exists to meter. Implemented 2026-09-07 (`SCN-146`/`SCN-147`/`SCN-148`), and the two halves shipped together because separating them is an outage: the day the gate lands, every account without a subscription — this deployment's owner included — stops syncing.
+
+- **The gate** is a fourth question on the `Entitlements` protocol, `may_run_scheduled_work`, asked through `app.entitlements.may_run_scheduled_work` — the module helper, never a provider directly. Three scheduled paths ask it and nothing else does: `_dispatch_daily_knowledge_sync_wave` (per project owner), `_dispatch_analytics_collect_wave` (per the connection's project owner) and `_scheduler_loop` (per `ScheduledQuery.user_id`, filtered *before* `claim_due` so a withheld schedule stays due). A manual index or a chat question is never gated — the user is present and asking.
+- **Everything fails towards letting the work run**, because this withholds a capability rather than enforcing a limit, so a broken check that withheld would be an invisible outage. A provider that predates the fourth method answers yes (the whole point of the structural `Protocol` is that the private package satisfies it without importing this repo, so an older one has no such method); a lookup that raises logs and allows; `billing_enabled=False` allows **twice over** — the registry never installs the commercial provider (`main.py`), and `EntitlementService.may_run_scheduled_work` also returns early on the flag rather than trusting the caller. That second belt was added because a test caught the first version withholding automation from self-hosted builds through the two direct instantiations that bypass the registry (`billing.py`, `usage_service.py`).
+- **The grant** is `PLAN_GRANTS` (`email=plan_id`, JSON list) reconciled by `app/ops/plan_grant_reconcile.py` in the lifespan, **strictly after** the catalogue reconcile — a grant names a plan id and the row has to exist first. Advisory-locked, idempotent, never blocks boot. An unknown plan id is **refused, not defaulted**. A real Stripe subscription outranks a grant and is left alone. A granted row carries **no** `stripe_subscription_id`, which is what keeps `BillingService.reconcile` from cancelling it — that sweep filters on the column being non-null and names manual grants as the reason.
+- **`past_due` keeps running**: an expired card is not a decision to stop paying, and cutting the nightly sync on the first failed charge is a punishment whose cause the user cannot see.
+
+**Operator action required on this deployment.** `BILLING_ENABLED=true` with no Stripe key means no account can buy a plan, so set `PLAN_GRANTS` or the nightly sync stops for everyone: `heroku config:set PLAN_GRANTS='["<owner-email>=enterprise"]'`. Confirm with the boot line `Plan grant reconcile at startup: ok (granted=1 …)`. The retired `free` row must still EXIST — `BillingService` writes `plan_id="free"` as a foreign-key target when a subscription is created and when Stripe reports one deleted.
 
 ### Custom rules
 
@@ -624,10 +631,34 @@ Read `vision.md` before any new feature. If a request conflicts with §7 invaria
 | FAQ / troubleshooting | `FAQ.md` |
 | Production planning | `docs/production-plan/` (PRD, tech spec, modules, QA, traceability) |
 | UX scenarios (source of truth) | `docs/ux/scenarios.md` |
+| UX funnels & drop-off points | `docs/ux/flows.md` (FLW-01–FLW-05, data-onboarding scope) |
+| UX screen/state map | `docs/ux/screens.md` (SCR-01–SCR-09) |
 
 ## UX scenarios — hard rule (super-ux)
 
 - `docs/ux/scenarios.md` is the source of truth for all user-facing behavior.
+- **The chain now has three layers, and they are not equally complete.**
+  `scenarios.md` covers the whole product (151 scenarios; 128 `implemented`, 23
+  `draft`). `flows.md` (FLW-01–05) and `screens.md` (SCR-01–10) were added
+  2026-09-07 and cover **only the data-onboarding scope** — adding a project,
+  connecting sources and repositories, describing them, refreshing the docs, and the
+  sidebar rail every flow starts from. Outside that scope there is no flow layer, so
+  a scenario there carries no `Traces:` and that is correct rather than missing.
+- **A scenario id may carry a lowercase suffix, and the tooling used to miss it.**
+  `SCN-101a` matched neither `_ROW` in `scripts/ux_verification_status.py` nor
+  either regex in the format test, so it was absent from every count and unchecked
+  on both sides of the body/index pairing. Invisible while it read `implemented`
+  like its neighbours; a wrong status the moment it changed. Both now accept
+  `SCN-\d+[a-z]?`. Related: a draft's Index audit cell must be bare `—`. A date or
+  a `PASS` there is counted as a live verification, so parking history in that cell
+  makes a draft read as verified — the history goes in the body.
+- **The index table stays at six columns.** `scripts/ux_verification_status.py`
+  reads status and last-audit by position, so a `Traces` column would silently
+  shift both. New scenarios carry `Traces:` in the body instead.
+- **A `draft` row owes no audit date or verdict.** `test_ux_scenarios.py`
+  demanded one from every row, which left a designed-but-unbuilt scenario two ways
+  to pass and made the cheaper one a `PASS` nobody measured. Scoped to statuses
+  that claim something was built; drafts are still counted under *Never verified*.
 - Any change that touches user-facing behavior MUST update
   `docs/ux/scenarios.md` in the same change (add/adjust scenarios, statuses,
   coverage).

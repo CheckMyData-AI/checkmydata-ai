@@ -195,7 +195,24 @@ CEILINGS: dict[str, int] = {
     # best-effort contract `embedding_reconcile` and `encryption_reconcile` already
     # hold, and for the same reason: a catalogue that failed to reconcile leaves the
     # previous rows in place, while a raise here costs the whole dyno.
-    "except Exception": 633,
+    # 633 → 636 on 2026-09-07. Three, all on the scheduled-work gate of SCN-146, and all
+    # three fail in the SAME direction — towards letting the work run — because the gate
+    # withholds a capability rather than enforcing a limit, so a broken check that
+    # withheld would be an invisible outage:
+    #
+    #   `may_run_scheduled_work` (registry) — a billing lookup that raises must not take
+    #                                         the cron down, and must not silently
+    #                                         withhold the night's work either. Logs at
+    #                                         WARNING with the account and allows.
+    #   `reconcile_plan_grants`             — boot must not fail because a comped plan
+    #                                         could not be written. Returns `error`, which
+    #                                         reads as neither success nor a grant.
+    #   the lifespan grant block            — the same rule the four reconciles beside it
+    #                                         already follow: never block boot.
+    #
+    # None returns a value that reads as success, and each logs what it swallowed — the
+    # shape this ratchet exists to catch.
+    "except Exception": 636,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

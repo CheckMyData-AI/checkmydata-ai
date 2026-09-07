@@ -184,6 +184,24 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Plan catalogue reconcile failed at startup", exc_info=True)
 
+    # Comped plans, strictly AFTER the catalogue: a grant names a plan id, and the row it
+    # points at has to exist before the grant can resolve. On a first boot with a repriced
+    # or newly added tier, running these the other way round refuses every grant naming it.
+    try:
+        from app.ops.plan_grant_reconcile import reconcile_plan_grants
+
+        _gr = await reconcile_plan_grants()
+        logger.info(
+            "Plan grant reconcile at startup: %s (granted=%d unchanged=%d refused=%d not-found=%d)",
+            _gr.status,
+            _gr.granted,
+            _gr.unchanged,
+            _gr.refused,
+            _gr.missing,
+        )
+    except Exception:
+        logger.warning("Plan grant reconcile failed at startup", exc_info=True)
+
     # F-KNOW-12: the BM25 snapshot is written by the repo index in the WORKER and read
     # by the chat path in THIS process, and on Heroku those are separate filesystems —
     # so the reader never had the file. Snapshots are derived from KnowledgeDoc rows,
@@ -884,6 +902,7 @@ async def _dispatch_daily_knowledge_sync_wave() -> None:
         schedule_svc = SyncScheduleService()
         dispatched = 0
         skipped = 0
+        unentitled = 0
 
         try:
             async with async_session_factory() as session:
@@ -897,6 +916,24 @@ async def _dispatch_daily_knowledge_sync_wave() -> None:
                         hour_filtered.append(project)
                     else:
                         skipped += 1
+
+                # SCN-146: unattended work needs a plan behind it. Asked through the
+                # registry, never `EntitlementService()` — the registry is what keeps the
+                # commercial provider out of a `billing_enabled=False` build, so asking
+                # the service directly would withhold automation from every self-hosted
+                # clone. A project with no owner is not gated: there is no account to
+                # charge, and dropping it would silently strand data nobody can pay for.
+                from app.entitlements import may_run_scheduled_work
+
+                allowed: list = []
+                for project in hour_filtered:
+                    if project.owner_id is None or await may_run_scheduled_work(
+                        session, project.owner_id
+                    ):
+                        allowed.append(project)
+                    else:
+                        unentitled += 1
+                hour_filtered = allowed
 
             skipped += len(all_projects) - len(eligible)
 
@@ -929,9 +966,11 @@ async def _dispatch_daily_knowledge_sync_wave() -> None:
                 dispatched += 1
 
             logger.info(
-                "Cron: daily knowledge sync wave dispatched projects=%d skipped=%d hour=%d",
+                "Cron: daily knowledge sync wave dispatched projects=%d skipped=%d "
+                "unentitled=%d hour=%d",
                 dispatched,
                 skipped,
+                unentitled,
                 current_hour,
             )
         except Exception:
@@ -1011,6 +1050,7 @@ async def _dispatch_analytics_collect_wave() -> None:
             return
 
         dispatched = 0
+        unentitled = 0
         try:
             async with async_session_factory() as session:
                 due_ids = list(
@@ -1027,6 +1067,36 @@ async def _dispatch_analytics_collect_wave() -> None:
                     .scalars()
                     .all()
                 )
+
+            # SCN-146: same gate, same reason, asked through the registry. The account is
+            # the owner of the connection's PROJECT — a connection has no owner of its
+            # own, and resolving it any other way would gate on the wrong person.
+            if due_ids:
+                from app.entitlements import may_run_scheduled_work
+                from app.models.project import Project
+
+                async with async_session_factory() as session:
+                    rows = (
+                        await session.execute(
+                            select(Connection.id, Project.owner_id)
+                            .join(Project, Connection.project_id == Project.id)
+                            .where(Connection.id.in_(due_ids))
+                        )
+                    ).all()
+                    owners: dict[str, str | None] = {r[0]: r[1] for r in rows}
+                    entitled_ids: list[str] = []
+                    for conn_id in due_ids:
+                        owner_id = owners.get(conn_id)
+                        if owner_id is None or await may_run_scheduled_work(session, owner_id):
+                            entitled_ids.append(conn_id)
+                        else:
+                            unentitled += 1
+                if unentitled:
+                    logger.info(
+                        "Cron: analytics collect wave withheld %d connection(s) — no plan",
+                        unentitled,
+                    )
+                due_ids = entitled_ids
 
             for conn_id in due_ids:
                 cid = conn_id
@@ -1131,6 +1201,25 @@ async def _scheduler_loop() -> None:
             await asyncio.sleep(60)
             async with async_session_factory() as session:
                 due = await svc.get_due_schedules(session)
+                if not due:
+                    continue
+                # SCN-146: unattended work needs a plan. Filtered BEFORE `claim_due` so a
+                # withheld schedule is not consumed — it stays due and runs the minute a
+                # plan appears. Skipped rather than paused on purpose: pausing writes a
+                # state the user then has to undo by hand after paying, and this loop
+                # wakes every 60 s, so it would do that within a minute of the decision.
+                from app.entitlements import may_run_scheduled_work
+
+                entitled = []
+                for schedule in due:
+                    if await may_run_scheduled_work(session, schedule.user_id):
+                        entitled.append(schedule)
+                if len(entitled) != len(due):
+                    logger.info(
+                        "Scheduler: %d due schedule(s) withheld — no plan",
+                        len(due) - len(entitled),
+                    )
+                due = entitled
                 if not due:
                     continue
                 logger.info("Scheduler: %d due schedule(s) to execute", len(due))

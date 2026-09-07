@@ -51,8 +51,18 @@ STRICT_COVERAGE_MIN_ID = 113
 #: to SCN-113 and above: a Coverage path either resolves or it is wrong.
 LEGACY_UNRESOLVED_COVERAGE_BASELINE = 0
 
-_BODY_RE = re.compile(r"^### (SCN-(\d+)):\s*(\S.*)$")
-_INDEX_ROW_RE = re.compile(r"^\|\s*(SCN-(\d+))\s*\|")
+#: Statuses that make no claim an audit could have checked, so no audit date or verdict
+#: is owed. `draft` is a scenario designed but not built; `retired` one deliberately no
+#: longer true. Every other status asserts shipped behaviour and must name the date it
+#: was measured on.
+_UNAUDITABLE_STATUSES = {"draft", "retired"}
+
+# The id may carry a lowercase suffix (`SCN-101a`); the numeric group stays the
+# sort key and the threshold key, and group 1 is the full id. Without the suffix
+# such a scenario matched neither side of the body/index pairing, so it was
+# consistent only by being unchecked on both.
+_BODY_RE = re.compile(r"^### (SCN-(\d+)[a-z]?):\s*(\S.*)$")
+_INDEX_ROW_RE = re.compile(r"^\|\s*(SCN-(\d+)[a-z]?)\s*\|")
 _COVERAGE_RE = re.compile(r"^- \*\*Coverage:\*\*\s*(\S.*)$")
 _STATUS_RE = re.compile(r"^- \*\*Status:\*\*\s*(\S+)\s*$")
 _HEADING_RE = re.compile(r"^## ")
@@ -346,18 +356,26 @@ def test_stale_verifications_do_not_grow() -> None:
 
 def test_every_index_row_carries_a_date_and_a_verdict() -> None:
     """A row saying only `implemented` cannot be told apart from one nobody has ever
-    checked — which is the state this whole section exists to make visible."""
+    checked — which is the state this whole section exists to make visible.
+
+    Scoped to rows that CLAIM something was built. A `draft` scenario has, by
+    definition, never been audited, and a `retired` one is not going to be: demanding a
+    verdict from them would leave two ways to satisfy this test, and the cheaper one is
+    typing a `PASS` nobody measured. That is the exact dishonesty the verification block
+    exists to expose, so the gate must not be the thing that rewards it. Draft rows are
+    still counted — `summarise` puts them under *Never verified (no date)*, which is
+    where a designed-but-unbuilt scenario belongs and is a true statement about it.
+    """
     mod = _status_module()
     text = SCENARIOS_MD.read_text(encoding="utf-8")
     import re as _re
 
-    undated = [
-        sid for sid, _st, audit in mod.rows(text) if not _re.search(r"\d{4}-\d{2}-\d{2}", audit)
+    claims_built = [
+        (sid, audit) for sid, st, audit in mod.rows(text) if st not in _UNAUDITABLE_STATUSES
     ]
+    undated = [sid for sid, audit in claims_built if not _re.search(r"\d{4}-\d{2}-\d{2}", audit)]
     unjudged = [
-        sid
-        for sid, _st, audit in mod.rows(text)
-        if not _re.search(r"\b(PASS|FAIL|PARTIAL)\b", audit)
+        sid for sid, audit in claims_built if not _re.search(r"\b(PASS|FAIL|PARTIAL)\b", audit)
     ]
     assert not undated, f"no audit date: {undated}"
     assert not unjudged, f"no verdict: {unjudged}"

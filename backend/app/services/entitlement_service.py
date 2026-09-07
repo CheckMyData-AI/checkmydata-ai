@@ -151,6 +151,34 @@ class EntitlementService:
         monthly = _strictest(ent.monthly_token_limit, settings.user_monthly_token_limit)
         return daily, monthly
 
+    async def may_run_scheduled_work(self, db: AsyncSession, user_id: str) -> bool:
+        """Unattended work needs a plan behind it (SCN-146, decided 2026-09-07).
+
+        Derived from the resolved plan id rather than from the subscription status, so
+        every way of having no plan answers the same: no row, a `canceled` or `unpaid`
+        one, and a row pointing at a plan the catalogue has lost all reach `_no_plan()`
+        and all mean the same thing here.
+
+        A grace-period subscription (`past_due`) keeps running deliberately — that is an
+        expired card, not a decision to stop paying, and cutting the nightly sync on the
+        first failed charge is a punishment the user cannot even see the cause of.
+
+        **Billing off is answered here too, and not by relying on the caller.** This
+        service is only *registered* when `billing_enabled` is true (`main.py`), so in
+        practice `NO_PLAN_ID` means "billing is on and this account has not paid". But
+        two call sites instantiate the class directly and bypass the registry
+        (`billing.py`, `usage_service.py`), and `get_entitlements` answers `_no_plan()`
+        to everything while billing is off — so deriving the answer from the plan id
+        alone would have this method withhold automation from a self-hosted build the
+        moment anyone asked it directly. Caught by
+        `test_billing_off_allows_scheduled_work_even_here`, which is the reason the check
+        is first rather than implied.
+        """
+        if not settings.billing_enabled:
+            return True
+        ent = await self.get_entitlements(db, user_id)
+        return ent.plan_id != NO_PLAN_ID
+
     async def _lock_owner(self, db: AsyncSession, user_id: str) -> None:
         """Serialise quota decisions for one owner (F-BILL-02).
 
