@@ -12,7 +12,7 @@ human review moves them to `validated`.
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-09-03 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-09-07 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -21,13 +21,13 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 
 | | |
 |---|---|
-| Scenarios | **128** |
-| Status | implemented × 128 |
-| Last verdict | PARTIAL × 2, PASS × 126 |
-| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1 |
-| **Verified >30 days ago** | **95 of 128** (oldest 46 days) |
-| Never verified (no date) | 0 |
-| Referenced from code or tests | **22 of 128** |
+| Scenarios | **151** |
+| Status | draft × 20, implemented × 131 |
+| Last verdict | PARTIAL × 2, PASS × 129, no verdict × 20 |
+| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 3, undated × 20 |
+| **Verified >30 days ago** | **95 of 151** (oldest 50 days) |
+| Never verified (no date) | 20 |
+| Referenced from code or tests | **23 of 151** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -143,7 +143,7 @@ it is what moves it.
 | SCN-099 | Manage billing (Stripe portal) | billing | owner | implemented | 2026-07-19 PASS |
 | SCN-100 | Hit token / quota limit (HTTP 402) | billing | analyst | implemented | 2026-07-19 PASS |
 | SCN-101 | Billing disabled (self-hosted) degradation | billing | owner | implemented | 2026-07-19 PASS |
-| SCN-101a | Billing on, no subscription (unpaid account) | billing | owner | implemented | 2026-09-06 PASS |
+| SCN-101a | Billing on, no subscription (unpaid account) | billing | owner | implemented | 2026-09-07 PASS |
 | SCN-102 | View usage stats | usage | owner | implemented | 2026-07-19 PASS |
 | SCN-103 | Mint & copy an MCP token | mcp-tokens | api-consumer | implemented | 2026-07-19 PASS |
 | SCN-104 | Revoke an MCP token | mcp-tokens | api-consumer | implemented | 2026-07-19 PASS |
@@ -171,6 +171,28 @@ it is what moves it.
 | SCN-125 | The answer is the page, not a speech bubble | chat | analyst | implemented | 2026-08-16 PARTIAL → fixed |
 | SCN-126 | Transfer project ownership | members | owner | implemented | 2026-08-21 PASS |
 | SCN-127 | Leave a project | analyst | members | implemented | 2026-08-21 PASS |
+| SCN-129 | Data workspace — every source managed on one screen | workspace | owner | draft | — |
+| SCN-130 | Add a source without leaving the workspace | workspace | owner | draft | — |
+| SCN-131 | A new project's workspace says what to connect first | workspace | owner | draft | — |
+| SCN-132 | Each source card says what the agent can do with it | workspace | analyst | draft | — |
+| SCN-133 | The sidebar switches, the workspace manages | workspace | analyst | draft | — |
+| SCN-134 | Say what a connection is for, in the agent's terms | connections | editor | draft | — |
+| SCN-135 | The answer shows which source context it was given | connections | analyst | draft | — |
+| SCN-136 | Source context that did not fit says so | connections | analyst | draft | — |
+| SCN-137 | Connect a repository to a project | repos | owner | draft | — |
+| SCN-138 | Connect a second repository | repos | owner | draft | — |
+| SCN-139 | Say what a repository is for, and what to ignore | repos | editor | draft | — |
+| SCN-140 | Index one repository without disturbing the other | repos | editor | draft | — |
+| SCN-141 | The answer names the repository it came from | repos | analyst | draft | — |
+| SCN-142 | Disconnect a repository | repos | owner | draft | — |
+| SCN-143 | Repository access is refused — recovery without losing the form | repos | owner | draft | — |
+| SCN-144 | Refresh the documentation and see what changed | knowledge | editor | draft | — |
+| SCN-145 | A document says where it came from and how old it is | knowledge | analyst | draft | — |
+| SCN-146 | Set up a project without a subscription — the work proceeds, the schedule does not | billing | owner | implemented | 2026-09-07 PASS |
+| SCN-147 | The schedule says why it is off and what turns it on | billing | owner | draft | — |
+| SCN-148 | A granted account behaves exactly as its plan | billing | owner | implemented | 2026-09-07 PASS |
+| SCN-149 | The sidebar answers "where was I, and what needs me" | workspace | analyst | draft | — |
+| SCN-150 | The sidebar surfaces what needs attention and routes to the fix | workspace | analyst | draft | — |
 
 ## Personas
 
@@ -823,6 +845,60 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Status:** implemented
 - **Coverage:** components/connections/ConnectionSelector.tsx:1511-1523 (error vs empty states), :197 (`handleRetryLoad`); components/connections/ConnectionsPanel.tsx:12-18 ("Select a project first"); components/ui/ListError.tsx
 
+### SCN-134: Say what a connection is for, in the agent's terms
+- **Persona:** editor
+- **Feature:** connections
+- **Traces:** FLW-02
+- **Entry point:** workspace source card → "Describe" (or the card's Edit form → "What is this for?")
+- **Preconditions:** editor/owner; the project has at least one connection
+- **Steps:**
+  1. User opens "Describe" on a source card -> system shows a multi-line field, a character counter against the cap, and one line stating that this text is sent to the agent with every question on this connection
+  2. User writes what the source is and how to read it — e.g. "Production billing DB. Money is in minor units. Only rows with `status='settled'` count as revenue." -> system enables Save and shows the remaining characters
+  3. User clicks Save -> system persists it on the connection and the card's subtitle changes from "No purpose set" to the first line of the text
+  4. User asks a revenue question in chat -> the answer honours the stated rule instead of guessing
+- **Expected result:** the description is stored per connection, visible on its card, and demonstrably reaches the agent
+- **Alt paths:** user clears the field and saves -> the card reverts to "No purpose set" and the agent stops receiving it; viewer opens the card -> the text renders read-only with no Save
+- **UI elements:** "Describe" action, multi-line field, character counter, cap notice, Save / Cancel, card subtitle, "No purpose set" placeholder
+- **States covered:** empty, loading, error, success
+- **Errors & recovery:** over the cap -> counter turns warning, Save refused with "N characters over the limit", text preserved; save fails -> toast "Could not save the description" and the field keeps the text so nothing is retyped; the field is user-authored text that reaches a prompt, so it is injected as data under its own heading and never as instructions the agent must obey
+- **Status:** draft
+- **Coverage:** none yet; planned: backend/app/models/connection.py (a description column and its migration), planned: backend/app/knowledge/custom_rules.py (the budgeted-injection precedent at `rules_to_context`), planned: frontend/src/components/connections/ConnectionSelector.tsx (the form that hosts it)
+
+### SCN-135: The answer shows which source context it was given
+- **Persona:** analyst
+- **Feature:** connections
+- **Traces:** FLW-05
+- **Entry point:** chat answer → the seal (SCN-122)
+- **Preconditions:** a question was answered against a connection or repository that carries a description
+- **Steps:**
+  1. User reads an answer and opens its seal -> system lists what the agent was told beyond the schema: the connection description, the repository context, the rules and learnings applied
+  2. User clicks one entry -> system shows the exact text that was injected, verbatim
+  3. User sees a wrong instruction there and clicks through to its source -> system opens that source card's Describe field with the text loaded for editing
+- **Expected result:** no instruction reaches the agent invisibly; every one is inspectable from the answer it shaped, and correctable in one step
+- **Alt paths:** nothing beyond the schema was injected -> the seal says so explicitly rather than omitting the section
+- **UI elements:** seal, context list, per-entry expander, verbatim text block, "Edit this" link
+- **States covered:** empty, success
+- **Errors & recovery:** the injected text can no longer be resolved (source deleted since the answer) -> the entry renders with a "source removed" label and the verbatim text is still shown, because what the agent was told is a fact about that answer and does not change when the source does
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/ui/Seal.tsx, planned: backend/app/agents/orchestrator.py (what is recorded per request)
+
+### SCN-136: Source context that did not fit says so
+- **Persona:** analyst
+- **Feature:** connections
+- **Traces:** FLW-05
+- **Entry point:** chat answer, when descriptions across sources exceed the prompt budget
+- **Preconditions:** the combined source descriptions are over the context cap
+- **Steps:**
+  1. User asks a question spanning several described sources -> system drops whole descriptions, never part of one, until the set fits
+  2. User reads the answer -> the seal states how many descriptions were omitted and names them
+- **Expected result:** the answer admits it may not reflect every description, and says which ones it did not see
+- **Alt paths:** everything fits -> no notice is shown
+- **UI elements:** seal, omitted-context notice with count and names
+- **States covered:** success
+- **Errors & recovery:** nothing can fail here — the cap is enforced before the call. The rule is inherited deliberately from `rules_to_context`: a half-included description is worse than an excluded one, because the agent cannot tell it was truncated
+- **Status:** draft
+- **Coverage:** none yet; planned: backend/app/knowledge/custom_rules.py, planned: frontend/src/components/ui/Seal.tsx
+
 ## ssh-keys
 
 ### SCN-038: Add an SSH key
@@ -1232,6 +1308,43 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Errors & recovery:** fetch fails → inline "Could not load sync history" (`SyncHistoryPanel.tsx:162-166`). Empty: "No scheduled syncs yet."
 - **Status:** implemented
 - **Coverage:** components/knowledge/SyncHistoryPanel.tsx:146-201
+
+### SCN-144: Refresh the documentation and see what changed
+- **Persona:** editor
+- **Feature:** knowledge
+- **Traces:** FLW-04
+- **Entry point:** workspace → Documentation group → "Refresh docs"
+- **Preconditions:** editor/owner; at least one repository is connected and indexed
+- **Steps:**
+  1. User clicks "Refresh docs" -> system states before starting what the job is: which repository, how many documents are due, that it calls an LLM, and a duration estimate from the last measured rate
+  2. User confirms -> system starts the run and shows a live RunCard with the current document number out of the total
+  3. User navigates away and returns -> system still shows the run in progress, because the work continues server-side
+  4. Run completes -> system shows a change summary: documents added, updated, unchanged, failed
+- **Expected result:** the documentation is regenerated and the user can see what actually changed, not merely that something ran
+- **Alt paths:** user declines at the estimate -> nothing starts; a run is already active -> the button offers to open the running one instead of queueing a second
+- **UI elements:** "Refresh docs" button, pre-run estimate panel (repository, document count, duration, "this calls an LLM"), Confirm / Cancel, RunCard with per-document progress, change-summary table
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** partial failure under `generate_docs_max_failure_ratio` -> run completes and the summary counts the failed documents by name rather than reporting success; over the ratio -> run fails with the reason; the run is reaped as stale -> the summary says so and offers a retry, never a silent gap
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/knowledge/KnowledgeDocs.tsx, planned: backend/app/knowledge/pipeline_runner.py (the `generate_docs` step it drives), planned: backend/app/api/routes/repos.py
+
+### SCN-145: A document says where it came from and how old it is
+- **Persona:** analyst
+- **Feature:** knowledge
+- **Traces:** FLW-04
+- **Entry point:** workspace → Documentation group → a document row, or the Docs tab of SCN-061
+- **Preconditions:** documents have been generated
+- **Steps:**
+  1. User opens a document -> system shows its source path, the commit it was generated from, and when
+  2. User compares against the repository's current head -> system labels the document `current` when the commit matches, or `behind by N commits` when it does not
+  3. User clicks a stale label -> system offers the refresh of SCN-144 scoped to that repository
+- **Expected result:** every document carries its provenance, and a stale one is labelled rather than served as current
+- **Alt paths:** the document predates repository tracking and has no commit -> the label reads "provenance unknown", which is a different claim from "current"
+- **UI elements:** document viewer, source-path line, commit chip, generated-at timestamp, freshness label (`current` / `behind by N` / `provenance unknown`), "Refresh this repository" link
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** the head cannot be read (clone missing or unreachable) -> the label degrades to "cannot compare" and says why, instead of defaulting to `current`
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/knowledge/KnowledgeDocs.tsx, planned: backend/app/api/routes/repos.py (the docs list already returns `commit_sha` and `updated_at`)
 
 ## insights
 
@@ -1809,13 +1922,75 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Preconditions:** billing enabled; no active or grace-period subscription
 - **Steps:**
   1. User asks a question, indexes a repository, or adds a connection
-- **Expected result:** the work proceeds. There is **no free tier to fall to**, so entitlements resolve to plan id `"none"` with every limit `0` (unlimited by this codebase's convention) and the plan catalogue is not consulted. The only ceiling that applies is the deployment-wide `USER_DAILY_TOKEN_LIMIT` / `USER_MONTHLY_TOKEN_LIMIT`.
+- **Expected result:** the work proceeds and **scheduled work does not** (SCN-146). There is no free tier to fall to, so entitlements resolve to plan id `"none"` with every limit `0` (unlimited by this codebase's convention) and the plan catalogue is not consulted; the only ceiling that applies is the deployment-wide `USER_DAILY_TOKEN_LIMIT` / `USER_MONTHLY_TOKEN_LIMIT`. What changed on 2026-09-07 is not a limit but a capability: unattended work is withheld.
 - **UI elements:** no paywall, no 402; `/pricing` shows only tiers that have a live Stripe price, otherwise the self-hosted fallback
 - **States covered:** success, empty (no plan)
 - **Errors & recovery:** none by design — this state degrades **open**. Before 2026-09-06 it resolved to the retired `free` plan and inherited its 100 000-token daily ceiling, which on production refused a code↔DB sync behind a 1 666 411-token index and pointed the operator at `/pricing`, a page that cannot take payment while no Stripe keys are set.
-- **Open decision:** whether an unpaid project should be *blocked* rather than served is a product call that has not been made. `EntitlementService._no_plan()` is the single place it belongs when it is.
+- **Decision taken 2026-09-07:** neither blocked nor fully open. Setting the product up and using it by hand stays open; **scheduled** work needs a subscription. Both binary options were on the table and the third answer is better than either: blocking an unpaid project makes the product unevaluable, and serving unattended nightly LLM work to accounts that pay nothing is the cost this tier exists to meter. `EntitlementService._no_plan()` is still the single place it lives.
+> **Previously.** This scenario was `implemented` and audited PASS on 2026-09-06. The
+> 2026-09-07 decision changed the behaviour it describes, so it is back to `draft`
+> and owes a fresh audit. The old verdict is recorded here rather than in the Index's
+> audit cell, because a date and a `PASS` in that cell are counted as a live
+> verification — which would have made a draft read as verified.
 - **Status:** implemented
 - **Coverage:** backend/app/services/entitlement_service.py (`_no_plan`); backend/tests/unit/test_four_tiers_priced_by_data_volume.py
+
+### SCN-146: Set up a project without a subscription — the work proceeds, the schedule does not
+- **Persona:** owner
+- **Feature:** billing
+- **Traces:** FLW-01
+- **Entry point:** any setup surface while `billing_enabled=True` and the account has no active subscription
+- **Preconditions:** billing enabled; no active or grace-period subscription
+- **Steps:**
+  1. User creates a project, connects sources, connects a repository and describes them -> system allows all of it, with no paywall and no 402
+  2. User presses Index on a source or a repository -> system runs it, because a manual action is the user asking for work they are watching
+  3. User asks a question in chat -> system answers, subject only to the deployment-wide token caps
+  4. Night falls -> system does **not** run the nightly knowledge sync, the analytics collection wave, or any scheduled query for this account
+  5. User opens the workspace the next morning -> system shows the sources exactly as they were, and says the schedule did not run and why
+- **Expected result:** an unpaid account can set the product up and use it by hand; only **unattended** work is withheld
+- **Alt paths:** `billing_enabled=False` (self-hosted) -> automation runs normally, because the registry never installs the commercial provider and the permissive default answers instead; the account has a granted plan -> automation runs per SCN-148
+- **UI elements:** no paywall on any setup surface; a schedule notice in the workspace and on the Schedules surface; the upgrade route from that notice only
+- **States covered:** success, empty (no plan)
+- **Errors & recovery:** nothing fails — this is a withheld capability, not an error. The withheld thing is named where it would have happened rather than in a billing page the user has no reason to open
+- **Status:** implemented
+- **Coverage:** backend/app/entitlements/base.py (`may_run_scheduled_work`, the fourth protocol method); backend/app/entitlements/__init__.py (the module helper that degrades to allowed); backend/app/entitlements/unlimited.py; backend/app/services/entitlement_service.py; backend/app/main.py (`_dispatch_daily_knowledge_sync_wave`, `_dispatch_analytics_collect_wave`, `_scheduler_loop`); backend/tests/unit/test_scheduled_work_needs_a_plan.py
+
+### SCN-147: The schedule says why it is off and what turns it on
+- **Persona:** owner
+- **Feature:** billing
+- **Traces:** FLW-01, FLW-04
+- **Entry point:** workspace → the project's sync-hour control; Schedules surface
+- **Preconditions:** the account may not run scheduled work
+- **Steps:**
+  1. User opens the sync-hour control -> system shows it disabled with one sentence: scheduled syncs need a subscription, and manual indexing does not
+  2. User reads the Repositories group -> each card says `last indexed manually` rather than implying a nightly refresh that will not happen
+  3. User follows the upgrade route -> system opens the plans surface; if no plan has a live Stripe price, it says so instead of offering a page that cannot take payment
+- **Expected result:** the absence of automation is visible where the user would expect the automation, and it is never mistaken for a failure
+- **Alt paths:** the account may run scheduled work -> the control is editable and this notice never appears
+- **UI elements:** disabled sync-hour control with its reason, per-card `last indexed manually` label, upgrade route, the self-hosted fallback message when Stripe is unconfigured
+- **States covered:** empty, success
+- **Errors & recovery:** the entitlement cannot be read -> the control renders disabled with "could not check your plan" and a retry; it does not default to enabled, because promising a nightly run that will not happen is the failure this scenario exists to prevent
+- **Status:** draft
+- **Coverage:** backend/app/entitlements/__init__.py (the gate this scenario reports on exists); planned: frontend/src/components/workspace/DataWorkspace.tsx, planned: backend/app/api/routes/projects.py (the `sync-schedule` route must report whether the schedule may run at all)
+
+### SCN-148: A granted account behaves exactly as its plan
+- **Persona:** owner
+- **Feature:** billing
+- **Traces:** FLW-01
+- **Entry point:** none — the grant is operator configuration, and the account simply behaves as its plan
+- **Preconditions:** the deployment grants a plan to a named account without Stripe
+- **Steps:**
+  1. Operator names the account and the plan in configuration -> system reconciles a subscription row for it at start-up, idempotently, without contacting Stripe
+  2. User signs in -> system resolves the granted plan's entitlements: its quotas, its token ceilings, and its right to run scheduled work
+  3. Night falls -> system runs the nightly sync for that account like any paid one
+  4. Operator removes the grant -> system returns the account to no-plan at the next start-up, and the schedule stops
+- **Expected result:** a comped account is indistinguishable from a paying one in behaviour, and the grant is a recorded configuration rather than a hand-edited row
+- **Alt paths:** the granted plan id does not exist in the catalogue -> the grant is refused at start-up with a log line naming it, and the account stays on no-plan rather than resolving to something unintended
+- **UI elements:** none of its own; the billing surface shows the granted plan's name and no Stripe portal link, because there is no Stripe subscription to manage
+- **States covered:** success
+- **Errors & recovery:** the reconcile cannot run -> it logs and never blocks boot, and the account degrades to no-plan, which is the safe direction for a grant. A granted row carries **no** `stripe_subscription_id`, which is what keeps `BillingService.reconcile` from cancelling it — that path already filters on the column being non-null and names manual grants as the reason
+- **Status:** implemented
+- **Coverage:** backend/app/ops/plan_grant_reconcile.py; backend/app/config.py (`plan_grants`); backend/app/main.py (reconciled in the lifespan, after the catalogue); backend/app/services/billing_service.py (`reconcile` skips rows with no Stripe id); backend/tests/unit/test_scheduled_work_needs_a_plan.py
 
 ## usage
 
@@ -2226,3 +2401,299 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Status:** implemented
 - **Audit note (2026-08-16):** PARTIAL on the first pass, same root cause as SCN-122 — "above it sit the response-type chip and the seal" did not hold for a plain text answer. One guard, one fix, deliberately filed as one finding rather than two
 - **Coverage:** frontend/src/components/chat/ChatMessage.tsx; frontend/src/components/chat/ChatPanel.tsx; frontend/src/app/globals.css; frontend/src/__tests__/components/ChatMessage.test.tsx
+
+## workspace
+
+### SCN-129: Data workspace — every source managed on one screen
+- **Persona:** owner
+- **Feature:** workspace
+- **Traces:** FLW-01, FLW-02, FLW-03, FLW-04
+- **Entry point:** top-bar "Data" button; replaces today's narrow `connections` centre panel
+- **Preconditions:** a project is active
+- **Steps:**
+  1. User clicks "Data" -> system opens the workspace in the centre panel at the full width of the content column, with three groups: Databases & sources, Repositories, Documentation
+  2. User reads a group -> system shows one card per item carrying its type, name, health dot, freshness line and counts
+  3. User clicks a card -> system expands it in place into its management form — edit, test, index, describe, delete — without a modal and without the sidebar
+- **Expected result:** every source of the project is visible and manageable on one screen; no management action requires the sidebar
+- **Alt paths:** viewer opens the workspace -> cards render read-only with no edit/index/delete; no project active -> "Select a project first", as the panel does today
+- **UI elements:** "Data" top-bar button, three group headings with counts, "Add" per group, source cards (type icon, name, health dot, freshness, counts), in-place expander, per-card Edit / Test / Index / Describe / Delete
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** a group's list fails to load -> that group shows an inline error with Retry while the other groups still render, rather than one failure blanking the screen; a card's health probe fails -> the card reads "health unknown" and stays manageable
+> **Layout.**
+
+```
+  +----------------+-----------------------------------------------+
+  |  sidebar       |  Data workspace                               |
+  |  (switching)   |                                               |
+  |                |  DATABASES & SOURCES (2)          [+ Add]     |
+  |  Projects      |  +-----------------------------------------+  |
+  |   > nicegram   |  | (o) nicegram        postgres  read-only |  |
+  |     acme       |  |     718 tables - indexed 2h ago         |  |
+  |                |  |     "billing ledger, money in cents"    |  |
+  |  Chats         |  +-----------------------------------------+  |
+  |   > today      |  | (o) nicegram_hub    postgres  read-only |  |
+  |     earlier    |  |     41 tables - never indexed  [Index]  |  |
+  |                |  |     No purpose set          [Describe]  |  |
+  |                |  +-----------------------------------------+  |
+  |                |                                               |
+  |                |  REPOSITORIES (2)                 [+ Add]     |
+  |                |  +-----------------------------------------+  |
+  |                |  | (o) api        main   9,981 files       |  |
+  |                |  |     indexed 3h ago - head matches       |  |
+  |                |  +-----------------------------------------+  |
+  |                |                                               |
+  |                |  DOCUMENTATION (758)         [Refresh docs]   |
+  +----------------+-----------------------------------------------+
+```
+
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/workspace/DataWorkspace.tsx; frontend/src/app/app/page.tsx (the `connections` panel at the `effectivePanel` switch), frontend/src/components/connections/ConnectionsPanel.tsx (the `max-w-xl` wrapper this supersedes)
+
+### SCN-130: Add a source without leaving the workspace
+- **Persona:** owner
+- **Feature:** workspace
+- **Traces:** FLW-02
+- **Entry point:** workspace → Databases & sources → "Add"
+- **Preconditions:** owner; a project is active
+- **Steps:**
+  1. User clicks "Add" -> system opens an inline panel in the centre column offering the source kinds: Database, MCP server, Analytics source
+  2. User picks Database -> system reveals the database form in place, with the type select and its default port
+  3. User fills the fields and clicks "Test connection" -> system reports the outcome inline beside the fields, naming the failure when there is one
+  4. User clicks Create -> system adds the card to the group, collapses the form, and offers "Index now" on the new card
+- **Expected result:** a source is created and appears as a card; the user never left the workspace and never opened a modal
+- **Alt paths:** user picks Analytics source -> the GA4 flow of SCN-113 runs inside the same inline panel; user picks MCP server -> the MCP fields of SCN-027 do; user cancels -> the form collapses and nothing is created
+- **UI elements:** "Add" button, source-kind chooser, inline form, "Test connection" button with inline result, Create (Saving…) / Cancel, "Index now" on the new card
+- **States covered:** loading, error, success
+- **Errors & recovery:** empty name -> inline "Name is required" with the field focused, rather than the silent return the sidebar form does today; SSH host without user or key -> inline message on the offending field; create fails -> inline error above the form with the input preserved; quota reached -> the 402 of SCN-100 rendered in place with the upgrade route
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/workspace/DataWorkspace.tsx, planned: frontend/src/components/connections/ConnectionSelector.tsx (the form logic it reuses)
+
+### SCN-131: A new project's workspace says what to connect first
+- **Persona:** owner
+- **Feature:** workspace
+- **Traces:** FLW-01
+- **Entry point:** workspace of a project with nothing connected — reached right after SCN-016, including the second and later project
+- **Preconditions:** owner; the project has no connections, no repository, no documents
+- **Steps:**
+  1. User opens the workspace of a fresh project -> system shows the three groups, each empty, each with one sentence naming what it unlocks and a single primary action
+  2. User reads the order -> system states that a data source comes first, because a repository is only picked up by the nightly wave once the project has an active connection
+  3. User clicks the one primary action -> the flow of SCN-130 starts
+- **Expected result:** the user knows the next step and why it is that step; the ordering constraint is stated rather than discovered by a repository that silently never indexes
+- **Alt paths:** the user connects a repository first anyway -> the Repositories group shows "indexed manually only — no data source connected yet" with the action to add one, so the consequence is visible where it applies
+- **UI elements:** three empty-group cards, per-group one-line explanation, one primary action, the ordering note
+- **States covered:** empty
+- **Errors & recovery:** nothing can fail — the screen reads state that is already loaded
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/workspace/DataWorkspace.tsx, planned: backend/app/services/daily_knowledge_sync_service.py (the eligibility rule the note states)
+
+### SCN-132: Each source card says what the agent can do with it
+- **Persona:** analyst
+- **Feature:** workspace
+- **Traces:** FLW-02
+- **Entry point:** workspace → any source card
+- **Preconditions:** a project with at least one source
+- **Steps:**
+  1. User scans the cards -> each states its capability in the product's terms: queryable, read-only, indexed-not-queryable, or collected-on-a-schedule
+  2. User reads a card with no description -> system shows "No purpose set — the agent will infer one" with a Describe action
+  3. User reads a card whose index is stale -> system shows the age and the one action that fixes it
+- **Expected result:** a user can tell, without opening anything, what each source contributes to an answer and what is missing
+- **Alt paths:** an analytics source -> the card shows its coverage and pending periods per SCN-115 instead of a table count, because it is collected rather than queried
+- **UI elements:** capability chip, read-only chip, freshness line, counts, "No purpose set" placeholder with Describe, single remedial action per stale card
+- **States covered:** empty, success
+- **Errors & recovery:** capability cannot be determined -> the chip reads "unknown" and links to Test, never defaulting to queryable; an analytics source must never advertise a query capability, per `is_queryable_database`
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/workspace/DataWorkspace.tsx, planned: backend/app/services/connection_service.py (`is_queryable_database`, the predicate the chip must read)
+
+### SCN-133: The sidebar switches, the workspace manages
+- **Persona:** analyst
+- **Feature:** workspace
+- **Traces:** FLW-01
+- **Entry point:** the sidebar, after the workspace ships
+- **Preconditions:** the workspace of SCN-129 exists
+- **Steps:**
+  1. User opens the sidebar -> system shows switching only: projects, sources and chats as selectable rows, with current selection marked
+  2. User looks for a create or delete action there -> system offers none; each group header links to the workspace instead
+  3. User clicks a source row -> system selects it for the chat and leaves the centre panel on chat, rather than opening a management form
+- **Expected result:** exactly one place manages a source and exactly one place switches between them; the two are not the same place. What the rail becomes once management leaves is SCN-149, and the group that makes it worth looking at is SCN-150
+- **Alt paths:** on the narrow layout the sidebar is a drawer -> the same rule holds, and management opens the workspace full-screen
+- **UI elements:** sidebar project rows, source rows, chat rows, per-group "Manage" link, selection markers
+- **States covered:** empty, success
+- **Errors & recovery:** nothing can fail — no action is taken here beyond selection
+> **Reconciliation.** This scenario changes the **Entry point** of SCN-025, SCN-026, SCN-027, SCN-028, SCN-029, SCN-030, SCN-031, SCN-032 and SCN-037, all of which read "sidebar …" today. They must be edited in the same change that removes the sidebar's management affordances, and they drop back to `draft` when they are. Until then both entry points exist and the sidebar remains authoritative.
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/Sidebar.tsx, planned: frontend/src/components/workspace/DataWorkspace.tsx
+
+### SCN-149: The sidebar answers "where was I, and what needs me"
+- **Persona:** analyst
+- **Feature:** workspace
+- **Traces:** FLW-01
+- **Entry point:** every authenticated screen — the left rail is always present
+- **Preconditions:** signed in; a project is active
+- **Steps:**
+  1. User signs in and looks left -> system shows, in this order: the project switcher, anything that needs attention, five navigation entries, and the recent chats
+  2. User reads the rail top to bottom -> it answers two questions and no others: *where am I* and *what needs me* (IS-01)
+  3. User clicks a navigation entry -> system changes the centre panel and the rail does not change shape
+  4. User clicks a recent chat -> system opens it with the rail's selection marked
+  5. User looks for a create or delete control for a source -> the rail offers none; management is the workspace of SCN-129 (SCN-133)
+- **Expected result:** the rail is a place to stand and a place to return to, not a control panel; nothing in it needs to be expanded before it is useful
+- **Alt paths:** narrow layout -> the rail is a drawer with the same order and the same five entries; a viewer -> the same rail, with entries their role cannot use absent and explained rather than dead (IS-17)
+- **UI elements:** project switcher (fixed, not collapsible); `Needs you` group (absent when empty); five navigation entries — Chat, Data, Knowledge, Dashboards, Activity; `Recent` chat list with `all chats →`; account entry at the foot
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** the recent list fails -> that block shows an inline retry and the navigation still works, because a rail that cannot navigate is worse than one with a stale list; the project list fails -> the switcher says so and keeps the last known active project rather than emptying the screen
+> **What leaves the rail, and where it goes.** Thirteen collapsible sections is the defect, and it is a structural one: account configuration, project management, work and reports were stacked in one column at equal weight, so the rail had no answer to either question above. SSH Keys and Vendor Credentials → Settings → Credentials. Projects → the switcher, with its management in the workspace. Repository and Connections → the workspace (SCN-129). Custom Rules → the Knowledge panel, where the rest of the project's knowledge already lives. Schedules → the workspace, beside the sources they automate. Usage and Analytics → Settings. Request History → Activity. Chat History stays, shortened, as `Recent`.
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/Sidebar.tsx (976 lines and thirteen `SidebarSection`s today), planned: frontend/src/components/ui/SidebarSection.tsx
+
+### SCN-150: The sidebar surfaces what needs attention and routes to the fix
+- **Persona:** analyst
+- **Feature:** workspace
+- **Traces:** FLW-01
+- **Entry point:** the `Needs you` group of SCN-149
+- **Preconditions:** something in the project is failed, stale, never-run or unread
+- **Steps:**
+  1. User signs in after a night -> system lists what changed against them: an index that failed or was reaped, a source never indexed, a schedule that did not run, a document behind its repository head, an unresolved insight
+  2. User reads one entry -> it names the thing, what happened, and when, in one line (IS-02, IS-16)
+  3. User clicks it -> system opens the exact surface that fixes it, with the item in view — not a list the user must search
+  4. User fixes it -> the entry leaves the group; when the last one goes, the group disappears rather than becoming an empty box
+- **Expected result:** the first thing a returning user sees is the shortest true list of what needs them, and every entry is one click from its remedy
+- **Alt paths:** nothing needs attention -> the group is **absent**, not an empty state, because a permanent "all good" box trains people to stop reading the rail (IS-05, IS-06); more than five entries -> the five most severe are shown with `N more →` into Activity
+- **UI elements:** `Needs you` group header with a count, one line per entry (subject, what happened, age), severity marker, `N more →`
+- **States covered:** empty (absent), loading, error, success
+- **Errors & recovery:** the attention query fails -> the group shows one line saying it could not check, which is different from "nothing needs you" and must never render as it; a routed-to item no longer exists -> the target surface says it was removed and the entry clears
+> **Why this earns the space it takes.** Every input already exists and none of it is surfaced on return: failed and reaped runs are catalogued in `error_log` and `/api/logs`, freshness states are computed by `KnowledgeFreshnessService`, a schedule that did not run is in `sync-history`, and unresolved insights are the feed of SCN-065. Production ran 143 failed runs and `index_repo` completed 16 times in 94 runs; a user could learn none of that from the interface without going looking.
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/Sidebar.tsx, planned: backend/app/services/knowledge_freshness_service.py, backend/app/api/routes/logs.py, backend/app/api/routes/projects.py (`sync-history`)
+
+## repos
+
+### SCN-137: Connect a repository to a project
+- **Persona:** owner
+- **Feature:** repos
+- **Traces:** FLW-03
+- **Entry point:** workspace → Repositories → "Add"; today the same fields live inside the project form of SCN-016/SCN-018
+- **Preconditions:** owner; a project is active; an SSH key exists for a private repository
+- **Steps:**
+  1. User clicks "Add" under Repositories -> system shows the repository form: name, URL, branch, SSH key
+  2. User pastes an SSH URL -> system detects that a key is required and probes access as the user stops typing
+  3. User sees the probe result -> system reports reachable with the resolved head, or the exact reason it failed
+  4. User clicks Create -> system adds the repository card and offers "Index now" with the first-run duration estimate
+- **Expected result:** the repository is attached to the project as its own item, visible with its own status, and ready to index
+- **Alt paths:** a public HTTPS URL -> no key is requested; user creates without indexing -> the card reads "never indexed" with the action still offered
+- **UI elements:** "Add" button, name / URL / branch / SSH-key fields, live access-probe result, Create / Cancel, "Index now" with estimate
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** unreachable or unauthorised -> the probe names which of the two it was and the form keeps every field; branch does not exist -> inline error on the branch field naming the branches that do; branch fails validation -> refused before submit, since the value reaches `git checkout` as an argument
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/workspace/DataWorkspace.tsx, backend/app/api/routes/repos.py (`check-access` and the repositories CRUD it uses), backend/app/services/repository_service.py
+
+### SCN-138: Connect a second repository
+- **Persona:** owner
+- **Feature:** repos
+- **Traces:** FLW-03
+- **Entry point:** workspace → Repositories → "Add", with one repository already attached
+- **Preconditions:** owner; the project already has one connected repository
+- **Steps:**
+  1. User adds a second repository through SCN-137 -> system creates it beside the first, each with its own name, branch, key and status
+  2. User starts its index -> system queues it behind any repository index already running for this project rather than running the two together
+  3. User watches both cards -> each shows its own run, progress and last-indexed commit, and neither reports the other's state
+  4. User asks a question spanning both -> the answer draws on both and attributes each part per SCN-141
+- **Expected result:** two repositories coexist under one project, index independently, and both reach the agent
+- **Alt paths:** the user removes the first repository -> the second keeps its knowledge untouched, per SCN-142
+- **UI elements:** repository cards with per-repository status, per-repository Index action, queue position when one is waiting
+- **States covered:** loading, empty, error, success
+- **Errors & recovery:** one repository's index fails -> only its card reports the failure and the other stays indexed and queryable; **the indexes must not run concurrently** — one repository index measures 415 MiB of peak worker memory against a 512 MiB quota, so a second beside it is the R15 kill this product has already had, and serialising them is a requirement of this scenario rather than an optimisation
+> **Scope taken 2026-09-07 (decision D1: several repositories per project).** Today a second repository is created and never indexed. The CRUD writes `project_repositories` while every consumer reads `Project.repo_url`, so `POST /api/repos/{id}/index` on a project whose only repository is a table row answers `400 "Project has no repository URL configured"` (measured 2026-09-07). Implementing this scenario means giving the indexing pipeline, the code graph, the BM25 snapshot, the docs and GitAgent a repository dimension. That work is now in scope; this scenario is the acceptance test for it.
+- **Status:** draft
+- **Coverage:** none yet; planned: backend/app/knowledge/pipeline_runner.py, planned: backend/app/api/routes/repos.py, planned: backend/app/agents/git_agent.py, backend/app/models/repository.py
+
+### SCN-139: Say what a repository is for, and what to ignore
+- **Persona:** editor
+- **Feature:** repos
+- **Traces:** FLW-03
+- **Entry point:** workspace → repository card → "Describe"
+- **Preconditions:** editor/owner; a repository is connected
+- **Steps:**
+  1. User opens Describe on a repository -> system shows three fields: what this repository is, which data source it owns, and paths to ignore
+  2. User fills them — e.g. "Laravel API, owns the nicegram DB", ignore `vendor/`, `storage/`, `*.generated.php` -> system saves them onto the repository
+  3. User re-indexes -> system applies the ignore list during extraction and records the ownership claim for the code-to-database map
+  4. User opens the code-to-database map -> tables are attributed to the repository that declares them instead of to a guess
+- **Expected result:** the analyser is told what the repository is, and the answer's provenance improves visibly rather than as a claim
+- **Alt paths:** no context set -> extraction behaves as it does today and the card says the analyser is inferring; the ignore list matches everything -> refused with the count it would have excluded
+- **UI elements:** "Describe" action, role field, owned-source select, ignore-path list with add/remove, Save / Cancel, "the analyser is inferring" placeholder
+- **States covered:** empty, loading, error, success
+- **Errors & recovery:** an ignore pattern is invalid -> inline error naming the pattern, the rest still save; the owned-source select points at a deleted connection -> the claim renders as "source removed" and is not used, rather than silently matching nothing
+> **Why this earns its place.** The code-to-database map for the one real customer named 39 tables of which six existed, because class names in generated `vendor/` code were pluralised into table names. A human-supplied ignore list and ownership claim is the input that shape rules alone cannot supply.
+- **Status:** draft
+- **Coverage:** none yet; planned: backend/app/models/repository.py (context columns and migration), planned: backend/app/knowledge/repo_analyzer.py, planned: frontend/src/components/workspace/DataWorkspace.tsx
+
+### SCN-140: Index one repository without disturbing the other
+- **Persona:** editor
+- **Feature:** repos
+- **Traces:** FLW-03
+- **Entry point:** workspace → repository card → "Index"
+- **Preconditions:** editor/owner; two or more repositories are connected
+- **Steps:**
+  1. User clicks Index on one repository -> system starts a run scoped to that repository and shows it on that card only
+  2. User clicks Index on the second while the first runs -> system accepts it and shows "waiting for the running index" with its position, rather than refusing or running both
+  3. First run finishes -> system starts the queued one automatically and the card moves from waiting to running
+  4. User cancels the queued one -> system removes it from the queue and leaves the running one alone
+- **Expected result:** repository indexes are independent in scope and serial in execution, and the interface says which of the two is true at any moment
+- **Alt paths:** only one repository exists -> the queue notice never appears
+- **UI elements:** per-card Index action, run state (waiting / running / failed / done), queue position, Cancel, per-card last-indexed commit
+- **States covered:** loading, error, success
+- **Errors & recovery:** the running index is reaped as stale -> the queued one still starts and the reaped card says it was reaped with the step it died on; the queue is lost to a restart -> the waiting card says so and offers the action again, because a queue position is not a promise the process can keep across a deploy
+- **Status:** draft
+- **Coverage:** none yet; planned: backend/app/api/routes/repos.py (`_indexing_locks` is per-project today and per-process only), planned: frontend/src/components/workspace/DataWorkspace.tsx
+
+### SCN-141: The answer names the repository it came from
+- **Persona:** analyst
+- **Feature:** repos
+- **Traces:** FLW-03
+- **Entry point:** chat answer that used code knowledge, with more than one repository connected
+- **Preconditions:** two or more repositories are indexed
+- **Steps:**
+  1. User asks a question about the code -> system answers and attributes each cited file to its repository by name
+  2. User opens the seal -> system lists which repositories were searched and which returned nothing
+  3. User clicks a citation -> system opens the document or symbol in the repository it belongs to
+- **Expected result:** with several repositories connected, an answer is never ambiguous about which one it describes
+- **Alt paths:** only one repository is connected -> the name is still shown, so the format does not change when a second is added
+- **UI elements:** per-citation repository label, seal repository list with searched/empty state, citation links
+- **States covered:** empty, success
+- **Errors & recovery:** a citation's repository can no longer be resolved -> the label reads "repository removed" and the citation still renders, since it records what the answer used
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/ui/Seal.tsx, planned: backend/app/knowledge/pipeline_runner.py (chunk attribution), planned: backend/app/agents/knowledge_agent.py
+
+### SCN-142: Disconnect a repository
+- **Persona:** owner
+- **Feature:** repos
+- **Traces:** FLW-03
+- **Entry point:** workspace → repository card → Delete
+- **Preconditions:** owner; the repository is connected
+- **Steps:**
+  1. User clicks Delete -> system asks for confirmation and names exactly what will be removed: the repository, its documents, its symbols and edges, its search snapshot, and what will be kept
+  2. User confirms by typing or pressing the destructive action -> system removes the repository and its derived knowledge
+  3. User returns to the workspace -> the card is gone, the other repositories are untouched, and the document count has fallen by the removed repository's share
+- **Expected result:** the repository and only its own knowledge are removed, and the user was told what that included before agreeing
+- **Alt paths:** user cancels -> nothing is removed; the repository has an index running -> the confirmation says the run will be cancelled first
+- **UI elements:** Delete action, confirmation dialog naming removed and kept artefacts, destructive-styled confirm, Cancel
+- **States covered:** loading, error, success
+- **Errors & recovery:** delete fails midway -> the card stays with a "partially removed" state and a Retry, rather than disappearing while its knowledge remains; cleanup of on-disk artefacts is best effort and the dialog says so, because a snapshot lives on an ephemeral disk the request cannot reach
+- **Status:** draft
+- **Coverage:** none yet; planned: backend/app/services/indexing_artifacts.py, planned: backend/app/api/routes/repos.py, planned: frontend/src/components/workspace/DataWorkspace.tsx
+
+### SCN-143: Repository access is refused — recovery without losing the form
+- **Persona:** owner
+- **Feature:** repos
+- **Traces:** FLW-03
+- **Entry point:** repository form of SCN-137, on a failing access probe
+- **Preconditions:** the URL or the key is wrong
+- **Steps:**
+  1. User submits a repository whose key has no access -> system reports "authenticated, but this key cannot read that repository" and keeps every field
+  2. User switches the SSH key in the same form -> system re-probes without the user retyping the URL or branch
+  3. Probe succeeds -> system enables Create and shows the resolved head
+- **Expected result:** a failed probe is diagnosable and recoverable in place, and no input is lost to it
+- **Alt paths:** the user has no key yet -> the form links to key creation and returns with the new key selected
+- **UI elements:** probe result panel with the distinguished reason, SSH-key select, re-probe indicator, Create (disabled until a probe passes), preserved field values
+- **States covered:** loading, error, success
+- **Errors & recovery:** host unreachable, host-key unknown, key rejected, repository not found and branch not found are five different messages, not one "could not connect"; a key the user does not own is refused as not-found per SCN-121, and the message must not confirm the id exists
+- **Status:** draft
+- **Coverage:** none yet; planned: frontend/src/components/workspace/DataWorkspace.tsx, backend/app/api/routes/repos.py (`check-access`)

@@ -62,3 +62,21 @@ class Entitlements(Protocol):
         convention `check_budget` and `_strictest` already use — a second way to say the
         same thing is a second thing to keep in step."""
         ...
+
+    async def may_run_scheduled_work(self, db: AsyncSession, user_id: str) -> bool:
+        """May this account's work run **unattended**?
+
+        Added 2026-09-07 with the decision recorded in `SCN-146`. It is a capability, not
+        a ceiling, which is why it could not be expressed by any of the three above: an
+        unpaid account has no limits at all here (`0` everywhere) and must still not have
+        a cron burning LLM tokens for it overnight.
+
+        Asked by the three scheduled paths and nothing else — the nightly knowledge sync,
+        the analytics collection wave and the scheduled-query loop. A manual action is
+        never gated on it: the user is present, watching, and asking.
+
+        **Ask this through `app.entitlements.may_run_scheduled_work`, not through a
+        provider directly.** The module helper is what lets a provider built against the
+        older three-method surface stay working.
+        """
+        ...

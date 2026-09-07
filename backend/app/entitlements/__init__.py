@@ -10,6 +10,10 @@ package, or the package is not separable.
 
 from __future__ import annotations
 
+import logging
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.entitlements.base import Entitlements, QuotaExceededError
 from app.entitlements.unlimited import UnlimitedEntitlements
 
@@ -18,9 +22,12 @@ __all__ = [
     "QuotaExceededError",
     "UnlimitedEntitlements",
     "get_entitlements",
+    "may_run_scheduled_work",
     "reset_entitlements",
     "set_entitlements",
 ]
+
+logger = logging.getLogger(__name__)
 
 #: A one-slot holder rather than a module `global`. The two PLW0603 suppressions the
 #: `global` form needed bought nothing, and the suppression ratchet asking whether they
@@ -41,3 +48,40 @@ def reset_entitlements() -> None:
 
 def get_entitlements() -> Entitlements:
     return _slot.get("provider") or UnlimitedEntitlements()
+
+
+async def may_run_scheduled_work(db: AsyncSession, user_id: str) -> bool:
+    """May this account's work run unattended? Ask here, never a provider directly.
+
+    Two things this function exists for, and neither is delegation.
+
+    **A provider may predate the question.** The whole point of `Entitlements` being a
+    structural `Protocol` is that the private cloud package satisfies it without
+    importing this repository — so a package built against the three-method surface has
+    no fourth method, and `getattr` is the only honest way to ask. When it cannot answer,
+    the answer is **yes**, for the reason `reset_entitlements` already gives: an image
+    that has lost part of its billing configuration degrades to working, not to broken.
+    An unmetered night is recoverable and visible in the usage table; a paying customer
+    whose nightly sync stopped without a word is the failure nobody notices for a week.
+
+    **A provider may fail.** A billing lookup that raises must not take the cron down
+    with it, and it must not silently withhold the work either — so it is logged and
+    allowed, the same direction as above.
+    """
+    provider = get_entitlements()
+    ask = getattr(provider, "may_run_scheduled_work", None)
+    if ask is None:
+        logger.debug(
+            "entitlements: %s cannot answer may_run_scheduled_work; allowing",
+            type(provider).__name__,
+        )
+        return True
+    try:
+        return bool(await ask(db, user_id))
+    except Exception:
+        logger.warning(
+            "entitlements: could not check whether %s may run scheduled work; allowing",
+            user_id[:8],
+            exc_info=True,
+        )
+        return True

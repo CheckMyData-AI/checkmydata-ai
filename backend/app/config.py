@@ -1085,6 +1085,17 @@ class Settings(BaseSettings):
     # ``ADMIN_EMAILS`` env var (JSON list, e.g. ``["alice@x.com","bob@x.com"]``).
     admin_emails: list[str] = []
 
+    # Comped plans, reconciled at boot by ``app/ops/plan_grant_reconcile.py``. Each entry
+    # is ``email=plan_id``; the plan must exist in ``plan_catalogue.PAID_TIERS`` or the
+    # grant is refused rather than guessed. JSON list, e.g.
+    # ``PLAN_GRANTS='["owner@example.com=enterprise"]'``.
+    #
+    # This exists because the scheduled-work gate (SCN-146) withholds unattended work
+    # from any account with no plan, and on a deployment with `BILLING_ENABLED=true` and
+    # no Stripe key that is every account — there is nothing to buy a plan from. Removing
+    # an entry returns the account to no-plan at the next boot, which stops its schedule.
+    plan_grants: list[str] = []
+
     def is_admin_email(self, email: str | None) -> bool:
         """Return True when the given email is configured as admin."""
         if not email:

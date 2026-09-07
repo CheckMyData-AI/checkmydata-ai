@@ -22,3 +22,10 @@ class UnlimitedEntitlements:
     async def effective_token_limits(self, db: AsyncSession, user_id: str) -> tuple[int, int]:
         """``(0, 0)`` — 0 = unlimited, the convention used throughout this codebase."""
         return (0, 0)
+
+    async def may_run_scheduled_work(self, db: AsyncSession, user_id: str) -> bool:
+        """Yes. A build with no billing layer has nothing to withhold automation for, and
+        a self-hosted clone whose nightly sync silently stopped would be the same defeat
+        as one that cannot boot. Stated explicitly rather than inherited from the module
+        helper's fallback, so the open-source answer is a decision and not an accident."""
+        return True
