@@ -652,6 +652,12 @@ Read `vision.md` before any new feature. If a request conflicts with §7 invaria
   `SCN-\d+[a-z]?`. Related: a draft's Index audit cell must be bare `—`. A date or
   a `PASS` there is counted as a live verification, so parking history in that cell
   makes a draft read as verified — the history goes in the body.
+- **Run `make ux-status` AFTER staging, never before.** The block's
+  *Referenced from code or tests* figure comes from `git grep`, which sees only
+  TRACKED files — so a new test that names a scenario is invisible until it is
+  added, and a block generated before `git add` disagrees with the table the
+  moment the commit lands. `test_the_block_agrees_with_the_table_it_summarises`
+  then fails on a tree where nothing is actually wrong.
 - **The index table stays at six columns.** `scripts/ux_verification_status.py`
   reads status and last-audit by position, so a `Traces` column would silently
   shift both. New scenarios carry `Traces:` in the body instead.

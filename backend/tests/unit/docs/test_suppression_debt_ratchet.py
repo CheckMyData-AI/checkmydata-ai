@@ -249,7 +249,12 @@ CEILINGS: dict[str, int] = {
     # The second one was already declared in the `# noqa` metric while its shape stayed
     # invisible here. Both predate this change and are recorded, not edited.
     "except ...: pass": 57,
-    "# type: ignore": 49,
+    # 49 -> 50 on 2026-09-08. One, on `ConnectionResponse.capability`,
+    # and it is pydantic's documented workaround rather than a silenced type error:
+    # mypy does not support decorators above `@property`, and `@computed_field` is
+    # exactly that. The identical ignore already sits on `source_config` in the same
+    # class, for the identical reason.
+    "# type: ignore": 50,
     # 129 → 130 on 2026-08-31. One, in `BillingService.reconcile`: BLE001 on a per-row
     # handler, because a subscription Stripe cannot answer for must not end the sweep
     # over the rest — reconciliation exists precisely for the rows nobody noticed.

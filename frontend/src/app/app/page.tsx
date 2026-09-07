@@ -9,7 +9,7 @@ import { AuthGate } from "@/components/auth/AuthGate";
 import { EmailVerifyBanner } from "@/components/auth/EmailVerifyBanner";
 import { ProjectOverview } from "@/components/projects/ProjectOverview";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
-import { ConnectionsPanel } from "@/components/connections/ConnectionsPanel";
+import { DataWorkspace } from "@/components/workspace/DataWorkspace";
 import { KnowledgePanel } from "@/components/knowledge/KnowledgePanel";
 import { DashboardsPanel } from "@/components/dashboards/DashboardsPanel";
 import { useAppStore } from "@/stores/app-store";
@@ -156,9 +156,12 @@ function AppPageContent() {
       );
     }
     if (effectivePanel === "connections") {
+      // The `connections` route name is kept: it is a URL people already have, and
+      // renaming it would break links to buy a tidier word. What it renders is now the
+      // whole data workspace (SCR-01) rather than a narrow list of connections.
       return (
-        <SectionErrorBoundary sectionName="Connections">
-          <ConnectionsPanel />
+        <SectionErrorBoundary sectionName="Data">
+          <DataWorkspace />
         </SectionErrorBoundary>
       );
     }

@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Проверка подсистем по продовой телеметрии</title>
+<style>
+  :root{
+    --bg:#0d0f13; --panel:#161a21; --panel2:#1c212a; --line:#2a3140;
+    --txt:#e7ebf2; --dim:#98a3b6; --acc:#6ea8ff; --ok:#4ec9a0;
+    --warn:#e0b341; --bad:#ff6b6b; --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:16px/1.62 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+  .wrap{max-width:1200px;margin:0 auto;padding:56px 28px 120px}
+  h1{font-size:2.1rem;line-height:1.18;margin:0 0 8px;letter-spacing:-.02em}
+  .sub{color:var(--dim);font-size:1rem;margin:0 0 36px}
+  h2{font-size:1.38rem;margin:54px 0 6px;letter-spacing:-.01em}
+  h2 .n{color:var(--acc);font-family:var(--mono);font-size:.84em;margin-right:.5em}
+  h3{font-size:1.04rem;margin:28px 0 8px}
+  p{margin:10px 0}
+  code{font-family:var(--mono);font-size:.87em;background:#080a0e;
+    border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:#cfe0ff}
+  .lede{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--bad);
+    border-radius:8px;padding:20px 24px;margin:0}
+  .lede p:first-child{margin-top:0}.lede p:last-child{margin-bottom:0}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:.91rem}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.06em}
+  tbody tr:hover{background:var(--panel)}
+  td.num{font-family:var(--mono);white-space:nowrap}
+  .tw{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+  .tw table{margin:0}
+  .b{display:inline-block;font-family:var(--mono);font-size:.73rem;font-weight:600;
+    padding:2px 7px;border-radius:4px;white-space:nowrap}
+  .b-bad{background:rgba(255,107,107,.14);color:var(--bad);border:1px solid rgba(255,107,107,.35)}
+  .b-warn{background:rgba(224,179,65,.14);color:var(--warn);border:1px solid rgba(224,179,65,.35)}
+  .b-ok{background:rgba(78,201,160,.14);color:var(--ok);border:1px solid rgba(78,201,160,.35)}
+  .b-dim{background:rgba(152,163,182,.12);color:var(--dim);border:1px solid var(--line)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px 22px;margin:14px 0}
+  .card.bad{border-left:3px solid var(--bad)}
+  .card.warn{border-left:3px solid var(--warn)}
+  .card.ok{border-left:3px solid var(--ok)}
+  .card h4{margin:0 0 6px;font-size:1rem}
+  .g{display:grid;gap:13px;grid-template-columns:repeat(auto-fit,minmax(215px,1fr))}
+  .kpi{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:15px 17px}
+  .kpi .v{font-family:var(--mono);font-size:1.6rem;font-weight:700;letter-spacing:-.02em}
+  .kpi .l{color:var(--dim);font-size:.8rem;margin-top:2px;line-height:1.4}
+  ul,ol{margin:10px 0;padding-left:24px}
+  li{margin:5px 0}
+  hr{border:0;border-top:1px solid var(--line);margin:44px 0}
+  .foot{color:var(--dim);font-size:.85rem;margin-top:60px;border-top:1px solid var(--line);padding-top:20px}
+  .meth{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+    padding:16px 20px;margin:20px 0;font-size:.92rem;color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Проверка подсистем по продовой телеметрии</h1>
+<p class="sub">Оркестратор · индексация репозитория · работа с БД · исполнение запросов ·
+планирование · переплanирование · валидация · агент. checkmydata-ai · 2026-09-03 ·
+релиз v321</p>
+
+<div class="lede">
+<p><strong>Проверка сделана не чтением кода, а чтением того, что уже произошло:</strong>
+222 трейса за 2026-03-30 … 2026-08-27, 7 700+ спанов, 302 прогона индексации, 50
+зафиксированных отказов запросов. Каждое число ниже — запрос к живой базе, выполненный
+<em>внутри</em> дино, чтобы креды не покидали Heroku.</p>
+<p><strong>Главное: подсистема, от которой зависит свежесть всей карты код↔БД,
+заблокирована прямо сейчас</strong> — <code>code_db_sync</code> падает с
+«Monthly token budget exceeded (2 000 604/1 000 000) — upgrade your plan at /pricing»,
+последний раз <strong>сегодня</strong>. Фоновая работа системы упёрлась в
+пользовательский лимит тарифа на аккаунте оператора и советует ему обновить план.</p>
+<p><strong>И три задокументированных факта оказались неверны.</strong> Маршрутизация
+пишется как <code>unknown</code> в 222 трейсах из 222, хотя <code>CLAUDE.md</code>
+утверждает обратное; таксономия отказов не заполнена ни разу; переплanирование в
+сохранённой телеметрии не существует как сущность.</p>
+</div>
+
+<div class="g" style="margin-top:24px">
+  <div class="kpi"><div class="v" style="color:var(--bad)">222/222</div><div class="l"><code>route</code> и <code>complexity</code> = <code>unknown</code></div></div>
+  <div class="kpi"><div class="v" style="color:var(--bad)">25%</div><div class="l">трейсов завершились отказом <span style="color:var(--dim)">56 из 222</span></div></div>
+  <div class="kpi"><div class="v" style="color:var(--bad)">9 / 17</div><div class="l"><code>index_repo</code> падает <strong>после</strong> фикса N1</div></div>
+  <div class="kpi"><div class="v" style="color:var(--warn)">296 s</div><div class="l">худшая длительность против документированных 180</div></div>
+  <div class="kpi"><div class="v" style="color:var(--warn)">63%</div><div class="l">запросов потребовали LLM-починки <span style="color:var(--dim)">544 из 856</span></div></div>
+  <div class="kpi"><div class="v" style="color:var(--ok)">67 922</div><div class="l">рёбер графа кода — индексация <em>работает</em></div></div>
+</div>
+
+<div class="meth">
+<strong>Метод и его границы.</strong> Телеметрия обрывается 2026-08-27 — это последний
+трейс, а не последний день работы продукта. Август представлен 12 трейсами, поэтому
+процент отказов за август (7 из 12) я привожу с числом наблюдений, а не как «58%».
+<code>pipeline_runs</code> сейчас пуст: <code>_cleanup_pipeline_runs()</code>
+(<code>main.py:1073</code>) сметает прогоны старше <code>pipeline_run_ttl_days = 7</code>
+<em>на загрузке</em>, и мой собственный деплой v321 удалил четыре строки между двумя
+зондами. Прочитать этот ноль как «Path B никогда не сохранял прогоны» было бы ошибкой —
+<code>response_type</code> знает <code>stage_checkpoint</code> ×10 и
+<code>pipeline_complete</code> ×1, значит сохранял.
+</div>
+
+<hr>
+
+<h2><span class="n">1</span>Что заблокировано сегодня</h2>
+
+<div class="card bad">
+<h4>Фоновая индексация упёрлась в тариф оператора</h4>
+<p><code>code_db_sync</code> — джоб, который строит карту код↔БД, то есть ровно ту
+ценность, ради которой продукт существует — падает с сообщением, адресованным
+<em>покупателю</em>:</p>
+<p><code>Monthly token budget exceeded (2 000 604/1 000 000) — upgrade your plan at /pricing to continue.</code></p>
+<p>Четыре раза, последний <strong>2026-09-03</strong>. Раньше в этом же месте было
+<code>8 802 534/1 000 000</code> (2026-08-31) — то есть счётчик доходил до 8,8× лимита.</p>
+<p><strong>Откуда лимит.</strong> В окружении он снят: <code>user_monthly_token_limit = 0</code>
+и <code>user_daily_token_limit = 0</code> (0 = без лимита). Значит 1 000 000 приходит из
+<em>тарифа</em> через <code>EntitlementService</code>. У аккаунта оператора нет подписки —
+`BILLING_ENABLED=true` при нулевых `STRIPE_*` — поэтому он сидит на бесплатном потолке,
+пока его собственные фоновые джобы жгут 2 млн токенов в месяц. Потолки, поднятые строкой
+0.6 (base 7,5M, scale 22,5M), к нему не применяются: подписки нет.</p>
+<p>Это самопричинённый отказ слоя знаний, и он замкнут на строку <strong>0.4</strong> —
+единственную, заблокированную на человека.</p>
+</div>
+
+<hr>
+
+<h2><span class="n">2</span>Оркестратор и маршрутизация</h2>
+
+<div class="card bad">
+<h4><code>route</code> и <code>complexity</code> — <code>unknown</code> во всех 222 трейсах</h4>
+<p><code>SELECT COUNT(*) FROM request_traces WHERE route &lt;&gt; 'unknown'</code> → <strong>0</strong>.
+Группировка даёт единственную строку: <code>('unknown','unknown',0)</code> ×222 — включая
+десять самых свежих трейсов от 2026-08-27.</p>
+<p><code>CLAUDE.md</code> утверждает: «<em>MetricsCollector records per-request route,
+complexity (no longer <code>unknown</code> — ORCH-A03)</em>» и «<em>routing metrics always
+populated</em>». В сохранённых трейсах это не так ни в одной строке. Либо ORCH-A03 починил
+метрику в памяти и не тронул запись трейса, либо не сработал вовсе — но заявленное
+свойство продукта отсутствует, и никакой аудит маршрутизации по истории невозможен.</p>
+</div>
+
+<div class="card bad">
+<h4>Таксономия отказов не заполнена ни разу</h4>
+<p>56 трейсов со статусом <code>failed</code> — и <code>failure_kind IS NOT NULL</code>
+не даёт <strong>ни одной</strong> строки. То же в <code>query_failures</code>: 50 записей,
+<code>failure_kind</code> пуст во всех, а <code>error_type = 'unknown'</code> в 28 из 50.</p>
+<p>Колонка есть, классификатор есть, значение не пишется. «Почему это упало» —
+не отвечаемый вопрос на исторических данных, при том что схема выглядит так, будто отвечает.</p>
+</div>
+
+<div class="tw"><table>
+<thead><tr><th>Исход</th><th>Тип ответа</th><th class="num">Трейсов</th></tr></thead>
+<tbody>
+<tr><td><span class="b b-ok">completed</span></td><td><code>sql_result</code></td><td class="num">62</td></tr>
+<tr><td><span class="b b-ok">completed</span></td><td><code>text</code></td><td class="num">56</td></tr>
+<tr><td><span class="b b-bad">failed</span></td><td><code>text</code></td><td class="num">37</td></tr>
+<tr><td><span class="b b-ok">completed</span></td><td><code>generate_title</code></td><td class="num">22</td></tr>
+<tr><td><span class="b b-bad">failed</span></td><td><code>error</code></td><td class="num">16</td></tr>
+<tr><td><span class="b b-ok">completed</span></td><td><code>stage_checkpoint</code></td><td class="num">10</td></tr>
+<tr><td><span class="b b-warn">completed</span></td><td><code>step_limit_reached</code></td><td class="num">10</td></tr>
+<tr><td><span class="b b-ok">completed</span></td><td><code>clarification_request</code></td><td class="num">5</td></tr>
+<tr><td><span class="b b-bad">failed</span></td><td><code>stage_failed</code></td><td class="num">3</td></tr>
+<tr><td><span class="b b-ok">completed</span></td><td><code>pipeline_complete</code></td><td class="num">1</td></tr>
+</tbody>
+</table></div>
+
+<p><strong>56 из 222 — отказ (25%).</strong> По месяцам: март 7/16, апрель 20/73, май 5/47,
+июнь 14/56, июль 3/18, <strong>август 7 из 12</strong>. Последний месяц — худший, но на
+двенадцати наблюдениях, поэтому это сигнал, а не ставка.</p>
+
+<h3>Бюджет шагов пишется меньше чем в половине случаев</h3>
+<p><code>steps_total &gt; 0</code> — в <strong>92 трейсах из 222</strong>. В остальных 130
+записано <code>0/0</code>. Значения там, где записаны, разнородны: 100 (доW0-дефолт), 20
+(текущий), а также 25, 12, 6, 5, 4 — то есть история пересекает смену конфигурации, и
+сравнивать «шаги» между трейсами нельзя без даты.</p>
+
+<h2><span class="n">3</span>Длительность и стенные часы</h2>
+
+<p>Средняя длительность запроса — <strong>118,7 с</strong>, максимум <strong>359,7 с</strong>.
+Восемь худших — все <code>failed</code>, и семь из восьми — до 2026-08-21, то есть до
+F-SQL-03, который снял умножение дедлайна на переплanы.</p>
+
+<div class="card warn">
+<h4>Фикс помог и всё ещё не хватает</h4>
+<p>После 2026-08-21: три трейса дольше 200 с, максимум <strong>296,3 с</strong>. Документированный
+предел — <code>agent_wall_clock_timeout_seconds = 180</code>, подтверждено из живого
+конфига. Это уже не 540 с худшего случая, но и не 180: <strong>превышение в 1,6 раза
+сохраняется</strong>.</p>
+<p>Где время: <code>orchestrator:sql_agent</code> — 230 вызовов, <strong>в среднем 71,8 с
+каждый</strong>. Внутри него <code>sql:llm_call</code> 1242 вызова по 9,7 с и
+<code>sql:tool:execute_query</code> 856 по 11,8 с. Один субагент съедает больше трети
+документированного бюджета за один вход.</p>
+</div>
+
+<h2><span class="n">4</span>Исполнение запросов и починка</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Спан</th><th class="num">Вызовов</th><th class="num">Средн., мс</th><th>Чтение</th></tr></thead>
+<tbody>
+<tr><td><code>pre_validate</code></td><td class="num">1406</td><td class="num">1</td><td>дешёвая, работает</td></tr>
+<tr><td><code>safety_check</code></td><td class="num">895</td><td class="num">0</td><td>SafetyGuard на каждом запросе</td></tr>
+<tr><td><code>explain_check</code></td><td class="num">892</td><td class="num">119</td><td>EXPLAIN перед исполнением</td></tr>
+<tr><td><code>sql:tool:execute_query</code></td><td class="num">856</td><td class="num">11 792</td><td>сам запрос</td></tr>
+<tr><td><code>post_validate</code></td><td class="num">652</td><td class="num">1</td><td>—</td></tr>
+<tr><td><code>error_classify</code></td><td class="num">547</td><td class="num">0</td><td>классификация ошибки</td></tr>
+<tr><td><code>query_repair</code></td><td class="num">544</td><td class="num">8 404</td><td><span class="b b-warn">63% от запросов</span></td></tr>
+<tr><td><code>required_filter_check</code></td><td class="num">212</td><td class="num">1</td><td>гард обязательных фильтров</td></tr>
+</tbody>
+</table></div>
+
+<p><strong>544 починки на 856 исполнений.</strong> И <code>error_classify</code> 547 ≈
+<code>query_repair</code> 544 — то есть почти каждая классифицированная ошибка ведёт к
+LLM-починке по 8,4 с. Это 76 минут LLM-времени только на переписывание неудавшегося SQL.</p>
+
+<p><code>query_failures</code>: 50 записей, <strong>27 восстановлены, 23 нет</strong>,
+в среднем 2,9 попытки. Причины: <code>unknown</code> 28, <code>group_by_violation</code> 14,
+<code>empty_result</code> 5, <code>table_not_found</code> 2, <code>timeout</code> 1.
+Больше половины отказов классификатор не назвал.</p>
+
+<h2><span class="n">5</span>Планирование и переплanирование</h2>
+
+<p><code>orchestrator:planning</code> — <strong>32 спана</strong> из 222 трейсов, в среднем
+17,7 с. То есть мультистейджевый путь берётся примерно в 14% запросов, и планирование само
+стоит почти десятую часть документированного бюджета.</p>
+
+<div class="card bad">
+<h4>Переплanирования в сохранённой телеметрии не существует</h4>
+<p>48 различных имён спанов во всей базе, и <strong>ни одного</strong> совпадения с
+<code>replan</code>. Ближайшее — <code>stage_retry</code>, 5 раз со статусом
+<code>retrying</code>.</p>
+<p><code>MetricsCollector</code> действительно считает <code>replans</code>, но держит их
+в памяти процесса и отдаёт через <code>/api/metrics</code> — счётчик обнуляется на каждом
+рестарте дино, а рестарт бывает при каждом деплое. Поэтому вопрос «сколько раз пайплайн
+переплanировал и помогло ли это» на истории <strong>не отвечаем вообще</strong>, при том
+что переплanирование — один из механизмов, на которых держится заявленная надёжность.</p>
+</div>
+
+<h2><span class="n">6</span>Валидация и гейты</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Гейт</th><th class="num">Наблюдений</th><th>Что видно</th></tr></thead>
+<tbody>
+<tr><td>Валидация SQL (<code>pre</code>/<code>post</code>/<code>safety</code>/<code>explain</code>)</td>
+    <td class="num">5148</td><td><span class="b b-ok">работает на каждом запросе</span></td></tr>
+<tr><td><code>stage_validation</code></td><td class="num">12 passed / 7 failed</td>
+    <td>на 19 наблюдениях блокирует чаще чем в трети случаев</td></tr>
+<tr><td><code>data_gate</code></td><td class="num">16</td>
+    <td><span class="b b-warn">почти не работал</span> — он на пути Path B, а тот редок</td></tr>
+<tr><td><code>result_gate</code></td><td class="num">3 retrying</td><td>—</td></tr>
+<tr><td>Упавшие спаны всего</td><td class="num">17</td>
+    <td><code>stage_validation</code> 7, <code>orchestrator:llm_call</code> 5,
+        <code>orchestrator:viz</code> 3, схема 1, контекст 1</td></tr>
+</tbody>
+</table></div>
+
+<p>Вывод по слою валидации двойной: <strong>SQL-валидация действительно отработала 5148 раз
+и это её честная заслуга</strong>, а <strong>DataGate практически не проверялся в бою</strong> —
+16 наблюдений. Утверждение, что он блокирует невозможные числа, опирается на выборку, из
+которой ничего не следует.</p>
+
+<h2><span class="n">7</span>Индексация репозитория и БД</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Джоб</th><th class="num">Завершено</th><th class="num">Упало</th><th>Доминирующая причина</th></tr></thead>
+<tbody>
+<tr><td><code>index_repo</code></td><td class="num">21</td><td class="num">81</td>
+    <td><code>stale run reaped</code> на <code>graph_build</code> ×65, <code>generate_docs</code> ×12</td></tr>
+<tr><td><code>daily_sync</code></td><td class="num">15</td><td class="num">79</td>
+    <td><code>stale run reaped</code> на <code>repo_index</code> ×77</td></tr>
+<tr><td><code>db_index</code></td><td class="num">42</td><td class="num">7</td>
+    <td><code>fetch_samples</code> ×6</td></tr>
+<tr><td><code>code_db_sync</code></td><td class="num">34</td><td class="num">4</td>
+    <td><strong>лимит токенов тарифа</strong> ×4</td></tr>
+</tbody>
+</table></div>
+
+<div class="card bad">
+<h4>Фикс N1 не закрыл проблему, ради которой существовал</h4>
+<p>25 августа сердцебиение перенесли <em>внутрь</em> шага, чтобы длинный шаг не жали
+жнецом на ходу. После этой даты: <code>index_repo</code> — <strong>8 завершено против 9
+упавших</strong>, и по-прежнему <code>stale run reaped</code> (9 прогонов
+<code>index_repo</code> и 8 <code>daily_sync</code>, последний 2026-09-02). Свежий пример
+от 2026-09-02: три подряд падения на <code>code_symbol_embed</code> и
+<code>generate_docs</code>, между ними одно <code>completed</code>.</p>
+<p>То есть частота примерно вдвое лучше исторической (81/102 → 9/17), но выживает меньше
+половины прогонов. Оставшаяся строка CB-OPS4 — взаимное исключение только внутри процесса,
+Redis-лок отложен — остаётся самой вероятной причиной, и её отложили сознательно.</p>
+</div>
+
+<h3>При этом индексация производит настоящий результат</h3>
+<p>Это надо сказать так же прямо, как отказы: <strong>25 638 символов, 67 922 ребра
+графа кода, 758 документов знаний, 46 911 эмбеддингов, 213 строк схемного индекса</strong>.
+Карта код↔БД — 256 строк: 135 <code>matched</code>, 97 <code>db_only</code>,
+23 <code>code_only</code>, 1 <code>mismatch</code>. Слой знаний не пуст и не фиктивен;
+он просто обновляется через джоб, который падает чаще, чем проходит, и сегодня
+заблокирован тарифом.</p>
+
+<h2><span class="n">8</span>Агент: память, инсайты, стоимость</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Что</th><th class="num">Значение</th><th>Чтение</th></tr></thead>
+<tbody>
+<tr><td>Обучения агента</td><td class="num">81</td>
+    <td>средняя уверенность 0,71; 2100 предъявлений — механизм живой</td></tr>
+<tr><td>Инсайты</td><td class="num">134</td><td>накапливаются</td></tr>
+<tr><td>Учёт токенов</td><td class="num">7662 вызова / 60,2 млн</td>
+    <td>считается; за текущий месяц 2 000 604</td></tr>
+<tr><td><code>estimated_cost_usd</code></td><td class="num">NULL ×222</td>
+    <td><span class="b b-bad">стоимость не посчитана ни разу</span></td></tr>
+<tr><td>Субагенты от оркестратора</td><td class="num">только <code>sql_agent</code></td>
+    <td>230 вызовов; спанов <code>analytics</code>/<code>git</code>/<code>mcp</code> нет вовсе</td></tr>
+</tbody>
+</table></div>
+
+<p><strong>Стоимость известна и не вычислена.</strong> <code>token_usage</code> содержит
+7662 вызова и 60,2 млн токенов, то есть сырьё есть. <code>estimated_cost_usd</code> пуст во
+всех 222 трейсах — ровно как записано в леджере: <code>estimate_cost</code> читает
+внутрипроцессный кэш HTTP-ответа <code>/api/models</code>, которого у воркера нет.
+Подтверждено повторно, спустя правку.</p>
+
+<hr>
+
+<h2><span class="n">9</span>Что из этого — новое</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Находка</th><th>Статус</th><th>Размер</th></tr></thead>
+<tbody>
+<tr><td><code>code_db_sync</code> заблокирован лимитом тарифа оператора, последний отказ сегодня</td>
+    <td><span class="b b-bad">новое, живое</span></td><td>S — снять лимит для системных джобов или дать аккаунту подписку</td></tr>
+<tr><td><code>route</code>/<code>complexity</code> = <code>unknown</code> в 222/222 против прямого утверждения в <code>CLAUDE.md</code></td>
+    <td><span class="b b-bad">новое</span></td><td>S — найти, где трейс пишется без результата роутера</td></tr>
+<tr><td><code>failure_kind</code> не заполнен ни в одном трейсе и ни в одном отказе запроса</td>
+    <td><span class="b b-bad">новое</span></td><td>S</td></tr>
+<tr><td>Переплanирование не наблюдаемо на истории — счётчик только в памяти</td>
+    <td><span class="b b-bad">новое</span></td><td>S — спан или колонка</td></tr>
+<tr><td>Худшая длительность 296 с против документированных 180 после F-SQL-03</td>
+    <td><span class="b b-warn">новое уточнение</span></td><td>M</td></tr>
+<tr><td>63% запросов проходят через LLM-починку по 8,4 с</td>
+    <td><span class="b b-warn">новое</span></td><td>M — это симптом, не дефект</td></tr>
+<tr><td><code>error_type = 'unknown'</code> в 28 из 50 отказов</td>
+    <td><span class="b b-warn">новое</span></td><td>S</td></tr>
+<tr><td>Фикс N1 не закрыл жатву: 9 из 17 <code>index_repo</code> после него</td>
+    <td><span class="b b-warn">подтверждение</span></td><td>уже CB-OPS4</td></tr>
+<tr><td><code>estimated_cost_usd</code> NULL ×222</td>
+    <td><span class="b b-dim">подтверждение</span></td><td>уже в леджере</td></tr>
+<tr><td>DataGate проверен на 16 наблюдениях — заявление о нём не опирается ни на что</td>
+    <td><span class="b b-warn">новое</span></td><td>вывод, не задача</td></tr>
+</tbody>
+</table></div>
+
+<h2><span class="n">10</span>Что работает, и это не вежливость</h2>
+<ul>
+<li><strong>Слой валидации SQL</strong> — 5148 наблюдений, безопасность и EXPLAIN на каждом
+запросе, средняя стоимость проверки около нуля.</li>
+<li><strong>Починка запросов восстанавливает</strong> — 27 из 50 зафиксированных отказов
+дошли до ответа за ~2,9 попытки.</li>
+<li><strong>Индексация производит артефакты</strong> — 67 922 ребра и 46 911 эмбеддингов
+существуют, а не декларированы.</li>
+<li><strong>Память агента живая</strong> — 81 обучение, 2100 предъявлений, средняя
+уверенность 0,71.</li>
+<li><strong>Учёт токенов точен</strong> — 7662 вызова; именно он и обнаружил блокировку
+тарифом, то есть наблюдаемость сработала как задумано.</li>
+</ul>
+
+<div class="foot">
+Проверка подсистем · checkmydata-ai · 2026-09-03 · релиз v321 ·
+все числа — запросы к продовой БД, выполненные внутри дино<br>
+Леджер: <code>docs/AUDIT_REMEDIATION_2026-09.md</code> · разрыв с целью:
+<code>docs/reports/target-gap-2026-09-03.html</code>
+</div>
+
+</div>
+</body>
+</html>
