@@ -121,6 +121,31 @@ transformer's activations and nothing else. Measured through `VectorStore.add_do
 over 960 chunks: **batch 200 → 967 MiB peak / 9.3 s; batch 8 → 415 MiB peak / 10.9 s.**
 The default trades ~17% wall clock for ~552 MiB. Raise it only on a dyno with headroom.
 
+**0c. A rebuild no longer re-buys prose about files that did not change (T03, 2026-09-09)**
+`generate_docs` is the most expensive step the product runs: ~9 375 s of a 12 039 s full
+rebuild, 758 documents at ~4.8/min, 1.7–2.0M tokens — and **535 of those documents describe
+database migrations**, files never edited after they merge. Full rebuilds are routine, not
+exceptional: every `SYMBOL_UID_SCHEMA` / `GRAPH_EXTRACTION_SCHEMA` / embedding-config bump
+enqueues one, so each structural fix to the extractor paid for the same prose again.
+
+`knowledge_docs.content_hash` now records what a document was generated FROM
+(`app/knowledge/doc_cache.py`: content + doc_type + enrichment_context + `DOC_GEN_SCHEMA`),
+and `should_reuse_document` decides. **`DOC_GEN_SCHEMA` is deliberately not in
+`embedding_fingerprint()`, and the independence runs both ways** — inside it, a reworded
+prompt would re-embed every chunk of every project; and the UID/graph constants inside the
+document key would discard 758 cached documents whenever a symbol's identity moved, which
+is the cost this exists to avoid. The commit sha is absent for the same reason: a rebuild
+triggered by a schema bump has not edited one migration.
+
+`NULL` on an existing row means *generated before the cache existed* — unknown, not
+unchanged — so the first run after deploy regenerates and records; the one after is cheap.
+**No backfill**: a hash derived from the stored document would assert it matches inputs
+nobody compared. `existing_docs_map` is now loaded on both branches (it was incremental-only,
+which is why the expensive path had nothing to compare against).
+
+`INDEXING_LLM_MODEL_BY_DOC_TYPE` (JSON, empty by default) overrides the model per doc type.
+Setting it in production is a config change and belongs in `DELIBERATE`.
+
 **0b. The symbol-UID schema bump reindexes itself — no operator step**
 `SYMBOL_UID_SCHEMA` (`app/knowledge/ast_parser.py`) is part of
 `embedding_fingerprint()`, so the 2026-08-19 UID change (methods now carry their

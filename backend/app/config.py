@@ -760,6 +760,19 @@ class Settings(BaseSettings):
     # docs per run (default 30%); above that the step fails so an operator
     # sees the problem before it becomes silent KB drift.
     generate_docs_max_failure_ratio: float = 0.3
+    #: Per-`doc_type` model override for `generate_docs`, as a JSON object
+    #: (``INDEXING_LLM_MODEL_BY_DOC_TYPE='{"migration": "<cheap-model>"}'``).
+    #:
+    #: Empty by default, which means the project's own `indexing_llm_model` is used for
+    #: everything — today's behaviour, unchanged. The axis exists because doc types are
+    #: not equally hard: 535 of the one real project's 758 documents describe database
+    #: migrations, a mechanical `CREATE TABLE` restated in prose, and paying a frontier
+    #: model for each is what makes a rebuild cost 1.7–2.0M tokens.
+    #:
+    #: An unknown key is harmless (no doc of that type exists); an unknown MODEL is not,
+    #: so turning this on in production is a config change that belongs in the
+    #: `DELIBERATE` map with the rest.
+    indexing_llm_model_by_doc_type: dict[str, str] = {}
 
     # Cross-connection learning injection (V1, vision §7 #4).
     # When False (default), `compile_prompt` skips sibling-connection and
