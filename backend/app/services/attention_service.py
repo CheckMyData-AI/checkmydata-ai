@@ -26,9 +26,10 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.metrics import get_metrics_collector
 from app.models.connection import Connection
 from app.models.db_index import DbIndexSummary
 from app.models.indexing_run import IndexingRun
@@ -39,6 +40,25 @@ logger = logging.getLogger(__name__)
 #: Severity order. The rail shows the top of this list, so the order IS the product
 #: decision about what a returning user should see first.
 _SEVERITY_RANK = {"critical": 0, "warning": 1, "info": 2}
+
+
+def index_quota_exceeded(*, used_bytes: int | None, quota_bytes: int) -> bool:
+    """Has this project's index passed what its plan sells?
+
+    Three ways to answer "no", and each is a decision:
+
+    * ``quota_bytes == 0`` — unlimited, which is what `0` means in every other column of
+      `plans`. `enterprise` would otherwise be permanently over its own quota.
+    * ``used_bytes is None`` — the measurement could not be taken, which is not evidence
+      of a breach. A rail line saying "over quota" that the reader cannot verify is worse
+      than no line.
+    * strictly greater, not `>=`. A project exactly at its ceiling has not passed it, and
+      the meter is an estimate built from row counts rather than a storage query — its
+      precision does not justify a warning on the boundary.
+    """
+    if quota_bytes <= 0 or used_bytes is None:
+        return False
+    return used_bytes > quota_bytes
 
 
 @dataclass
@@ -77,6 +97,7 @@ class AttentionService:
             ("runs", self._failed_runs),
             ("sources", self._never_indexed),
             ("schedule", self._schedule_withheld),
+            ("index_size", self._index_over_quota),
         ):
             try:
                 collected.extend(await source(self, db, project_id))
@@ -256,6 +277,97 @@ class AttentionService:
                 subject=project.name,
                 what="scheduled syncs need a subscription — indexing by hand still works",
                 severity="info",
+                route="panel=settings",
+            )
+        ]
+
+    @staticmethod
+    async def _index_over_quota(
+        self: AttentionService, db: AsyncSession, project_id: str
+    ) -> list[AttentionItem]:
+        """`SCN-152` (D5, option a): the tier sells "1 GB index" — say when it is spent.
+
+        `plans.max_index_bytes` has been sold since 2026-08-31 and `estimate_index_bytes`
+        has existed beside it, called from a test and from nothing else. The promise, the
+        column and the meter all existed; nothing compared them.
+
+        Warn, never block. Refusing to index would make the product unevaluable for the
+        account most likely to be over — and the same reasoning already settled the
+        scheduled-work gate. `severity="warning"` rather than `critical`: nothing has
+        stopped working.
+
+        Measured from row counts rather than a storage query, because the index spans
+        Postgres, a vector store that may be pgvector or Chroma, and gzip snapshots on an
+        ephemeral disk. Anchor: `esim-php` measures ~460 MB against `base`'s 1 GB.
+        """
+        from app.entitlements import index_quota_bytes
+        from app.models.code_graph import CodeGraphEdge, CodeGraphSymbol
+        from app.models.knowledge_doc import KnowledgeDoc
+        from app.services.plan_catalogue import estimate_index_bytes
+
+        project = (
+            await db.execute(select(Project).where(Project.id == project_id))
+        ).scalar_one_or_none()
+        if project is None or project.owner_id is None:
+            return []
+
+        quota = await index_quota_bytes(db, project.owner_id)
+        if quota <= 0:
+            # Unlimited. Skipped before the counting queries rather than after, so an
+            # `enterprise` project pays nothing for a question with a known answer.
+            return []
+
+        docs_bytes = int(
+            await db.scalar(
+                select(func.coalesce(func.sum(func.length(KnowledgeDoc.content)), 0)).where(
+                    KnowledgeDoc.project_id == project_id
+                )
+            )
+            or 0
+        )
+        symbols = int(
+            await db.scalar(
+                select(func.count(CodeGraphSymbol.id)).where(
+                    CodeGraphSymbol.project_id == project_id
+                )
+            )
+            or 0
+        )
+        edges = int(
+            await db.scalar(
+                select(func.count(CodeGraphEdge.id)).where(CodeGraphEdge.project_id == project_id)
+            )
+            or 0
+        )
+        used = estimate_index_bytes(
+            docs_bytes=docs_bytes,
+            symbols=symbols,
+            edges=edges,
+            # One embedding per symbol is the shape `code_symbol_embed` produces. Counting
+            # the vector store itself would mean asking pgvector or Chroma depending on
+            # deployment, which is the coupling `estimate_index_bytes` exists to avoid.
+            embeddings=symbols,
+        )
+        if not index_quota_exceeded(used_bytes=used, quota_bytes=quota):
+            return []
+
+        get_metrics_collector().record_index_over_quota()
+        logger.warning(
+            "index quota: project %s holds ~%.2f GB of index against a %.2f GB plan "
+            "limit — indexing continues, this is a warning",
+            project_id[:8],
+            used / (1024**3),
+            quota / (1024**3),
+        )
+        return [
+            AttentionItem(
+                kind="index_over_quota",
+                subject=project.name,
+                what=(
+                    f"index is ~{used / (1024**3):.1f} GB against a "
+                    f"{quota / (1024**3):.0f} GB plan limit — indexing still runs"
+                ),
+                severity="warning",
                 route="panel=settings",
             )
         ]

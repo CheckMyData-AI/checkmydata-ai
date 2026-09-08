@@ -162,6 +162,15 @@ class MetricsCollector:
         """
         self.inc("db_index_sample_budget_exhausted_total")
 
+    def record_index_over_quota(self) -> None:
+        """A project's index passed what its plan sells (T08 / D5 option a).
+
+        A warning, never a refusal — so this counter is the only place the breach becomes
+        a number an operator can trend. `plans.max_index_bytes` has been sold since
+        2026-08-31 with nothing comparing it to anything.
+        """
+        self.inc("index_over_quota_total")
+
     def record_filter_guard_degrade(self) -> None:
         """The required-filter guard degraded to a warning instead of hard-failing (SYNC-L1)."""
         self.inc("filter_guard_degrade_total")

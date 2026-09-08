@@ -311,6 +311,33 @@ Stripe-backed subscriptions when `billing_enabled=True`: Checkout, Customer Port
 
 **Four paid tiers, no free one, priced on how much data we index.** The ladder lives once, in `app/services/plan_catalogue.py`: `base` $199 / 1 GB, `scale` $599 / 2 GB, `team` $900 / 5 GB, `enterprise` $1500 / unlimited — `max_index_bytes` is per project, and `0` means unlimited as it does in every other column on `plans`. The axis is not new: `base` has been described as "1 GB index" since 2026-08-31 while the table had no column to hold the figure. `estimate_index_bytes()` is the meter, built from row counts rather than a storage query because the index spans Postgres, a vector store that may be pgvector or Chroma, and gzip snapshots on an ephemeral disk. Anchor: `esim-php`, the one real project, measures ~16 MB against `base`'s 1 GB.
 
+**`max_index_bytes` is now compared to something (T08 / D5, 2026-09-09).** The tier copy
+has sold "1 GB index" since 2026-08-31, the column has held the number since the catalogue
+reconcile, and `estimate_index_bytes` has sat beside it — called from a test and from
+nothing else. The promise, the meter and the limit all existed and nothing compared them.
+
+**D5 chose to warn, not to block**, for the reason the scheduled-work gate already
+settled: a product that refuses to index is a product nobody can evaluate, and the account
+most likely to be over quota is the one getting the most out of a trial. Over quota puts
+one `warning`-severity line on the rail (`AttentionService._index_over_quota`, kind
+`index_over_quota`, route `panel=settings`), logs, and increments
+`index_over_quota_total`. Indexing runs exactly as before.
+
+**The protocol was deliberately NOT widened.** `Entitlements` has four methods and its
+guard demands a written argument for a fifth; the argument for `may_run_scheduled_work` was
+that a *capability* fits none of the three ceilings. This is not that — a warning asks no
+permission, it reads a number the plan publishes. So `index_quota_bytes` is a module helper
+shaped exactly like `may_run_scheduled_work`, degrading **open**: a provider that predates
+the question or whose lookup raises yields `0`, which means unlimited. A billing outage
+must not print "you are over quota" on a rail where the reader can neither verify nor act
+on it.
+
+Three ways the check says no, each a decision: quota `0` is unlimited (skipped **before**
+the counting queries, so an `enterprise` project pays nothing for a known answer); an
+unmeasurable size is not evidence of a breach; and `>` rather than `>=`, because the meter
+is an estimate from row counts and its precision does not justify a boundary warning.
+Anchor: `esim-php` measures ~460 MB against `base`'s 1 GB.
+
 **The catalogue reaches the database by reconcile, not by a seed.** `app/ops/plan_catalogue_reconcile.py` upserts the tiers in the FastAPI `lifespan` — advisory-locked, idempotent, never blocks boot — and migration `e5f6a7b8c9d0` adds only the column. Seeding a price list inside a migration freezes it at that revision: the code would say $900 while the row a customer resolves against still said $199, and nothing would compare them.
 
 **No subscription is not the cheapest plan.** `free` was retired from sale on 2026-08-31, but `get_plan` deliberately does not filter on `is_active` (sold subscriptions must keep resolving), so every unsubscribed user still resolved to `free` and inherited its 100 000-token daily ceiling. Measured on production 2026-09-06: the owner burned 1 666 411 tokens on a full repository index, and the code↔DB sync queued behind it was refused with *"upgrade your plan at /pricing"* — a page that cannot take payment because no Stripe keys are set. A 3 h 37 m index completed and the step it exists to feed was turned away. Resolution now leaves the ladder instead of descending it: no subscription, or a `canceled`/`unpaid` one, returns `_no_plan()` — plan id `"none"`, every limit `0`, the catalogue not consulted at all. **That degrades OPEN, and until 2026-09-07 it was the absence of a decision rather than one.** The decision has now been taken, and it is neither of the two options that were on the table: an unpaid project is **not** blocked and **not** fully served — setup and hand-driven use stay open, and **scheduled** work needs a subscription. Blocking makes the product unevaluable; serving unattended nightly LLM work to accounts that pay nothing is the cost the tier exists to meter. Implemented 2026-09-07 (`SCN-146`/`SCN-147`/`SCN-148`), and the two halves shipped together because separating them is an outage: the day the gate lands, every account without a subscription — this deployment's owner included — stops syncing.

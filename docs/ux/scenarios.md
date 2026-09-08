@@ -12,7 +12,7 @@ human review moves them to `validated`.
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-09-08 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-09-09 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -21,13 +21,13 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 
 | | |
 |---|---|
-| Scenarios | **152** |
-| Status | draft × 12, implemented × 140 |
-| Last verdict | PARTIAL × 2, PASS × 138, no verdict × 12 |
-| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, undated × 12 |
-| **Verified >30 days ago** | **95 of 152** (oldest 51 days) |
+| Scenarios | **153** |
+| Status | draft × 12, implemented × 141 |
+| Last verdict | PARTIAL × 2, PASS × 139, no verdict × 12 |
+| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, undated × 12 |
+| **Verified >30 days ago** | **95 of 153** (oldest 52 days) |
 | Never verified (no date) | 12 |
-| Referenced from code or tests | **32 of 152** |
+| Referenced from code or tests | **33 of 153** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -194,6 +194,7 @@ it is what moves it.
 | SCN-149 | The sidebar answers "where was I, and what needs me" | workspace | analyst | implemented | 2026-09-08 PASS |
 | SCN-150 | The sidebar surfaces what needs attention and routes to the fix | workspace | analyst | implemented | 2026-09-08 PASS |
 | SCN-151 | A panel link opens the panel it names | workspace | analyst | implemented | 2026-09-07 PASS |
+| SCN-152 | The rail says when a project's index outgrew its plan | billing | owner | implemented | 2026-09-09 PASS |
 
 ## Personas
 
@@ -2590,6 +2591,26 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 > **What this fixed.** `knowledge` and `insights` were in `APP_PANELS` — validated as legal URLs — and both rendered the **chat**. Two gates dropped them: the panel resolver kept its own enumeration of five names while the list held eight, and the render switch had no case for them behind an unconditional chat fallback. A route that 404s teaches the user immediately; one that renders a plausible other screen teaches them nothing. The resolver now passes any declared panel through rather than re-deciding it by name, which is the shape that stops the two lists drifting apart again.
 - **Status:** implemented
 - **Coverage:** frontend/src/app/app/page.tsx; frontend/src/hooks/useAppPanel.ts; frontend/src/components/knowledge/KnowledgePanel.tsx; frontend/src/components/dashboards/DashboardsPanel.tsx; frontend/src/__tests__/app-panels-have-destinations.test.ts
+
+
+### SCN-152: The rail says when a project's index outgrew its plan
+- **Persona:** owner
+- **Feature:** billing
+- **Traces:** FLW-01
+- **Entry point:** the "Needs You" group in the sidebar rail, on any screen
+- **Preconditions:** signed in; a project is active; the account's plan sets a per-project index limit
+- **Steps:**
+  1. User's project holds more index than the plan sells -> system shows one rail line naming the project, its approximate index size and the plan's limit
+  2. User selects the line -> system opens Settings, where the plan and its limits are
+  3. User keeps working; the next index run starts and completes normally -> system indexes as it always did, and the line stays until the size or the plan changes
+- **Expected result:** the user learns their project passed what they bought, from the place they already look, and nothing they were doing stops
+- **Alt paths:** plan is unlimited (`enterprise`, or no limit set) -> no line, and the counting queries are never run; the size cannot be measured -> no line, because "could not check" must not be shown as "over quota"
+- **UI elements:** the "Needs You" rail group, a warning-severity line, the Settings destination
+- **States covered:** empty, success
+- **Errors & recovery:** the billing lookup fails -> the account is treated as unlimited and the failure is logged, never surfaced as a breach the user cannot verify; the whole source fails -> the rail says "could not check index size", which is a different sentence from "nothing needs you"
+> **The decision this records (D5, 2026-09-08).** Three options were on the table: warn, block a full rebuild, or block indexing entirely. Warn was chosen for the same reason the scheduled-work gate leaves manual indexing open — a product that refuses to index is a product nobody can evaluate, and the account most likely to be over its quota is the one getting the most out of the trial. `plans.max_index_bytes` had been sold since 2026-08-31 and `estimate_index_bytes` had existed beside it, called from a test and from nothing else: the promise, the column and the meter all existed, and nothing compared them.
+- **Status:** implemented
+- **Coverage:** backend/app/services/attention_service.py (`_index_over_quota`, `index_quota_exceeded`); backend/app/entitlements/__init__.py (`index_quota_bytes`); backend/app/services/plan_catalogue.py (`estimate_index_bytes`); backend/tests/unit/services/test_index_quota_warning.py
 
 ## repos
 
