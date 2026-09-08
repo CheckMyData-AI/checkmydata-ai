@@ -891,6 +891,26 @@ def _scan_table_usage(
             # of it.
             if tbl.lower() in sql_kw or not is_plausible_table_name(tbl):
                 continue
+            if not (is_read or is_write):
+                # No evidence, no entry. `setdefault` used to create the usage row and
+                # only THEN decide whether anything read or wrote it, so a name matched
+                # in a segment that is neither a read nor a write was registered with
+                # empty readers and writers — a table nothing does anything to.
+                #
+                # Those rows are how the customer's code↔DB map came to carry `axios`,
+                # `vue`, `const`, `export`, `import`, `library` and `change`. Measured on
+                # production 2026-09-08: twenty such rows, every one with
+                # `entity_name=NULL`, `entity_file_path=NULL`, `read_count=0`,
+                # `write_count=0` and `used_in_files_json='[]'` — no evidence of any kind,
+                # from either side.
+                #
+                # Gating on EVIDENCE rather than on syntax is deliberate. The first
+                # attempt gated on ES-module statements (`import x from "y"`), which the
+                # raw regex does match — but `_strip_sql_noise` already blanks
+                # non-SQL string literals, so that was never the pipeline's route in.
+                # A rule about what we *know* survives being wrong about which regex,
+                # which language, and which quote style produced the name.
+                continue
             usage = knowledge.table_usage.setdefault(tbl, TableUsage(table_name=tbl))
             if is_write and rel_path not in usage.writers:
                 usage.writers.append(rel_path)
