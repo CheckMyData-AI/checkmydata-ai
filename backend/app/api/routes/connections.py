@@ -389,6 +389,10 @@ class ConnectionCreate(_ConnectionFieldRules):
     source_config: dict[str, Any] | None = None
     collection_enabled: bool = True
     collection_hour: int = Field(default=3, ge=0, le=23)
+    # What this source is for, in the owner's words (SCN-134). Capped here as well as
+    # on update: guarded on create and free on PATCH is a shape this file has been
+    # bitten by before.
+    purpose: str | None = Field(None, max_length=2000)
     # H6: opt-out of sending DB sample data to the LLM (default True = send)
     send_sample_data_to_llm: bool = True
 
@@ -436,6 +440,9 @@ class ConnectionCreate(_ConnectionFieldRules):
 
 class ConnectionUpdate(_ConnectionFieldRules):
     name: str | None = Field(None, max_length=200)
+    # Same cap as ConnectionCreate. Guarded on create and free on PATCH is the
+    # exact shape that let an unvalidated branch reach `git checkout` as argv.
+    purpose: str | None = Field(None, max_length=2000)
     db_type: str | None = Field(None, max_length=50)
     source_type: str | None = Field(None, max_length=50)
     ssh_host: str | None = Field(None, max_length=255)
@@ -466,6 +473,28 @@ class ConnectionUpdate(_ConnectionFieldRules):
     send_sample_data_to_llm: bool | None = None
 
 
+def capability_of(*, db_type: str | None, source_type: str | None) -> str:
+    """What the agent can DO with this source, for the workspace card (SCN-132).
+
+    Answered here rather than derived in the interface, because deriving it means
+    reimplementing `is_queryable_database` in a language that cannot import it. That
+    rule has already been got wrong once in this codebase: a caller that read "is a
+    connection attached?" as "is there a database to query?" advertised
+    `query_database` for a GA4 source, and `get_connector("ga4")` raised in the middle
+    of the user's chat.
+
+    ``unknown`` is a real answer and the card links it to Test. Defaulting it to
+    ``queryable`` is precisely how the model gets handed a tool that raises.
+    """
+    from app.analytics.source_types import ANALYTICS_SOURCE_TYPES
+
+    if (source_type or "") in ANALYTICS_SOURCE_TYPES or (db_type or "") in ANALYTICS_SOURCE_TYPES:
+        return "collected"
+    if db_type:
+        return "queryable"
+    return "unknown"
+
+
 class ConnectionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -486,6 +515,28 @@ class ConnectionResponse(BaseModel):
     db_user: str | None
     is_read_only: bool
     is_active: bool
+    purpose: str | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def capability(self) -> str:
+        """ "queryable" | "collected" | "unknown" — see `capability_of`.
+
+        Computed, not a field. Two reasons, and the second was found by a test.
+
+        Six routes return this shape, so a value each of them fills in is one five of
+        them eventually forget — and that failure is silent, with every card in the
+        workspace reading "unknown".
+
+        And a plain field with a validator is still *populated from the source object*
+        under `from_attributes`. A `Connection` has no `capability` attribute so
+        production was fine, but anything that answers to every attribute — a test
+        double, a future model that gains a column of that name — is read first and
+        rejected before an `after` validator can correct it. A computed property cannot
+        be fed from outside at all, which is the property this field actually wants.
+        """
+        return capability_of(db_type=self.db_type, source_type=self.source_type)
+
     send_sample_data_to_llm: bool
     ssh_exec_mode: bool
     ssh_command_template: str | None

@@ -218,7 +218,13 @@ CEILINGS: dict[str, int] = {
     # instead of "nothing needs you". Letting it propagate would blank a panel that
     # exists to report state; dropping it silently would make the two sentences
     # identical, which is the defect the service was written to prevent.
-    "except Exception": 637,
+    # 637 -> 638 on 2026-09-08. One, `SQLAgent._load_source_purposes`, and it joins a
+    # family this file already contains: every prompt loader in that class degrades
+    # to an empty string rather than failing a question, and every one of them
+    # reports it at WARNING naming the section that will be empty. The first draft
+    # logged at debug and `test_prompt_loaders_report_their_failures_at_warning`
+    # caught it — which is the ratchet beside this one doing its job.
+    "except Exception": 638,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:
@@ -243,7 +249,12 @@ CEILINGS: dict[str, int] = {
     # The second one was already declared in the `# noqa` metric while its shape stayed
     # invisible here. Both predate this change and are recorded, not edited.
     "except ...: pass": 57,
-    "# type: ignore": 49,
+    # 49 -> 50 on 2026-09-08. One, on `ConnectionResponse.capability`,
+    # and it is pydantic's documented workaround rather than a silenced type error:
+    # mypy does not support decorators above `@property`, and `@computed_field` is
+    # exactly that. The identical ignore already sits on `source_config` in the same
+    # class, for the identical reason.
+    "# type: ignore": 50,
     # 129 → 130 on 2026-08-31. One, in `BillingService.reconcile`: BLE001 on a per-row
     # handler, because a subscription Stripe cannot answer for must not end the sweep
     # over the rest — reconciliation exists precisely for the rows nobody noticed.

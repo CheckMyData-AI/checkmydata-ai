@@ -53,6 +53,11 @@ export interface ConnectionSourceConfig {
 }
 
 export interface Connection {
+  /** What the owner says this source is for; reaches the agent as data (SCN-134). */
+  purpose?: string | null;
+  /** What the agent can DO with it. Derived server-side so the card does not
+   *  reimplement `is_queryable_database` in a language that cannot import it. */
+  capability?: SourceCapability;
   id: string;
   project_id: string;
   name: string;
@@ -1006,6 +1011,19 @@ export interface SyncHistoryRun {
   error_message: string | null;
   created_at: string;
   steps: Record<string, unknown> | null;
+}
+
+export type SourceCapability = "queryable" | "collected" | "unknown";
+
+export interface SyncSchedule {
+  enabled: boolean;
+  hour: number;
+  timezone: string;
+  next_run: string | null;
+  /** Whether a schedule can have any effect at all. `enabled` is the user's setting;
+   *  this is whether the account may run unattended work (SCN-146/147). A control that
+   *  shows only the first promises a nightly run that will not happen. */
+  may_run: boolean;
 }
 
 export type AttentionSeverity = "critical" | "warning" | "info";

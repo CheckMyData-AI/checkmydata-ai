@@ -578,6 +578,10 @@ async def get_sync_schedule(
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
+    from sqlalchemy import select
+
+    from app.entitlements import may_run_scheduled_work
+    from app.models.project import Project
     from app.services.daily_knowledge_sync_service import compute_next_scheduled_run
     from app.services.sync_schedule_service import SyncScheduleService
 
@@ -588,7 +592,16 @@ async def get_sync_schedule(
         next_run = compute_next_scheduled_run(
             datetime.now(ZoneInfo(tz)), hour=eff["hour"], timezone_name=tz
         ).isoformat()
-    return {**eff, "next_run": next_run}
+
+    # SCN-147: an interface cannot say WHY the schedule will not run unless it is told.
+    # Asked through the registry, never `EntitlementService()` — that would report "no"
+    # to every self-hosted build, where the commercial provider is never installed.
+    # `enabled` and `may_run` are different questions: the first is the user's setting,
+    # the second is whether the setting can have any effect, and a control that shows
+    # only the first promises a nightly run that will not happen.
+    owner_id = await db.scalar(select(Project.owner_id).where(Project.id == project_id))
+    may_run = True if owner_id is None else await may_run_scheduled_work(db, owner_id)
+    return {**eff, "next_run": next_run, "may_run": may_run}
 
 
 @router.put("/{project_id}/sync-schedule")

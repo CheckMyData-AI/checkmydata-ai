@@ -117,6 +117,13 @@ class TestConnectionRoutes:
         mock_conn.db_user = "root"
         mock_conn.is_read_only = True
         mock_conn.is_active = True
+        # The response contract grew a source description (SCN-134). A MagicMock
+        # attribute is not a string, so the field has to be set explicitly here —
+        # which is the mock catching a real contract change, not noise.
+        mock_conn.purpose = None
+        # `capability` needs no mock: it is a computed property on the response,
+        # so nothing reads it off this object. That it once did is what made this
+        # test fail and the field become computed.
         mock_conn.ssh_exec_mode = False
         mock_conn.ssh_command_template = None
         mock_conn.ssh_pre_commands = None

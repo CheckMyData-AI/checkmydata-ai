@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CheckMyData — статус проекта, 5 сентября 2026</title>
+<style>
+:root{--bg:#0e1014;--panel:#161920;--line:#252a34;--tx:#e8ebf0;--dim:#98a2b5;--acc:#7dd3fc;
+--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--mut:#5b6478}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);padding:42px 22px;
+font:15px/1.68 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1060px;margin:0 auto}
+h1{font-size:28px;margin:0 0 4px;letter-spacing:-.02em}
+h2{font-size:19px;margin:40px 0 12px;padding-bottom:7px;border-bottom:1px solid var(--line)}
+h3{font-size:15px;margin:22px 0 8px;color:var(--acc)}
+.sub{color:var(--dim);margin:0 0 28px;font-size:14px}
+code{background:#1e222c;padding:1px 5px;border-radius:3px;
+font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--dim);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+tr:hover td{background:#12151c}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:16px 18px;margin:16px 0}
+.panel.warn{border-left:3px solid var(--warn)}
+.panel.bad{border-left:3px solid var(--bad)}
+.panel.ok{border-left:3px solid var(--ok)}
+.metric{display:flex;gap:30px;flex-wrap:wrap;margin:16px 0}
+.metric div{min-width:112px}
+.metric b{display:block;font-size:23px;color:var(--acc);line-height:1.25}
+.metric span{font-size:12px;color:var(--dim)}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.dim{color:var(--dim)}
+.why{color:var(--dim);font-size:13.5px;margin:4px 0 10px}
+ul{margin:8px 0;padding-left:19px}li{margin:6px 0}
+.bar{display:flex;height:9px;border-radius:5px;overflow:hidden;margin:6px 0 3px;background:#1e222c}
+.bar i{display:block}
+footer{margin-top:46px;padding-top:14px;border-top:1px solid var(--line);color:var(--mut);font-size:12px}
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>CheckMyData — статус проекта</h1>
+<p class="sub">5 сентября 2026 · после программы ремедиации по девяти итерациям · каждое число ниже измерено, не пересказано</p>
+
+<h2>Что в проде прямо сейчас</h2>
+<div class="panel ok">
+<p><code>main</code> = <code>a9d33ac3</code>, деплой на Heroku <b class="ok">успешен в 14:50</b>. Всё смерженное сегодня — живо.</p>
+<p class="why">Один PR (<code>#304</code>, диалектные подсказки для SQLite) остаётся открытым и ждёт CI — в проде его нет.</p>
+</div>
+
+<div class="metric">
+<div><b>16</b><span>коммитов в main сегодня</span></div>
+<div><b>13</b><span>PR смержено (#291–#303)</span></div>
+<div><b>7 883</b><span>теста зелёных на задеплоенном коммите</span></div>
+<div><b>+3 945</b><span>строк тестов за день</span></div>
+<div><b>37</b><span>тестовых файлов затронуто</span></div>
+</div>
+
+<h2>Доска ремедиации</h2>
+<div class="bar">
+  <i style="background:var(--ok);width:70.8%"></i>
+  <i style="background:var(--warn);width:27.1%"></i>
+  <i style="background:var(--bad);width:2.1%"></i>
+</div>
+<p class="why"><span class="ok">■</span> 34 закрыто &nbsp; <span class="warn">■</span> 13 открыто &nbsp; <span class="bad">■</span> 1 заблокирована оператором</p>
+
+<table>
+<tr><th>Ярус</th><th>Что это</th><th>Закрыто</th><th>Открыто</th></tr>
+<tr><td><b>P0</b></td><td>живая утечка, живая ложь, или продукт нельзя купить</td><td class="ok">7</td><td>— <span class="bad">+1 заблокирована</span></td></tr>
+<tr><td><b>P1</b></td><td>честность пути, который реально исполняется</td><td class="ok">12</td><td class="ok">0 — закрыт целиком</td></tr>
+<tr><td><b>P2</b></td><td>качество слоя, ради которого продукт покупают</td><td class="ok">15</td><td class="warn">6</td></tr>
+<tr><td><b>P3</b></td><td>структура — не видна пользователю</td><td>0</td><td class="warn">7</td></tr>
+</table>
+
+<h2>Что закрыто, и чем оно оказалось на самом деле</h2>
+<p class="why">Ни одна строка доски не была тем, чем себя называла. Формулировка описывала симптом; объём и форму задавало только чтение места.</p>
+
+<table>
+<tr><th>Строки</th><th>Заголовок обещал</th><th>Оказалось</th></tr>
+<tr><td>аудит</td><td>—</td><td><b>7 мест доступа между арендаторами</b>, все с тестами. Доминирующая форма: проверка, написанная на каждый вход и отсутствующая на одном</td></tr>
+<tr><td>1.7, 2.9</td><td>«вернуть нужный тип», «падать закрыто»</td><td>Контракты, <b>реализованные в одном слое и недостижимые из другого</b>. Фронтенд был прав и недостижим</td></tr>
+<tr><td>2.7</td><td>«Decimal в детекторах»</td><td>Не потеря точности, а <b>слепота к типу</b>: <code>isinstance(x,(int,float))</code> ложно для <code>Decimal</code>. Счётчик получал карточку с числом, выручка — прозу</td></tr>
+<tr><td>2.4</td><td>«расширить проверки»</td><td>Усечение <b>заставляло гейт пропускать</b> самые рискованные результаты. Предложенное расширение сломало бы ответ про возвраты</td></tr>
+<tr><td>2.2, 2.3, 2.10,<br>2.16, 2.17</td><td>«добавить символы в BM25»</td><td><b>Лексическая нога поиска никогда не индексировала код</b> — только пересказ LLM. Плюс идентификатор чанка, зависевший от порядка обхода файлов</td></tr>
+<tr><td>1.9</td><td>«передать tracker»</td><td>Строка о деградации <b>построена в UI под событие, которое никто не слал</b>. Передача в конструктор дала бы межзапросную утечку</td></tr>
+<tr><td>2.8</td><td>«привязать к алиасу»</td><td>Обязательный фильтр удовлетворялся текстом <b>из комментария или литерала</b>. В проде 159 предикатов на 57 таблицах</td></tr>
+<tr><td>2.1</td><td>«рендерить title»</td><td>Контекст агента <b>не называл ничего</b>, что показывал. У проекта без описаний весь список таблиц схлопывался в одну строку</td></tr>
+<tr><td>2.11</td><td>«nullability для Mongo»</td><td>Тип <b>не мог сказать «неизвестно»</b>: дефолт был утверждением, которого никто не делал</td></tr>
+<tr><td>2.20</td><td>«to_thread для BM25»</td><td>Четыре синхронных вызова на асинхронных путях; один <b>морил голодом heartbeat</b>, из-за которого в проде уже убивали живой прогон</td></tr>
+</table>
+
+<h2>Что осталось открытым</h2>
+
+<h3>P2 — качество, 6 строк</h3>
+<table>
+<tr><th>#</th><th>Строка</th><th>Почему ещё открыта</th></tr>
+<tr><td>2.6</td><td><code>to_thread</code> для схемного BM25</td><td class="dim"><b>Кандидат на закрытие без работы.</b> <code>schema_retriever.py:231</code> уже делает <code>await asyncio.to_thread</code>, загрузка снимка внутри. Проверить и закрыть</td></tr>
+<tr><td>2.12</td><td>Диалектные подсказки SQLite</td><td class="dim">Сделано, ждёт мержа <code>#304</code></td></tr>
+<tr><td>2.15</td><td>23 охранника «это число?»</td><td class="dim">Не все дефекты: четыре проверены и корректны по своим причинам. Каждый требует отдельного чтения</td></tr>
+<tr><td>2.18</td><td>Счётчики без слова <code>count</code></td><td class="dim"><b>Безопасного решения нет.</b> Список существительных победит следующее слово; эвристика по форме не отличит счётчик от идентификатора и года</td></tr>
+<tr><td>2.19</td><td>Флак теста аутентификации</td><td class="dim">Упал раз, не воспроизвёлся ни изолированно, ни в наборе из 680. Либо изоляция, либо проверка срока — оба варианта важны</td></tr>
+<tr><td>2.21</td><td>Мёртвый <code>_rag_artifacts</code></td><td class="dim">Один из трёх случаев мёртвого кода, найденных за день</td></tr>
+</table>
+
+<h3>P3 — структура, 7 строк</h3>
+<p class="why">Ни одна не видна пользователю: тела задач из роутов в сервисы, пять копий <code>execute_stored_query()</code>, 867 функциональных импортов, генерация <code>types.ts</code> из OpenAPI, разделение <code>ConnectionSelector</code>, heartbeat дневной синхронизации, расширение храповика на пустые контейнеры. <b>Берутся, когда блокируют строку выше, — не по расписанию.</b></p>
+
+<div class="panel bad">
+<h3 style="margin-top:0">Заблокировано вами — строка 0.4</h3>
+<p>Живые ключи Stripe и три <code>STRIPE_PRICE_*</code>. Ключи я не ввожу и не храню по вашему требованию; команду <code>heroku config:set</code> запускаете вы.</p>
+<p class="why"><b>Это потолок для всего остального.</b> Пока строка открыта, продавать нечего, чем бы ни был занят план.</p>
+</div>
+
+<h2>Что показал метод</h2>
+
+<div class="panel warn">
+<p><b>Трижды фаза разбора остановила правку, которая была бы хуже дефекта</b> — и все три раза это выяснялось чтением, до написания кода:</p>
+<ul>
+<li>денежный вид в DataGate <b>заблокировал бы вопрос «сколько мы вернули»</b> — отрицательная выручка это возврат, а не невозможное значение;</li>
+<li>трекер в конструкторе ретривера дал бы <b>межзапросную утечку событий</b>: объект живёт весь процесс, а <code>workflow_id</code> называет поток одного запроса;</li>
+<li>гашение литералов в охраннике фильтров сделало бы <b>неудовлетворимым каждый предикат с литералом-операндом</b> — то есть воспроизвело бы дефект соседней строки.</li>
+</ul>
+</div>
+
+<div class="panel">
+<p><b>Трижды мою ошибку ловили чужие тесты</b>, уже лежавшие в репозитории, — включая два случая, когда мой фикс воспроизводил чинимый дефект, и один, когда моё объяснение поведения было ложным. Все три исправления записаны в тестах с причиной: тест, запрещающий не то, учит следующего читателя не тому.</p>
+</div>
+
+<div class="panel">
+<p><b>Повторяющаяся форма, найденная шесть раз:</b> одна работа — несколько реализаций, верна одна. Проверки области видимости, определение корпуса BM25, охранники «это число?», вырезание комментариев из SQL, карты диалектов. Каждый раз лечение одно: <b>одна функция, которую спрашивают все, и она возбуждает исключение</b> — потому что возвращаемый <code>None</code> можно проигнорировать, забыв проверку.</p>
+</div>
+
+<div class="panel bad">
+<p><b>Мои процессные промахи, названные прямо.</b> Ветвление до мержа предыдущей ветки — <b>четыре раза</b>, при том что правило я записал сам. Молчаливый откат чужой закрытой строки при разрешении конфликта — дважды. <code>git add -A</code> после провалившегося <code>cd</code> затянул в коммит 178 файлов и 89 379 строк.</p>
+<p class="why">Два класса закрыты машинами: <code>scripts/board_no_regression.py</code> ловит откат строки, проверка пересечения файлов один раз сработала до записи. <b>Правило в документе автора не останавливает — останавливает только падающая проверка.</b></p>
+</div>
+
+<h2>Что дальше, если продолжать</h2>
+<ol>
+<li><b>Смержить <code>#304</code></b> и закрыть 2.12.</li>
+<li><b>Проверить и закрыть 2.6</b> — похоже, работа уже сделана.</li>
+<li><b>Строка 0.4 — ваш шаг.</b> До него остальное упирается в потолок.</li>
+<li>2.18 и 2.19 ждут не времени, а идеи и воспроизведения соответственно.</li>
+<li>P3 брать по мере того, как он блокирует, а не списком.</li>
+</ol>
+
+<footer>
+Источники: <code>docs/AUDIT_REMEDIATION_2026-09.md</code> на <code>origin/main</code> (52 строки) ·
+<code>gh pr list</code> · <code>gh run list --workflow="Deploy to Heroku"</code> ·
+полный прогон сюиты на задеплоенном коммите · <code>git log --numstat</code> за 5 сентября.
+</footer>
+
+</div></body></html>

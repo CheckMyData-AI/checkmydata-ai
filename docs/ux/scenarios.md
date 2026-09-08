@@ -22,12 +22,12 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 | | |
 |---|---|
 | Scenarios | **152** |
-| Status | draft × 19, implemented × 133 |
-| Last verdict | PARTIAL × 2, PASS × 131, no verdict × 19 |
-| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 1, undated × 19 |
+| Status | draft × 15, implemented × 137 |
+| Last verdict | PARTIAL × 2, PASS × 135, no verdict × 15 |
+| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 5, undated × 15 |
 | **Verified >30 days ago** | **95 of 152** (oldest 51 days) |
-| Never verified (no date) | 19 |
-| Referenced from code or tests | **27 of 152** |
+| Never verified (no date) | 15 |
+| Referenced from code or tests | **31 of 152** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -173,10 +173,10 @@ it is what moves it.
 | SCN-127 | Leave a project | analyst | members | implemented | 2026-08-21 PASS |
 | SCN-129 | Data workspace — every source managed on one screen | workspace | owner | draft | — |
 | SCN-130 | Add a source without leaving the workspace | workspace | owner | draft | — |
-| SCN-131 | A new project's workspace says what to connect first | workspace | owner | draft | — |
-| SCN-132 | Each source card says what the agent can do with it | workspace | analyst | draft | — |
+| SCN-131 | A new project's workspace says what to connect first | workspace | owner | implemented | 2026-09-08 PASS |
+| SCN-132 | Each source card says what the agent can do with it | workspace | analyst | implemented | 2026-09-08 PASS |
 | SCN-133 | The sidebar switches, the workspace manages | workspace | analyst | draft | — |
-| SCN-134 | Say what a connection is for, in the agent's terms | connections | editor | draft | — |
+| SCN-134 | Say what a connection is for, in the agent's terms | connections | editor | implemented | 2026-09-08 PASS |
 | SCN-135 | The answer shows which source context it was given | connections | analyst | draft | — |
 | SCN-136 | Source context that did not fit says so | connections | analyst | draft | — |
 | SCN-137 | Connect a repository to a project | repos | owner | draft | — |
@@ -189,7 +189,7 @@ it is what moves it.
 | SCN-144 | Refresh the documentation and see what changed | knowledge | editor | draft | — |
 | SCN-145 | A document says where it came from and how old it is | knowledge | analyst | draft | — |
 | SCN-146 | Set up a project without a subscription — the work proceeds, the schedule does not | billing | owner | implemented | 2026-09-07 PASS |
-| SCN-147 | The schedule says why it is off and what turns it on | billing | owner | draft | — |
+| SCN-147 | The schedule says why it is off and what turns it on | billing | owner | implemented | 2026-09-08 PASS |
 | SCN-148 | A granted account behaves exactly as its plan | billing | owner | implemented | 2026-09-07 PASS |
 | SCN-149 | The sidebar answers "where was I, and what needs me" | workspace | analyst | draft | — |
 | SCN-150 | The sidebar surfaces what needs attention and routes to the fix | workspace | analyst | implemented | 2026-09-08 PASS |
@@ -844,7 +844,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** empty, error
 - **Errors & recovery:** connections load failure (project switch) → inline error + Retry in place of the empty state (shared `ListError`, audit M5; `ConnectionSelector.tsx:1511-1516`). Known gap: the connections list has no list-level loading spinner (populated via project switch)
 - **Status:** implemented
-- **Coverage:** components/connections/ConnectionSelector.tsx:1511-1523 (error vs empty states), :197 (`handleRetryLoad`); components/connections/ConnectionsPanel.tsx:12-18 ("Select a project first"); components/ui/ListError.tsx
+- **Coverage:** components/connections/ConnectionSelector.tsx:1511-1523 (error vs empty states), :197 (`handleRetryLoad`); frontend/src/components/workspace/DataWorkspace.tsx ("Select a project first" — the state moved here when `ConnectionsPanel` was deleted); components/ui/ListError.tsx
 
 ### SCN-134: Say what a connection is for, in the agent's terms
 - **Persona:** editor
@@ -862,8 +862,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** "Describe" action, multi-line field, character counter, cap notice, Save / Cancel, card subtitle, "No purpose set" placeholder
 - **States covered:** empty, loading, error, success
 - **Errors & recovery:** over the cap -> counter turns warning, Save refused with "N characters over the limit", text preserved; save fails -> toast "Could not save the description" and the field keeps the text so nothing is retyped; the field is user-authored text that reaches a prompt, so it is injected as data under its own heading and never as instructions the agent must obey
-- **Status:** draft
-- **Coverage:** none yet; planned: backend/app/models/connection.py (a description column and its migration), planned: backend/app/knowledge/custom_rules.py (the budgeted-injection precedent at `rules_to_context`), planned: frontend/src/components/connections/ConnectionSelector.tsx (the form that hosts it)
+- **Status:** implemented
+> **Delivered end to end 2026-09-08.** The column, the API contract (create AND update, capped identically), the migration and the prompt injection all exist and are tested: a described connection now reaches the SQL agent as `## What the user says these sources are for` — **data under its own heading, attributed, never framed as an instruction**, because a free-text field presented as a rule is an injection channel with a text input attached. The budget drops whole descriptions and names the omitted ones. The place to type it is the Describe affordance on the source card of `SCR-01`, which landed the same day: a failed save keeps the text, and one line states that the agent receives this with every question — a field whose effect is invisible does not get filled in.
+- **Coverage:** frontend/src/components/workspace/SourceDescribe.tsx; frontend/src/components/workspace/DataWorkspace.tsx; frontend/src/__tests__/components/DataWorkspace.test.tsx; backend/app/models/connection.py; backend/app/agents/source_purpose.py; backend/app/agents/sql_agent.py (`_load_source_purposes`); backend/app/agents/prompts/sql_prompt.py; backend/app/api/routes/connections.py; backend/alembic/versions/f6a7b8c9d0e1_add_connection_purpose.py; backend/tests/unit/test_source_purpose.py
 
 ### SCN-135: The answer shows which source context it was given
 - **Persona:** analyst
@@ -1971,8 +1972,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** disabled sync-hour control with its reason, per-card `last indexed manually` label, upgrade route, the self-hosted fallback message when Stripe is unconfigured
 - **States covered:** empty, success
 - **Errors & recovery:** the entitlement cannot be read -> the control renders disabled with "could not check your plan" and a retry; it does not default to enabled, because promising a nightly run that will not happen is the failure this scenario exists to prevent
-- **Status:** draft
-- **Coverage:** backend/app/entitlements/__init__.py (the gate this scenario reports on exists); planned: frontend/src/components/workspace/DataWorkspace.tsx, planned: backend/app/api/routes/projects.py (the `sync-schedule` route must report whether the schedule may run at all)
+- **Status:** implemented
+- **Coverage:** frontend/src/components/workspace/DataWorkspace.tsx (the sync-hour control and its reason); backend/app/api/routes/projects.py (`sync-schedule` reports `may_run`); backend/app/entitlements/__init__.py; backend/tests/integration/test_sync_schedule_may_run.py; frontend/src/__tests__/components/DataWorkspace.test.tsx
 
 ### SCN-148: A granted account behaves exactly as its plan
 - **Persona:** owner
@@ -2447,8 +2448,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   +----------------+-----------------------------------------------+
 ```
 
+> **Partly delivered 2026-09-08.** The screen exists at the `connections` route — three groups, full content width, the empty state of SCN-131, capability and read-only chips per card, the Describe affordance of SCN-134 and the sync-hour control of SCN-147. `ConnectionsPanel`, the `max-w-xl` wrapper that re-rendered the sidebar's list, is deleted. **Not yet done:** step 3, the in-place per-card expander for Edit / Test / Index / Delete — only Describe expands in place today and the rest still runs through the shared connection form below the group. Until that lands the rail cannot give up its Connections section (SCN-133).
 - **Status:** draft
-- **Coverage:** none yet; planned: frontend/src/components/workspace/DataWorkspace.tsx; frontend/src/app/app/page.tsx (the `connections` panel at the `effectivePanel` switch), frontend/src/components/connections/ConnectionsPanel.tsx (the `max-w-xl` wrapper this supersedes)
+- **Coverage:** frontend/src/components/workspace/DataWorkspace.tsx; frontend/src/__tests__/components/DataWorkspace.test.tsx; frontend/src/app/app/page.tsx (the `connections` panel at the `effectivePanel` switch)
 
 ### SCN-130: Add a source without leaving the workspace
 - **Persona:** owner
@@ -2484,8 +2486,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** three empty-group cards, per-group one-line explanation, one primary action, the ordering note
 - **States covered:** empty
 - **Errors & recovery:** nothing can fail — the screen reads state that is already loaded
-- **Status:** draft
-- **Coverage:** none yet; planned: frontend/src/components/workspace/DataWorkspace.tsx, planned: backend/app/services/daily_knowledge_sync_service.py (the eligibility rule the note states)
+- **Status:** implemented
+- **Coverage:** frontend/src/components/workspace/DataWorkspace.tsx; frontend/src/__tests__/components/DataWorkspace.test.tsx; backend/app/services/daily_knowledge_sync_service.py (the eligibility rule the note states)
 
 ### SCN-132: Each source card says what the agent can do with it
 - **Persona:** analyst
@@ -2502,8 +2504,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** capability chip, read-only chip, freshness line, counts, "No purpose set" placeholder with Describe, single remedial action per stale card
 - **States covered:** empty, success
 - **Errors & recovery:** capability cannot be determined -> the chip reads "unknown" and links to Test, never defaulting to queryable; an analytics source must never advertise a query capability, per `is_queryable_database`
-- **Status:** draft
-- **Coverage:** none yet; planned: frontend/src/components/workspace/DataWorkspace.tsx, planned: backend/app/services/connection_service.py (`is_queryable_database`, the predicate the chip must read)
+- **Status:** implemented
+- **Coverage:** frontend/src/components/workspace/DataWorkspace.tsx; frontend/src/__tests__/components/DataWorkspace.test.tsx; backend/app/api/routes/connections.py (`capability_of` — answered server-side so the card does not reimplement `is_queryable_database` in a language that cannot import it); backend/tests/unit/test_workspace_contract.py
 
 ### SCN-133: The sidebar switches, the workspace manages
 - **Persona:** analyst

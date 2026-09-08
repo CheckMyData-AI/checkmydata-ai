@@ -93,6 +93,7 @@ def build_sql_system_prompt(
     required_filters: str = "",
     column_value_mappings: str = "",
     custom_rules: str = "",
+    source_purposes: str = "",
 ) -> str:
     """Assemble a SQL-focused system prompt for the SQL agent."""
 
@@ -112,11 +113,22 @@ def build_sql_system_prompt(
         sections.append("CUSTOM RULES & BUSINESS LOGIC (MANDATORY — always apply these):")
         sections.append(custom_rules)
 
+    if source_purposes:
+        # Deliberately NOT framed like the rules above. Custom rules are the project's
+        # standing instructions; this is what a person said their data means, and it
+        # arrives carrying its own heading and attribution (`source_purpose.py`). Giving
+        # it a "MANDATORY" banner would turn a free-text field into an instruction
+        # channel — which is the difference between context and an injection surface.
+        sections.append("")
+        sections.append(source_purposes)
+
     available_context: list[str] = []
     if table_map:
         available_context.append("table map")
     if custom_rules:
         available_context.append("custom rules")
+    if source_purposes:
+        available_context.append("source descriptions")
     if learnings_prompt:
         available_context.append("agent learnings")
     if notes_prompt:
