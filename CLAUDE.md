@@ -595,6 +595,59 @@ now beats both rows. Hidden the same way both times: **a heartbeat does exist ne
 a different row.** When a run is reaped and the process is demonstrably alive, check
 *which row* is being ticked before anything else.
 
+**A beat nobody can schedule is worth exactly what no beat is worth (2026-09-08).** The
+same `graph_build` step, a third time — and the two previous fixes were both necessary and
+both insufficient. Production, every timestamp from the log:
+
+```
+20:49:26  graph_build: started (82 parsed files)
+20:49:27  code_graph: built 408 symbols, 516 edges
+          ...14 min 30 s of complete silence...
+20:55:09  Reaper: reset stale runs — repo=1 runs=2 (timeout=300s)
+21:03:57  graph_build: re-parsing 231 reverse-dependent file(s)   <- STILL ALIVE
+```
+
+Between those two log lines `pipeline_runner.py:1758-1761` does two things:
+`CodeGraphService.load_graph`, and `reverse_dependents` over the result. The second
+measures **0.009 s** on the production graph, so all of it is the first — and inside it,
+the `CodeGraph` constructor, on one expression at `code_graph.py:158`:
+`key=f"{e.edge_type}:{len(self._graph.edges)}"`. `G.edges` is a **view**, and `len()` on
+it walks the adjacency structure, so asking once per edge makes construction O(E×(V+E)).
+Measured at the production shape (25 695 symbols, 68 263 edges): **209.6 s on a 2026
+laptop**, several times that on a dyno core. It is synchronous Python with no `await` in
+it, so the heartbeat coroutine cannot be scheduled for its entire duration. The key's
+value is read by nothing — it only keeps parallel edges distinct — so the position in the
+list serves: **0.10 s**.
+
+The general shape, which is the part worth carrying: **the reaper measures a coroutine's
+ability to be scheduled, not a process's liveness.** Any CPU-bound stretch on the event
+loop longer than `stale_running_heartbeat_timeout_seconds` reads as death, and the run's
+own logs will show it working afterwards. When a heartbeat gap has no restart, no R14/R15
+and no error beside it, look for blocking work on the loop before looking for a crash —
+and prefer a test that counts operations over one that measures time, because a
+timing-ratio test for exactly this defect **passed against it**.
+
+Two independent costs were fixed on the same day and only one of them was the reap:
+`save_incremental` also rewrote the whole graph (~94 000 rows, 837 571 parameter values,
+for a 408-symbol delta) and now writes the delta — 1 176 values. That is a real saving and
+it was never the starvation; the run never reached persistence.
+
+**And the delta's own first version was slower than what it replaced.** R3-1's prune was
+written as a correlated `NOT EXISTS` per endpoint over every edge in the project: correct,
+and **1 195 s** for a 36-symbol delta against the same shape, versus 0.06 s now. The fix is
+not a faster query but a smaller question. R3-1 requires that an edge must not survive
+pointing at a symbol **this run removed** — which is exactly `doomed_uids - new uids`, a
+targeted `DELETE` on `(project_id, dst_uid)` proportional to the change. The in-memory
+merge asked the whole-project question only because it already held the graph.
+
+That narrowing also settles a disagreement between the two write paths, and the direction
+is the surprising one. `CodeGraph` keeps edges to unresolved UIDs **on purpose**
+(`code_graph.py:153`: "so the graph remains queryable") and `save`, the full rebuild,
+stores them — while the old incremental prune deleted every one of them on every run. So a
+full index and an incremental index produced different graphs for the same repository, and
+the incremental was the lossy one. Nothing could depend on the swept state, because the
+next full rebuild restored it.
+
 **A directly-enqueued repo index now mints its run row (2026-08-31).**
 `run_repo_index_task` began a bare workflow and no `IndexingRun`, so the path
 `reconcile_embeddings` uses — every deploy-triggered `force_full` rebuild — was invisible

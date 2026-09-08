@@ -149,13 +149,23 @@ class CodeGraph:
         self._graph: nx.MultiDiGraph = nx.MultiDiGraph()
         for sym in symbols:
             self._graph.add_node(sym.uid, kind=sym.kind, name=sym.name, file=sym.file_path)
-        for e in edges:
+        for position, e in enumerate(edges):
             # Allow edges to dangling UIDs (unresolved external references)
             # so the graph remains queryable.
+            #
+            # The key only has to keep parallel edges between one pair distinct; nothing
+            # reads its value. It used to be `len(self._graph.edges)`, and `G.edges` is a
+            # view whose `__len__` walks the whole adjacency structure — so asking for it
+            # once per edge made construction O(E x (V+E)). Measured at the production
+            # shape (25,695 symbols / 68,263 edges): 209.6 s on a 2026 laptop, several
+            # times that on a dyno core, all of it synchronous. That is what blocked the
+            # event loop long enough for `StaleRunReaper` to kill a live indexing run
+            # whose heartbeat simply could not be scheduled. The position in `edges` is
+            # unique by construction and costs nothing.
             self._graph.add_edge(
                 e.src_uid,
                 e.dst_uid,
-                key=f"{e.edge_type}:{len(self._graph.edges)}",
+                key=f"{e.edge_type}:{position}",
                 edge_type=e.edge_type,
                 confidence=e.confidence,
                 attrs=e.attrs,
