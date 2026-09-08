@@ -553,6 +553,36 @@ async def _maybe_autostart_sync_chain(project_id: str) -> None:
         )
 
 
+async def _run_id_for_workflow(wf_id: str) -> str | None:
+    """The `IndexingRun` id behind *wf_id*, or ``None`` when this path has no run row.
+
+    Best effort by design. A missing run row is a real state — `run_repo_index_task`
+    falls back to a bare workflow when the row cannot be written, and that fallback is
+    deliberate: "the row is bookkeeping; the index is the work". Failing the rebuild
+    because its heartbeat has nowhere to land would invert that.
+    """
+    try:
+        from sqlalchemy import select as _select
+
+        from app.models.indexing_run import IndexingRun
+
+        async with async_session_factory() as db:
+            return await db.scalar(
+                _select(IndexingRun.id)
+                .where(IndexingRun.workflow_id == wf_id)
+                .order_by(IndexingRun.created_at.desc())
+                .limit(1)
+            )
+    except Exception:
+        logger.warning(
+            "could not resolve the run row for workflow %s — the index proceeds, but "
+            "its run-level heartbeat will not be written and the reaper may kill it",
+            wf_id,
+            exc_info=True,
+        )
+        return None
+
+
 async def _run_index_background(
     project_id: str,
     project,
@@ -588,11 +618,32 @@ async def _run_index_background(
                 try:
                     from app.config import settings as _settings
                     from app.core.heartbeat import heartbeat
+                    from app.services.run_coordinator import _run_beat
+
+                    # Beat BOTH rows. `IndexingCheckpoint` is what the resume logic and
+                    # the status endpoint read; `IndexingRun` is what `StaleRunReaper`
+                    # reads — and until 2026-09-08 only the first was ticked here, so a
+                    # repo index that worked for longer than
+                    # `stale_running_heartbeat_timeout_seconds` (300) was reaped while it
+                    # was running, with a perfectly fresh checkpoint beside it.
+                    #
+                    # Measured: 2026-09-08 15:19:11 started, last `IndexingRun.heartbeat_at`
+                    # 15:20:00, `code_graph: built 408 symbols, 516 edges` at 15:20:01,
+                    # five minutes of silence, reaped 15:25:10. No process died. It also
+                    # explains the 52 historical `graph_build` reaps: `RunCoordinator.step`
+                    # carries the run-level beat, and this path never enters one.
+                    #
+                    # The same trap as N1 (2026-08-25), and it stayed hidden the same way:
+                    # a heartbeat DOES exist here, on the wrong row.
+                    run_id = await _run_id_for_workflow(wf_id)
+                    beat_run = _run_beat(run_id) if run_id else None
 
                     async def _hb() -> None:
                         async with async_session_factory() as hb_db:
                             await _checkpoint_svc.touch_heartbeat(hb_db, checkpoint.id)
                             await hb_db.commit()
+                        if beat_run is not None:
+                            await beat_run()
 
                     async with heartbeat(
                         _hb, interval_seconds=_settings.heartbeat_interval_seconds

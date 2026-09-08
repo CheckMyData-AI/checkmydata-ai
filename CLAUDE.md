@@ -583,6 +583,18 @@ need renewing by the same beat that failed here.
 **A reaped run now reaches `error_log` (N3, 2026-08-25).** `RunCoordinator` catalogs failures only on terminal-event paths (`run_coordinator.py:317`, `:450`, `:485`); the reaper flips rows with a bulk `UPDATE` and emits no terminal event, so 143 failed runs produced 3 catalog rows. `StaleRunReaper` reads the doomed rows before killing them and catalogs each — message carries the step (`stale run reaped (step: graph_build)`), so the concentration that identifies a cause is visible in `/api/logs` rather than only in ad-hoc SQL. The run's `error` column stays exactly `REAP_ERROR`, because `run_coordinator.py:393` compares it verbatim to reconcile a run that turns out to be alive.
 **The beat runs *inside* a step, not only at its edges (N1, 2026-08-25).** `RunCoordinator.step` wrote `heartbeat_at` on entry and on success and nothing between, so any single step longer than `stale_running_heartbeat_timeout_seconds` (300) was reaped **while it was still working**. Production: 64 of 70 repo-index failures, all `current_step='graph_build'`, `error='stale run reaped'`, every day from 2026-08-07. It was invisible for thirteen days because a heartbeat *did* exist — `_run_index_background` (`repos.py:556-563`) ticks `IndexingCheckpoint`, and the reaper's `stale run reaped` marker lands on `IndexingRun`, a different row. The fix is in `step` because all four repo-index entry points (ARQ task, manual route, retry route, daily sync) reach the pipeline through it, and because `IndexingRun` is created and finished there. The writer uses **its own session** — the step's `db` driven from two tasks is a race, not a heartbeat — and a targeted `UPDATE` rather than an ORM load, so it cannot carry a stale `version` or overwrite columns it does not own.
 
+**The repo-index path beat the WRONG ROW until 2026-09-08 — the N1 trap, twice.** N1 put
+the beat inside `RunCoordinator.step`; the repo-index paths never enter a `step`, so they
+kept the beat they already had — `_run_index_background` ticking `IndexingCheckpoint`,
+which is not the row `StaleRunReaper` reads. Measured: a manual catch-up started 15:19:11,
+wrote its last `IndexingRun.heartbeat_at` at 15:20:00, logged `code_graph: built 408
+symbols, 516 edges` at 15:20:01, then five minutes of worker silence — no restart, no
+R14/R15 — and was reaped at 15:25:10 while alive. It explains the 52 historical
+`graph_build` reaps and why nightly `index_repo` failed 54 of 66 times in 30 days. `_hb`
+now beats both rows. Hidden the same way both times: **a heartbeat does exist nearby, on
+a different row.** When a run is reaped and the process is demonstrably alive, check
+*which row* is being ticked before anything else.
+
 **A directly-enqueued repo index now mints its run row (2026-08-31).**
 `run_repo_index_task` began a bare workflow and no `IndexingRun`, so the path
 `reconcile_embeddings` uses — every deploy-triggered `force_full` rebuild — was invisible
