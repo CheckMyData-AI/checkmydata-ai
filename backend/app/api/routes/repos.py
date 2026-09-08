@@ -50,6 +50,22 @@ _checkpoint_svc = CheckpointService()
 _connection_svc = ConnectionService()
 _membership_svc = MembershipService()
 _repo_svc = RepositoryService()
+# These three are a FAST PATH, not the exclusion mechanism. They are per-process
+# `asyncio` primitives and the entry points span both Heroku process types, so on their
+# own they would guarantee nothing across `web` and `worker`.
+#
+# What actually enforces "one active run per (project, kind, connection)" is the
+# database: `uq_indexing_runs_active_one`, a partial unique index declared for both
+# SQLite and PostgreSQL (`models/indexing_run.py:85`), plus `RunCoordinator.start`
+# catching the `IntegrityError` when it loses the TOCTOU race. `IndexingRun` is
+# constructed in exactly one place, so there is no path around it —
+# `tests/unit/services/test_run_exclusion_cross_process.py` proves all three.
+#
+# Kept because they save a database round trip on the common case. Stated here because
+# CLAUDE.md used to describe this as an open gap (2026-09-01 → corrected 2026-09-09),
+# and a reader who takes these dicts for the mechanism will build a Redis lock nobody
+# needs — one whose TTL would have to be renewed by the same heartbeat that failed in
+# the incident that prompted the note.
 _indexing_locks: dict[str, asyncio.Lock] = {}
 _indexing_tasks: dict[str, asyncio.Task] = {}
 _index_start_locks: dict[str, asyncio.Lock] = {}

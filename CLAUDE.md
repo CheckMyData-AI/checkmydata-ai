@@ -599,11 +599,30 @@ retries (caught by the existing coordinator tests, not by the new ones).
 raises nothing, and that silence is why the beat gap behind the 22:07 reap still cannot be
 explained from the data. `rowcount == -1` ("could not tell") is kept distinct from `0`.
 
-**Still open: repo-index mutual exclusion is per-process only.** `_indexing_locks`
-(`repos.py:53`) is a module-level dict of `asyncio.Lock`, while the entry points span both
-process types — `daily_knowledge_sync_service.py:348` calls the task directly on `web`, the
-reaper enqueues to ARQ on `worker`. A Redis lock was deferred deliberately: its TTL would
-need renewing by the same beat that failed here.
+**Repo-index mutual exclusion is cross-process, and was already (T07, measured
+2026-09-09).** This paragraph used to read *"Still open: mutual exclusion is per-process
+only"*, on the grounds that `_indexing_locks` (`repos.py:53`) is a module-level dict of
+`asyncio.Lock` while the entry points span both process types. Both halves of that are
+true; the conclusion was not, because the dict is not what enforces exclusion. Three
+facts, each now checked by `tests/unit/services/test_run_exclusion_cross_process.py`
+rather than asserted:
+
+- `IndexingRun` is constructed in **exactly one place**, `RunCoordinator.start`
+  (`run_coordinator.py:281`) — the test walks `app/` and fails if a second site appears.
+- The rule is enforced by the **database**: `uq_indexing_runs_active_one`, a partial
+  unique index on `(project_id, kind, coalesce(connection_id, ''))` limited to
+  `status IN ('queued','running','cancelling')`, declared for **both** SQLite and
+  PostgreSQL (`models/indexing_run.py:85`). A row inserted by hand, bypassing the
+  coordinator entirely, is refused — which is what "another process" means.
+- The TOCTOU window is closed by catching `IntegrityError`, rolling back (mandatory — the
+  session is poisoned otherwise) and re-querying for the winner.
+
+What the 2026-09-01 incident actually was: not a missing lock. The reaper flipped a live
+run to `failed` and `_find_active` filtered on **status**, the one field a wrong reap
+falsifies. Closed by `_is_live`. So `_indexing_locks` is a fast path that saves a round
+trip, and a Redis lock would add nothing — its TTL would need renewing by the same beat
+that failed there. The comment at `repos.py:53` now says so, because a reader who takes
+those dicts for the mechanism will build the lock nobody needs.
 
 **A reaped run now reaches `error_log` (N3, 2026-08-25).** `RunCoordinator` catalogs failures only on terminal-event paths (`run_coordinator.py:317`, `:450`, `:485`); the reaper flips rows with a bulk `UPDATE` and emits no terminal event, so 143 failed runs produced 3 catalog rows. `StaleRunReaper` reads the doomed rows before killing them and catalogs each — message carries the step (`stale run reaped (step: graph_build)`), so the concentration that identifies a cause is visible in `/api/logs` rather than only in ad-hoc SQL. The run's `error` column stays exactly `REAP_ERROR`, because `run_coordinator.py:393` compares it verbatim to reconcile a run that turns out to be alive.
 **The beat runs *inside* a step, not only at its edges (N1, 2026-08-25).** `RunCoordinator.step` wrote `heartbeat_at` on entry and on success and nothing between, so any single step longer than `stale_running_heartbeat_timeout_seconds` (300) was reaped **while it was still working**. Production: 64 of 70 repo-index failures, all `current_step='graph_build'`, `error='stale run reaped'`, every day from 2026-08-07. It was invisible for thirteen days because a heartbeat *did* exist — `_run_index_background` (`repos.py:556-563`) ticks `IndexingCheckpoint`, and the reaper's `stale run reaped` marker lands on `IndexingRun`, a different row. The fix is in `step` because all four repo-index entry points (ARQ task, manual route, retry route, daily sync) reach the pipeline through it, and because `IndexingRun` is created and finished there. The writer uses **its own session** — the step's `db` driven from two tasks is a race, not a heartbeat — and a targeted `UPDATE` rather than an ORM load, so it cannot carry a stale `version` or overwrite columns it does not own.
@@ -693,6 +712,23 @@ does. `StaleRunReaper._requeue` re-enqueues it, inheriting `force_full` from the
 spend the budget, and an unreadable count returns the bound rather than zero. Only that
 kind, because `run_repo_index` runs `generate_docs` through an LLM and the worker is the
 memory-constrained process.
+
+**The nightly sync now says when it nearly ran out of night (T06, 2026-09-09).** The
+longest COMPLETED `daily_sync` on production took **7 214.9 s** against
+`daily_knowledge_sync_job_timeout_seconds` = 7 200 — it finished by luck, and nothing said
+so. ARQ's timeout does not warn on the way up, it cancels, so the first symptom of a
+repository outgrowing the budget is a night that simply did not sync, with the run before
+it looking exactly like a success. `budget_warning()` logs at WARNING above
+`BUDGET_WARNING_FRACTION` (0.85) of the budget and increments
+`daily_sync_budget_near_ceiling_total`.
+
+A **fraction**, not a second threshold constant: a hard-coded alarm beside a configurable
+limit fails both ways — raise the ceiling and it fires on every ordinary run until someone
+deletes it, lower the ceiling and it never fires again. The timeout is read at the moment
+of the check, so a run that outlives a config change is judged against the ceiling that is
+actually about to cancel it. A non-positive timeout degrades **quiet**, because an alarm on
+every run trains the operator to ignore the one that matters. This is a different ceiling
+from `repo_index_job_timeout_seconds` (21 600) — see the two-ceilings note above.
 
 Stuck `running` DB-index / sync / repo-index rows self-heal: a crashed worker stops touching `heartbeat_at`, and the reaper flips the row to `failed` on the next sweep so the UI surfaces the failure instead of spinning indefinitely. New endpoint `GET /api/projects/{id}/sync-history` (see `API.md`) returns the last N daily-sync audit rows with per-project outcome details.
 
