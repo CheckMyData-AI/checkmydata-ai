@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge_doc import KnowledgeDoc
@@ -24,6 +24,7 @@ class DocStore:
         content: str,
         commit_sha: str | None = None,
         embedding_id: str | None = None,
+        content_hash: str | None = None,
     ) -> KnowledgeDoc:
         content = content.replace("\x00", "")
 
@@ -41,6 +42,10 @@ class DocStore:
             doc.content = content
             doc.doc_type = doc_type
             doc.commit_sha = commit_sha
+            # Written unconditionally, `None` included: a caller that did not compute a
+            # hash has not verified one, and leaving the previous value would claim this
+            # content was generated from inputs nobody compared it against.
+            doc.content_hash = content_hash
             if embedding_id:
                 doc.embedding_id = embedding_id
         else:
@@ -51,12 +56,43 @@ class DocStore:
                 content=content,
                 commit_sha=commit_sha,
                 embedding_id=embedding_id,
+                content_hash=content_hash,
             )
             session.add(doc)
 
         await session.commit()
         await session.refresh(doc)
         return doc
+
+    async def touch_reused(
+        self,
+        session: AsyncSession,
+        project_id: str,
+        source_paths: list[str],
+        commit_sha: str | None,
+    ) -> int:
+        """Mark documents whose inputs did not change as current for this commit.
+
+        A cache hit still has to say WHEN it was last confirmed: `commit_sha` and
+        `updated_at` are what freshness reporting and `sync-history` read, and a document
+        left at an old sha reads as stale when it is merely unchanged.
+
+        One statement per batch rather than one per document. A rebuild of the one real
+        project reuses ~700 of 758, and 700 round trips is its own cost.
+        """
+        if not source_paths:
+            return 0
+        result = await session.execute(
+            update(KnowledgeDoc)
+            .where(
+                and_(
+                    KnowledgeDoc.project_id == project_id,
+                    KnowledgeDoc.source_path.in_(source_paths),
+                )
+            )
+            .values(commit_sha=commit_sha, updated_at=func.now())
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def get_docs_for_project(
         self, session: AsyncSession, project_id: str, doc_type: str | None = None

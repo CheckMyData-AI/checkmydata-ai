@@ -26,6 +26,7 @@ from app.knowledge.bm25_index import BM25Index
 from app.knowledge.chunker import chunk_document
 from app.knowledge.code_graph import CodeGraph, CodeGraphBuilder
 from app.knowledge.code_symbol_chunker import make_chunker as _make_symbol_chunker
+from app.knowledge.doc_cache import doc_content_hash, should_reuse_document
 from app.knowledge.doc_generator import _is_binary_content
 from app.knowledge.indexing_pipeline import (
     generate_summary_doc,
@@ -976,11 +977,17 @@ class IndexingPipelineRunner:
 
         await self._cp_svc.complete_step(db, cp_id, "enrich_docs", total_docs=total)
 
-        # Pre-fetch all existing docs in one query to avoid N individual lookups
+        # Pre-fetch all existing docs in one query to avoid N individual lookups.
+        #
+        # Loaded on BOTH branches now, which is the whole of T03's cheap half: the
+        # incremental path was already skipping unchanged files, and the expensive path
+        # is `force_full`, which used to fetch nothing and therefore had nothing to
+        # compare against. One SELECT either way.
         existing_docs_map: dict[str, str] = {}
-        if is_incremental:
-            all_existing = await self._doc_store.get_docs_for_project(db, project_id)
-            existing_docs_map = {d.source_path: d.content for d in all_existing}
+        existing_hash_map: dict[str, str | None] = {}
+        all_existing = await self._doc_store.get_docs_for_project(db, project_id)
+        existing_docs_map = {d.source_path: d.content for d in all_existing}
+        existing_hash_map = {d.source_path: d.content_hash for d in all_existing}
 
         # Build table_model_map once instead of per-doc
         table_model_map: dict[str, str] = {}
@@ -1037,13 +1044,19 @@ class IndexingPipelineRunner:
             prev_content: str | None,
         ) -> str:
             """Run the LLM call under a concurrency limiter."""
+            # A migration's document is a mechanical restatement of a `CREATE TABLE`;
+            # an ORM model's is not. The override is per `doc_type` and empty by
+            # default, so absent configuration this is exactly the project's own model.
+            model = settings.indexing_llm_model_by_doc_type.get(
+                edoc.doc_type, project.indexing_llm_model
+            )
             async with _llm_sem:
                 return await doc_generator.generate(
                     file_path=edoc.file_path,
                     content=edoc.content,
                     doc_type=edoc.doc_type,
                     preferred_provider=project.indexing_llm_provider,
-                    model=project.indexing_llm_model,
+                    model=model,
                     enrichment_context=edoc.enrichment_context,
                     previous_content=prev_content,
                     existing_doc=existing_doc_content,
@@ -1060,6 +1073,10 @@ class IndexingPipelineRunner:
             # Phase 1: filter out skip-able docs and prepare LLM tasks
             llm_tasks: list[tuple[int, EnrichedDoc, str | None, str | None]] = []
             docs_generated = 0
+            docs_reused = 0
+            reused_by_type: dict[str, int] = {}
+            reused_paths: list[str] = []
+            doc_hashes: dict[str, str] = {}
 
             for i, edoc in enumerate(state.enriched_docs):
                 if edoc.file_path in processed_paths:
@@ -1098,6 +1115,35 @@ class IndexingPipelineRunner:
 
                 existing_doc_content = existing_docs_map.get(edoc.file_path)
 
+                # T03: the document is a function of its inputs, so if those are
+                # unchanged the stored document is still the right one — whatever
+                # triggered this run. A `force_full` enqueued by an extractor-schema bump
+                # has not edited a single migration, and migrations are 535 of this
+                # project's 758 documents.
+                #
+                # `None` on the stored side means "generated before this cache existed",
+                # which is unknown rather than unchanged: it regenerates once and records
+                # the hash, and the run after that is the cheap one.
+                doc_hash = doc_content_hash(
+                    content=edoc.content,
+                    doc_type=edoc.doc_type,
+                    enrichment_context=edoc.enrichment_context,
+                )
+                doc_hashes[edoc.file_path] = doc_hash
+                if should_reuse_document(
+                    existing_content=existing_doc_content,
+                    stored_hash=existing_hash_map.get(edoc.file_path),
+                    computed_hash=doc_hash,
+                ):
+                    docs_reused += 1
+                    reused_by_type[edoc.doc_type] = reused_by_type.get(edoc.doc_type, 0) + 1
+                    reused_paths.append(edoc.file_path)
+                    pending_paths.append(edoc.file_path)
+                    if len(pending_paths) >= batch_flush_size:
+                        await self._cp_svc.mark_docs_batch_processed(db, cp_id, pending_paths)
+                        pending_paths = []
+                    continue
+
                 if is_incremental:
                     if (
                         edoc.file_path not in changed_set
@@ -1119,11 +1165,25 @@ class IndexingPipelineRunner:
 
                 llm_tasks.append((i, edoc, existing_doc_content, prev_content))
 
+            # A cache hit is still a confirmation: `commit_sha` and `updated_at` are what
+            # freshness reporting reads, and a reused document left at an old sha reads as
+            # stale when it is merely unchanged. One statement for the batch — a rebuild
+            # reuses ~700 of 758 documents and 700 round trips is its own cost.
+            if reused_paths:
+                await self._doc_store.touch_reused(db, project_id, reused_paths, state.head_sha)
+                await db.commit()
+                logger.info(
+                    "generate_docs: reused %d cached doc(s) by content hash (%s)",
+                    docs_reused,
+                    ", ".join(f"{k}={v}" for k, v in sorted(reused_by_type.items())),
+                )
+
             await tracker.emit(
                 wf_id,
                 "generate_docs",
                 "started",
                 f"Prepared {len(llm_tasks)} docs for LLM generation, "
+                f"{docs_reused} reused (source unchanged), "
                 f"{skipped} skipped (unchanged/binary)",
             )
 
@@ -1185,6 +1245,7 @@ class IndexingPipelineRunner:
                         source_path=edoc.file_path,
                         content=generated_content,
                         commit_sha=state.head_sha,
+                        content_hash=doc_hashes.get(edoc.file_path),
                     )
 
                     await asyncio.to_thread(
@@ -1286,6 +1347,7 @@ class IndexingPipelineRunner:
                                 source_path=edoc.file_path,
                                 content=retry_out,
                                 commit_sha=state.head_sha,
+                                content_hash=doc_hashes.get(edoc.file_path),
                             )
                             await asyncio.to_thread(
                                 self._vector_store.delete_by_source_path,
@@ -1360,6 +1422,12 @@ class IndexingPipelineRunner:
                     )
 
         result.docs_skipped = skipped
+        await tracker.emit(
+            wf_id,
+            "generate_docs",
+            "completed",
+            f"generated={docs_generated} reused={docs_reused} skipped={skipped}",
+        )
 
         # --- Step 10: bm25_build (M3) ---
         # Rebuild the BM25 lexical index from the just-persisted KnowledgeDoc
