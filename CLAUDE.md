@@ -347,6 +347,20 @@ asked. `resolve_sync_status()` (`code_db_sync_pipeline.py`) decides in order: no
 versus `mismatch`; then — and only when both sides exist with columns unknown on one — the
 LLM's reading stands.
 
+**A table with NO side is not `db_only` either (fixed 2026-09-08).** The first branch of
+`resolve_sync_status` read `return "code_only" if has_code_info else "db_only"` — inside
+the branch that has just established there is no DB side, so it contradicted the rule
+stated two paragraphs above it. Measured on production: **43 of 256 map rows named tables
+absent from `db_index`**, all with `updated_at` from the latest run, and 20 of them
+carried `db_only` — a claim about the customer's database made about names the indexer
+never saw there, including `axios`, `vue`, `const`, `export` and `import`. Every one had
+`entity_name`, `entity_file_path` NULL and `read_count = write_count = 0`: no evidence
+from either side. It now returns `unknown`, a write-path guard refuses any status
+CLAIMING a DB side for a table absent from `db_index` (and deletes such rows left by
+older versions — the prune keeps everything in `matched_tables`, so a refused row would
+otherwise survive forever), and `_scan_table_usage` no longer registers a table before
+knowing whether anything reads or writes it.
+
 Before 2026-08-27 the model decided by default. `_match_tables` builds the code-only tail
 with an empty `db_context`, SYNC-L5 needs both column sets and so never fired for those
 rows, and eleven tables with **no `db_index` row at all** were stored as `matched` in

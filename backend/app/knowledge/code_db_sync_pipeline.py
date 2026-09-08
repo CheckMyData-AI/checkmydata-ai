@@ -208,6 +208,14 @@ class CodeDbSyncPipeline:
                         omit_samples=omit_samples,
                     )
 
+                # The set the phantom guard checks against: exactly the tables the
+                # database index observed. Built once here rather than per row, and from
+                # `db_entries` rather than a re-query, so the guard and the analysis are
+                # looking at the same database.
+                db_table_names = {e.table_name for e in db_entries}
+                phantoms_refused = 0
+                refused_names: list[str] = []
+
                 code_info_count = sum(1 for m in matched_tables if m.has_code_info)
                 db_only_match = len(matched_tables) - code_info_count
                 await self._tracker.emit(
@@ -384,6 +392,27 @@ class CodeDbSyncPipeline:
                                     mt.has_code_info,
                                 )
 
+                            # T02.1 — the phantom guard, and it stays even now that the
+                            # resolver is fixed. A status that CLAIMS a database side
+                            # (`db_only`/`matched`/`mismatch`) must be about a table the
+                            # index actually saw; anything else is a statement about the
+                            # customer's production data that nothing verified. This is
+                            # the belt to the resolver's braces: it catches the next
+                            # writer of such a row rather than the one already found.
+                            if effective_status in _STATUSES_CLAIMING_A_DB_SIDE and (
+                                analysis.table_name not in db_table_names
+                            ):
+                                phantoms_refused += 1
+                                refused_names.append(analysis.table_name)
+                                logger.warning(
+                                    "store_sync: refusing phantom row %s status=%s — "
+                                    "no db_index entry for it, so the status claims a "
+                                    "database side that was never observed",
+                                    analysis.table_name,
+                                    effective_status,
+                                )
+                                continue
+
                             sync_data = {
                                 "table_name": analysis.table_name,
                                 "entity_name": mt.entity_name,
@@ -411,8 +440,39 @@ class CodeDbSyncPipeline:
                             wf_id,
                             "store_sync",
                             "started",
-                            f"Stored {len(analyses)} sync entries",
+                            f"Stored {len(analyses) - phantoms_refused} sync entries"
+                            + (
+                                f", refused {phantoms_refused} phantom row(s)"
+                                if phantoms_refused
+                                else ""
+                            ),
                         )
+                        if refused_names:
+                            # The prune above keeps every name in `matched_tables`, and a
+                            # refused row is still in it — so without this a phantom
+                            # written by an older version would survive the guard forever:
+                            # never rewritten, never pruned. Deleting the named rows is
+                            # precise; widening the prune set instead would risk emptying
+                            # the whole map on a run where everything was refused.
+                            from sqlalchemy import delete as _sa_delete
+
+                            from app.models.code_db_sync import CodeDbSync as SyncRow
+
+                            await session.execute(
+                                _sa_delete(SyncRow).where(
+                                    SyncRow.connection_id == connection_id,
+                                    SyncRow.table_name.in_(refused_names),
+                                )
+                            )
+
+                        if phantoms_refused:
+                            logger.warning(
+                                "store_sync: %d phantom row(s) refused for connection=%s "
+                                "— a status claiming a database side was produced for a "
+                                "table with no db_index entry",
+                                phantoms_refused,
+                                connection_id[:8],
+                            )
                         await session.commit()
 
                 # Step 6: Generate summary
@@ -982,6 +1042,11 @@ class CodeDbSyncPipeline:
         return "\n".join(parts)
 
 
+#: Statuses that assert *the database has this table*. A row carrying one of them and no
+#: `db_index` entry is a claim nothing verified — see the phantom guard in `run`.
+_STATUSES_CLAIMING_A_DB_SIDE = frozenset({"db_only", "matched", "mismatch"})
+
+
 def resolve_sync_status(
     *,
     llm_status: str,
@@ -1012,7 +1077,19 @@ def resolve_sync_status(
     """
     has_db_side = bool((db_context or "").strip())
     if not has_db_side:
-        return "code_only" if has_code_info else "db_only"
+        # Neither branch here may say ``db_only``: this is the case where the database
+        # index has never seen the table, so a claim about the database cannot be made
+        # about it. The `else` used to say exactly that, contradicting the rule stated
+        # two paragraphs up — and it is how `axios`, `vue`, `const` and `import` came to
+        # be reported as tables that exist in the customer's database and not in their
+        # code. Twenty such rows on production 2026-09-08, rewritten by every fresh run.
+        #
+        # With no side at all there is nothing to report: ``unknown`` is the honest
+        # status and the write path refuses to persist the row (see the phantom guard in
+        # the caller). Extraction should not have produced the name either — that is the
+        # other half of T02 — but a resolver must not launder a name it knows nothing
+        # about into a statement about production data.
+        return "code_only" if has_code_info else "unknown"
     if not has_code_info:
         return "db_only"
 
