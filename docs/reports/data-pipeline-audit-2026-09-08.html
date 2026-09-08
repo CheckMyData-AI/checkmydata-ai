@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Аудит конвейера данных · esim-php · 2026-09-08</title>
+<style>
+  :root{--ink:#1a1d23;--mut:#6b7280;--bg:#fbfbfa;--panel:#fff;--line:#e5e7eb;
+        --red:#b91c1c;--amber:#b45309;--green:#15803d;--blue:#1d4ed8;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,"Segoe UI",Roboto,sans-serif;padding:32px 20px 80px}
+  main{max-width:960px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 4px} h2{font-size:19px;margin:40px 0 10px;border-bottom:2px solid var(--ink);padding-bottom:6px}
+  h3{font-size:15px;margin:20px 0 6px}
+  .sub{color:var(--mut);margin-bottom:24px}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px;background:var(--panel)}
+  th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#f3f4f6;font-weight:600}
+  .num{text-align:right;font-family:var(--mono);white-space:nowrap}
+  code,.mono{font-family:var(--mono);font-size:12.5px;background:#f3f4f6;padding:1px 4px;border-radius:3px}
+  .ok{color:var(--green);font-weight:600}.warn{color:var(--amber);font-weight:600}
+  .crit{color:var(--red);font-weight:600}.info{color:var(--blue);font-weight:600}
+  .box{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--blue);padding:10px 14px;margin:12px 0;border-radius:4px}
+  .box.crit{border-left-color:var(--red)} .box.warn{border-left-color:var(--amber)} .box.ok{border-left-color:var(--green)}
+  .receipt{color:var(--mut);font-size:12px;font-family:var(--mono)}
+  .wrap{overflow-x:auto}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:12px}
+</style>
+</head>
+<body>
+<main>
+<h1>Аудит конвейера данных: синхронизация и индексация</h1>
+<p class="sub">Проект-эталон: <b>esim-php</b> (единственный реальный проект прода) · измерено 2026-09-08 против продовой БД (Supabase, через <code>DATABASE_URL</code>), Heroku-конфига и логов · прод на v345, фикс #312 деплоится (v346) · read-only аудит — код не менялся</p>
+
+<h2>0. Вердикты по модулям</h2>
+<div class="wrap"><table>
+<tr><th>Модуль</th><th>Вердикт</th><th>Главный факт</th></tr>
+<tr><td>1. Оркестрация расписания</td><td class="crit">был сломан молча</td><td>волна пропустила час 0 (единственный назначенный) две ночи; причина структурная, фикс #312 смержен, деплой в пути</td></tr>
+<tr><td>2. Repo-индексация</td><td class="warn">работает, дорого</td><td>полная пересборка 12 039–12 329 с; <b>~78% времени — generate_docs через LLM</b>; надёжность ночных прогонов: 2✓/12✗ → 4✓/0✗ за 5 недель</td></tr>
+<tr><td>3. Бюджет токенов / биллинг-шов</td><td class="ok">починено в #307/#308</td><td>5 отказов chained-sync за Aug 31–Sep 6 из-за лимитов ретро-плана «free»; после гранта (09-07) — безлимит, отказов нет</td></tr>
+<tr><td>4. Эмбеддинги / векторный стор</td><td class="ok">стабильно</td><td>pgvector закреплён явно; 45 138 чанков / 331 МБ; батч 8 консервативен для Standard-2X</td></tr>
+<tr><td>5. BM25</td><td class="ok">по устройству</td><td>gzip-JSON на эфемерном диске, пересборка в обоих процессах на буте — принятое решение</td></tr>
+<tr><td>6. DB-индексация</td><td class="warn">норм сейчас, аномалия в истории</td><td>213 таблиц, 100% со статистикой, schedule ≈ 26 мин; но авто-прогоны августа шли <b>6,4–8,4 часа</b> в <code>fetch_samples</code></td></tr>
+<tr><td>7. Карта code↔DB</td><td class="crit">17% фантомов</td><td><b>43 из 256 строк называют таблицы, которых нет в db_index</b>, и пишутся заново каждым прогоном; среди «таблиц» — <code>axios</code>, <code>vue</code>, <code>const</code>, <code>export</code>, <code>import</code></td></tr>
+<tr><td>8. Наблюдаемость</td><td class="ok">окупилась</td><td>трейсы несут route/complexity (12/14 известны); счётчик <code>unentitled=0</code> — то, что диагностировало баг крона</td></tr>
+<tr><td>9. Вес индекса / квоты</td><td class="info">известный долг</td><td>vес ~460 МБ против обещанного 1 ГБ base; счётчик есть, enforcement — нет</td></tr>
+</table></div>
+
+<h2>Метод</h2>
+<p>Все числа вычислены, не пересказаны: SQL против продовой БД (<code>indexing_runs</code>, <code>knowledge_docs</code>, <code>code_graph_*</code>, <code>doc_embeddings</code>, <code>code_db_sync</code>, <code>db_index</code>, <code>request_traces</code>, <code>token_usage</code>, <code>pg_total_relation_size</code>), <code>heroku config</code>/<code>ps</code>/<code>releases</code>, лог веб-дино за ночь 07–08.09. Окно — 30 дней, если не сказано иное. JSON-сайдкар с сырыми выборками — рядом с отчётом.</p>
+
+<h2>1. Оркестрация расписания — молчаливый пропуск нужного часа</h2>
+<div class="box crit"><b>Найдено этой проверкой, в проде.</b> За восемь подряд идущих часов волна отработала за часы <span class="mono">20, 21, 21, 23, 23, 1, 2, 3</span>: два часа дважды, два — никогда, и один из пропущенных — <b>час 0</b>, дефолт <code>daily_knowledge_sync_hour</code>, единственный назначенный час этого деплоя. Последний завершённый <code>daily_sync</code> — 06.09 22:00 UTC; esim-php не синхронизировался две ночи.</div>
+<p><b>Причина структурная, не значение.</b> Цикл вычислял границу часа, спал до неё и звал диспетчер, который <b>читал часы заново</b>. Два независимых чтения, намерение между ними не передаётся; ранний подъём/медленный старт/рестарт — и диспетчер работает за прошлый час. Обе половины отказа молчат: почасовой Redis-lock превращает повтор в no-op, пропуск не логируется вовсе. Фикс: обе волны принимают <code>at</code>, циклы передают <code>at=next_hour</code> (#312, смержен, тесты воспроизводят подъём за 5 мс до границы).</p>
+<h3>Надёжность ночной repo-индексации по неделям (schedule)</h3>
+<table>
+<tr><th>Неделя</th><th class="num">completed</th><th class="num">failed</th><th>Комментарий</th></tr>
+<tr><td>08-03</td><td class="num">2</td><td class="num">12</td><td rowspan="3">эпоха «reaped на graph_build»: бит сердца писался только на границах шага</td></tr>
+<tr><td>08-10</td><td class="num">1</td><td class="num">20</td></tr>
+<tr><td>08-17</td><td class="num">3</td><td class="num">25</td></tr>
+<tr><td>08-24</td><td class="num">4</td><td class="num">8</td><td>внутришаговый heartbeat (N1, 25.08) начал действовать</td></tr>
+<tr><td>08-31</td><td class="num">4</td><td class="num">0</td><td class="ok">чисто — до бага крона</td></tr>
+</table>
+<p class="receipt">indexing_runs, kind='index_repo' AND trigger='schedule', 35 дней. Reaps по шагам: graph_build 52, generate_docs 12, code_symbol_embed 4 — все исторические волны совпадают с задокументированными фиксами.</p>
+<p><b>Остаточные риски модуля:</b> (а) оба cron-флага читаются один раз на старте — флип требует рестарта; (б) mutual exclusion repo-индексации всё ещё per-process (<code>_indexing_locks</code> — dict в памяти), web и worker не видят локи друг друга; (в) завершённый <code>daily_sync</code> максимум — <b>7 214,9 с при потолке 7 200</b>: ночной бюджет исчерпан впритык, следующая тяжёлая ночь упрётся.</p>
+
+<h2>2. Repo-индексация — работает, но 78% стоимости в одном шаге</h2>
+<table>
+<tr><th>Прогон</th><th class="num">n (30д)</th><th class="num">avg, с</th><th class="num">max, с</th></tr>
+<tr><td>index_repo · schedule (инкрементальный, ✓)</td><td class="num">12</td><td class="num">996</td><td class="num">2 928</td></tr>
+<tr><td>index_repo · queue (полный, ✓)</td><td class="num">5</td><td class="num">11 819</td><td class="num">17 131</td></tr>
+<tr><td>daily_sync (✓)</td><td class="num">12</td><td class="num">1 896</td><td class="num">7 215</td></tr>
+</table>
+<p>Полная пересборка измерена дважды независимо: 12 039 и 12 329 с (~3,4 ч), из них <b>generate_docs ≈ 9 375 с (~78%)</b> при ~4,8 док/мин — каждый документ через LLM. Продукт пересборки: <b>759 документов</b> (535 миграций, 211 ORM-моделей, 9 raw_sql, 3 query_pattern, 1 summary), все на одном коммите — когерентно. Граф: 25 695 символов (17 574 метода, 7 353 класса), рёбра: CALLS 49 864, <b>IMPORTS 17 286</b> (фикс PHP-резолвера работает — было 0), EXTENDS 1 113.</p>
+<div class="box warn"><b>Где неоптимально.</b> generate_docs пересоздаёт документы, а не переиспользует: смена <code>GRAPH_EXTRACTION_SCHEMA</code>/<code>SYMBOL_UID_SCHEMA</code> честно запускает force_full — и платит все ~9 400 с LLM заново, хотя <b>535 из 759 документов — миграции, чьё содержимое не менялось</b>. Кэш по <code>(source_path, content_hash)</code> вместо привязки к прогону срезал бы ~70–90% стоимости пересборки. Второй рычаг — модель: миграции описывать фронтир-моделью не обязательно.</div>
+
+<h2>3. Бюджет токенов — что именно ломало chained-sync</h2>
+<table>
+<tr><th>Дата</th><th>Отказ</th><th>Сообщение (из <code>indexing_runs.error</code>)</th></tr>
+<tr><td>08-31</td><td>code_db_sync ×3</td><td class="mono">Monthly token budget exceeded (8,802,534/1,000,000)</td></tr>
+<tr><td>09-03</td><td>code_db_sync</td><td class="mono">Monthly token budget exceeded (2,000,604/1,000,000)</td></tr>
+<tr><td>09-05, 09-06</td><td>code_db_sync ×2</td><td class="mono">Daily token budget exceeded (1,666,411…1,671,850/100,000)</td></tr>
+</table>
+<p>Лимиты 100k/день и 1M/мес — это ретро-план <code>free</code>, к которому резолвился аккаунт без подписки (глобальные конфиг-капы <b>не установлены</b>, дефолт 0 = безлимит — проверено в heroku config и config.py:1019). После #307 (<code>_no_plan()</code>) и гранта enterprise (#308, 07.09) — <b>ни одного бюджетного отказа</b>. Индекс тратит 1,7–2,0M токенов в тяжёлый день ≈ <b>$2–3/день</b> (учёт стоимости появился 04.09; топ: qwen3.7-plus $3.23/5,3M, gpt-4o $1.63/3,0M за 14 дней). Мелочь в данных: 04.09 — $0.99 при 0 токенов (2 вызова) — строки затрат без токенов, стоит взглянуть при случае.</p>
+
+<h2>4. Эмбеддинги и векторный стор</h2>
+<p><code>VECTOR_STORE_BACKEND=pgvector</code> закреплён явно (история с эфемерным Chroma-диском закрыта: «16 завершений из 94 прогонов» больше невозможны по этой причине). 45 138 чанков × 384-d = <b>331 МБ</b>, HNSW cosine. <code>EMBEDDING_UPSERT_BATCH_SIZE</code> не переопределён → дефолт 8, выбранный под квоту 512 МиБ; worker теперь <b>Standard-2X (1 ГБ)</b> — измеренный трейд-офф (батч 200 = 967 МиБ/9,3 с против батч 8 = 415 МиБ/10,9 с) говорит, что батч ~32–64 вернёт большую часть скорости с запасом по памяти. Reranker выключен и честно отрапортован capability-report'ом (ml-extra не в образе) — по решению 2026-08-10.</p>
+
+<h2>5. BM25 — принятое решение, работает</h2>
+<p>Снапшоты gzip-JSON на эфемерном диске каждого процесса, пересборка из <code>KnowledgeDoc</code> на буте обоих процессов (F-KNOW-12). Метрика <code>retrieval_degraded_total{reason="no_snapshot"}</code> — та, за которой смотреть; по устройству должна быть ~0.</p>
+
+<h2>6. DB-индексация — сейчас 26 минут, в августе бывало 8 часов</h2>
+<p>213 таблиц, <b>100% со статистикой колонок</b> (D9/D10 работают), свежесть 06.09. Schedule-прогоны: avg 1 544 с. Но <code>trigger='auto'</code> прогоны августа: <b>30 279 с (8,4 ч), 23 198 с, 8 793 с, 8 593 с — все в шаге <code>fetch_samples</code></b>, все завершились. Семплирование живой БД через SSH-туннель часами — это нагрузка на прод клиента и окно неконсистентности. С 24.08 (D-серия + <code>DB_INDEX_INCREMENTAL_ENABLED=true</code>) повторов не видно, но <b>причинно-следственная связь не доказана</b> — стоит подтвердить политику auto-триггера (когда он вообще стреляет и что делает full, а что incremental) и закрепить потолок семплинга тестом.</p>
+
+<h2>7. Карта code↔DB — главная содержательная находка</h2>
+<div class="box crit"><b>43 из 256 строк карты (17%) называют таблицы, которых нет в db_index, и это не старый мусор:</b> у всех 43 <code>updated_at = 2026-09-06</code> — их пишет заново каждый свежий прогон. Хуже: <b>20 из них носят статус <code>db_only</code></b> («есть в БД, нет в коде») — самопротиворечие, потому что в проиндексированной БД их нет: <span class="mono">axios, vue, const, export, import, change, library, sessions, workspaces…</span> Первые семь — токены JavaScript, а не таблицы.</div>
+<p>Что это значит: экстрактор имён таблиц всё ещё жнёт JS/TS-код (фиксы 27.08 — <code>is_plausible_table_name</code>, declared-over-inferred — сузили мусор с «39 названо / 6 существует», но канал не закрыт), а резолвер статусов умеет присвоить <code>db_only</code> строке без подтверждения в db_index — хотя его документированное правило «нет DB-стороны → code_only». Достоверная часть карты: matched 135, из них <b>135 с required_filters</b> (guard переписан 31.08). 98 честных db_only (покрытие кода) + 23 code_only.</p>
+<p><b>Предлагаемый контракт целостности</b> (тестом, не ревью): (1) строка со статусом <code>db_only</code>/<code>matched</code> обязана ссылаться на таблицу, существующую в db_index; (2) имена, извлечённые из файлов вне ORM-языков проекта, не становятся таблицами без declared-подтверждения; (3) прогон удаляет строки, не наблюдённые заново (сейчас — переписывает и мусор тоже).</p>
+
+<h2>8. Наблюдаемость — вложения окупились</h2>
+<p>Трейсы: за 7 дней route/complexity известны у 12 из 14 (<span class="mono">query/simple ×7, direct ×2, moderate ×1</span>; 2 «unknown» — служебные) — фикс Ш0a живёт. Счётчик <code>unentitled</code>, добавленный в #308 «на всякий случай», — именно то, что исключило гейт из подозреваемых и вывело на баг крона за минуты. Zero-row beat логируется. Реальность использования, честно: <b>~12 пользовательских вопросов за неделю</b> — оптимизации стоит взвешивать против этой базы.</p>
+
+<h2>9. Вес индекса и квоты</h2>
+<table>
+<tr><th>Таблица</th><th class="num">Размер</th></tr>
+<tr><td>doc_embeddings</td><td class="num">331 МБ</td></tr>
+<tr><td>code_graph_edges</td><td class="num">76 МБ</td></tr>
+<tr><td>code_graph_symbols</td><td class="num">44 МБ</td></tr>
+<tr><td>knowledge_docs + db_index + прочее</td><td class="num">~10 МБ</td></tr>
+<tr><td><b>Итого «индекс» esim-php</b></td><td class="num"><b>~460 МБ</b></td></tr>
+</table>
+<p>Против обещанного base-тарифом 1 ГБ: половина квоты на репозитории в 10k файлов. <code>estimate_index_bytes()</code> существует, но вызывается только из теста; <code>enforce_index_quota</code> нет — оплаченный лимит не работает в обе стороны (известный долг, подтверждён).</p>
+
+<h2>Рекомендации — предлагаемые строки борда</h2>
+<div class="wrap"><table>
+<tr><th>Pri</th><th>Строка</th><th>Обоснование (receipt)</th></tr>
+<tr><td class="crit">P0</td><td>Проверить сегодняшнюю волну часа 0 после деплоя v346 и закрыть двухдневный разрыв ручным <code>sync-now</code> (≈3 мин инкрементально)</td><td>последний daily_sync 06.09; фикс смержен, ночь — верификация</td></tr>
+<tr><td class="crit">P1</td><td>Карта code↔DB: контракт целостности (db_only ⇒ ∈ db_index; языковой гейт экстрактора; prune ненаблюдённых строк) + инвариант-тест</td><td>43/256 фантомов с updated_at=09-06; <code>axios/vue/const</code> как «таблицы»</td></tr>
+<tr><td class="crit">P1</td><td>generate_docs: кэш по (source_path, content_hash) + дешёвая модель для миграций</td><td>78% времени пересборки; 535/759 доков — миграции; ~$2–3 и ~2M токенов на каждый force_full</td></tr>
+<tr><td class="warn">P1</td><td>db_index trigger=auto: подтвердить политику и закрепить потолок fetch_samples тестом</td><td>4 авто-прогона августа по 2,4–8,4 ч в живой БД клиента</td></tr>
+<tr><td class="warn">P2</td><td>Поднять EMBEDDING_UPSERT_BATCH_SIZE под Standard-2X (измерить 32/64)</td><td>дефолт 8 выбран под 512 МиБ; воркер теперь 1 ГБ</td></tr>
+<tr><td class="warn">P2</td><td>Ночной потолок 7200 с: completed max 7 214,9 с — алерт на приближение или пересмотр</td><td>indexing_runs, daily_sync max</td></tr>
+<tr><td class="warn">P2</td><td>Repo-index mutual exclusion через Redis (сейчас per-process dict)</td><td>задокументированный открытый риск; двойной прогон уже случался 01.09</td></tr>
+<tr><td class="info">P2</td><td>Включить enforcement max_index_bytes (счётчик есть)</td><td>~460 МБ/1 ГБ уже на одном проекте</td></tr>
+<tr><td class="info">P3</td><td>token_usage: строки с $>0 при 0 токенов (04.09)</td><td>2 вызова, $0.99, tokens=0</td></tr>
+</table></div>
+
+<footer>
+Аудит по контракту project-audit: read-only, находки — предложения, ничего не записано в код. Сырые выборки: <code>data-pipeline-audit-2026-09-08.json</code> рядом. Инструменты: SQL против прод-БД, heroku CLI, лог дино, greps по backend/app. Составил Claude (Fable 5) · 2026-09-08.
+</footer>
+</main>
+</body>
+</html>
