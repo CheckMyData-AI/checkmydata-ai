@@ -464,6 +464,21 @@ Learnings are stored per-connection by default (`cross_connection_learnings_enab
 - `backend/app/llm/router.py` fronts OpenAI, Anthropic, and OpenRouter. All LLM calls go through `llm_call_with_retry` with exponential backoff. `LLMAllProvidersFailedError` is **non-retryable**.
 - **Usage accounting & post-call budget gate** (`app/llm/usage_sink.py`): `LLMRouter(usage_sink=…)` observes `(prompt_tokens, completion_tokens, total_tokens, provider, model)` after every successful call; `DbUsageSink` persists each call via `UsageService.record_usage` **and** re-checks the user's budget so a long agent run hard-stops at the next safe boundary instead of overshooting. `AdaptivePlanner`, `AnswerValidator`, and `QueryRepairer` carry the sink so their LLM calls are counted too. **MCP tools** build the router with `DbUsageSink` and acquire `agent_limiter` for parity with the chat path (no usage/budget bypass via MCP). Streaming responses are not yet sinked (tracked as a known gap).
 - `MetricsCollector` records per-request route, complexity (no longer `"unknown"` — ORCH-A03), response_type, replans, retries, SQL calls, wall-clock, plus M2/M5/M6 code-graph counters. Exposed via `/api/metrics` (JSON) and `/api/metrics/prometheus`. **It holds them in memory, and until 2026-09-04 nothing carried them any further.** ORCH-A03 works: `orchestrator.py` writes the router's three signals into `context.extra`, which is what this collector reads. But `replace(context, …)` returns a *copy*, so the caller holding the original never saw them, and the persisted `request_traces` row took its values from `finalize_trace`'s own defaults — **`route` and `complexity` read `"unknown"` in 222 production traces out of 222**, measured 2026-09-03, while the counter beside them was right. `replans` still has only the in-memory home, and the counter resets on every dyno restart, so *"how often did the pipeline replan, and did it help"* is unanswerable over history (Ш0b). The trace now gets the routing from `TraceMeta` (`app/core/trace_meta.py`), which `finalize_trace` **requires** — the fix is the shape of #267, not another kwarg with a default.
+- **A zero `total_tokens` is an absence, and the 2026-08-28 fix only covered half the
+  writers (T09, 2026-09-09).** That fix put the derivation in `router.py::_usage_total`,
+  which is the per-LLM-call sink. The four REQUEST-level writers in `chat.py` (`:541`,
+  `:930`, `:1297`, `:1861`) still read `usage.get("total_tokens", 0)` and handed that zero
+  through, and `record_usage` only derived on `is None` — so a `0` produced by a `.get`
+  default was stored as a measurement. Measured on production: **10 rows of 9 423**, among
+  them `prompt=175 669 / completion=4 587 / total=0` at $0.99 (claude-opus-4.8, 09-04) and
+  `prompt=177 838 / completion=3 316 / total=0` (gpt-4o, 09-05). `check_budget` sums that
+  column, so those calls charged **nothing** against daily, monthly and plan limits with
+  billing on. The derivation now lives in `UsageService.record_usage` — the one funnel all
+  five writers pass, including the next one — and treats a falsy total as absent. A
+  provider-reported total is never zero, so `_usage_total`'s preference for it is
+  untouched and still right (prompt caching makes the billed total differ from the sum).
+  **Not backfilled**, deliberately: 361 410 uncounted tokens against 64 263 898 counted is
+  0.56%, and rewriting historical usage records for that is not proportionate.
 - Sentry on backend (`sentry-sdk[fastapi]`) and frontend (`@sentry/nextjs`) with **two** scrubbing layers, because each misses what the other catches. Layer 1 is Sentry's `EventScrubber` over KEY names, denylist extended 33 → 39 (`dsn`, `database_url`, `auth_key`, … are not in its default). Layer 2 is `before_send` over VALUES, and it walks `extra` and `contexts` as well as exceptions, log entries and breadcrumbs — those two containers were reached by neither layer until 2026-08-26. `release` comes from `HEROKU_SLUG_COMMIT` (needs `heroku labs:enable runtime-dyno-metadata`), and is `None` rather than invented when absent.
 
 ### Storage
