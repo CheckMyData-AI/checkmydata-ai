@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from dataclasses import replace
 from datetime import datetime
 
@@ -27,6 +28,7 @@ from app.config import settings
 from app.connectors.base import BaseConnector, ConnectionConfig, QueryResult, TableInfo
 from app.connectors.registry import get_connector
 from app.core.heartbeat import heartbeat
+from app.core.metrics import get_metrics_collector
 from app.core.workflow_tracker import WorkflowTracker
 from app.core.workflow_tracker import tracker as default_tracker
 from app.knowledge.custom_rules import CustomRulesEngine
@@ -57,6 +59,69 @@ PREFERRED_ORDER_COLS = [
     "inserted_at",
     "insertedat",
 ]
+
+
+class SamplingBudget:
+    """A wall-clock bound on `fetch_samples`, and a record of where the time went.
+
+    Two jobs, and the second is the one August needed. `db_index` runs with
+    `trigger='auto'` took 30 279 s and 23 198 s against the same 213 tables a scheduled
+    run covers in 1 544 s — and the log named **not a single table**, so the cause could
+    not be recovered afterwards from anything.
+
+    Bounding without reporting would repeat that: a run that stopped at the budget with
+    no names attached is as unexplainable as one that ran for eight hours.
+    """
+
+    #: Below this a table is not worth a line of its own — 213 lines per run would hide
+    #: the four that matter.
+    SLOW_TABLE_SECONDS = 5.0
+
+    def __init__(self, seconds: float) -> None:
+        if seconds <= 0:
+            raise ValueError(
+                f"a sampling budget must be positive (got {seconds}); a bound that means "
+                "'never' or 'forever' is not a bound"
+            )
+        self._budget = float(seconds)
+        self._deadline = self._now() + self._budget
+        self.timings: list[tuple[str, float]] = []
+        self.skipped: list[str] = []
+
+    @staticmethod
+    def _now() -> float:
+        return time.monotonic()
+
+    def exhausted(self) -> bool:
+        return self._now() >= self._deadline
+
+    def is_noteworthy(self, seconds: float) -> bool:
+        return seconds >= self.SLOW_TABLE_SECONDS
+
+    def record(self, table: str, seconds: float) -> None:
+        self.timings.append((table, seconds))
+
+    def skip(self, table: str) -> None:
+        self.skipped.append(table)
+
+    def summary(self) -> str:
+        """One line, printed whether or not the budget was hit.
+
+        Silence is not a passing check: an operator has to be able to tell a run that
+        sampled everything from one whose logging broke.
+        """
+        total = sum(s for _, s in self.timings)
+        parts = [f"{len(self.timings)} table(s) sampled in {total:.0f}s"]
+        if self.timings:
+            slowest, slow_s = max(self.timings, key=lambda ts: ts[1])
+            parts.append(f"slowest={slowest}({slow_s:.0f}s)")
+        if self.skipped:
+            shown = ", ".join(self.skipped[:20])
+            more = f" +{len(self.skipped) - 20} more" if len(self.skipped) > 20 else ""
+            parts.append(
+                f"{len(self.skipped)} skipped after the {self._budget:.0f}s budget: {shown}{more}"
+            )
+        return "fetch_samples: " + ", ".join(parts)
 
 
 def _find_ordering_column(table: TableInfo) -> str | None:
@@ -462,6 +527,10 @@ class DbIndexPipeline:
                 distinct_values: dict[str, dict[str, list[str]]] = {}
                 total_tables = len(schema.tables)
                 _sample_sem = asyncio.Semaphore(5)
+                # The concurrency bound above says how many tables at once; this says how
+                # long in total. Without the second, `trigger='auto'` runs reached 8h25m
+                # against a customer's live database (production, 2026-08-13).
+                _budget = SamplingBudget(settings.db_index_fetch_samples_budget_seconds)
 
                 _sampled_count = [0]
 
@@ -485,6 +554,29 @@ class DbIndexPipeline:
                     object,  # approx_max for ordering_col (D17)
                 ]:
                     async with _sample_sem:
+                        # Checked after acquiring, not before: a table already holding a
+                        # slot is doing real work against the customer's database and
+                        # cancelling it mid-query buys nothing. What this stops is the
+                        # queue behind it.
+                        #
+                        # The result shape is the same as a table whose sampling failed —
+                        # an empty `QueryResult` — because downstream code already has a
+                        # branch for "no evidence for this table". Inventing a third
+                        # state would need a branch at every reader.
+                        if _budget.exhausted():
+                            _budget.skip(table.name)
+                            return (
+                                table.name,
+                                QueryResult(columns=[], rows=[], row_count=0),
+                                _find_ordering_column(table),
+                                {},
+                                False,
+                                0,
+                                {},
+                                None,
+                            )
+
+                        _table_started = time.monotonic()
                         sample_failed = False
                         tbl_distinct_failures = 0
 
@@ -618,6 +710,19 @@ class DbIndexPipeline:
                             f"{table.name} ({', '.join(detail_parts)})",
                         )
 
+                        _elapsed = time.monotonic() - _table_started
+                        _budget.record(table.name, _elapsed)
+                        if _budget.is_noteworthy(_elapsed):
+                            # Only the slow ones get a line. 213 lines per run would hide
+                            # the four that explain the duration — which is exactly what
+                            # left August's eight-hour runs unaccountable.
+                            logger.info(
+                                "fetch_samples: %s took %.1fs (rows=%d)",
+                                table.name,
+                                _elapsed,
+                                result.row_count,
+                            )
+
                         return (
                             table.name,
                             result,
@@ -662,6 +767,33 @@ class DbIndexPipeline:
                         if sample_failed:
                             sample_failures.add(tname)
                         distinct_failures += tbl_distinct_failures
+
+                    # Printed on every run, clean ones included: silence is not a
+                    # passing check, and an operator has to be able to tell a run that
+                    # sampled everything from one whose logging broke.
+                    logger.info(_budget.summary())
+
+                    if _budget.skipped:
+                        # No `try` around this, deliberately. `MetricsCollector.inc`
+                        # already swallows and logs its own failures, and
+                        # `get_metrics_collector` is a plain singleton accessor — so a
+                        # guard here would add a suppression that can never fire while
+                        # spending the codebase's `except Exception` budget.
+                        get_metrics_collector().record_db_index_sample_budget_exhausted()
+                        logger.warning(
+                            "fetch_samples: the %ds budget was spent with %d table(s) "
+                            "unsampled — they are indexed WITHOUT column statistics: %s",
+                            settings.db_index_fetch_samples_budget_seconds,
+                            len(_budget.skipped),
+                            ", ".join(_budget.skipped[:50]),
+                        )
+                        await self._tracker.emit(
+                            wf_id,
+                            "fetch_samples",
+                            "started",
+                            f"Sampling budget spent: {len(_budget.timings)} table(s) "
+                            f"sampled, {len(_budget.skipped)} indexed without statistics",
+                        )
 
                     if sample_failures or distinct_failures:
                         await self._tracker.emit(

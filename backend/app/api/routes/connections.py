@@ -71,8 +71,27 @@ async def _ensure_db_index_wf(connection_id: str, project_id: str) -> str:
     """Return a workflow id for a db_index run, creating an :class:`IndexingRun`
     (or reusing the active one) so the pipeline's events land on a run record.
 
-    Used by auto-index callers (reconciler / post-test) that do not mint the run
-    themselves the way the manual ``index_database`` route does.
+    Used by auto-index callers that do not mint the run themselves the way the manual
+    ``index_database`` route does — which is why ``trigger='manual'`` never appears for
+    those, and ``trigger='auto'`` never appears for the manual route.
+
+    **Who reaches this, established 2026-09-09** (T04.0), because a run nobody can
+    attribute is a run nobody can explain:
+
+    * :func:`maybe_autostart_db_index`, from the ``FreshnessReconciler`` loop
+      (``main.py:821``) when the stored index is older than ``db_index_ttl_hours``.
+      Gated on ``freshness_reconciler_enabled``, which defaults to ``False`` **and is
+      not set on production** — so this path has never run there.
+    * ``POST /connections/{id}/test`` (:func:`test_connection`), which auto-indexes a
+      connection it just proved reachable.
+    * ``POST /connections/{id}/refresh-schema`` (:func:`refresh_schema` →
+      :func:`_maybe_start_db_index`), and only for connections that already have a
+      stored ``db_index`` (``require_prior_index=True``).
+
+    The consequence is worth stating plainly: every ``trigger='auto'`` run on production
+    — including the ones that took 8 h 25 m and 6 h 27 m in August — was started by a
+    person pressing a button, and what they saw was an operation that never came back.
+    That is what ``db_index_fetch_samples_budget_seconds`` now bounds.
     """
     from app.models.base import async_session_factory
     from app.services.run_coordinator import RunAlreadyActiveError, RunCoordinator
