@@ -3,8 +3,10 @@
 Measured on production 2026-09-09, `token_usage` rows with `estimated_cost_usd > 0` and
 `total_tokens = 0`:
 
-    2026-09-05  openai/gpt-4o              8 rows  prompt=177 838  completion=3 316  total=0  $0.4778
-    2026-09-04  anthropic/claude-opus-4.8  2 rows  prompt=175 669  completion=4 587  total=0  $0.9930
+    2026-09-05  openai/gpt-4o              8 rows  prompt=177 838  completion=3 316
+                                                   total=0   $0.4778
+    2026-09-04  anthropic/claude-opus-4.8  2 rows  prompt=175 669  completion=4 587
+                                                   total=0   $0.9930
 
 The cost is right. What is wrong is the total, and the consequence is not a reporting
 one: `UsageService.check_budget` sums exactly this column, so those ten calls counted as
@@ -28,7 +30,6 @@ reported total is never zero, so the two rules never disagree.
 
 from __future__ import annotations
 
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
