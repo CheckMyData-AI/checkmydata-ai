@@ -1,0 +1,40 @@
+{
+  "audit": "data-pipeline",
+  "project": "esim-php (production)",
+  "date": "2026-09-08",
+  "contract": "project-audit: read-only, findings as proposed board rows",
+  "sources": ["prod DB via DATABASE_URL (asyncpg)", "heroku config/ps/releases", "web dyno log 2026-09-07..08", "backend/app code reads"],
+  "verdicts": {
+    "scheduling": {"state": "was silently broken", "fix": "#312 merged, deploy v346 pending",
+      "evidence": {"hours_acted": [20,21,21,23,23,1,2,3], "last_daily_sync_utc": "2026-09-06T22:00"}},
+    "repo_indexing": {"state": "works, expensive",
+      "full_rebuild_s": [12039, 12329], "generate_docs_share": 0.78, "docs": {"migration":535,"orm_model":211,"raw_sql":9,"query_pattern":3,"project_summary":1},
+      "nightly_by_week": {"08-03":"2/12","08-10":"1/20","08-17":"3/25","08-24":"4/8","08-31":"4/0"},
+      "graph": {"symbols":25695,"CALLS":49864,"IMPORTS":17286,"EXTENDS":1113}},
+    "token_budget": {"state": "resolved by #307+#308",
+      "failures": [{"d":"08-31","msg":"monthly 8,802,534/1,000,000","n":3},{"d":"09-03","msg":"monthly 2,000,604/1,000,000"},{"d":"09-05..06","msg":"daily ~1.67M/100,000","n":2}],
+      "root_cause": "retired free plan resolution; global config caps default 0 and unset on heroku",
+      "cost_per_index_day_usd": [2.09, 2.77], "tokens_per_index_day": [1666411, 1977272]},
+    "vector_store": {"backend": "pgvector (pinned)", "chunks": 45138, "size_mb": 331, "batch_size": 8, "worker": "Standard-2X"},
+    "bm25": {"state": "by design", "note": "gzip JSON, per-process boot reconcile"},
+    "db_indexing": {"tables": 213, "with_stats": 213, "schedule_avg_s": 1544,
+      "auto_anomaly_s": [30279, 23198, 8793, 8593], "auto_anomaly_step": "fetch_samples", "last_anomaly": "2026-08-19"},
+    "code_db_map": {"state": "17% phantoms", "rows": 256, "matched": 135, "db_only": 98, "code_only": 23,
+      "phantom_rows": 43, "phantom_db_only": 20, "phantom_updated_at": "2026-09-06",
+      "phantom_samples": ["axios","vue","const","export","import","change","library","sessions","workspaces"],
+      "required_filters_rows": 135},
+    "observability": {"traces_7d_known_route": "12/14", "user_questions_7d": 12, "unentitled_counter": "diagnosed the cron bug"},
+    "index_weight": {"total_mb": 460, "base_quota_gb": 1, "enforcement": "absent (estimate_index_bytes called only from a test)"}
+  },
+  "proposed_board_rows": [
+    {"pri": "P0", "row": "Verify tonight's hour-0 wave on v346; close the 2-night gap with manual sync-now"},
+    {"pri": "P1", "row": "code<->DB map integrity contract: db_only => in db_index; language-gate extraction; prune unobserved rows; invariant test"},
+    {"pri": "P1", "row": "generate_docs cache by (source_path, content_hash) + cheaper model for migrations (535/759 docs)"},
+    {"pri": "P1", "row": "db_index trigger=auto policy: confirm and cap fetch_samples with a test (Aug runs 2.4-8.4h against the customer's live DB)"},
+    {"pri": "P2", "row": "Raise EMBEDDING_UPSERT_BATCH_SIZE for Standard-2X (measure 32/64)"},
+    {"pri": "P2", "row": "daily_sync ceiling: completed max 7214.9s vs 7200 ceiling - alert or revisit"},
+    {"pri": "P2", "row": "Repo-index mutual exclusion via Redis (per-process dict today; double-run happened 2026-09-01)"},
+    {"pri": "P2", "row": "Enforce max_index_bytes (meter exists, unused): ~460MB/1GB on one project already"},
+    {"pri": "P3", "row": "token_usage rows with cost>0 and tokens=0 (2026-09-04)"}
+  ]
+}
