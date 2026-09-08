@@ -121,6 +121,26 @@ transformer's activations and nothing else. Measured through `VectorStore.add_do
 over 960 chunks: **batch 200 → 967 MiB peak / 9.3 s; batch 8 → 415 MiB peak / 10.9 s.**
 The default trades ~17% wall clock for ~552 MiB. Raise it only on a dyno with headroom.
 
+**And "a dyno with headroom" turned out not to mean Standard-2X (T05, measured 2026-09-09).**
+The worker is Standard-2X now — 1 GiB, twice the quota that picked 8, `heroku ps` verified —
+so the obvious move was 32. Set on production (v351) and a `force_full` enqueued against
+`esim-php`; `code_symbol_embed` began on 26 014 symbols and the worker went over quota
+**within twenty seconds and kept climbing**:
+
+```
+23:46:24  code_symbol_embed: started (Embedding 26014 code symbols…)
+23:46:44  Process running mem=1082M (105.7%)   Error R14
+23:47:03  Process running mem=1089M (106.4%)   Error R14
+23:47:22  Process running mem=1094M (106.9%)   Error R14
+```
+
+Reverted to the code default the same hour (v352) and the rebuild re-enqueued. So the
+number to carry is not "8 was for 512 MiB": **batch 32 does not fit in 1 GiB on this
+workload either**, and doubling the dyno bought less than doubling the batch. 16 is
+untested and each trial costs a full rebuild of the only production project, so it stays
+untested until there is a reason better than symmetry. The `DELIBERATE` entry written for
+32 was removed with the value — a recorded decision must describe what is deployed.
+
 **0c. A rebuild no longer re-buys prose about files that did not change (T03, 2026-09-09)**
 `generate_docs` is the most expensive step the product runs: ~9 375 s of a 12 039 s full
 rebuild, 758 documents at ~4.8/min, 1.7–2.0M tokens — and **535 of those documents describe
