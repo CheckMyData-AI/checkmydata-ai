@@ -129,13 +129,15 @@ describe("Sidebar", () => {
     expect(screen.getByText("DB Agent")).toBeInTheDocument();
   });
 
-  it("has navigation sections (Projects)", async () => {
+  it("has the fixed project switcher", async () => {
     await renderSidebar();
     await waitFor(() => {
       // SSH Keys moved to Settings -> Credentials: they belong to the ACCOUNT, not
       // to any one project, and they were two of the thirteen collapsible sections
       // that made this rail unreadable. SCN-149.
-      expect(screen.getByText("Projects")).toBeInTheDocument();
+      // Fixed and never collapsible: this is where the user IS, and a rail that
+      // can hide your location answers neither of its two questions (SCN-149).
+      expect(screen.getAllByText("Project").length).toBeGreaterThan(0);
     });
   });
 
@@ -169,7 +171,9 @@ describe("Sidebar", () => {
     await renderSidebar();
     await waitFor(() => {
       expect(screen.getByText("Connections")).toBeInTheDocument();
-      expect(screen.getByText("Chat History")).toBeInTheDocument();
+      // `Chat History` was a filing cabinet; `Recent` is what a returning user is
+      // actually looking for, and the rail answers "where was I" (SCN-149).
+      expect(screen.getByText("Recent")).toBeInTheDocument();
     });
   });
 

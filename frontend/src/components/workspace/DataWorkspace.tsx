@@ -10,7 +10,9 @@ import { Icon } from "@/components/ui/Icon";
 import { selectBaseCls } from "@/components/ui/Input";
 import { ConnectionSelector } from "@/components/connections/ConnectionSelector";
 import { SyncStatusIndicator } from "@/components/connections/SyncStatusIndicator";
+import { ScheduleManager } from "@/components/schedules/ScheduleManager";
 import { SourceDescribe } from "./SourceDescribe";
+import { confirmConnectionDelete } from "@/lib/connection-delete";
 
 /**
  * One screen where every source of a project is visible and manageable. `SCR-01`,
@@ -45,17 +47,101 @@ function CapabilityChip({ value }: { value: string | undefined }) {
   );
 }
 
+function CardAction({
+  children,
+  onClick,
+  busy,
+  destructive,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  busy?: boolean;
+  destructive?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className={`text-meta transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent rounded disabled:opacity-50 ${
+        destructive
+          ? "text-text-tertiary hover:text-danger"
+          : "text-text-tertiary hover:text-text-secondary"
+      }`}
+    >
+      {busy ? "…" : children}
+    </button>
+  );
+}
+
 function SourceCard({
   connection,
   canEdit,
   onDescribed,
+  onDeleted,
 }: {
   connection: Connection;
   canEdit: boolean;
   onDescribed: (purpose: string | null) => void;
+  onDeleted: () => void;
 }) {
+  const setEditConnectionId = useAppStore((s) => s.setEditConnectionId);
   const [describing, setDescribing] = useState(false);
+  const [busy, setBusy] = useState<null | "test" | "index" | "delete">(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const firstLine = (connection.purpose ?? "").trim().split("\n")[0];
+
+  // Only a source the SQL tools can reach has anything to test or index. An analytics
+  // source is collected, and offering to index it offers an action whose adapter does
+  // not exist for that `db_type` — the same conflation that once let the model be
+  // handed `query_database` for GA4.
+  const queryable = connection.capability === "queryable";
+
+  const runTest = async () => {
+    setBusy("test");
+    setResult(null);
+    try {
+      const r = await api.connections.test(connection.id);
+      // Reported ON THE CARD, not only in a toast: a toast is gone by the time the user
+      // looks back at the source it was about, and the card is where they will look.
+      setResult(
+        r.success
+          ? { ok: true, text: "connects" }
+          : { ok: false, text: r.error || "could not connect" },
+      );
+    } catch (e) {
+      setResult({ ok: false, text: e instanceof Error ? e.message : "could not connect" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runIndex = async () => {
+    setBusy("index");
+    try {
+      await api.connections.indexDb(connection.id);
+      toast("Indexing started", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not start indexing", "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runDelete = async () => {
+    // One sentence, one home. The list below this group asks the same question, and two
+    // copies is two chances for one to under-report what the click destroys.
+    if (!(await confirmConnectionDelete(connection.name))) return;
+    setBusy("delete");
+    try {
+      await api.connections.delete(connection.id);
+      toast("Connection deleted", "success");
+      onDeleted();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not delete the connection", "error");
+      setBusy(null);
+    }
+  };
 
   return (
     <div className="rounded-card border border-border bg-panel p-3">
@@ -86,14 +172,34 @@ function SourceCard({
             </p>
           )}
 
+          {result && (
+            <p className={`text-meta mt-1 ${result.ok ? "text-text-secondary" : "text-danger"}`}>
+              {result.text}
+            </p>
+          )}
+
+          {/* Management in place: no modal, no sidebar (SCN-129 step 3). Absent rather
+              than disabled for a viewer — a dead control is an unanswered question. */}
           {canEdit && !describing && (
-            <button
-              type="button"
-              onClick={() => setDescribing(true)}
-              className="mt-1.5 text-meta text-text-tertiary hover:text-text-secondary transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
-            >
-              {firstLine ? "Edit description" : "Describe"}
-            </button>
+            <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+              <CardAction onClick={() => setDescribing(true)}>
+                {firstLine ? "Edit description" : "Describe"}
+              </CardAction>
+              <CardAction onClick={() => setEditConnectionId(connection.id)}>Edit</CardAction>
+              {queryable && (
+                <CardAction onClick={runTest} busy={busy === "test"}>
+                  Test
+                </CardAction>
+              )}
+              {queryable && (
+                <CardAction onClick={runIndex} busy={busy === "index"}>
+                  Index
+                </CardAction>
+              )}
+              <CardAction onClick={runDelete} busy={busy === "delete"} destructive>
+                Delete
+              </CardAction>
+            </div>
           )}
 
           {describing && (
@@ -214,6 +320,13 @@ export function DataWorkspace() {
     };
   }, [projectId]);
 
+  const onDeleted = useCallback(
+    (id: string) => {
+      setConnections(connections.filter((c) => c.id !== id));
+    },
+    [connections, setConnections],
+  );
+
   const onDescribed = useCallback(
     (id: string, purpose: string | null) => {
       setConnections(connections.map((c) => (c.id === id ? { ...c, purpose } : c)));
@@ -270,6 +383,7 @@ export function DataWorkspace() {
                 connection={c}
                 canEdit={canEdit}
                 onDescribed={(p) => onDescribed(c.id, p)}
+                onDeleted={() => onDeleted(c.id)}
               />
             ))}
           </div>
@@ -308,6 +422,20 @@ export function DataWorkspace() {
             </p>
           )}
           <SyncHourControl projectId={activeProject.id} />
+        </section>
+
+        {/* ---- Schedules ----
+             Beside the sources they automate rather than in the left rail, which is
+             where they were: a schedule is a thing you do TO a connection, and reading
+             it three sections away from the connection is why nobody found it. */}
+        <section
+          className="animate-slide-in-left rounded-card border border-border bg-panel p-4 space-y-2"
+          style={{ animationDelay: "150ms", animationFillMode: "both" }}
+        >
+          <h3 className="text-xs font-medium text-text-secondary uppercase tracking-wider">
+            Scheduled queries
+          </h3>
+          <ScheduleManager />
         </section>
 
         {/* ---- Documentation ---- */}

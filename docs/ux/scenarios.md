@@ -22,12 +22,12 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 | | |
 |---|---|
 | Scenarios | **152** |
-| Status | draft × 15, implemented × 137 |
-| Last verdict | PARTIAL × 2, PASS × 135, no verdict × 15 |
-| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 5, undated × 15 |
+| Status | draft × 12, implemented × 140 |
+| Last verdict | PARTIAL × 2, PASS × 138, no verdict × 12 |
+| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, undated × 12 |
 | **Verified >30 days ago** | **95 of 152** (oldest 51 days) |
-| Never verified (no date) | 15 |
-| Referenced from code or tests | **31 of 152** |
+| Never verified (no date) | 12 |
+| Referenced from code or tests | **32 of 152** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -171,11 +171,11 @@ it is what moves it.
 | SCN-125 | The answer is the page, not a speech bubble | chat | analyst | implemented | 2026-08-16 PARTIAL → fixed |
 | SCN-126 | Transfer project ownership | members | owner | implemented | 2026-08-21 PASS |
 | SCN-127 | Leave a project | analyst | members | implemented | 2026-08-21 PASS |
-| SCN-129 | Data workspace — every source managed on one screen | workspace | owner | draft | — |
+| SCN-129 | Data workspace — every source managed on one screen | workspace | owner | implemented | 2026-09-08 PASS |
 | SCN-130 | Add a source without leaving the workspace | workspace | owner | draft | — |
 | SCN-131 | A new project's workspace says what to connect first | workspace | owner | implemented | 2026-09-08 PASS |
 | SCN-132 | Each source card says what the agent can do with it | workspace | analyst | implemented | 2026-09-08 PASS |
-| SCN-133 | The sidebar switches, the workspace manages | workspace | analyst | draft | — |
+| SCN-133 | The sidebar switches, the workspace manages | workspace | analyst | implemented | 2026-09-08 PASS |
 | SCN-134 | Say what a connection is for, in the agent's terms | connections | editor | implemented | 2026-09-08 PASS |
 | SCN-135 | The answer shows which source context it was given | connections | analyst | draft | — |
 | SCN-136 | Source context that did not fit says so | connections | analyst | draft | — |
@@ -191,7 +191,7 @@ it is what moves it.
 | SCN-146 | Set up a project without a subscription — the work proceeds, the schedule does not | billing | owner | implemented | 2026-09-07 PASS |
 | SCN-147 | The schedule says why it is off and what turns it on | billing | owner | implemented | 2026-09-08 PASS |
 | SCN-148 | A granted account behaves exactly as its plan | billing | owner | implemented | 2026-09-07 PASS |
-| SCN-149 | The sidebar answers "where was I, and what needs me" | workspace | analyst | draft | — |
+| SCN-149 | The sidebar answers "where was I, and what needs me" | workspace | analyst | implemented | 2026-09-08 PASS |
 | SCN-150 | The sidebar surfaces what needs attention and routes to the fix | workspace | analyst | implemented | 2026-09-08 PASS |
 | SCN-151 | A panel link opens the panel it names | workspace | analyst | implemented | 2026-09-07 PASS |
 
@@ -2448,8 +2448,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   +----------------+-----------------------------------------------+
 ```
 
-> **Partly delivered 2026-09-08.** The screen exists at the `connections` route — three groups, full content width, the empty state of SCN-131, capability and read-only chips per card, the Describe affordance of SCN-134 and the sync-hour control of SCN-147. `ConnectionsPanel`, the `max-w-xl` wrapper that re-rendered the sidebar's list, is deleted. **Not yet done:** step 3, the in-place per-card expander for Edit / Test / Index / Delete — only Describe expands in place today and the rest still runs through the shared connection form below the group. Until that lands the rail cannot give up its Connections section (SCN-133).
-- **Status:** draft
+> **Delivered 2026-09-08.** Four groups (sources, repository, scheduled queries, documentation), full content width, the empty state of SCN-131, capability and read-only chips, and per-card management in place: Describe, Edit, Test, Index, Delete — no modal and no sidebar. Test reports **on the card**, because a toast is gone by the time the user looks back at the source it was about. Test and Index are offered only for a source the SQL tools can reach: offering to index an analytics source offers an action whose adapter does not exist for that `db_type`. Edit sets an id the shared form in the same panel opens on, rather than reimplementing sixteen fields of it. Delete asks one confirmation naming what is destroyed, and that sentence now has **one home** shared with the connection list — two copies is two chances for one to under-report what the click removes.
+- **Status:** implemented
 - **Coverage:** frontend/src/components/workspace/DataWorkspace.tsx; frontend/src/__tests__/components/DataWorkspace.test.tsx; frontend/src/app/app/page.tsx (the `connections` panel at the `effectivePanel` switch)
 
 ### SCN-130: Add a source without leaving the workspace
@@ -2523,8 +2523,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** empty, success
 - **Errors & recovery:** nothing can fail — no action is taken here beyond selection
 > **Reconciliation.** This scenario changes the **Entry point** of SCN-025, SCN-026, SCN-027, SCN-028, SCN-029, SCN-030, SCN-031, SCN-032 and SCN-037, all of which read "sidebar …" today. They must be edited in the same change that removes the sidebar's management affordances, and they drop back to `draft` when they are. Until then both entry points exist and the sidebar remains authoritative.
-- **Status:** draft
-- **Coverage:** none yet; planned: frontend/src/components/Sidebar.tsx, planned: frontend/src/components/workspace/DataWorkspace.tsx
+- **Status:** implemented
+- **Coverage:** frontend/src/components/Sidebar.tsx; frontend/src/components/connections/RailSourceList.tsx (selection only, with `Manage sources →` as the seam); frontend/src/components/workspace/DataWorkspace.tsx
 
 ### SCN-149: The sidebar answers "where was I, and what needs me"
 - **Persona:** analyst
@@ -2544,9 +2544,11 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** loading, empty, error, success
 - **Errors & recovery:** the recent list fails -> that block shows an inline retry and the navigation still works, because a rail that cannot navigate is worse than one with a stale list; the project list fails -> the switcher says so and keeps the last known active project rather than emptying the screen
 > **What leaves the rail, and where it goes.** Thirteen collapsible sections is the defect, and it is a structural one: account configuration, project management, work and reports were stacked in one column at equal weight, so the rail had no answer to either question above. SSH Keys and Vendor Credentials → Settings → Credentials. Projects → the switcher, with its management in the workspace. Repository and Connections → the workspace (SCN-129). Custom Rules → the Knowledge panel, where the rest of the project's knowledge already lives. Schedules → the workspace, beside the sources they automate. Usage and Analytics → Settings. Request History → Activity. Chat History stays, shortened, as `Recent`.
-- **Status:** draft
-> **Partly delivered 2026-09-08.** Seven of the thirteen collapsible sections are gone — SSH Keys and Vendor Credentials to Settings → Credentials, Knowledge and Custom Rules to the Knowledge screen, Dashboards to its own, Usage and Analytics to Settings — and the rail gained the `Needs you` group of SCN-150 plus flat entries for the three destinations that were sections. **Not yet done:** Projects, Repository, Connections, Chat History and Schedules are still collapsible sections, so the rail is five sections rather than a switcher and a recent list, and the full five-entry navigation waits on the data workspace of SCN-129 to receive the source management (SCN-133). Sequenced this way on purpose: a section cannot leave the rail before its destination exists, which is the ordering error this scenario's first attempt made.
-- **Coverage:** frontend/src/components/Sidebar.tsx; frontend/src/components/settings/SettingsPanel.tsx; frontend/src/__tests__/components/SettingsVendorCredentials.test.tsx; planned: frontend/src/components/workspace/DataWorkspace.tsx (the destination the rest of the rail is waiting for)
+- **Status:** implemented
+> **Delivered 2026-09-08, over two changes.** Thirteen collapsible sections became two, and the rail lost 325 lines: SSH Keys and Vendor Credentials went to Settings → Credentials, Knowledge and Custom Rules to the Knowledge screen, Dashboards to its own, Usage and Analytics to Settings, and Repository and Schedules to the data workspace. The project switcher is fixed and never collapsible — a rail that can hide where you are answers neither of its questions. Five flat entries (Chat, Data, Knowledge, Dashboards, Activity), the `Needs you` group of SCN-150, and `Chat History` renamed `Recent`, which is what a returning user is looking for rather than a filing cabinet.
+> **What went with them, and where.** The repository's status, its index trigger, its live progress and its update check were all in the rail. Live progress with cancel and retry is the Knowledge Health panel of the project overview (SCN-062); a failed or reaped run reaches `Needs you`; the repository is a group in the workspace. Nothing was dropped — the rail stopped running things.
+> **One deviation from the spec above:** sources are still wrapped in a collapsible `Connections` section rather than being plain rows. Its contents are selection-only, so the rule this scenario exists for holds; only the chrome differs.
+- **Coverage:** frontend/src/components/Sidebar.tsx; frontend/src/components/settings/SettingsPanel.tsx; frontend/src/components/connections/RailSourceList.tsx; frontend/src/components/attention/AttentionGroup.tsx; frontend/src/__tests__/components/Sidebar.test.tsx
 
 ### SCN-150: The sidebar surfaces what needs attention and routes to the fix
 - **Persona:** analyst
@@ -2626,7 +2628,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** repository cards with per-repository status, per-repository Index action, queue position when one is waiting
 - **States covered:** loading, empty, error, success
 - **Errors & recovery:** one repository's index fails -> only its card reports the failure and the other stays indexed and queryable; **the indexes must not run concurrently** — one repository index measures 415 MiB of peak worker memory against a 512 MiB quota, so a second beside it is the R15 kill this product has already had, and serialising them is a requirement of this scenario rather than an optimisation
-> **Scope taken 2026-09-07 (decision D1: several repositories per project).** Today a second repository is created and never indexed. The CRUD writes `project_repositories` while every consumer reads `Project.repo_url`, so `POST /api/repos/{id}/index` on a project whose only repository is a table row answers `400 "Project has no repository URL configured"` (measured 2026-09-07). Implementing this scenario means giving the indexing pipeline, the code graph, the BM25 snapshot, the docs and GitAgent a repository dimension. That work is now in scope; this scenario is the acceptance test for it.
+> **Parked 2026-09-08.** D1 took this into scope on 2026-09-07 and reversed the next day — one repository for now, deferred rather than cancelled. The reason is measured: `CodeGraphService.save_incremental` merges by file path within a PROJECT, and a path is unique only inside a repository, so two repositories sharing `README.md` would delete each other's symbols on every incremental run. That makes this a change of identity in seven places plus the symbol `uid`, and moving the `uid` forces a full rebuild — 3.3 h on the one real repository. The scenario stands as designed; only its schedule changed. Today a second repository is created and never indexed. The CRUD writes `project_repositories` while every consumer reads `Project.repo_url`, so `POST /api/repos/{id}/index` on a project whose only repository is a table row answers `400 "Project has no repository URL configured"` (measured 2026-09-07). Implementing this scenario means giving the indexing pipeline, the code graph, the BM25 snapshot, the docs and GitAgent a repository dimension. That work is now in scope; this scenario is the acceptance test for it.
 - **Status:** draft
 - **Coverage:** none yet; planned: backend/app/knowledge/pipeline_runner.py, planned: backend/app/api/routes/repos.py, planned: backend/app/agents/git_agent.py, backend/app/models/repository.py
 
