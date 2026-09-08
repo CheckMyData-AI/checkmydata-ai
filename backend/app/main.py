@@ -870,14 +870,26 @@ async def _git_poll_loop() -> None:
             logger.exception("Git poll loop iteration failed; will retry next cycle")
 
 
-async def _dispatch_daily_knowledge_sync_wave() -> None:
-    """Enqueue one daily knowledge sync job per eligible project whose effective hour matches now.
+async def _dispatch_daily_knowledge_sync_wave(at: datetime | None = None) -> None:
+    """Enqueue one daily knowledge sync job per eligible project whose effective hour matches.
 
     A Redis advisory lock keyed by ``run_date:current_hour`` ensures exactly one web dyno
     dispatches the wave per calendar-day/hour combination; other dynos skip silently.
     The per-project task_id is day-scoped (``daily_sync:{project_id}:{run_date}``) so a
     project cannot be double-dispatched within the same calendar day even if the lock is
     somehow acquired twice in different hours.
+
+    ``at`` is the instant the caller INTENDED to act for. The loop sleeps until an hour
+    boundary and then hands that boundary over, because reading the clock a second time
+    here is a guess: an early wake, a slow start or a restart re-phasing the loop makes
+    the two reads disagree, and the disagreement is silent. Measured on production
+    2026-09-07/08 — over eight consecutive hours the wave acted for 20, 21, 21, 23, 23,
+    1, 2, 3. Two hours ran twice (the lock made the repeat a no-op) and two never ran at
+    all, one of them **hour 0**, which is when this deployment's sync is scheduled. The
+    last completed `daily_sync` was 2026-09-06.
+
+    ``None`` falls back to the clock, for a standalone caller — a test, a manual trigger
+    — that has no intention to declare.
     """
     from zoneinfo import ZoneInfo
 
@@ -886,7 +898,7 @@ async def _dispatch_daily_knowledge_sync_wave() -> None:
     from app.services.sync_schedule_service import SyncScheduleService
 
     tz = ZoneInfo(settings.daily_knowledge_sync_timezone)
-    now = datetime.now(tz)
+    now = at.astimezone(tz) if at is not None else datetime.now(tz)
     run_date = now.strftime("%Y-%m-%d")
     current_hour = now.hour
 
@@ -1004,7 +1016,10 @@ async def _daily_knowledge_sync_cron_loop() -> None:
                 next_hour.isoformat(),
             )
             await asyncio.sleep(wait_seconds)
-            await _dispatch_daily_knowledge_sync_wave()
+            # Hand over the boundary rather than letting the dispatcher read the clock
+            # again. The two reads disagree whenever the wake is early or the start is
+            # slow, and the disagreement costs the intended hour entirely.
+            await _dispatch_daily_knowledge_sync_wave(at=next_hour)
         except asyncio.CancelledError:
             break
         except Exception:
@@ -1014,8 +1029,13 @@ async def _daily_knowledge_sync_cron_loop() -> None:
             await asyncio.sleep(60)
 
 
-async def _dispatch_analytics_collect_wave() -> None:
+async def _dispatch_analytics_collect_wave(at: datetime | None = None) -> None:
     """Enqueue one collection job per analytics connection due this hour (spec §3.2).
+
+    ``at`` carries the instant the loop intended, for the reason spelled out on
+    :func:`_dispatch_daily_knowledge_sync_wave`: sleeping to an hour boundary and
+    then re-reading the clock is two guesses where one intention would do, and when
+    they disagree an hour is skipped in silence.
 
     Deliberately the same shape as :func:`_dispatch_daily_knowledge_sync_wave`:
     an hour-scoped Redis lock so exactly one web dyno dispatches each hour's
@@ -1038,7 +1058,7 @@ async def _dispatch_analytics_collect_wave() -> None:
     from app.services.analytics_collect_service import ANALYTICS_SOURCE_TYPES
 
     tz = ZoneInfo(settings.daily_knowledge_sync_timezone)
-    now = datetime.now(tz)
+    now = at.astimezone(tz) if at is not None else datetime.now(tz)
     run_date = now.strftime("%Y-%m-%d")
     current_hour = now.hour
 
@@ -1151,7 +1171,7 @@ async def _analytics_collect_cron_loop() -> None:
                 next_hour.isoformat(),
             )
             await asyncio.sleep(wait_seconds)
-            await _dispatch_analytics_collect_wave()
+            await _dispatch_analytics_collect_wave(at=next_hour)
         except asyncio.CancelledError:
             break
         except Exception:

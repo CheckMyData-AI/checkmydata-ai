@@ -238,6 +238,17 @@ Worker functions (`backend/app/worker.py`):
 - `run_batch` — batch query execution
 - `run_analytics_collect` — collect one analytics connection's reports into its fact tables (per-function timeout `analytics_collect_job_timeout_seconds`)
 
+**An hourly cron acts for the hour it was WOKEN for, not the one the clock reports
+(fixed 2026-09-08).** Both loops slept to an hour boundary and then called a
+dispatcher that read `datetime.now()` again — two guesses where one intention would
+do. Measured on production over eight consecutive hours, the wave acted for
+`20, 21, 21, 23, 23, 1, 2, 3`: two hours ran twice and two never ran, one of them
+**hour 0**, which is `daily_knowledge_sync_hour`'s default and so the only hour that
+mattered. The last completed `daily_sync` was 2026-09-06 and nothing ran for two
+days. Silent in both directions: the hour-scoped Redis lock made the repeat a no-op,
+and a skipped hour logs nothing at all. The loops now pass `at=next_hour`; the
+argument defaults to `None` so a standalone caller still works.
+
 Hourly cron loops in `app/main.py`, same shape and both multi-dyno-safe (hour-scoped `redis_lock` + day-scoped `task_id`): `_daily_knowledge_sync_cron_loop` (repo index → DB index → code↔DB sync, gated on `daily_knowledge_sync_enabled`) and `_analytics_collect_cron_loop` (analytics collection wave, gated on `analytics_collect_enabled`). Both read their flag **once at start-up** — flipping it needs a restart. They share `daily_knowledge_sync_timezone` so both agree what "3 a.m." means.
 
 Maintenance cron (24 h): learning/insight confidence decay, insight TTL expiry, analytics journal prune, optional backup (`maintenance_interval_hours`).
