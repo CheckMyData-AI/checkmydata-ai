@@ -224,7 +224,13 @@ CEILINGS: dict[str, int] = {
     # reports it at WARNING naming the section that will be empty. The first draft
     # logged at debug and `test_prompt_loaders_report_their_failures_at_warning`
     # caught it — which is the ratchet beside this one doing its job.
-    "except Exception": 638,
+    # 638 -> 639 on 2026-09-08. One, in `_run_id_for_workflow`: resolving the
+    # run row for a heartbeat must never fail the rebuild. `run_repo_index_task`
+    # already falls back to a bare workflow when the row cannot be written — "the
+    # row is bookkeeping; the index is the work" — so raising here would invert a
+    # decision already taken. It logs at WARNING naming the consequence (the run
+    # will not beat and the reaper may kill it) and returns None.
+    "except Exception": 639,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:
