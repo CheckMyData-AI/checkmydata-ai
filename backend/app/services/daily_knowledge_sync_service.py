@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.heartbeat import heartbeat
+from app.core.metrics import get_metrics_collector
 from app.core.workflow_tracker import tracker
 from app.models.base import async_session_factory
 from app.models.connection import Connection
@@ -34,6 +35,41 @@ _STATUS_SUCCESS = "success"
 _STATUS_PARTIAL = "partial"
 _STATUS_FAILED = "failed"
 _STATUS_SKIPPED = "skipped"
+
+
+#: Fraction of the nightly budget above which a run is worth warning about.
+#:
+#: A FRACTION rather than a second threshold constant, deliberately. The ceiling is
+#: configurable (`daily_knowledge_sync_job_timeout_seconds`), and a hard-coded alarm
+#: beside a configurable limit goes wrong in both directions: raise the ceiling and the
+#: alarm fires on every ordinary run until somebody deletes it; lower the ceiling and it
+#: never fires again. 0.85 leaves roughly eighteen minutes of the default 7 200 s — one
+#: night's warning before the night that gets cancelled.
+BUDGET_WARNING_FRACTION = 0.85
+
+
+def budget_warning(*, elapsed_seconds: float, timeout_seconds: int) -> str | None:
+    """Say whether this run came close enough to its ceiling to be worth reporting.
+
+    Measured on production: the longest COMPLETED nightly sync took **7 214.9 s** against
+    a 7 200 s budget — it finished by luck, and nothing said so. ARQ's timeout does not
+    warn on the way up, it cancels, so the first symptom of a repository outgrowing the
+    budget is a night that simply did not sync, with the run before it looking exactly
+    like a success.
+
+    Returns the message, or ``None`` when there is nothing to say. A non-positive timeout
+    means the caller could not determine the budget, and that degrades **quiet**: warning
+    on every run would train the operator to ignore the one line that matters.
+    """
+    if timeout_seconds <= 0:
+        return None
+    if elapsed_seconds < BUDGET_WARNING_FRACTION * timeout_seconds:
+        return None
+    pct = 100.0 * elapsed_seconds / timeout_seconds
+    return (
+        f"daily_sync: {elapsed_seconds:.0f}s of the {timeout_seconds}s budget "
+        f"({pct:.0f}%) — the next heavy night will hit the ceiling and be cancelled"
+    )
 
 
 @dataclass
@@ -137,8 +173,22 @@ class DailyKnowledgeSyncService:
                 )
                 await s.commit()
 
+        _started = time.monotonic()
         async with heartbeat(_hb, interval_seconds=settings.heartbeat_interval_seconds):
             result = await self._orchestrate(project_id, run_id=run_id)
+        _elapsed = time.monotonic() - _started
+
+        # The budget is read HERE rather than captured before the run: a sync that
+        # outlives a config change should be judged against the ceiling that is actually
+        # about to cancel it, not the one that was in force when it started.
+        if (
+            _warning := budget_warning(
+                elapsed_seconds=_elapsed,
+                timeout_seconds=settings.daily_knowledge_sync_job_timeout_seconds,
+            )
+        ) is not None:
+            logger.warning("%s (project=%s)", _warning, project_id[:8])
+            get_metrics_collector().record_daily_sync_near_ceiling()
 
         terminal = "failed" if result.status == _STATUS_FAILED else "completed"
         failure_kind = "fatal" if terminal == "failed" else None

@@ -142,6 +142,16 @@ class MetricsCollector:
         else:
             self.inc("datagate_block_total")
 
+    def record_daily_sync_near_ceiling(self) -> None:
+        """A nightly sync finished within `BUDGET_WARNING_FRACTION` of its own timeout.
+
+        Measured on production: the longest COMPLETED run took 7 214.9 s against a 7 200 s
+        budget. ARQ's timeout does not warn on the way up, it cancels — so without this
+        the first symptom of a repository outgrowing the budget is a night that simply did
+        not sync, with the run before it looking exactly like a success.
+        """
+        self.inc("daily_sync_budget_near_ceiling_total")
+
     def record_filter_guard_degrade(self) -> None:
         """The required-filter guard degraded to a warning instead of hard-failing (SYNC-L1)."""
         self.inc("filter_guard_degrade_total")
