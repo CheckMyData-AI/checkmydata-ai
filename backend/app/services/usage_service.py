@@ -37,7 +37,23 @@ class UsageService:
         total_tokens: int | None = None,
         estimated_cost_usd: float | None = None,
     ) -> TokenUsage:
-        if total_tokens is None:
+        # Falsy, not `is None`. Measured on production 2026-09-09: rows carrying
+        # prompt=175 669 / completion=4 587 and `total_tokens = 0`, because no adapter
+        # reports a total and every caller reads `usage.get("total_tokens", 0)` — which
+        # produces a NUMBER where there was an ABSENCE, so an `is None` check never fired.
+        #
+        # `check_budget` sums exactly this column, so those calls charged **nothing**
+        # against the user's daily, monthly and plan-derived limits, with billing on.
+        # The same defect was fixed in `router.py::_usage_total` on 2026-08-28 for the
+        # per-call sink; the four request-level writers in `chat.py` were left behind.
+        # The derivation belongs here instead — the one funnel every writer passes,
+        # including the next one somebody adds.
+        #
+        # A provider-reported total is never zero, so this never overrides one: prompt
+        # caching makes the billed total differ from the sum and the provider is the
+        # authority on what it charged. And a call with no prompt and no completion
+        # stays at zero, which is also the truth.
+        if not total_tokens:
             total_tokens = prompt_tokens + completion_tokens
 
         row = TokenUsage(

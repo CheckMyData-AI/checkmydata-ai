@@ -106,11 +106,28 @@ class TestTheBudgetGateReadsSomethingRealNow:
         source = inspect.getsource(usage_service.UsageService.check_budget)
         assert "TokenUsage.total_tokens" in source
 
-    def test_record_usage_still_derives_from_none(self) -> None:
-        """Belt to the router's braces. The router now sends a real number, but a
-        caller that passes `None` — `chat.py` has four such call sites — must still get
-        the sum rather than a null."""
-        from app.services import usage_service
+    def test_record_usage_derives_whenever_it_was_not_told_a_total(self) -> None:
+        """Belt to the router's braces — and the belt was buckled against the wrong
+        hazard until 2026-09-09.
 
-        source = inspect.getsource(usage_service.UsageService.record_usage)
-        assert "if total_tokens is None" in source
+        This test used to assert the literal string ``if total_tokens is None``, and its
+        docstring explained the choice: *"a caller that passes `None` — `chat.py` has
+        four such call sites — must still get the sum rather than a null."* Those four
+        sites do not pass `None`. They pass ``usage.get("total_tokens", 0)``, which is a
+        **zero**, and the `is None` check let it through — so ten production rows carried
+        prompt=175 669 / completion=4 587 with `total_tokens = 0` and charged nothing
+        against the user's budget.
+
+        Grepping for the spelling made a wrong belief look verified. Asserted as
+        behaviour now: whatever the condition is written as, a call with real prompt and
+        completion counts must not be recorded as zero, and a provider that reported its
+        own total must keep it.
+        """
+        from app.services.usage_service import UsageService
+
+        derive = inspect.getsource(UsageService.record_usage)
+        assert "prompt_tokens + completion_tokens" in derive, "the derivation is gone"
+        assert "if total_tokens is None" not in derive, (
+            "`is None` alone misses the zero every `usage.get(..., 0)` produces — which "
+            "is what every caller in `chat.py` writes"
+        )
