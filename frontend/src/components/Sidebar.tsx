@@ -2,42 +2,25 @@
 
 import Link from "next/link";
 import { ProjectSelector } from "./projects/ProjectSelector";
-import { ConnectionSelector } from "./connections/ConnectionSelector";
-import { SyncStatusIndicator } from "./connections/SyncStatusIndicator";
+import { RailSourceList } from "./connections/RailSourceList";
 import { ChatSessionList } from "./chat/ChatSessionList";
 import { ChatSearch } from "./chat/ChatSearch";
 import { SidebarGroup, useSidebarGroupCollapse } from "./ui/SidebarGroup";
 import { SidebarNavLauncher } from "./ui/SidebarNavLauncher";
 import { useAppPanel } from "@/hooks/useAppPanel";
-import { WorkflowProgress } from "./workflow/WorkflowProgress";
 import { PendingInvites } from "./invites/PendingInvites";
 import { AttentionGroup } from "./attention/AttentionGroup";
 import { useAppStore } from "@/stores/app-store";
-import { useBackgroundTasks } from "@/stores/background-tasks-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { api } from "@/lib/api";
-import type { RepoStatus, UpdateCheck } from "@/lib/api";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Icon } from "./ui/Icon";
 import { Tooltip } from "./ui/Tooltip";
 import { SidebarSection, useSectionCollapse } from "./ui/SidebarSection";
-import { useLogStore } from "@/stores/log-store";
 import { toast } from "@/stores/toast-store";
 import { AccountMenu } from "./auth/AccountMenu";
-import { ScheduleManager } from "./schedules/ScheduleManager";
 import { NotificationBell } from "./ui/NotificationBell";
 import { usePermission } from "@/hooks/usePermission";
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 function getStoredCollapsed(): boolean {
   if (typeof window === "undefined") return false;
@@ -55,12 +38,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarProps) {
-  const { isOwner, canEdit } = usePermission();
+  const { isOwner } = usePermission();
   const activeProject = useAppStore((s) => s.activeProject);
-  const pipelineStatus = useAppStore((s) =>
-    activeProject ? s.pipelineStatusByProject[activeProject.id] : undefined,
-  );
-  const sshKeys = useAppStore((s) => s.sshKeys);
   const setSshKeys = useAppStore((s) => s.setSshKeys);
   const projects = useAppStore((s) => s.projects);
   const connections = useAppStore((s) => s.connections);
@@ -70,122 +49,12 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
   const [collapsed, setCollapsed] = useState(isMobile ? false : getStoredCollapsed);
   const drawerRef = useRef<HTMLElement>(null);
 
-  const [indexing, setIndexing] = useState(false);
-  const [indexResult, setIndexResult] = useState<string | null>(null);
-  const [indexWorkflowId, setIndexWorkflowId] = useState<string | null>(null);
-  const [repoStatus, setRepoStatus] = useState<RepoStatus | null>(null);
-  const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
-  const [checking, setChecking] = useState(false);
-  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const loadStatus = useCallback(async () => {
-    if (!activeProject?.repo_url) {
-      setRepoStatus(null);
-      return;
-    }
-    try {
-      const st = await api.repos.status(activeProject.id);
-      setRepoStatus(st);
-    } catch {
-      setRepoStatus(null);
-    }
-  }, [activeProject]);
-
-  useEffect(() => {
-    if (dismissTimerRef.current) {
-      clearTimeout(dismissTimerRef.current);
-      dismissTimerRef.current = null;
-    }
-    setRepoStatus(null);
-    setUpdateCheck(null);
-    setIndexResult(null);
-    setIndexWorkflowId(null);
-    loadStatus();
-    return () => {
-      if (dismissTimerRef.current) {
-        clearTimeout(dismissTimerRef.current);
-        dismissTimerRef.current = null;
-      }
-    };
-  }, [activeProject?.id, loadStatus]);
-
-  const handleIndex = async () => {
-    if (!activeProject) return;
-    if (dismissTimerRef.current) {
-      clearTimeout(dismissTimerRef.current);
-      dismissTimerRef.current = null;
-    }
-    setIndexing(true);
-    setIndexResult(null);
-    setIndexWorkflowId(null);
-    setUpdateCheck(null);
-    try {
-      const result = await api.repos.index(activeProject.id);
-      setIndexWorkflowId(result.workflow_id);
-      useBackgroundTasks.getState().insertOptimistic({
-        runId: result.run_id,
-        workflowId: result.workflow_id,
-        kind: "index_repo",
-        projectId: activeProject.id,
-        connectionId: null,
-      });
-      void api.projects
-        .pipelineStatus(activeProject.id)
-        .then((s) => {
-          useAppStore.getState().setPipelineStatus(activeProject.id, s);
-          useBackgroundTasks.getState().reconcileFromPipelineStatus(s);
-        })
-        .catch(() => {});
-      useLogStore.getState().setOpen(true);
-    } catch (err) {
-      setIndexResult(
-        `Error: ${err instanceof Error ? err.message : "Unknown"}`,
-      );
-      setIndexing(false);
-    }
-  };
-
-  const handleIndexComplete = useCallback(
-    (status: "completed" | "failed", detail: string) => {
-      setIndexing(false);
-      if (status === "completed") {
-        setIndexResult(detail || "Indexing completed");
-      } else {
-        setIndexResult(`Error: ${detail || "Indexing failed"}`);
-      }
-      loadStatus();
-      if (activeProject) {
-        useAppStore.getState().clearReadinessCache(activeProject.id);
-      }
-
-      if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
-      const delay = status === "failed" ? 15_000 : 5_000;
-      dismissTimerRef.current = setTimeout(() => {
-        setIndexWorkflowId(null);
-        setIndexResult(null);
-        dismissTimerRef.current = null;
-      }, delay);
-    },
-    [loadStatus, activeProject],
-  );
-
-  const handleCheckUpdates = async () => {
-    if (!activeProject) return;
-    setChecking(true);
-    setUpdateCheck(null);
-    try {
-      const uc = await api.repos.checkUpdates(activeProject.id);
-      setUpdateCheck(uc);
-    } catch {
-      setUpdateCheck({
-        has_updates: false,
-        commits_behind: 0,
-        message: "Check failed",
-      });
-    } finally {
-      setChecking(false);
-    }
-  };
+  // The repository's status, its index trigger, its progress and its update check
+  // all lived here. They are gone from the rail, not from the product: live progress
+  // with cancel and retry is the Knowledge Health panel of the project overview
+  // (SCN-062), a failed or reaped run reaches the `Needs you` group (SCN-150), and
+  // the repository itself is a group in the data workspace (SCN-129). The rail
+  // switches and reports; it does not run things. SCN-133/SCN-149.
 
   useEffect(() => {
     api.sshKeys
@@ -205,10 +74,8 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
   const showOnboarding = projects.length === 0;
 
   const projectsCollapse = useSectionCollapse("projects");
-  const repoCollapse = useSectionCollapse("repository");
   const connCollapse = useSectionCollapse("connections");
   const chatCollapse = useSectionCollapse("chat-history");
-  const schedulesCollapse = useSectionCollapse("schedules", false);
 
   const { setPanel } = useAppPanel();
   const setupGroup = useSidebarGroupCollapse("setup");
@@ -220,17 +87,12 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
   }, [setPanel, onClose]);
 
   const [projCreateReq, setProjCreateReq] = useState(false);
-  const [connCreateReq, setConnCreateReq] = useState(false);
   const [chatCreateReq, setChatCreateReq] = useState(false);
-  const [schedCreateReq, setSchedCreateReq] = useState(false);
 
   const onProjCreated = useCallback(() => setProjCreateReq(false), []);
-  const onConnCreated = useCallback(() => setConnCreateReq(false), []);
   const onChatCreated = useCallback(() => setChatCreateReq(false), []);
-  const onSchedCreated = useCallback(() => setSchedCreateReq(false), []);
 
   const projectsRef = useRef<HTMLDivElement>(null);
-  const repoRef = useRef<HTMLDivElement>(null);
   const connRef = useRef<HTMLDivElement>(null);
 
   const focusSection = useAppStore((s) => s.focusSidebarSection);
@@ -240,7 +102,6 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
     if (!focusSection) return;
     const map: Record<string, { forceOpen: () => void; ref: React.RefObject<HTMLDivElement | null> }> = {
       projects: { forceOpen: projectsCollapse.forceOpen, ref: projectsRef },
-      repository: { forceOpen: repoCollapse.forceOpen, ref: repoRef },
       connections: { forceOpen: connCollapse.forceOpen, ref: connRef },
     };
     const target = map[focusSection];
@@ -253,7 +114,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
       setTimeout(() => target.ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
     }
     setFocusSection(null);
-  }, [focusSection, setFocusSection, collapsed, projectsCollapse.forceOpen, repoCollapse.forceOpen, connCollapse.forceOpen]);
+  }, [focusSection, setFocusSection, collapsed, projectsCollapse.forceOpen, connCollapse.forceOpen]);
 
   const userInitials = user
     ? (user.display_name || user.email)
@@ -263,122 +124,6 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
         .join("")
     : "";
 
-  const repoIsIndexing =
-    pipelineStatus?.repo.is_indexing ?? repoStatus?.is_indexing ?? indexing;
-  const remoteWorkflowId =
-    pipelineStatus?.repo.is_indexing && pipelineStatus.repo.workflow_id
-      ? pipelineStatus.repo.workflow_id
-      : null;
-  const effectiveWorkflowId = indexWorkflowId ?? remoteWorkflowId;
-
-  const repoSection = activeProject?.repo_url ? (
-    <div className="space-y-2 px-1">
-      {repoStatus && (
-        <div className="text-xs text-text-secondary space-y-1.5 bg-surface-1 rounded-lg p-2.5 border border-border-subtle">
-          {repoStatus.last_indexed_commit ? (
-            <>
-              <div className="flex justify-between items-center">
-                <span className="text-text-tertiary">Commit</span>
-                <span className="text-text-primary font-mono text-meta">
-                  {repoStatus.last_indexed_commit.slice(0, 7)}
-                </span>
-              </div>
-              {repoStatus.last_indexed_at && (
-                <div className="flex justify-between items-center">
-                  <span className="text-text-tertiary">Indexed</span>
-                  <span className="text-text-secondary">
-                    {timeAgo(repoStatus.last_indexed_at)}
-                  </span>
-                </div>
-              )}
-              <div className="flex justify-between items-center">
-                <span className="text-text-tertiary">Branch</span>
-                <span className="text-text-secondary font-mono text-meta">
-                  {repoStatus.branch}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-text-tertiary">Docs</span>
-                <span className="text-text-secondary">
-                  {repoStatus.total_documents}
-                </span>
-              </div>
-            </>
-          ) : (
-            <p className="text-text-muted italic text-meta">
-              Not yet indexed
-            </p>
-          )}
-          {repoIsIndexing && (
-            <p className="text-warning text-meta flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse-dot" />
-              Indexing in progress...
-            </p>
-          )}
-        </div>
-      )}
-
-      {canEdit && (
-        <div className="flex gap-1.5">
-          <button
-            onClick={handleIndex}
-            disabled={indexing}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs bg-surface-2 text-text-secondary rounded-lg hover:bg-surface-3 hover:text-text-primary disabled:opacity-50 transition-colors"
-          >
-            <Icon name="refresh-cw" size={12} className={indexing ? "animate-spin" : ""} />
-            {indexing ? "Indexing..." : "Index Repo"}
-          </button>
-          {repoStatus?.last_indexed_commit && (
-            <button
-              onClick={handleCheckUpdates}
-              disabled={checking || indexing}
-              title="Check for new commits"
-              aria-label="Check for new commits"
-              className="px-3 py-2 text-xs bg-surface-2 text-text-tertiary rounded-lg hover:bg-surface-3 hover:text-text-secondary disabled:opacity-50 transition-colors"
-            >
-              {checking ? "..." : "Check"}
-            </button>
-          )}
-        </div>
-      )}
-
-      {updateCheck && (
-        <p
-          className={`text-meta px-1 ${
-            updateCheck.has_updates ? "text-warning" : "text-success"
-          }`}
-        >
-          {updateCheck.message}
-          {updateCheck.has_updates && updateCheck.commits_behind > 0 && (
-            <button
-              onClick={handleIndex}
-              disabled={indexing}
-              className="ml-1.5 underline hover:text-warning/80 transition-colors"
-            >
-              Re-index now
-            </button>
-          )}
-        </p>
-      )}
-
-      {effectiveWorkflowId && (
-        <WorkflowProgress
-          workflowId={effectiveWorkflowId}
-          compact
-          onComplete={handleIndexComplete}
-        />
-      )}
-      {indexResult && (
-        <p
-          className={`text-meta px-1 ${
-            indexResult.startsWith("Error") ? "text-error" : "text-success"
-          }`}
-        >
-          {indexResult}
-        </p>
-      )}
-    </div>
-  ) : null;
 
   useEffect(() => {
     if (!isMobile || !isOpen) return;
@@ -492,10 +237,22 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             >
 
 
-              <div ref={projectsRef}>
-                <SidebarSection icon="folder-git" title="Projects" open={projectsCollapse.open} onToggle={projectsCollapse.toggle} count={projects.length} collapsed={false} action={{ label: "New project", onClick: () => setProjCreateReq(true) }}>
-                  <ProjectSelector createRequested={projCreateReq} onCreateHandled={onProjCreated} />
-                </SidebarSection>
+              {/* Fixed, never collapsible: this is where the user IS, and a rail that can
+                  hide your location answers neither of its two questions (SCN-149). */}
+              <div ref={projectsRef} className="px-1 pb-1">
+                <div className="flex items-center justify-between px-2 py-1">
+                  <span className="text-kicker uppercase tracking-wider text-text-muted font-medium">
+                    Project
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setProjCreateReq(true)}
+                    className="text-meta text-text-tertiary hover:text-text-secondary transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
+                  >
+                    New
+                  </button>
+                </div>
+                <ProjectSelector createRequested={projCreateReq} onCreateHandled={onProjCreated} />
               </div>
             </SidebarGroup>
 
@@ -506,22 +263,14 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                   collapsed={workspaceGroup.collapsed}
                   onToggle={workspaceGroup.toggle}
                 >
-                  {activeProject.repo_url && (
-                    <div ref={repoRef}>
-                      <SidebarSection icon="git-branch" title="Repository" open={repoCollapse.open} onToggle={repoCollapse.toggle} collapsed={false}>
-                        {repoSection}
-                      </SidebarSection>
-                    </div>
-                  )}
 
                   <div ref={connRef}>
-                    <SidebarSection icon="database" title="Connections" open={connCollapse.open} onToggle={connCollapse.toggle} count={connections.length} collapsed={false} action={isOwner ? { label: "New connection", onClick: () => setConnCreateReq(true) } : undefined}>
-                      <ConnectionSelector createRequested={connCreateReq} onCreateHandled={onConnCreated} />
-                      <SyncStatusIndicator />
+                    <SidebarSection icon="database" title="Connections" open={connCollapse.open} onToggle={connCollapse.toggle} count={connections.length} collapsed={false}>
+                      <RailSourceList />
                     </SidebarSection>
                   </div>
 
-                  <SidebarSection icon="message-square" title="Chat History" open={chatCollapse.open} onToggle={chatCollapse.toggle} collapsed={false} action={{ label: "New chat", onClick: () => { setChatCreateReq(true); setPanel("chat"); } }}>
+                  <SidebarSection icon="message-square" title="Recent" open={chatCollapse.open} onToggle={chatCollapse.toggle} collapsed={false} action={{ label: "New chat", onClick: () => { setChatCreateReq(true); setPanel("chat"); } }}>
                     {restoringState ? (
                       <div className="px-3 py-2 space-y-1.5">
                         {[1, 2, 3].map((i) => (
@@ -538,13 +287,21 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
 
 
 
-                  <SidebarSection icon="clock" title="Schedules" open={schedulesCollapse.open} onToggle={schedulesCollapse.toggle} collapsed={false} action={isOwner ? { label: "New schedule", onClick: () => setSchedCreateReq(true) } : undefined}>
-                    <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
-                  </SidebarSection>
 
                 </SidebarGroup>
 
                 <div className="mb-1">
+                  <SidebarNavLauncher
+                    icon="message-square"
+                    title="Chat"
+                    onClick={() => setPanel("chat")}
+                  />
+                  <SidebarNavLauncher
+                    icon="database"
+                    title="Data"
+                    subtitle="Sources, repository, docs"
+                    onClick={() => setPanel("connections")}
+                  />
                   <SidebarNavLauncher
                     icon="book-open"
                     title="Knowledge"
@@ -704,18 +461,38 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               same list/add/delete rhythm as SSH Keys, and the only place a
               credential can be reviewed or removed once a connection exists. */}
 
-          <div ref={projectsRef}>
-            <SidebarSection
-              icon="folder-git"
-              title="Projects"
-              open={projectsCollapse.open}
-              onToggle={projectsCollapse.toggle}
-              count={projects.length}
-              collapsed={collapsed}
-              action={{ label: "New project", onClick: () => setProjCreateReq(true) }}
-            >
-              <ProjectSelector createRequested={projCreateReq} onCreateHandled={onProjCreated} />
-            </SidebarSection>
+          {/* Fixed, never collapsible: this is where the user IS, and a rail that can
+
+              hide your location answers neither of its two questions (SCN-149). */}
+
+          <div ref={projectsRef} className="px-1 pb-1">
+
+            <div className="flex items-center justify-between px-2 py-1">
+
+              <span className="text-kicker uppercase tracking-wider text-text-muted font-medium">
+
+                Project
+
+              </span>
+
+              <button
+
+                type="button"
+
+                onClick={() => setProjCreateReq(true)}
+
+                className="text-meta text-text-tertiary hover:text-text-secondary transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
+
+              >
+
+                New
+
+              </button>
+
+            </div>
+
+            <ProjectSelector createRequested={projCreateReq} onCreateHandled={onProjCreated} />
+
           </div>
         </SidebarGroup>
 
@@ -725,6 +502,19 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                 rail and are screens now — see SCN-151. Flat and not grouped on purpose:
                 a thing you go to should cost one click, not an expand and a click. */}
             <div className="mb-1">
+              <SidebarNavLauncher
+                icon="message-square"
+                title="Chat"
+                onClick={() => setPanel("chat")}
+                collapsed={collapsed}
+              />
+              <SidebarNavLauncher
+                icon="database"
+                title="Data"
+                subtitle="Sources, repository, docs"
+                onClick={() => setPanel("connections")}
+                collapsed={collapsed}
+              />
               <SidebarNavLauncher
                 icon="book-open"
                 title="Knowledge"
@@ -755,19 +545,6 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
               onToggle={workspaceGroup.toggle}
               sidebarCollapsed={collapsed}
             >
-              {activeProject.repo_url && (
-                <div ref={repoRef}>
-                  <SidebarSection
-                    icon="git-branch"
-                    title="Repository"
-                    open={repoCollapse.open}
-                    onToggle={repoCollapse.toggle}
-                    collapsed={collapsed}
-                  >
-                    {repoSection}
-                  </SidebarSection>
-                </div>
-              )}
 
               <div ref={connRef}>
                 <SidebarSection
@@ -777,16 +554,15 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                   onToggle={connCollapse.toggle}
                   count={connections.length}
                   collapsed={collapsed}
-                  action={isOwner ? { label: "New connection", onClick: () => setConnCreateReq(true) } : undefined}
+                 
                 >
-                  <ConnectionSelector createRequested={connCreateReq} onCreateHandled={onConnCreated} />
-                  <SyncStatusIndicator />
+                  <RailSourceList />
                 </SidebarSection>
               </div>
 
               <SidebarSection
                 icon="message-square"
-                title="Chat History"
+                title="Recent"
                 open={chatCollapse.open}
                 onToggle={chatCollapse.toggle}
                 collapsed={collapsed}
@@ -808,16 +584,6 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
 
 
 
-              <SidebarSection
-                icon="clock"
-                title="Schedules"
-                open={schedulesCollapse.open}
-                onToggle={schedulesCollapse.toggle}
-                collapsed={collapsed}
-                action={isOwner ? { label: "New schedule", onClick: () => setSchedCreateReq(true) } : undefined}
-              >
-                <ScheduleManager createRequested={schedCreateReq} onCreateHandled={onSchedCreated} />
-              </SidebarSection>
 
             </SidebarGroup>
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Connection, type ConnectionSourceConfig } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { confirmAction } from "@/components/ui/ConfirmModal";
+import { confirmConnectionDelete } from "@/lib/connection-delete";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
 import { ActionButton } from "@/components/ui/ActionButton";
@@ -666,6 +667,21 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
     }
   };
 
+  // SCN-129: the workspace card manages a source in place, and "in place" includes the
+  // edit form — which already lives in this panel. The card sets an id rather than
+  // reimplementing sixteen fields; this opens on it and clears it, so the trigger cannot
+  // fire twice or survive a navigation.
+  const editConnectionId = useAppStore((s) => s.editConnectionId);
+  const setEditConnectionId = useAppStore((s) => s.setEditConnectionId);
+  useEffect(() => {
+    if (!editConnectionId) return;
+    const target = connections.find((c) => c.id === editConnectionId);
+    if (target) handleEdit(target);
+    // Cleared even when the connection is not found: a stale id that never clears would
+    // re-fire on every render of this component for the rest of the session.
+    setEditConnectionId(null);
+  }, [editConnectionId, connections, setEditConnectionId]);
+
   const handleUpdate = async () => {
     if (!editingId || saving) return;
     if (isGA4) {
@@ -835,12 +851,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
     const conn = connections.find((c) => c.id === id);
     const name = conn?.name || conn?.db_name || conn?.id || "this connection";
     if (
-      !(await confirmAction(`Delete connection "${name}"?`, {
-        severity: "critical",
-        detail:
-          "This will permanently remove all DB indexes, sync data, learnings, benchmarks, and session notes associated with this connection.",
-        confirmText: "DELETE",
-      }))
+      !(await confirmConnectionDelete(name))
     ) return;
     try {
       await api.connections.delete(id);

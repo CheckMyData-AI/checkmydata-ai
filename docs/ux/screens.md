@@ -18,7 +18,7 @@ needs showing it is an ASCII sketch in the repository. So the `Figma` column rea
 | SCR-01 | Data workspace | FLW-01, FLW-02, FLW-03, FLW-04 | n/a (text-only) | drifted | frontend/src/components/connections/ConnectionsPanel.tsx |
 | SCR-02 | Source-kind chooser | FLW-02 | n/a (text-only) | designed | none yet |
 | SCR-03 | Source form | FLW-02 | n/a (text-only) | drifted | frontend/src/components/connections/ConnectionSelector.tsx |
-| SCR-04 | Repository form | FLW-03 | n/a (text-only) | designed | none yet |
+| SCR-04 | Repository form | FLW-03 | n/a (text-only) | parked | none yet |
 | SCR-05 | Describe panel | FLW-02, FLW-03, FLW-05 | n/a (text-only) | designed | none yet |
 | SCR-06 | Refresh estimate | FLW-04 | n/a (text-only) | designed | none yet |
 | SCR-07 | Document viewer | FLW-04 | n/a (text-only) | drifted | frontend/src/components/knowledge/KnowledgeDocs.tsx |
@@ -123,7 +123,7 @@ had never been specified, which is how it reached thirteen sections.
 - **Coverage:** none yet
 - **Scenarios:** SCN-137, SCN-138, SCN-140, SCN-142, SCN-143
 - **Resources:** `backend/app/api/routes/repos.py` (`check-access`, and the repositories CRUD that exists but nothing indexes), `backend/app/services/repository_service.py`, `backend/app/models/repository.py`
-- **Status:** designed — **D1 resolved 2026-09-07: several repositories per project.** So this screen lists many, each with its own key, branch and run state, and the index queue of FLW-03 is part of the spec rather than a contingency. It is not buildable against today's backend on its own: `project_repositories` has CRUD and no consumer, so the form must land together with the repository dimension in the indexing pipeline, the code graph, the BM25 snapshot, the docs and GitAgent.
+- **Status:** designed, **parked 2026-09-08**. D1 was decided as several-repositories on 2026-09-07 and revised the next day to one repository, deferred: the reconnaissance found that the code graph merges by file path within a PROJECT, so two repositories sharing a path would delete each other's symbols on every incremental run. The multi-repository spec above stands and is not withdrawn; what changed is when it is built. Against today's single-repository backend the screen's fields are the ones already on the project form (`SCR-09`), which is where they stay until this is picked up.
 
 ### SCR-05: Describe panel
 

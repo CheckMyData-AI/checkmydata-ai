@@ -123,6 +123,10 @@ interface AppState {
   rulesVersion: number;
   focusSidebarSection: string | null;
   triggerProjectEdit: boolean;
+  /** A source the workspace card asked the shared connection form to open (SCN-129).
+   *  The form already lives in the same panel; the card asks it to open rather than
+   *  reimplementing sixteen fields of it. */
+  editConnectionId: string | null;
   readinessCache: Record<string, ReadinessCacheEntry>;
   pipelineStatusByProject: Record<string, PipelineStatusResponse>;
   sessionTokens: number;
@@ -157,6 +161,7 @@ interface AppState {
   bumpRulesVersion: () => void;
   setFocusSidebarSection: (section: string | null) => void;
   setTriggerProjectEdit: (v: boolean) => void;
+  setEditConnectionId: (id: string | null) => void;
   setReadinessCache: (projectId: string, entry: ReadinessCacheEntry) => void;
   clearReadinessCache: (projectId: string) => void;
   setPipelineStatus: (projectId: string, status: PipelineStatusResponse | null) => void;
@@ -189,6 +194,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   rulesVersion: 0,
   focusSidebarSection: null,
   triggerProjectEdit: false,
+  editConnectionId: null,
   readinessCache: {},
   pipelineStatusByProject: {},
   sessionTokens: 0,
@@ -313,6 +319,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   bumpRulesVersion: () => set((state) => ({ rulesVersion: state.rulesVersion + 1 })),
   setFocusSidebarSection: (section) => set({ focusSidebarSection: section }),
   setTriggerProjectEdit: (v) => set({ triggerProjectEdit: v }),
+  setEditConnectionId: (id) => set({ editConnectionId: id }),
   setReadinessCache: (projectId, entry) =>
     set((state) => ({
       readinessCache: { ...state.readinessCache, [projectId]: entry },
