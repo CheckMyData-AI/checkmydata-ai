@@ -295,6 +295,19 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
     )
     run_migrations()
     await init_db()
+
+    # Before taking any job: put back what the process this one replaced was running.
+    # A deploy and a platform dyno-cycle both land here, and this worker is the only
+    # thing that knows for free that the previous boot's runs are dead — the reaper
+    # would wait 300 s and then spend a budget meant for genuine failures.
+    try:
+        from app.models.base import async_session_factory
+        from app.ops.orphan_runs import requeue_orphaned_runs
+
+        async with async_session_factory() as _orphan_db:
+            await requeue_orphaned_runs(_orphan_db)
+    except Exception:
+        logger.warning("orphan sweep failed at worker start-up", exc_info=True)
     redis_url = os.getenv("REDIS_URL")
     await redis_client.connect(redis_url)
     tracker.enable_cross_process_publish()

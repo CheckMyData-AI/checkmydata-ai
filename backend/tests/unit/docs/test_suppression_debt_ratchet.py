@@ -237,7 +237,20 @@ CEILINGS: dict[str, int] = {
     # withholding direction would be a rail line reading "your index is over quota" that
     # the reader cannot verify and cannot act on, produced by an outage they never saw.
     # It logs at WARNING and returns 0, which means unlimited everywhere else in `plans`.
-    "except Exception": 640,
+    # 640 -> 644 on 2026-09-09. Four, all in the orphan sweep that a restarting worker
+    # runs before it takes any job, and all serving one contract stated in that module:
+    # **a worker must start**. Recovery that can prevent the process from booting is
+    # worse than the failure it recovers from.
+    #   * `orphan_runs.requeue_orphaned_runs` x3 — reading the running runs, closing one
+    #     row, and enqueueing its replacement. Each failure is logged at WARNING or ERROR
+    #     naming the consequence, and the sweep continues to the next row; the enqueue one
+    #     says outright that nothing is rebuilding that project.
+    #   * `worker.startup` x1 — around session creation and the import, which sit outside
+    #     the function's own "never raises" promise and so are not covered by it.
+    # The json parse in `stale_run_reaper._requeue_attempts` added in the same change is
+    # NOT here: `json.loads` raises `ValueError` or `TypeError` and nothing else can, so
+    # it is caught narrowly rather than spending this budget.
+    "except Exception": 644,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:
