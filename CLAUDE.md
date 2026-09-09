@@ -592,9 +592,22 @@ Learnings are stored per-connection by default (`cross_connection_learnings_enab
   over. Observed doing exactly that: `psycopg_pool.PoolTimeout: couldn't get a connection
   after 30.00 sec` on `web` at 02:43:21, and `FATAL: (EMAXCONNSESSION) max clients reached
   in session mode` from outside. `/api/health` stayed 200 throughout — existing
-  connections keep working, which is why this can saturate without an alarm. The fix is
-  either more pooler connections (a Supabase setting) or a smaller app-side budget (a
-  latency trade-off); neither is a code default to guess at.
+  connections keep working, which is why this can saturate without an alarm.
+
+  **The arithmetic is checkable now, which is the half that was missing.** It lived in
+  three files that never referred to each other — `config.py`'s two pool settings and the
+  psycopg pool built inside `PgVectorStore` — so nothing could notice they added up to
+  more than the pooler allows. `DB_CONNECTION_CEILING` is what the pooler permits in
+  total; when set, the boot **refuses** a configuration whose worst case cannot fit:
+  `(db_pool_size + db_pool_overflow + max(2, db_pool_size // 2)) * 2 + 1 <= ceiling`,
+  the `2` being `web` + `worker` and the `+1` reserved for an operator — the saturation
+  was found by a `psql` session failing, and a budget that fills the pooler exactly leaves
+  nobody able to look at the database precisely when someone needs to. Default `0` checks
+  nothing, because a self-hosted install talking straight to Postgres has no such limit.
+
+  Raising the pooler's own limit needs `supabase login`, which is interactive — the one
+  step here that requires a person. Until then, set the ceiling and keep the pools under
+  it: `db_pool_size=4` + `db_pool_overflow=1` is 7 per process, 14 of 15.
 - Vectors: **`VECTOR_STORE_BACKEND` picks the backend, and its default is `auto`** — resolved by `DATABASE_URL`: `pgvector` on Postgres (table `doc_embeddings`, one row per chunk, HNSW `vector_cosine_ops`), `chroma` on SQLite (`CHROMA_PERSIST_DIR` or `CHROMA_SERVER_URL`; collections named `project_{project_id}`). Neither literal would serve both: `pgvector` breaks a fresh `make setup`, which creates SQLite where the `doc_embeddings` migration is a deliberate no-op, and `chroma` leaves a real deployment on the store described next. An explicit value pins it; an explicit `pgvector` on SQLite raises rather than downgrading silently. The decision lives in the pure `resolve_backend()` — construction opens a psycopg pool, so the choice is untestable through the factory anywhere Postgres is absent. **`auto` means the answer is written nowhere an operator can read, so the boot log names it** (`vector store: … (auto-resolved …)` / `(pinned …)`). **ChromaDB's persist dir on Heroku is the container filesystem** — wiped on every dyno restart, and `web`/`worker` are separate process types with separate copies. An empty store makes `pipeline_runner` set `force_full`, a full rebuild costs 12 039 s against the nightly ceiling of 7 200 s, so the store was empty again by morning: **`index_repo` completed 16 times in 94 runs**. Embeddings are identical across backends (bundled ONNX `all-MiniLM-L6-v2`, 384-d) and the metric matches the `{"hnsw:space": "cosine"}` the collections were created with, so the swap does not move retrieval ranking. pgvector is available on both deployments (0.8.1 Heroku, 0.8.2 Supabase). Requires Postgres — the migration is a deliberate no-op on SQLite, and asking for pgvector there fails at start-up saying so.
 - BM25 snapshots: `backend/data/bm25/{project_id}.json.gz` and `schema_{connection_id}.json.gz` — **gzip JSON, not pickle, since 2026-08-21 (F-KNOW-06)**: `pickle.load` executes its payload, and `BM25_DATA_DIR` is configurable. The tokenized corpus is stored and `BM25Okapi` is rebuilt on load; a leftover `.pkl` is deleted, never read. Both are rebuilt from Postgres at start-up when missing (`app/ops/bm25_local_reconcile.py`).
 - Redis (`REDIS_URL`): rate limiting, agent concurrency tokens, WS tickets, ARQ task queue. In-memory fallback for dev — keep it working when adding Redis features.

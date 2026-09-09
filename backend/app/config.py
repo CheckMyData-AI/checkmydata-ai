@@ -57,6 +57,25 @@ _config_logger = logging.getLogger(__name__)
 _SAFE_ENVIRONMENTS = frozenset({"development", "dev", "test", "testing", "local", "ci"})
 
 
+#: Connections the vector store's own psycopg pool opens, derived exactly as
+#: `PgVectorStore` derives it (`pgvector_store.py:87`). Duplicated deliberately rather
+#: than imported: importing the store here would pull psycopg into every config load,
+#: and a test pins the two expressions against each other so they cannot drift.
+def _pgvector_pool_size(pool_size: int) -> int:
+    return max(2, pool_size // 2)
+
+
+def worst_case_connections_per_process(*, pool_size: int, overflow: int) -> int:
+    """Every database connection one process can hold at once.
+
+    Two pools, and the second is the one that was invisible: `PgVectorStore` builds its
+    own psycopg pool inside the store rather than beside the SQLAlchemy engine, so the
+    arithmetic lived in three files that never referred to each other. On 2026-09-09 that
+    added up to 17 per process against a pooler that allows 15 in total.
+    """
+    return pool_size + overflow + _pgvector_pool_size(pool_size)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -72,6 +91,16 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/agent.db"
 
     # Connection pool settings
+    #: What the connection pooler in front of Postgres allows in TOTAL, across every
+    #: process. `0` means no ceiling is declared and nothing is checked — a self-hosted
+    #: install talking straight to Postgres has no such limit and must not be throttled by
+    #: one.
+    #:
+    #: When set, the boot refuses a configuration whose worst case cannot fit. Measured
+    #: 2026-09-09: Supavisor session mode caps this project at 15 while the app was
+    #: configured for up to 34, surviving only because the pools are lazy — 14 of 15 at
+    #: rest, no headroom, and a `psql` session was enough to push it over.
+    db_connection_ceiling: int = 0
     db_pool_size: int = 5
     db_pool_overflow: int = 10
     db_pool_recycle: int = 3600
@@ -1166,6 +1195,26 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _validate_sql_loop_bounds(self) -> "Settings":
         """A bound that silently means "never" is worse than no bound at all."""
+        if self.db_connection_ceiling > 0:
+            per_process = worst_case_connections_per_process(
+                pool_size=self.db_pool_size, overflow=self.db_pool_overflow
+            )
+            # Two process types (`web`, `worker`) plus one reserved for a human: the
+            # saturation on 2026-09-09 was found by a `psql` session failing, and a budget
+            # that fills the pooler exactly leaves nobody able to look at the database
+            # while it is busy — which is exactly when somebody needs to.
+            needed = per_process * 2 + 1
+            if needed > self.db_connection_ceiling:
+                raise ValueError(
+                    f"DB_CONNECTION_CEILING is {self.db_connection_ceiling} but this "
+                    f"configuration can hold {per_process} connections per process "
+                    f"(db_pool_size={self.db_pool_size} + "
+                    f"db_pool_overflow={self.db_pool_overflow} + "
+                    f"{_pgvector_pool_size(self.db_pool_size)} for the vector store), "
+                    f"which is {needed} across web + worker + one reserved for an "
+                    "operator. Either raise the pooler's limit or lower the pools; do not "
+                    "leave them disagreeing, which is how this reached 34 against 15."
+                )
         if self.db_index_fetch_samples_budget_seconds <= 0:
             raise ValueError(
                 "DB_INDEX_FETCH_SAMPLES_BUDGET_SECONDS must be positive (got "
