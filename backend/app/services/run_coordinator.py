@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.heartbeat import heartbeat
+from app.core.release import BOOT_ID, current_release, owner
 from app.core.workflow_tracker import WorkflowEvent, tracker
 from app.knowledge.run_manifests import (
     Step,
@@ -290,7 +291,22 @@ class RunCoordinator:
             progress_pct=0,
             started_at=_now(),
             heartbeat_at=_now(),
-            meta_json=json.dumps({"force_full": force_full, "flags": _diagnostic_flags()}),
+            # `release` lets a later reap tell a run orphaned by a deploy from one that
+            # hangs — they are identical in every other column, and treating the first as
+            # the second is what exhausted the reaper's retry budget on 2026-09-09.
+            meta_json=json.dumps(
+                {
+                    "force_full": force_full,
+                    "flags": _diagnostic_flags(),
+                    "release": current_release(),
+                    # Who was running this, and in which process. A restart — deploy or
+                    # platform dyno-cycle alike — replaces the process, and the
+                    # replacement is the only thing in the system that knows for free
+                    # that the previous one's runs are dead.
+                    "boot_id": BOOT_ID,
+                    "owner": owner(),
+                }
+            ),
         )
         db.add(run)
         try:

@@ -15,6 +15,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.release import current_release as _current_release
 from app.models.code_db_sync import CodeDbSyncSummary
 from app.models.db_index import DbIndexSummary
 from app.models.indexing_checkpoint import IndexingCheckpoint
@@ -151,21 +152,45 @@ class StaleRunReaper:
         starts a fresh row. `REAP_ERROR` narrows it to reaps — a run that failed on its
         own merits is a different fact and must not spend this budget.
         """
+        import json
+
         window = datetime.now(UTC) - timedelta(hours=settings.reaper_requeue_window_hours)
         try:
-            return int(
-                await session.scalar(
-                    select(func.count())
-                    .select_from(IndexingRun)
-                    .where(
+            metas = (
+                await session.scalars(
+                    select(IndexingRun.meta_json).where(
                         IndexingRun.project_id == project_id,
                         IndexingRun.kind == kind,
                         IndexingRun.error == REAP_ERROR,
                         IndexingRun.finished_at >= window,
                     )
                 )
-                or 0
-            )
+            ).all()
+            here = _current_release()
+            if not here:
+                # Nothing to compare against — a self-hosted install. Every reap counts,
+                # which is exactly the behaviour that predates this distinction.
+                return len(metas)
+            counted = 0
+            for raw in metas:
+                try:
+                    stamped = (json.loads(raw or "{}") or {}).get("release", "")
+                except (ValueError, TypeError):
+                    # Narrow on purpose: `json.loads` raises `JSONDecodeError` (a
+                    # `ValueError`) or `TypeError`, and nothing else here can. A broad
+                    # handler would spend the repository's `except Exception` budget on a
+                    # case that cannot produce anything else. A malformed meta falls
+                    # through to "unknown", which counts.
+                    stamped = ""
+                # A run started under a DIFFERENT release was orphaned when that release
+                # was replaced — the process was taken away from it. That is not evidence
+                # the work fails, and spending the budget on it is what refused a third
+                # rebuild on 2026-09-09 with "failing for its own reasons, not a restart".
+                # An absent stamp is unknown, and unknown counts: a bound that cannot
+                # count stops bounding, the same rule the error path below follows.
+                if stamped == here or not stamped:
+                    counted += 1
+            return counted
         except Exception:
             # Unknown attempt count must not read as zero, or the bound stops bounding.
             logger.warning("Reaper: could not count requeue attempts", exc_info=True)
@@ -210,6 +235,18 @@ class StaleRunReaper:
                     project_id=project_id,
                     force_full=bool(meta.get("force_full", False)),
                 )
+                if job_id is None:
+                    # `enqueue` returns None rather than raising, so this used to be
+                    # counted and logged as a success — the work was destroyed by the
+                    # reap and not put back, silently.
+                    logger.error(
+                        "Reaper: destroyed %s for project %s at step %s and could NOT "
+                        "put it back — nothing is rebuilding it.",
+                        kind,
+                        project_id[:8],
+                        current_step or "unknown",
+                    )
+                    continue
                 requeued += 1
                 logger.info(
                     "Reaper: re-enqueued %s for project %s after a reap at step %s "

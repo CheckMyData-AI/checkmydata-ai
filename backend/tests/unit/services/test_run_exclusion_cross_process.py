@@ -190,7 +190,11 @@ class TestNothingMintsARunAroundTheCoordinator:
                 if re.search(r"\bIndexingRun\(", stripped):
                     sites.append(f"{path.relative_to(app_dir)}:{i}")
 
-        assert sites == ["services/run_coordinator.py:281"], (
+        # The FILE, not the line. The first version pinned
+        # `run_coordinator.py:281` and went red the next time anything above that line
+        # moved — a guard that breaks on an unrelated edit is a guard that gets deleted.
+        files = {s.rsplit(":", 1)[0] for s in sites}
+        assert files == {"services/run_coordinator.py"} and len(sites) == 1, (
             "IndexingRun is constructed somewhere other than RunCoordinator.start, so a "
             f"run can be minted without the exclusion check: {sites}"
         )
