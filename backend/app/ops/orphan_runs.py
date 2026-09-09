@@ -16,6 +16,13 @@ own reasons, not a restart"* — which was wrong, and unknowable from its data.
 The replacement worker knows on its first line, because it IS the replacement: an
 `index_repo` run still marked `running` and stamped with a different boot id belonged to
 the process this one took over from.
+
+A double enqueue is harmless, which is worth stating because it is the first objection:
+arq may re-queue a job its worker was executing at shutdown, and this sweep may enqueue
+the same work. Whichever arrives second reaches `run_repo_index_task`, finds the run the
+first one minted, and returns with *"already has an active index run; not starting a
+second one"* — the partial unique index behind that is proven cross-process in
+`tests/unit/services/test_run_exclusion_cross_process.py`. Two enqueues, one index.
 """
 
 from __future__ import annotations
