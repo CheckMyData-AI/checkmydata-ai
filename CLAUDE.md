@@ -166,6 +166,26 @@ which is why the expensive path had nothing to compare against).
 `INDEXING_LLM_MODEL_BY_DOC_TYPE` (JSON, empty by default) overrides the model per doc type.
 Setting it in production is a config change and belongs in `DELIBERATE`.
 
+**Measured in production 2026-09-09, once the cache was warm.** A full rebuild of
+`esim-php` ran 08:28:08 → 10:01:37 — **5 609 s**, against 12 039–12 329 s cold:
+
+```
+generate_docs: completed (generated=188 reused=575)   2 687 s   ← 9 375 s cold
+code_symbol_embed: completed                          2 582 s
+bm25_build: completed (31 392 chunks from 763 docs)       27 s
+pipeline_end: completed (Indexed 10228 files, 722 schemas)
+```
+
+`generate_docs` fell **71%** and is no longer the dominant step — it and
+`code_symbol_embed` are now roughly equal, where the first used to be four times the
+second. All 763 documents now carry a `content_hash`, so the next rebuild reuses
+essentially all of them.
+
+The cache grew *across* interrupted attempts, which is the property the key was designed
+for: three runs orphaned by restarts took `reused` from 304 → 575 (migrations 113 → 384),
+because every document each attempt finished recorded its hash. An interrupted rebuild is
+no longer wasted work.
+
 **0d. A reindex that drops the vectors must confirm the rebuild was queued (2026-09-09).**
 Found by doing it, while measuring T05. `queue_embedding_reindex` drops the project's
 collection and then calls `enqueue`, which returns `None` on failure rather than raising —
@@ -296,7 +316,7 @@ Worker functions (`backend/app/worker.py`):
 
 - `run_db_index` — schema indexing for a connection
 - `run_code_db_sync` — code↔DB cross-reference
-- `run_repo_index` — Git repo knowledge pipeline (per-function timeout `repo_index_job_timeout_seconds`, **21600 s** — this line said 16200 until 2026-08-31 while `config.py:596` said 21600; the ceiling test asserts only `>= measured x 1.25`, so nothing went red). This job carries the **full** rebuild — `force_full=True` plus the chained code↔DB sync. The nightly cron runs the same pipeline with `force_full=False, chain_sync=False` under its own 7200 s ceiling, so **the two ceilings cover different work and must not be tied together**. Reading the cron's 42.4-minute incremental run as a full rebuild is what sized this knob at 1800 and then 3600, and each cut a real run off: 1800.02 s inside `code_symbol_embed`, 3600.00 s inside `generate_docs` at document 80 of 758. A full rebuild of that 9 981-file repository measures **12 039 s (3.34 h)** — `generate_docs` ~9 375 s at ~4.8 docs/min, `code_symbol_embed` ~2 300 s — summed from the segments of the run that reached `pipeline_end`. A second, independent full rebuild on 2026-08-31 — enqueued by hand after the extraction fixes — measured **12 329 s** end to end and reached `pipeline_end: completed (Indexed 10004 files, 718 schemas)`, so the figure is a range rather than a single reading. Asserted in `tests/unit/services/test_repo_index_ceiling.py`, which also fails if the cron stops being incremental.
+- `run_repo_index` — Git repo knowledge pipeline (per-function timeout `repo_index_job_timeout_seconds`, **21600 s** — this line said 16200 until 2026-08-31 while `config.py:596` said 21600; the ceiling test asserts only `>= measured x 1.25`, so nothing went red). This job carries the **full** rebuild — `force_full=True` plus the chained code↔DB sync. The nightly cron runs the same pipeline with `force_full=False, chain_sync=False` under its own 7200 s ceiling, so **the two ceilings cover different work and must not be tied together**. Reading the cron's 42.4-minute incremental run as a full rebuild is what sized this knob at 1800 and then 3600, and each cut a real run off: 1800.02 s inside `code_symbol_embed`, 3600.00 s inside `generate_docs` at document 80 of 758. A full rebuild of that 9 981-file repository measures **12 039 s (3.34 h)** — `generate_docs` ~9 375 s at ~4.8 docs/min, `code_symbol_embed` **2 260–2 582 s** (two readings at the code-default batch size against the same 26 014 symbols — a range rather than the ~2 300 s this line used to assert) — summed from the segments of the run that reached `pipeline_end`. A second, independent full rebuild on 2026-08-31 — enqueued by hand after the extraction fixes — measured **12 329 s** end to end and reached `pipeline_end: completed (Indexed 10004 files, 718 schemas)`, so the figure is a range rather than a single reading. Asserted in `tests/unit/services/test_repo_index_ceiling.py`, which also fails if the cron stops being incremental.
 - **A resume no longer repays `code_symbol_embed`.** `_run_steps` reads the completed-step set once (`pipeline_runner.py:168`) and gated only four steps on it; `code_symbol_embed` recorded completion that nothing read, so every resume spent its 38 minutes again and attempt N+1 reached no further than attempt N — no ceiling could fix that. Measured after the gate: enqueue → `generate_docs` in **96 s**, against ~36 min before. `ast_parse` and `graph_build` stay ungated deliberately (in-memory state; graph merge), and a test fails if either joins the gated set.
 - `run_batch` — batch query execution
 - `run_analytics_collect` — collect one analytics connection's reports into its fact tables (per-function timeout `analytics_collect_job_timeout_seconds`)
@@ -887,6 +907,13 @@ covered alike, where `HEROKU_RELEASE_VERSION` only moves on the first. It marks 
 terminal with its own `ORPHAN_ERROR` (never `REAP_ERROR`, which spends the failure budget
 and which `run_coordinator` compares verbatim) and enqueues the replacement inheriting
 `force_full`.
+
+**Any push to `main` deploys, and a deploy kills a running full rebuild.** Recorded
+because knowing the rule did not stop me breaking it: `deploy.yml` fires on a successful
+CI run over a `push` to `main`, so a documentation-only commit restarts both dynos exactly
+as a code change does. On 2026-09-09 a commit whose own text said "shipping releases
+through one is a losing race" orphaned the third consecutive rebuild. Before starting a
+full rebuild, finish merging.
 
 **It prevents loss, not repetition, and that is deliberate.** The replacement starts at
 `clone_or_pull`, because `force_full` is inherited and a full rebuild has no checkpoint to
