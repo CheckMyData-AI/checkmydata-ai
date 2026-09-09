@@ -888,6 +888,18 @@ terminal with its own `ORPHAN_ERROR` (never `REAP_ERROR`, which spends the failu
 and which `run_coordinator` compares verbatim) and enqueues the replacement inheriting
 `force_full`.
 
+**It prevents loss, not repetition, and that is deliberate.** The replacement starts at
+`clone_or_pull`, because `force_full` is inherited and a full rebuild has no checkpoint to
+resume from — only a clean run reconciles what `save_incremental` merges by FILE, which is
+the whole reason the rebuild was full. So a full rebuild still needs an uninterrupted
+window, and shipping releases through one is a losing race: observed 2026-09-09, three
+consecutive runs orphaned at 63%, 33% and 33% of the way. What blunts the cost is the
+document cache — each attempt regenerates fewer documents than the last, because every one
+it finished recorded its `content_hash`. Verified in production: `1 put back` at 07:27:41
+and again at 08:04:45, both carrying `ORPHAN_ERROR` so neither spent the reaper's budget,
+and the replacement started 36 s after the first — against 300 s of waiting followed by a
+refusal.
+
 Second, `_requeue_attempts` no longer counts a reap whose run started under a different
 release. An unstamped run still counts — unknown means counted, or the bound stops
 bounding.
