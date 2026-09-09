@@ -230,7 +230,14 @@ CEILINGS: dict[str, int] = {
     # row is bookkeeping; the index is the work" — so raising here would invert a
     # decision already taken. It logs at WARNING naming the consequence (the run
     # will not beat and the reaper may kill it) and returns None.
-    "except Exception": 639,
+    # 639 -> 640 on 2026-09-09. One, `entitlements.index_quota_bytes`, and it is the
+    # same handler as `may_run_scheduled_work` four lines above it in that module, kept
+    # for the same reason stated there: a billing lookup that raises must not take the
+    # caller down, and it must not answer in the withholding direction either. Here the
+    # withholding direction would be a rail line reading "your index is over quota" that
+    # the reader cannot verify and cannot act on, produced by an outage they never saw.
+    # It logs at WARNING and returns 0, which means unlimited everywhere else in `plans`.
+    "except Exception": 640,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

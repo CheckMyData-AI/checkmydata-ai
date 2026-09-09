@@ -85,3 +85,41 @@ async def may_run_scheduled_work(db: AsyncSession, user_id: str) -> bool:
             exc_info=True,
         )
         return True
+
+
+async def index_quota_bytes(db: AsyncSession, user_id: str) -> int:
+    """Bytes of index this account's plan allows per project; ``0`` means unlimited.
+
+    A **module helper rather than a fifth protocol method**, and that is the decision
+    rather than a shortcut. `Entitlements` has four methods and its guard demands a
+    written argument for another; the argument for `may_run_scheduled_work` was that a
+    capability could not be expressed by any of the three ceilings. This is not that. D5
+    chose to WARN rather than block, and a warning does not ask permission — it reads a
+    number the plan already publishes. Widening a protocol whose whole point is that a
+    private package satisfies it without importing this repository, in order to read a
+    number, is a cost with nothing on the other side of it.
+
+    Degrades **open**, in the same direction and for the same reason as
+    `may_run_scheduled_work`: a provider that predates the question, or one whose lookup
+    raises, yields ``0`` — unlimited, therefore no warning. A billing outage must not put
+    "you are over quota" on a paying customer's rail, where they cannot check it and
+    cannot act on it.
+    """
+    provider = get_entitlements()
+    ask = getattr(provider, "get_entitlements", None)
+    if ask is None:
+        logger.debug(
+            "entitlements: %s cannot answer index_quota_bytes; treating as unlimited",
+            type(provider).__name__,
+        )
+        return 0
+    try:
+        ent = await ask(db, user_id)
+        return int(getattr(ent, "max_index_bytes", 0) or 0)
+    except Exception:
+        logger.warning(
+            "entitlements: index_quota lookup failed for %s; treating as unlimited",
+            user_id[:8] if user_id else "?",
+            exc_info=True,
+        )
+        return 0
