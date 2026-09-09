@@ -4,9 +4,12 @@ Uses a real async SQLite database per test session, overriding the FastAPI
 dependency so every endpoint hits an actual DB instead of mocks.
 """
 
+import socket
 import uuid
 from collections.abc import AsyncGenerator
+from unittest.mock import patch
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -260,3 +263,34 @@ async def make_chat_session(
     db_session.add(ChatSession(id=sid, project_id=project_id, title="seed"))
     await db_session.commit()
     return sid
+
+
+#: Hosts the integration suite names in repository URLs. `validate_repo_url` DNS-resolves
+#: the host as an SSRF guard (FA-004) and rejects anything it cannot resolve, so every one
+#: of these tests silently depended on the runner having working public DNS. On 2026-09-09
+#: it did not, and five tests failed with `422` — `assert 422 == 200` — on a docs-only
+#: branch, which is the worst way for a test to fail: loudly, and about nothing it tests.
+#:
+#: Resolution is stubbed only for these names. Anything else falls through to the real
+#: resolver, so a test that deliberately points at a private or unresolvable host still
+#: exercises the guard. The guard's own tests live in `tests/unit/` and are untouched.
+_PUBLIC_GIT_HOSTS = {"github.com", "gitlab.com", "bitbucket.org", "example.com"}
+_STUB_ADDRINFO = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+_real_getaddrinfo = socket.getaddrinfo
+
+
+@pytest.fixture(autouse=True)
+def _public_git_hosts_resolve():
+    """Make the SSRF guard deterministic for the hosts these tests name.
+
+    Not `repo_allow_private_hosts=True`: that switches the guard off entirely and would
+    let a genuine SSRF regression through a suite that currently catches it.
+    """
+
+    def _resolve(host, *args, **kwargs):
+        if host in _PUBLIC_GIT_HOSTS:
+            return _STUB_ADDRINFO
+        return _real_getaddrinfo(host, *args, **kwargs)
+
+    with patch("socket.getaddrinfo", side_effect=_resolve):
+        yield
