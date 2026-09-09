@@ -60,18 +60,6 @@ DELIBERATE: dict[str, str] = {
         "The MCP server is a shipped feature of this deployment. Off by default: it is "
         "an additional authenticated surface, and a self-hosted install should opt in."
     ),
-    "STALE_RUNNING_HEARTBEAT_TIMEOUT_SECONDS": (
-        "TEMPORARY and already obsolete — unset it, and delete this entry, as soon as the "
-        "full rebuild started 2026-09-09 00:29 UTC finishes. Raised to 3600 that night to "
-        "work around what looked like a heartbeat defect in `code_symbol_embed` (T12). "
-        "The defect does not exist: the beats stopped within a second of v352 and v353, "
-        "which were deploys restarting the worker under a running index — the reaper was "
-        "killing runs that really were dead. It is still set only because unsetting it "
-        "restarts the dyno, which would kill the rebuild currently running and repeat the "
-        "mistake it documents. Note the cost while it is on: this value also doubles into "
-        "`_find_active`'s liveness window, so a reaped row blocks its replacement for two "
-        "hours instead of ten minutes."
-    ),
     "DEFAULT_LLM_PROVIDER": (
         "Production routes every LLM call through OpenRouter, not OpenAI directly — "
         "6 338 of 6 479 recorded calls. The code default is 'openai' so a self-hosted "
