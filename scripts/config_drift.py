@@ -60,6 +60,19 @@ DELIBERATE: dict[str, str] = {
         "The MCP server is a shipped feature of this deployment. Off by default: it is "
         "an additional authenticated surface, and a self-hosted install should opt in."
     ),
+    "STALE_RUNNING_HEARTBEAT_TIMEOUT_SECONDS": (
+        "TEMPORARY, and it is silencing an alarm rather than fixing a fault — remove it "
+        "the moment T12 closes. Three rebuilds of the one production project died at "
+        "`code_symbol_embed` on 2026-09-08/09: the beat continued ~4.5 minutes into the "
+        "step and then stopped, and the reaper killed a run that was working. Memory is "
+        "not the cause (no R14 at batch 8) and the step is already inside "
+        "`asyncio.to_thread`, so the T10 mechanism does not explain it either. Raised to "
+        "3600 so the project would not be left with NO embeddings after "
+        "`queue_embedding_reindex` dropped its collection. Note the cost, which was "
+        "measured the same night: this value also widens `_find_active`'s liveness "
+        "window to 2x itself, so a wrongly-reaped row blocks a replacement run for two "
+        "hours instead of ten minutes."
+    ),
     "DEFAULT_LLM_PROVIDER": (
         "Production routes every LLM call through OpenRouter, not OpenAI directly — "
         "6 338 of 6 479 recorded calls. The code default is 'openai' so a self-hosted "
