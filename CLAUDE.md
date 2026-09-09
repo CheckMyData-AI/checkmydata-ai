@@ -625,9 +625,19 @@ Learnings are stored per-connection by default (`cross_connection_learnings_enab
   nobody able to look at the database precisely when someone needs to. Default `0` checks
   nothing, because a self-hosted install talking straight to Postgres has no such limit.
 
-  Raising the pooler's own limit needs `supabase login`, which is interactive — the one
-  step here that requires a person. Until then, set the ceiling and keep the pools under
-  it: `db_pool_size=4` + `db_pool_overflow=1` is 7 per process, 14 of 15.
+  **Resolved 2026-09-09.** The pooler's `default_pool_size` was unset, so the platform
+  default of 15 applied; it is now **40** (Management API,
+  `PATCH /v1/projects/{ref}/config/database/pooler`), and `DB_CONNECTION_CEILING=40` is set
+  so the boot validator checks against the real limit. 40 covers the app's worst case plus
+  one reserved for an operator (35) and leaves **17 of the database's 57 usable
+  connections** — `max_connections` 60 minus 3 reserved, measured — for direct clients:
+  migrations, `psql`, and the platform's own. Do not raise it further without re-measuring
+  `max_connections`: Supavisor's servers and every direct connection come out of the same
+  60, and exhausting *that* is worse than exhausting the pooler.
+
+  Verified after the change: a `psql` session that had been refused with `EMAXCONNSESSION`
+  connected on the first attempt, and the deployed validator refuses the 5 + 10 + 2
+  configuration against a ceiling of 15 — the shape that saturated production.
 - Vectors: **`VECTOR_STORE_BACKEND` picks the backend, and its default is `auto`** — resolved by `DATABASE_URL`: `pgvector` on Postgres (table `doc_embeddings`, one row per chunk, HNSW `vector_cosine_ops`), `chroma` on SQLite (`CHROMA_PERSIST_DIR` or `CHROMA_SERVER_URL`; collections named `project_{project_id}`). Neither literal would serve both: `pgvector` breaks a fresh `make setup`, which creates SQLite where the `doc_embeddings` migration is a deliberate no-op, and `chroma` leaves a real deployment on the store described next. An explicit value pins it; an explicit `pgvector` on SQLite raises rather than downgrading silently. The decision lives in the pure `resolve_backend()` — construction opens a psycopg pool, so the choice is untestable through the factory anywhere Postgres is absent. **`auto` means the answer is written nowhere an operator can read, so the boot log names it** (`vector store: … (auto-resolved …)` / `(pinned …)`). **ChromaDB's persist dir on Heroku is the container filesystem** — wiped on every dyno restart, and `web`/`worker` are separate process types with separate copies. An empty store makes `pipeline_runner` set `force_full`, a full rebuild costs 12 039 s against the nightly ceiling of 7 200 s, so the store was empty again by morning: **`index_repo` completed 16 times in 94 runs**. Embeddings are identical across backends (bundled ONNX `all-MiniLM-L6-v2`, 384-d) and the metric matches the `{"hnsw:space": "cosine"}` the collections were created with, so the swap does not move retrieval ranking. pgvector is available on both deployments (0.8.1 Heroku, 0.8.2 Supabase). Requires Postgres — the migration is a deliberate no-op on SQLite, and asking for pgvector there fails at start-up saying so.
 - BM25 snapshots: `backend/data/bm25/{project_id}.json.gz` and `schema_{connection_id}.json.gz` — **gzip JSON, not pickle, since 2026-08-21 (F-KNOW-06)**: `pickle.load` executes its payload, and `BM25_DATA_DIR` is configurable. The tokenized corpus is stored and `BM25Okapi` is rebuilt on load; a leftover `.pkl` is deleted, never read. Both are rebuilt from Postgres at start-up when missing (`app/ops/bm25_local_reconcile.py`).
 - Redis (`REDIS_URL`): rate limiting, agent concurrency tokens, WS tickets, ARQ task queue. In-memory fallback for dev — keep it working when adding Redis features.

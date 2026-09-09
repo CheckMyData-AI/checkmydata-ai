@@ -60,6 +60,18 @@ DELIBERATE: dict[str, str] = {
         "The MCP server is a shipped feature of this deployment. Off by default: it is "
         "an additional authenticated surface, and a self-hosted install should opt in."
     ),
+    "DB_CONNECTION_CEILING": (
+        "What the Supavisor pooler allows this project in total. Raised from the platform "
+        "default of 15 to 40 on 2026-09-09 (`default_pool_size`, Management API) after the "
+        "app saturated it: 5 + 10 + 2 per process x web + worker is up to 34, and 14 of 15 "
+        "were held at rest with no headroom — one `psql` session produced `PoolTimeout` on "
+        "`web` and `EMAXCONNSESSION` outside while `/api/health` stayed 200. 40 covers that "
+        "worst case plus one reserved for an operator (35) and leaves 17 of the database's "
+        "57 usable connections (`max_connections` 60 minus 3 reserved) for direct clients: "
+        "migrations, `psql`, and the platform's own. Declaring it here is what makes the "
+        "boot refuse a pool configuration that no longer fits — the code default is 0, "
+        "which checks nothing, because a self-hosted install has no pooler."
+    ),
     "DEFAULT_LLM_PROVIDER": (
         "Production routes every LLM call through OpenRouter, not OpenAI directly — "
         "6 338 of 6 479 recorded calls. The code default is 'openai' so a self-hosted "
