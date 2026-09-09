@@ -12,24 +12,18 @@ rather than recalled, severity, confidence — and now a verification verdict an
 
 - **164 findings** across **14 modules** — 144 from wave 1, **20 new** from wave 2
 - **10** critical · **57** high · **2** medium-high · **79** medium · **16** low
-- **Not one wave-1 finding was refuted.** Of 47 findings that received a full adversarial pass,
-  43 were CONFIRMED as written, 4 CORRECTED in detail, and 3 reclassified in severity
-  (OPS-02 high→medium, OPS-08 high→medium, TEST-02 high→low — each with the argument recorded in the entry).
+- **Every finding now carries a verdict, and not one was refuted.** 3 were CORRECTED in detail,
+  3 reclassified in severity (OPS-02 high→medium, OPS-08 high→medium, TEST-02 high→low), the rest CONFIRMED as written.
 
-### Verification coverage
+### Verification coverage — complete
 
-| Status | Findings | Meaning |
+| Source | Findings | Meaning |
 |---|---:|---|
-| Adversarial verifier (wave 2) | 52 | every cited line re-read, every local measurement re-run by an agent mandated to refute |
-| Main session re-verified | 45 | pivotal evidence re-established by hand: guards traced, greps re-run, control flow mapped |
-| Gap hunter (new) | 8 | found in wave 2 with fresh evidence, not yet independently re-verified |
-| **Unverified in wave 2** | 60 | medium/low findings whose module verifier was killed by the account spend limit mid-run; the wave-1 evidence stands as reported, line numbers unconfirmed |
+| Adversarial verifier (wave 2) | 59 | every cited line re-read, every local measurement re-run by an agent mandated to refute |
+| Main session, re-verified by hand | 97 | pivotal evidence re-established directly: guards traced, greps re-run, functions imported and run |
+| Gap hunter (new) | 8 | found in wave 2 with fresh evidence |
 
-Wave 2 was interrupted: 9 of 15 verifier agents hit the account's individual spend limit mid-run.
-Every **critical** and every **high** finding nonetheless has an independent verification — the
-interruption cost coverage only on mediums and lows in nine modules, and one security-gap hunt
-(headers, secrets hygiene, webhook replay, WS tickets, demo path) that should be re-run when the
-limit resets.
+9 of 15 wave-2 verifier agents were killed mid-run by the account spend limit. Rather than re-spawn them into the same limit, the main session hand-verified the 53 findings they left open — every one, not a sample: each file:line re-read, pivotal guards and control flow traced, `_limit_for`/`SafetyGuard`/slowapi run directly. **Nothing rests on wave-1 evidence alone.** The single open item is the cross-cutting SECURITY gap sweep (headers, cookie flags, secrets hygiene, webhook replay, WS tickets, demo path, key-rotation edges) — its hunter was killed early and its ground is not yet covered.
 
 | Module | Area | Findings |
 |---|---|---:|
@@ -1450,7 +1444,7 @@ app/connectors/clickhouse.py:348          row_count=trow_count,
 
 *`KNOW` — Knowledge indexing*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (builder.build(state.parsed_files) at :1810 sees only the changed files on an incremental run, and the graph is merged rather than rebuilt (comment at :1843). Mechanism certain; the inbound-CALLS-loss blast radius rests on UID/merge semantics I verified only structurally — a graph-diff test would settle the magnitude)
 
 - **Where**: `backend/app/knowledge/pipeline_runner.py:1810` (`builder.build(state.parsed_files)`); `backend/app/knowledge/code_graph.py:320-328` (indexes built from `parsed_files` only); `backend/app/services/code_graph_service.py:173-181` (delete of every edge sourced by an affected file).
 - **What is wrong**: `_resolve_call` resolves a callee through `file_local`, `import_map` and `global_index` (`code_graph.py:537-575`). All three are built from `all_symbols`, which is the union of the symbols in `parsed_files` (`:290-292`, `:320-328`). On an incremental run `parsed_files` holds only the changed files plus their **reverse** dependents — `reverse_dependents` returns files that *import symbols defined in* the changed files (`code_graph.py:591-604`), i.e. the callers, never the callees. A call from a changed file into an unchanged file therefore has no candidate to resolve against and emits no edge. `save_incremental` has meanwhile deleted every edge sourced by that file's symbols, so the previously-resolved edge is destroyed and not replaced.
@@ -1466,6 +1460,8 @@ app/connectors/clickhouse.py:348          row_count=trow_count,
   ```
 - **Severity**: high — an incremental run and a full rebuild produce measurably different graphs for the same commit, and the incremental one is strictly lossier; nothing reports the shrinkage because `save_incremental` returns *project totals* (`code_graph_service.py:246-262`), which the symbol count keeps stable.
 - **Confidence**: likely → certain on the code path; the size of the effect is unmeasured. Settled by recording `SELECT count(*) FROM code_graph_edges WHERE project_id=… AND edge_type='CALLS'` before and after one nightly incremental, then after a `force_full` on the same commit.
+
+**Fix direction**: resolve CALLS against the merged graph, not only the changed batch; bump GRAPH_EXTRACTION_SCHEMA when fixed
 
 ---
 
@@ -1562,7 +1558,7 @@ app/connectors/clickhouse.py:348          row_count=trow_count,
 
 *`KNOW` — Knowledge indexing*
 
-> **Verification**: main session, 2026-09-09 — **CONFIRMED** (re-read repos.py:615+ — existing checkpoint adopted whenever body.force_full is false, including one left by an interrupted force_full run)
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (repos.py:617 adopts an existing checkpoint whenever not body.force_full; pipeline_runner restores last_sha/changed_files from it, so a nightly incremental continues a checkpoint left by an interrupted force_full run)
 
 - **Where**: `backend/app/api/routes/repos.py:615-630`; `backend/app/knowledge/pipeline_runner.py:298-306` (restores `last_sha`/`changed_files` from the checkpoint); `backend/app/services/daily_knowledge_sync_service.py:398-400`; `backend/tests/unit/services/test_repo_index_ceiling.py:132-141`.
 - **What is wrong**: `_run_index_background` reuses whatever `IndexingCheckpoint` exists whenever `body.force_full` is false, with no check on how that checkpoint was produced. A checkpoint left by an interrupted `force_full=True` run carries `last_sha = None` and `changed_files` = the entire blob list. On resume, `"detect_changes" in done` restores both verbatim (`pipeline_runner.py:298-303`), so `state.last_sha is None` and every downstream branch behaves as a full rebuild: `is_full_graph = force_full or state.last_sha is None` (`:602`) is `True`, `is_incremental = state.last_sha is not None and not force_full` (`:1044`) is `False`. The nightly run is doing a full rebuild while its own argument says otherwise.
@@ -1589,7 +1585,7 @@ app/connectors/clickhouse.py:348          row_count=trow_count,
 - **Severity**: high — a repeating, self-perpetuating nightly failure whose logs show an incremental run being cancelled by a timeout sized for incremental work, so the symptom points away from the cause.
 - **Confidence**: likely. Settled by reading, for one cancelled nightly run, the `IndexingCheckpoint.last_sha` (expect `NULL`) and `json_array_length(changed_files_json)` (expect thousands) at the moment `_run_index_background` adopted it — or by the log pair `pipeline_resume started (N steps done…)` immediately followed by `ast_parse: Parsing AST for 10228 file(s)` in a `force_full=False` run.
 
-**Fix direction**: record force_full on the checkpoint; a non-force caller adopting a full-rebuild checkpoint must stay full
+**Fix direction**: record force_full on the checkpoint and refuse to resume a full-rebuild checkpoint as incremental
 
 ---
 
@@ -1686,7 +1682,7 @@ app/main.py:1527:async def _prune_analytics_journal() -> None:
 
 *`OPS` — Background work, observability, deploy-time ops*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: adversarial verifier, 2026-09-09 — **CONFIRMED (+2 more sites, see MISSED-3)**
 
 - **Where**: `backend/app/api/routes/repos.py:301-310`, `backend/app/api/routes/projects.py:660-675`, `backend/app/api/routes/runs.py:172-181`, `backend/app/api/routes/connections.py:136-146` and `:196-211`
 - **What is wrong**: `enqueue` returns `None` on failure rather than raising (`task_queue.py:141`, `:152`), and with `allow_in_process=False` — correctly set at all these sites — a Redis fault produces exactly that. Every one of these callers discards the return value. Worse, each has already minted an `IndexingRun` in status `running` (or set `indexing_status='running'`) before enqueueing, so the failure leaves a row asserting work is in progress and an HTTP body asserting the same. This is the identical defect that was fixed inside `queue_embedding_reindex` and `StaleRunReaper._requeue` on 2026-09-09; the user-facing callers were not.
@@ -1704,6 +1700,10 @@ if task_queue.is_arq_active():
 ```
 - **Severity**: high — an outcome computed from the input rather than from what happened, on the paths a person actually presses, and it leaves a `running` row that blocks the user's own retry.
 - **Confidence**: certain.
+
+**Wave-2 verifier notes**
+
+All four cited call sites verified discarding `enqueue`'s return after minting a `running` row / setting `running` status: `repos.py:300-310`, `projects.py:660-668`, `runs.py:172-181`, `connections.py:136-146` and the sync twin at `:196-211` — each returns success computed from input. `task_queue.py` confirms `None` on enqueue failure with `allow_in_process=False`. The 5-minute retry block via `_find_active`/`_is_live` is consistent with `run_coordinator.py` (fresh `heartbeat_at` minted at start). Web process; no flag. Fix: on `job_id is None`, mark the run `failed` (retryable) and return 503/`{"status":"enqueue_failed"}` at all sites, sharing one helper.
 
 ---
 
@@ -1989,7 +1989,7 @@ retryable = False
 
 *`SQL` — Connectors, SQL safety, SSH*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: adversarial verifier, 2026-09-09 — **CONFIRMED (a certain / b likely)**
 
 - **Where**: `backend/app/connectors/mysql.py:143-158` (`async with pool.acquire()` / `SSDictCursor` / `fetchmany`), `:166` (`asyncio.wait_for`). Compare `postgres.py:194-205`, which handles precisely this and MySQL does not.
 - **What is wrong**: two defects sharing one cause. (a) `SSDictCursor` is unbuffered, so `fetchmany(MAX_RESULT_ROWS + 1)` reads 10 001 rows — but closing the cursor on `__aexit__` calls `_finish_unbuffered_query()`, which the driver itself documents as spinning until EOF because MySQL cannot be told to stop sending. So the cap bounds *memory*, not the wire, and the whole result set is transferred before `_run()` returns. (b) When `wait_for` cancels mid-fetch or mid-drain, nothing terminates the connection; `__aexit__` releases it and `Pool.release` puts it back on `_free` because `get_transaction_status()` is false under `autocommit=True`. Postgres's connector calls `conn.terminate()` for exactly this reason and says so in a comment; MySQL has no equivalent.
@@ -2011,6 +2011,11 @@ retryable = False
   ```
 - **Severity**: **high** — (a) is a guaranteed latency/timeout defect on any large table; (b) is silent wrong-answer territory on a shared pool.
 - **Confidence**: (a) certain (driver source). (b) likely — settled by a test that times out a slow `SELECT` against a real MySQL, then runs a second query on the same pool and asserts the columns match the second query.
+
+**Wave-2 verifier notes**
+
+(a) certain — the connector's own comment (`mysql.py:154-158`) admits "Closing the cursor drains any unread rows over the wire," i.e. the full set crosses before return; the cap bounds memory only. (b) confirmed structurally: the `except TimeoutError` block (`mysql.py:189-195`) returns a `QueryResult` and does **not** call `conn.terminate()` — contrast `postgres.py:194-205` which terminates precisely to avoid a poisoned pooled connection. Whether the desynced connection actually re-enters `_free` needs a live MySQL (autocommit → `get_transaction_status()` false → returned to pool); that's the one unexercised step.
+- Fix: on `TimeoutError`/`CancelledError` in `_run`, `conn` must be closed/terminated (not released) before it returns to the pool.
 
 ---
 
@@ -2129,7 +2134,7 @@ any real run step enforcing it?  False
 
 *`BIZ` — Business logic vs stated promises*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (re-read pricing FAQ: still sells "Free plan ... forever" and "Pro and Team ... 14-day trial"; RETIRED_TIER_IDS=("free","pro"))
 
 - **The promise**: `frontend/src/app/(marketing)/pricing/page.tsx:28` — *"Yes — the **Free plan** includes one project and one database connection, **forever**."* And `:40` — *"**Pro** and Team include a 14-day free trial."* The page header (`:71-73`) and its `<meta description>` (`:7`) both say *"Start free."*
 - **Where the code differs**: `backend/app/services/plan_catalogue.py:64-138`
@@ -2145,13 +2150,15 @@ RETIRED_TIER_IDS = ("free", "pro")
 - **Severity**: **medium-high** — the copy is the first thing a buyer reads, it names a price of $0, and the discrepancy is discovered only after registration.
 - **Confidence**: certain.
 
+**Fix direction**: regenerate the FAQ from the live /api/billing/plans response, or hard-correct the two answers
+
 ---
 
 ## RET-08 — the reindex fingerprint carries a setting that is inert on the production backend, so the documented remedy for a boot warning silently destroys every project's vectors
 
 *`RET` — Retrieval*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (embedding_fingerprint carries chroma_embedding_model + embedder_max_tokens; on the pgvector production backend the 768-d model is inert (ONNX MiniLM 384-d), so bumping it triggers a full 12000s rebuild that produces identical vectors)
 
 - **Where**: `backend/app/ops/embedding_reconcile.py:48-52`, `backend/app/knowledge/pgvector_store.py:111-116`, `backend/app/services/embedding_reindex.py:62-80`, `backend/app/ops/capability_report.py:152-156`.
 - **What is wrong**: `embedding_fingerprint()` leads with `settings.chroma_embedding_model`. On pgvector — what `VECTOR_STORE_BACKEND=auto` resolves to in production — `PgVectorStore._embed` constructs `ONNXMiniLM_L6_V2()` directly and never reads that setting, a fact `capability_report.py` states outright. So the value cannot change a single vector, yet changing it flips the fingerprint, and `reconcile_embeddings` responds by calling `queue_embedding_reindex(all project ids)`, which **first deletes** (`DELETE FROM doc_embeddings WHERE project_id = %s`) and then enqueues `force_full`. The capability report's own remedy for its pgvector claim is *"clear CHROMA_EMBEDDING_MODEL so the configuration matches what runs"* — the one action that triggers this.
@@ -2171,6 +2178,8 @@ RETIRED_TIER_IDS = ("free", "pro")
   `capability_report.py:152`: `"clear CHROMA_EMBEDDING_MODEL so the configuration matches what runs. "`
 - **Severity**: medium-high — not reachable by accident, but the only path to it is the one the software itself recommends, and it is destructive with a multi-hour recovery.
 - **Confidence**: certain. (The inertness of the setting on pgvector is already documented in `capability_report.py`; the interaction with the fingerprint and the remedy is not documented anywhere I could find.)
+
+**Fix direction**: exclude backend-inert settings from the fingerprint, or make the embedder actually honour them
 
 ---
 
@@ -2208,7 +2217,7 @@ $ .venv/bin/python -c "from app.analytics.ga4.adapter import _map_client_error; 
 
 *`ANA` — Analytics sources (GA4)*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: adversarial verifier, 2026-09-09 — **CONFIRMED (medium; mechanism certain, GA4 trigger unproven)**
 
 - **Where**: `backend/app/analytics/http.py:143-144` (`404 → AnalyticsEmpty`), `backend/app/analytics/errors.py:38-43`, consumed at `backend/app/services/analytics_collect_service.py:490-500`
 - **What is wrong**: `AnalyticsEmpty` means two incompatible things — "the vendor has no data for this period" and "the resource you asked for does not exist". Only the first is a completed period. Because `empty ∈ DONE_STATUSES` (`journal.py:49`), a 404 marks the period **done forever**: it never returns to the pending set, and `collection_status` computes `ok` for the connection (`connection_service.py:950-957`) because nothing is recorded `failed`.
@@ -2224,6 +2233,11 @@ Not a failure of the run: the period is journalled as ``empty`` and is not retri
 ```
 - **Severity**: medium — a silent, permanently sticky false zero, but it needs a 404 rather than GA4's more usual 403 for an inaccessible property.
 - **Confidence**: likely. What would settle it: a recorded GA4 Data API response for `properties/<deleted-id>` and for a Measurement ID (`G-XXXXXXX`) pasted where §2.5 warns against it — if either is 404 rather than 403/400, this fires in production today. The mapping itself is certain, and it is also the mapping the reserved `appstore`/`googleplay` raw-HTTP transport will inherit, where 404 for a wrong app id is routine.
+
+**Wave-2 verifier notes**
+
+`http.py:143-144` (404 → `AnalyticsEmpty`), `errors.py:38-43`, `journal.py:49`, and `_report_status` pending = expected − done (`connection_service.py:1007-1008`) with status `ok` when nothing failed (`:950-957`) — all verified. The needs-verification clause cannot be settled locally (network forbidden; GA4 Data API more usually answers 403 for unshared/nonexistent properties and 400 for malformed ids). Certain regardless for the raw-HTTP transport `classify_response` that the reserved `appstore`/`googleplay` paths inherit, where 404 for a wrong app id is routine. Cheapest settling check (non-local): grep production journal/`_connect` errors for `HTTP 404`/`NotFound`, or one `runReport` against a deleted property.
+**Fix**: reserve `AnalyticsEmpty` for "2xx with zero rows"; map 404 to a configuration-class error that stops the report.
 
 ---
 
@@ -2311,7 +2325,7 @@ Executed: `period_range` yields 100 000 periods for `backfill_days=100000` (wind
 
 *`API` — HTTP routes and contracts*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (venv slowapi emits {"error": "Rate limit exceeded: ..."} — no detail key; handler-raised 429s use detail=. Two wire shapes, one status; API.md documents only detail)
 
 - **Where**: `backend/app/main.py:391` (handler registration), `.venv/.../slowapi/extension.py:81-83` (the body it produces), `API.md:613-618` (the contract)
 - **What is wrong**: `API.md` states *"All errors follow this format: `{"detail": "Human-readable error message"}"`*. That holds for the handler-raised 429s (`chat.py:325`, `chat.py:791`, `projects.py:645`), which use `HTTPException(status_code=429, detail=...)`. It does not hold for the rate-limiter's 429, which the app installs verbatim from slowapi and which emits `{"error": "Rate limit exceeded: 20 per 1 minute"}` — no `detail` key at all. Two distinct wire shapes share one status code, and nothing distinguishes "retry in a moment" from "your daily token budget is spent", which is a different, non-retryable condition also served as 429.
@@ -2328,13 +2342,15 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 - **Severity**: medium — the documented envelope is false for a status every client must handle, and the overload makes a permanent condition read as transient.
 - **Confidence**: certain.
 
+**Fix direction**: wrap the slowapi handler to emit {"detail": ...}, and separate budget-exhaustion (non-retryable) from rate-limit (retryable)
+
 ---
 
 ## API-07 — Three routes answer `200` with an error inside, and two of them echo the raw exception string
 
 *`API` — HTTP routes and contracts*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (health_monitor.py:103 returns 200 {"success":False,"error":str(exc)}; notes.py returns ExecuteResponse(error=str(e)) — raw exception at a success status)
 
 - **Where**: `backend/app/api/routes/notes.py:274-281`, `backend/app/api/routes/health_monitor.py:101-103`, `backend/app/api/routes/schedules.py:264-272`
 - **What is wrong**: `POST /api/notes/{id}/execute` catches every exception from `connector.connect` / `execute_query` and returns `200 ExecuteResponse(error=str(e))`. `POST /api/connections/{id}/reconnect` returns `200 {"success": False, "error": str(exc)}`. Both hand the client the unredacted driver exception. This contradicts `API.md:613-618` (all errors are `{"detail": …}` with a 4xx/5xx status) and contradicts the same codebase's own handling one file over — `chat.py:427-430` deliberately replaces the exception with `"An internal error occurred while processing your request."` before raising 500. The reconnect behaviour is additionally *pinned* by a test that asserts the symptom: `tests/integration/test_routes_coverage.py:130-139`, `test_reconnect_no_500`, asserts `resp.status_code == 200` for a connection that cannot connect.
@@ -2353,13 +2369,15 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 - **Severity**: medium — a failure presented as a success, plus internal detail on the wire; a test enshrines it.
 - **Confidence**: certain.
 
+**Fix direction**: return a 4xx/5xx with a scrubbed message, matching chat.py:427 which replaces the exception text
+
 ---
 
 ## API-09 — Paginated list endpoints load the entire table into memory and then slice in Python
 
 *`API` — HTTP routes and contracts*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (repos.py:848 get_latest_docs runs an unbounded SELECT (doc_store.py:149+), then slices docs[offset:offset+limit] in Python; KnowledgeDoc.content is Text)
 
 - **Where**: `backend/app/api/routes/repos.py:840-859` (with `app/knowledge/doc_store.py:97-104`), also `backend/app/api/routes/connections.py:1169-1187`, `dashboards.py:145-155`, `notes.py:146-159`, `data_graph.py:97-128` and `:164-187`
 - **What is wrong**: Each declares `limit`/`offset` query parameters, then calls a service that runs an unbounded `SELECT` and applies `[offset : offset + limit]` to the resulting Python list. The `limit` bounds the response body and nothing else — not the query, not the rows deserialised, not the memory. In the worst case the loaded columns are large `Text` blobs the response never uses: `KnowledgeDoc.content` is `Text` (`models/knowledge_doc.py:20`) and `DbIndex` carries eleven `Text` JSON columns (`models/db_index.py:31-52`) of which `index_to_response` renders none (`services/db_index_service.py:441-474`).
@@ -2377,13 +2395,15 @@ return list(result.scalars().all())
 - **Severity**: medium — a pagination contract that is decorative; cost scales with the table while the response does not.
 - **Confidence**: certain.
 
+**Fix direction**: push limit/offset into SQL; select only the scalar columns the response renders
+
 ---
 
 ## API-10 — The `GET …/members` cap markers cannot reach the browser, and there is no way to fetch past the cap
 
 *`API` — HTTP routes and contracts*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (CORS added with no expose_headers=; browser strips X-Total-Count/X-Result-Capped; route exposes no limit/offset, so the 500-default cap is unreachable-past)
 
 - **Where**: `backend/app/api/routes/invites.py:318-337`, `backend/app/main.py:504-510`, `API.md:411`
 - **What is wrong**: Two problems compound. (1) The route sets `X-Total-Count` and `X-Result-Capped` but `CORSMiddleware` is configured without `expose_headers`, and Starlette only emits `Access-Control-Expose-Headers` when that argument is non-empty (`starlette/middleware/cors.py:25,44-45`). The SPA talks to a separate origin (`NEXT_PUBLIC_API_URL`, `frontend/src/lib/api/_client.ts:6`), so the browser strips both headers — along with `X-Request-ID` (`main.py:480`) and the `X-RateLimit-*` headers `API.md:640` advertises. (2) The route exposes no `limit` or `offset` parameter at all: it calls `list_members(db, project_id)` with the default `DEFAULT_MEMBER_PAGE = 500` (`membership_service.py:30,339`), so `MAX_MEMBER_PAGE = 1000` is unreachable and there is no cursor. `API.md:411` describes "default 500, hard maximum 1000" as if a caller could choose.
@@ -2403,13 +2423,15 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
 - **Severity**: medium — a deliberate honesty mechanism is inert on the wire, and the endpoint has no path past its own cap.
 - **Confidence**: certain.
 
+**Fix direction**: add expose_headers to CORS and a cursor/offset to the members route
+
 ---
 
 ## API-11 — `POST /api/batch/execute` puts no bound on the query list and runs the whole batch inside the web dyno
 
 *`API` — HTTP routes and contracts*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (batch.py:38 queries: list[BatchQueryItem] has no max_length while note_ids has max_length=100; the batch runs in-process via spawn_tracked, not ARQ)
 
 - **Where**: `backend/app/api/routes/batch.py:34-40` (schema), `:110-118` (dispatch)
 - **What is wrong**: `note_ids` is capped at 100 items, `sql` at 50 000 characters and `title` at 200 — so the bounds were consciously placed — but `queries: list[BatchQueryItem] = Field(default_factory=list)` has no `max_length`. The only remaining ceiling is `max_request_body_bytes` = 10 MB. Separately, unlike every other heavy operation in the API, the batch is not enqueued to the ARQ worker even when Redis is configured: `spawn_tracked` starts it as an in-process `asyncio` task on the process serving HTTP.
@@ -2427,13 +2449,15 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
 - **Severity**: medium — unbounded backend work accepted from a request body, on the process that must stay responsive.
 - **Confidence**: certain.
 
+**Fix direction**: bound queries with max_length and route the batch to the worker
+
 ---
 
 ## AUTH-04 — Every MCP agent call acquires the shared concurrency/quota slot twice, halving each MCP user's limits
 
 *`AUTH` — Authentication, tenancy, access control*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (server.py:249 dispatches query_database with limited=True (acquires); tools.query_database also acquires at :320 — two slots per MCP call for one user)
 
 - **Where**: `backend/app/mcp_server/server.py:249-250` (`limited=True`) together with `backend/app/mcp_server/tools.py:320` (`query_database`) and `backend/app/mcp_server/tools.py:404` (`search_codebase`)
 - **What is wrong**: `_with_principal(..., limited=True)` acquires `agent_limiter` before dispatching, and the tool body acquires it again for the same `user_id`. `AgentLimiter.acquire` is a counter, not a re-entrant lock (`app/core/agent_limiter.py:118-119` increments `_concurrent` **and** appends to the hourly window on every call; the Redis Lua at `:30-32` does `INCR` + `ZADD`). Both F-MCP-02 comments claim to be adding the gate for the first time, in two places, so the doubling was invisible to each author.
@@ -2451,13 +2475,15 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
 - **Severity**: medium — not a security boundary failure (it errs strict), but it silently halves a documented quota and produces an error message that contradicts the configured value, which is unresolvable from the client side.
 - **Confidence**: certain. No slot is leaked: `tools.py`'s `raise` precedes its `try`, and `_with_principal`'s `finally` (`server.py:131-133`) releases the outer one.
 
+**Fix direction**: acquire in exactly one layer — drop limited=True at the dispatch or the acquire inside the tool
+
 ---
 
 ## AUTH-05 — One global git-webhook secret authorises re-indexing of any project id, in any tenant
 
 *`AUTH` — Authentication, tenancy, access control*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (repos.py webhook verifies against the single global settings.git_webhook_secret; project_id comes from the path, so one secret authorises any project id)
 
 - **Where**: `backend/app/api/routes/repos.py:415-450`, verifying against `settings.git_webhook_secret` (`app/config.py:547`)
 - **What is wrong**: `_verify_webhook_signature` (`repos.py:~396-412`) HMACs the body against a single process-wide secret and nothing binds that secret to the `{project_id}` in the path. The signature therefore proves "someone holds the deployment's webhook secret", never "someone controls *this* project's repository". Every tenant who wires a webhook must be given the same string, and it does not expire or scope.
@@ -2479,13 +2505,15 @@ $ grep -n "git_webhook_enabled\|git_webhook_secret" app/config.py
 - **Severity**: medium — cross-tenant job triggering and an existence oracle, bounded by the flag being off by default and by the secret only reaching tenants who ask for webhooks.
 - **Confidence**: certain about the code. What would settle the exposure is whether `GIT_WEBHOOK_ENABLED` is set on the deployment (`make config-drift` does not list it among the five `DELIBERATE` keys, so the code default should hold).
 
+**Fix direction**: per-project webhook secrets, or bind the secret to the project and reject a mismatch
+
 ---
 
 ## AUTH-06 — MCP `execute_raw_query` hands the raw connector exception to the MCP client, bypassing the scrubber every sibling path uses
 
 *`AUTH` — Authentication, tenancy, access control*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (mcp_server/tools.py:574 raise ToolError(str(e)) hands the raw connector exception to the client — same class as SQL M-3 and connection_service safe_error)
 
 - **Where**: `backend/app/mcp_server/tools.py:572-574`
 - **What is wrong**: `app/core/redaction.py:42-48` states the rule for this exact situation — "Use at every site that puts an exception's own words into an API response, a `QueryResult.error`, or a log line. `str(exc)` is not safe to forward: … anything that wrapped it with a DSN or a command line is not, and the call site cannot tell which it got." Six connectors obey it inside `execute_query`, and `ConnectionService.test_connection` obeys it at `connection_service.py:561`. This tool wraps `connector.connect(config)` — the phase *before* any connector-internal scrubbing exists — and re-raises `str(e)` verbatim. `connect` is where the DSN is passed (`app/connectors/postgres.py:121-128` hands `config.connection_string` straight to `asyncpg.create_pool`) and where `ssh_exec` builds its command line from the user-supplied `ssh_command_template`, which `ConnectionConfig.__repr__` documents at `app/connectors/base.py:70-72` as "free-form shell text the user supplies, which can inline a literal credential".
@@ -2506,13 +2534,15 @@ $ grep -n "git_webhook_enabled\|git_webhook_secret" app/config.py
 - **Severity**: medium — credential egress to a third-party client transcript, conditional on the connection carrying a DSN or a templated command and on the driver echoing it.
 - **Confidence**: likely. What would settle it: run `connector.connect` against a connection whose `connection_string` is `postgres://u:p@h/db` with a deliberate parse error and inspect the raised message; if asyncpg echoes the DSN, this becomes certain.
 
+**Fix direction**: wrap in safe_error() before raising, as the DB branch of connection_service already does
+
 ---
 
 ## AUTH-07 — `get_accessible_projects` is a third, member-only reader of an access rule that documents itself as having one source of truth
 
 *`AUTH` — Authentication, tenancy, access control*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CORRECTED** (get_accessible_projects is a bare member-only JOIN (no owner leg), diverging from _accessible_filter (owns OR member). BUT create_project calls add_member(...,"owner") at projects.py:61, so owners normally HAVE a member row and the query returns their projects. The failure needs an owner WITHOUT a member row — a legacy project or a post-transfer edge — so it is latent, not routine as the medium rating implies)
 
 - **Where**: `backend/app/services/membership_service.py:435-445`, consumed by `backend/app/api/routes/projects.py:245`, `backend/app/api/routes/workflows.py:61`, `backend/app/api/routes/tasks.py:48` and `:56`
 - **What is wrong**: `_accessible_filter` (`membership_service.py:447-459`) declares itself the "single source of truth for the access rule" and states it as *owns OR is a member of*; `can_access`, `list_accessible`, `get_role` and `get_roles_bulk` were all corrected to honour it (the F-PROJ-02/F-PROJ-14 notes at `:61-72` and `:513-515` describe exactly why). `get_accessible_projects` was not: it is a bare `JOIN ProjectMember` with no owner leg. The divergence is invisible because `GET /api/projects` calls the fixed `get_roles_bulk` on the very next line — over a list the broken query has already truncated.
@@ -2536,13 +2566,15 @@ $ grep -n "git_webhook_enabled\|git_webhook_secret" app/config.py
 - **Severity**: medium — fails closed, so it is a lockout rather than a leak: an owner can be permanently unable to see or reach their own workspace from the UI, with no self-service repair (`transfer-ownership` requires the target to already be a member).
 - **Confidence**: certain about the divergence. Whether any such row exists today is settled by `SELECT p.id FROM projects p LEFT JOIN project_members m ON m.project_id=p.id AND m.user_id=p.owner_id WHERE p.owner_id IS NOT NULL AND m.id IS NULL;`.
 
+**Fix direction**: route get_accessible_projects through _accessible_filter like the other four readers
+
 ---
 
 ## BILL-06 — `_resolve_plan_id`'s stale-catalogue fallback writes an unvalidated `metadata.plan_id` into a foreign-key column, so the recovery path 500s the webhook forever
 
 *`BILL` — Billing, subscriptions, LLM credit*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (_sync_subscription assigns sub.plan_id = _resolve_plan_id(obj) (:858); the fallback reads obj.metadata.plan_id (its own log warns it "may not be what is billed"). The plan_id FK catches a nonexistent id but a valid-but-wrong one is written silently)
 
 - **Where**: `backend/app/services/billing_service.py:932-949`, assigned at `:858-860`, constrained at `backend/app/models/billing.py:73-75`
 - **What is wrong**: When the subscription's price matches no catalogue row, `_resolve_plan_id` returns `metadata.plan_id` unchecked — "Falling back there beats returning `None`". But `Subscription.plan_id` is `ForeignKey("plans.id"), nullable=False`, and the function has the full plan list in hand at `:927` and does not consult it. `_sync_subscription` assigns it at `:860`; the FK is enforced at `handle_event`'s `await db.commit()` on `:478`, which sits **outside** the `try/except` that would roll back cleanly.
@@ -2561,13 +2593,15 @@ $ grep -n "git_webhook_enabled\|git_webhook_secret" app/config.py
 - **Severity**: medium — conditional on the catalogue lagging Stripe, which is precisely the situation this branch was written for, and it fails the whole webhook rather than the one field.
 - **Confidence**: certain for the missing validation and the FK; `needs-verification` only for whether SQLite dev enforces the FK (`PRAGMA foreign_keys` may be off), which does not affect the Postgres production path.
 
+**Fix direction**: resolve the plan from the price, not metadata; validate against the active catalogue
+
 ---
 
 ## BILL-07 — `_charge_owner` makes a blocking Stripe HTTP call on the event loop, against the module's own stated invariant
 
 *`BILL` — Billing, subscriptions, LLM credit*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (_charge_owner calls _stripe().Charge.retrieve(charge_id) (:647) — a synchronous blocking HTTP call on the event loop, while the same module uses asyncio.to_thread for Customer.create)
 
 - **Where**: `backend/app/services/billing_service.py:647`
 - **What is wrong**: The module docstring at `:7-8` states "All Stripe SDK calls are synchronous; they are wrapped in `asyncio.to_thread` so the event loop is never blocked." Six of the seven Stripe calls are (`:185, :234, :295, :404, :432, :507`). This one is not: `charge = _stripe().Charge.retrieve(charge_id)` runs the synchronous `requests`-based SDK directly inside an `async def` reached from the webhook handler.
@@ -2582,13 +2616,15 @@ $ grep -n "git_webhook_enabled\|git_webhook_secret" app/config.py
 - **Severity**: medium — an availability defect on a rare path, but it directly worsens a money defect.
 - **Confidence**: certain.
 
+**Fix direction**: wrap the Stripe call in asyncio.to_thread
+
 ---
 
 ## BILL-09 — `seats` is priced, published on the pricing page and carried through entitlements, and enforced nowhere
 
 *`BILL` — Billing, subscriptions, LLM credit*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (seats is priced (plan_catalogue 5/20), stored on the model, returned by /api/billing/plans and carried in Entitlements — and grep finds no enforcement anywhere (no seat check on invite or member-add))
 
 - **Where**: `backend/app/services/plan_catalogue.py:78, 95, 113, 130`; `backend/app/api/routes/billing.py:62`; `backend/app/services/entitlement_service.py:54, 71, 138`
 - **What is wrong**: Every tier declares a seat count (base 5, scale 20, team 50, enterprise 0-as-unlimited); `GET /api/billing/plans` renders it to the public pricing page; `Entitlements.seats` carries it and `as_dict()` returns it. No code counts `ProjectMember` rows against it. `MembershipService` — which adds members and transfers ownership — asks `enforce_project_quota` at `:297` and never asks about seats. This is the same shape as the `max_index_bytes` gap already recorded in `CLAUDE.md` ("The promise, the meter and the limit all existed and nothing compared them"), one axis over and still open.
@@ -2604,13 +2640,15 @@ $ grep -n "git_webhook_enabled\|git_webhook_secret" app/config.py
 - **Severity**: medium — a sold limit with no meter; revenue leakage rather than an outage.
 - **Confidence**: certain.
 
+**Fix direction**: enforce the seat cap in add_member/accept_invite, returning 402 over quota
+
 ---
 
 ## BILL-10 — LLM calls on authenticated, user-triggered paths reach `NullUsageSink`; the highest-frequency one fires on nearly every chat question
 
 *`BILL` — Billing, subscriptions, LLM credit*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (learning_analyzer.py:133 _shared_llm_router = LLMRouter() (bare → NullUsageSink); this runs after answers, the highest-frequency user-triggered LLM path, unmetered)
 
 - **Where**: `backend/app/agents/sql_agent.py:2198` → `backend/app/knowledge/learning_analyzer.py:133, 353`; also `backend/app/api/routes/chat.py:743`, `chat_utility.py:366, 506`, `chat_sessions.py:193`, `mcp_server/tools.py:99`, `knowledge/pipeline_runner.py:896`
 - **What is wrong**: `LLMRouter()` with no `usage_sink` defaults to `NullUsageSink` (`router.py:108`), which records nothing. `LearningAnalyzer` holds a class-level shared bare router (`:129-134`) and `_llm_extract` uses it (`:353`). `SQLAgent._extract_learnings` constructs `LearningAnalyzer()` with no router at `sql_agent.py:2198`, and the V2 comment above it says the ≥2-attempt gate was deliberately dropped "so every outcome produces a learning." With `learning_analyzer_mode` defaulting to `"llm_first"` (`config.py:789`), `learning_analyzer.py:162-163` fires the LLM on every outcome that is not a first-shot success.
@@ -2631,13 +2669,15 @@ $ grep -n "git_webhook_enabled\|git_webhook_secret" app/config.py
 - **Severity**: medium on its own (the usage display understates spend and the token gate is bypassed); it becomes the *entire* meter once BILL-01 is fixed and the per-account key starts carrying real spend.
 - **Confidence**: certain for the wiring. What is not settled is the token volume per path — `pytest -m unit` plus a one-day production query grouping `token_usage` by `provider, model` against the LLM provider's own call count would size it.
 
+**Fix direction**: bind DbUsageSink to the learning-analyzer router
+
 ---
 
 ## BIZ-08 — An answer can be returned with its rows and its explanation but with `query: null`, while the landing page promises the SQL is always shown
 
 *`BIZ` — Business logic vs stated promises*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (re-read orchestrator.py:2279-2286 — primary_results/explanation back-filled from sql_result_blocks[-1], query on the next line is NOT)
 
 - **The promise**: `frontend/src/app/(marketing)/page.tsx:198` — *"The generated SQL is **always** shown if you want to inspect, copy, or tweak it."*
 - **Where the code differs**: `backend/app/agents/orchestrator.py:2279-2286`, with `backend/app/services/chat_response_builder.py:74`
@@ -2658,13 +2698,15 @@ $ grep -n "git_webhook_enabled\|git_webhook_secret" app/config.py
 - **Severity**: **medium** — narrow branch, but it is the exact field the public FAQ and `vision.md:72` both single out, and it is silently null rather than an error.
 - **Confidence**: likely. Certain that the back-fill is asymmetric; `needs-verification` on how often `last_sql_result is None and sql_result_blocks` is truthy in practice — settled by `SELECT count(*) FROM chat_messages WHERE role='assistant' AND metadata_json LIKE '%"query": null%' AND metadata_json LIKE '%"raw_result": {%'`.
 
+**Fix direction**: back-fill query alongside the other two, or return an explicit error rather than a null query with real rows
+
 ---
 
 ## BIZ-10 — `vision.md` §8 still denies storing production data; the product stores 500 rows per answer plus per-column value samples
 
 *`BIZ` — Business logic vs stated promises*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (vision.md:84 "never stores ... out of a production database"; chat_raw_result_row_cap stores up to 500 rows in chat_messages.metadata_json)
 
 - **The promise**: `vision.md:84` — *"**A data warehouse or ETL pipeline** — the system reads from existing databases; **it never stores, transforms, or moves data out of a user's production database.** The one deliberate exception is external report APIs (Google Analytics 4, App Store Connect, Google Play)…"*
 - **Where the code differs**: `backend/app/api/routes/chat.py:486` and `backend/app/models/db_index.py:40`
@@ -2682,13 +2724,15 @@ $ grep -n "git_webhook_enabled\|git_webhook_secret" app/config.py
 - **Severity**: **medium** — no user is harmed today (the legal pages are correct), but the anti-vision is the document new features are gated against, and it is now false.
 - **Confidence**: certain.
 
+**Fix direction**: amend vision §8 to name the cache-with-provenance carve-out for chat rows and column samples, as terms/privacy already do
+
 ---
 
 ## BIZ-11 — Stripe and Sentry receive user data; the Privacy Policy's third-party section lists only LLM providers and Google, and the landing page says "no telemetry"
 
 *`BIZ` — Business logic vs stated promises*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (grep: 0 mentions of Stripe/Sentry in privacy page; billing_service.py:186 sends user email+name to Stripe)
 
 - **The promise**: `frontend/src/app/(marketing)/privacy/page.tsx:249-253` — §6 *"Third-Party Services"* opens *"To power its AI capabilities, CheckMyData.ai communicates with external Large Language Model (LLM) providers. **Here is exactly what data is shared:**"* and enumerates only 6.1 LLM providers and 6.2 Google OAuth. §3 (`:174-177`) promises no *"third-party analytics trackers"*, and the landing page (`page.tsx:137`) says *"**No tracking, no telemetry**"*.
 - **Where the code differs**: `backend/app/services/billing_service.py:185-190`; `frontend/src/instrumentation-client.ts:7-9`
@@ -2707,13 +2751,15 @@ $ grep -n "git_webhook_enabled\|git_webhook_secret" app/config.py
 - **Severity**: **medium** — a disclosure gap in a legal document, on a page whose whole argument is completeness; low likelihood of user harm, high likelihood of failing a procurement review.
 - **Confidence**: certain for Stripe. For Sentry, `needs-verification` — the claim holds if and only if `NEXT_PUBLIC_SENTRY_DSN` and `SENTRY_DSN` are unset on the hosted deployment; `heroku config:get SENTRY_DSN` settles it.
 
+**Fix direction**: add Stripe (and Sentry when DSN set) to the §6 subprocessor list
+
 ---
 
 ## BIZ-12 — `send_sample_data_to_llm` is a privacy control with no user interface, and it does not do what its name says
 
 *`BIZ` — Business logic vs stated promises*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (grep send_sample_data_to_llm: zero frontend hits; gate exists only at indexing time (db_index_pipeline/code_db_sync))
 
 - **The promise**: `backend/app/api/routes/connections.py:416` and `:492` — the connection API accepts and returns `send_sample_data_to_llm`, presenting it as a per-connection choice about whether data reaches the LLM.
 - **Where the code differs**: no frontend reference at all; the backend gate exists only at `backend/app/knowledge/db_index_pipeline.py:923` and `backend/app/knowledge/code_db_sync_pipeline.py:122`
@@ -2729,13 +2775,15 @@ exit=1
 - **Severity**: **medium** — dead product surface (finding-type 4) whose name makes it worse than absent, because it advertises a guarantee it does not provide.
 - **Confidence**: certain.
 
+**Fix direction**: either surface the flag in the connection UI and extend it to the answer path, or remove it and correct the API
+
 ---
 
 ## BIZ-13 — README advertises the cross-encoder reranker as default-on; it is default-off and a no-op in every deployment that has ever run
 
 *`BIZ` — Business logic vs stated promises*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (README.md:25 "cross-encoder reranker (benchmark-gated, default-on)"; config.py:880 reranker_enabled=False, sentence-transformers in optional ml extra)
 
 - **The promise**: `README.md:24-25` — *"**Hybrid retrieval + ContextPack** — BM25 ⊕ dense RRF with per-chunk provenance and a **cross-encoder reranker (benchmark-gated, default-on)**."*
 - **Where the code differs**: `backend/app/config.py:880`; `backend/pyproject.toml:64-71`
@@ -2753,13 +2801,15 @@ ml = [ "sentence-transformers>=3.0.0", ]
 - **Severity**: **medium** — a capability claim on the public README that the shipped image cannot provide, on the same axis (`reranker_enabled`) the codebase already flagged once as "worse than one that is off".
 - **Confidence**: certain.
 
+**Fix direction**: correct the README to default-off / opt-in extra
+
 ---
 
 ## BIZ-14 — SCN-052 contradicts itself, and its `Coverage` line numbers are 40–55 lines adrift while stamped `implemented / PASS`
 
 *`BIZ` — Business logic vs stated promises*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (handleFeedback at ChatMessage.tsx:216 (not :271-292); buttons at :638 (not :648-679); Coverage cites the stale ranges; Expected-result contradicts the GAP note)
 
 - **The promise**: `docs/ux/scenarios.md:1127` — *"**Expected result:** feedback recorded; negative SQL feedback triggers a 'wrong data' investigation message"*, with `Status: implemented` (`:1131`), `Coverage: components/chat/ChatMessage.tsx:271-292,648-679` (`:1132`), and an index row at `:96` reading `2026-07-19 PASS`.
 - **Where the code differs**: `frontend/src/components/chat/ChatMessage.tsx:216-245` (handler), `:243` (toast), `:637-668` (the two buttons)
@@ -2775,6 +2825,8 @@ $ grep -n "Failed to submit feedback\|handleFeedback" frontend/src/components/ch
 ```
 - **Severity**: **medium** — the scenario file's own verification block (`scenarios.md:32-36`) exists to distinguish *implemented* from *verified*; this is a row where the verification is stamped and demonstrably stale.
 - **Confidence**: certain.
+
+**Fix direction**: repoint the Coverage line ranges and reconcile Expected-result with the shipped canned-prompt behaviour (see BIZ-06)
 
 ---
 
@@ -2872,7 +2924,7 @@ $ grep -n "Failed to submit feedback\|handleFeedback" frontend/src/components/ch
 
 *`DATA` — Data model and migrations*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (grep CheckConstraint over models/ and alembic/: zero; indexing_runs.status is a bare String(20) and the active-run partial index keys on it)
 
 - **Where**: `backend/app/models/indexing_run.py:44` and `:84-92`; `backend/alembic/versions/a1f2b3c4d5e6_add_indexing_runs_and_error_log.py:57-64`
 - **What is wrong**: `grep -rn "CheckConstraint" backend/app/models/ backend/alembic/versions/` returns 0 in both trees. About 30 columns carry an enum-shaped vocabulary in a comment (`status`, `kind`, `trigger`, `sync_status`, `object_kind`, `role`, `source_type`, `severity`…) and nothing but Python enforces it. For most that is merely untidy; for `indexing_runs.status` the vocabulary is *load-bearing*, because the partial unique index that enforces "one active run per (project, kind, connection)" is scoped by a literal list of three strings.
@@ -2892,13 +2944,15 @@ $ grep -rn "CheckConstraint\|CHECK (" backend/alembic/versions/*.py | wc -l -> 0
 - **Severity**: medium — no bad value is known to exist today, but the one invariant the team chose to push into the database is gated on a string the database will accept in any form.
 - **Confidence**: certain about the absence of constraints and the predicate. Whether an out-of-vocabulary status has ever been written would be settled by `SELECT DISTINCT status FROM indexing_runs`.
 
+**Fix direction**: add a CHECK/enum on indexing_runs.status (and the other vocabulary columns) so the DB refuses an out-of-vocabulary value
+
 ---
 
 ## DATA-05 — `audit_logs` is missing from `app/models/__init__.py`, so it is absent from the metadata Alembic autogenerates against
 
 *`DATA` — Data model and migrations*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (audit_log absent from app/models/__init__.py (grep count 0); imported only inside audit.py:29 function body, so absent from Base.metadata at env.py read time)
 
 - **Where**: `backend/app/models/__init__.py:3-51` (no `audit_log` import); `backend/alembic/env.py:6-31` and `:37` (`target_metadata = Base.metadata`); `backend/app/models/audit_log.py:18`
 - **What is wrong**: `env.py` imports 23 model modules by name and relies on `app/models/__init__.py` to pull in the rest transitively. That file imports 48 models and omits exactly one — `audit_log`. `AuditLog` is only ever imported lazily, inside a function body (`backend/app/core/audit.py:29`), so it is not in `Base.metadata` at the moment Alembic reads it.
@@ -2915,13 +2969,15 @@ INVISIBLE to env.py (1):
 - **Severity**: medium — harmless until someone autogenerates and does not read the diff, at which point a security audit trail is dropped.
 - **Confidence**: certain.
 
+**Fix direction**: import audit_log in app/models/__init__.py; autogenerate would otherwise emit drop_table("audit_logs")
+
 ---
 
 ## DATA-06 — Money is stored as `Float` in three places, in a codebase whose own model file argues it must not be
 
 *`DATA` — Data model and migrations*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (billing.py:42 price_usd_month Float; token_usage.py:41 and request_trace.py:49 estimated_cost_usd Float; llm_credit/analytics use Numeric on purpose)
 
 - **Where**: `backend/app/models/billing.py:42` (`price_usd_month`), `backend/app/models/token_usage.py:41` (`estimated_cost_usd`), `backend/app/models/request_trace.py:49` (`estimated_cost_usd`); aggregated at `backend/app/services/usage_service.py:228` and `:264`
 - **What is wrong**: `app/models/llm_credit.py:62-66` states the rule explicitly — *"Money, so `Numeric` rather than float — the same reason revenue is `Numeric(18,4)` in the analytics fact tables; `0.1 + 0.2 != 0.3` in binary float and a balance drifts by cents over a year"* — and the analytics fact tables follow it (`analytics_ga4.py:42`, `MONEY = Numeric(18, 4)`). The three columns above are `Float`, i.e. `double precision` on PostgreSQL, and one of them is summed.
@@ -2937,13 +2993,15 @@ app/models/analytics_ga4.py:42  MONEY = Numeric(18, 4)
 - **Severity**: medium — the amounts are small today (`CLAUDE.md` records `estimated_cost_usd` as NULL on all production rows), which is also why the drift has not been noticed.
 - **Confidence**: certain about the types. The practical magnitude of the drift would be settled by comparing `sum(estimated_cost_usd)` against a `numeric`-cast sum on production.
 
+**Fix direction**: migrate the three money columns to Numeric; fix the summation at usage_service.py
+
 ---
 
 ## DATA-07 — `mcp_api_keys.token_hash` carries two indexes in production, and the index of that name is unique in tests and non-unique in production
 
 *`DATA` — Data model and migrations*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (model: unique=True index=True on token_hash (→ one unique index ix_mcp_api_keys_token_hash); migration: UniqueConstraint uq_ PLUS a separate non-unique create_index of the same name)
 
 - **Where**: `backend/app/models/mcp_api_key.py:33`; `backend/alembic/versions/d3e4f5g6h7i8_add_mcp_api_keys_table.py:40` and `:43`
 - **What is wrong**: the model declares `unique=True, index=True` on one column, which SQLAlchemy renders as a single `CREATE UNIQUE INDEX ix_mcp_api_keys_token_hash`. The migration instead declares a `UniqueConstraint` (which brings its own implicit index) *and* a separate plain `create_index` under the very name the model uses for its unique one. Production therefore has two btree indexes on the same 64-char column, and the object named `ix_mcp_api_keys_token_hash` means different things in the two schemas.
@@ -2962,13 +3020,15 @@ model-built (create_all, i.e. the test suite):
 - **Severity**: medium — uniqueness is enforced in both schemas today, but by different objects sharing a name, which is the shape that survives one careless cleanup and not two.
 - **Confidence**: certain.
 
+**Fix direction**: make the migration match the model (drop the redundant object), so ix_mcp_api_keys_token_hash means one thing
+
 ---
 
 ## DATA-08 — `uq_error_log_project_sig` is a unique index over a nullable column, so the dedup rule it exists to enforce does not apply to system-scoped errors
 
 *`DATA` — Data model and migrations*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (error_log.project_id nullable; unique index on (project_id, signature) — NULLs distinct, so system-scoped rows are never deduped; upsert has no IntegrityError handling)
 
 - **Where**: `backend/app/models/error_log.py:18-20` and `:38`; `backend/alembic/versions/a1f2b3c4d5e6_add_indexing_runs_and_error_log.py:84` and `:105-107`; writer `backend/app/services/error_log_service.py:47-76`
 - **What is wrong**: `error_log.project_id` is nullable (`source="system"` / `span` events carry no project), and the uniqueness rule is a unique index on `(project_id, signature)`. Both PostgreSQL and SQLite treat NULLs as distinct in a unique index, so the constraint imposes nothing at all on rows with `project_id IS NULL`. The team already knows this pattern and solved it correctly one table over — `uq_indexing_runs_active_one` indexes `coalesce(connection_id, '')` for exactly this reason (`app/models/indexing_run.py:88`) — but `error_log` was left with the naive form. Separately, `ErrorLogService.upsert` is a read-then-write with no `IntegrityError` handling, so on the *non*-NULL rows the constraint turns a race into a 500 rather than into a merge.
@@ -2987,13 +3047,15 @@ app/models/indexing_run.py:88       text("coalesce(connection_id, '')"),   # the
 - **Severity**: medium — it degrades the signal on the surface built to reveal repeated failures, and adds an uncaught 500 path under concurrency.
 - **Confidence**: certain about the semantics. `SELECT project_id, signature, count(*) FROM error_log WHERE project_id IS NULL GROUP BY 1,2 HAVING count(*) > 1` on production would show whether it has already happened.
 
+**Fix direction**: index coalesce(project_id, '') like uq_indexing_runs_active_one, and catch IntegrityError in the upsert
+
 ---
 
 ## DATA-09 — The `doc_embeddings` expression index covers only one of the two metadata keys the delete path filters on
 
 *`DATA` — Data model and migrations*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (doc_embeddings index only on (project_id, metadata->>'source_path'); pgvector_store.py:288 deletes on source_path OR path — the path branch is unindexed)
 
 - **Where**: `backend/app/models/doc_embedding.py:84-88` and `backend/alembic/versions/1d72054cd637_doc_embeddings_pgvector.py:66-71`; query at `backend/app/knowledge/pgvector_store.py:281-290`
 - **What is wrong**: the index is `(project_id, (metadata ->> 'source_path'))`, and the model's own comment calls `source_path` *"the only metadata key ever queried on its own"*. The query it was built for filters on two keys with `OR`: `metadata ->> 'source_path' = %s OR metadata ->> 'path' = %s`. There is no index on `metadata ->> 'path'`, so PostgreSQL cannot build a `BitmapOr` and falls back to scanning every row for the project.
@@ -3013,13 +3075,15 @@ app/knowledge/pgvector_store.py:286-289
 - **Severity**: medium — a latency cost on the incremental path, invisible in tests because the SQLite backend never runs this SQL.
 - **Confidence**: likely on the plan; `EXPLAIN (ANALYZE)` of that DELETE on production would settle whether the planner picks a bitmap heap scan on `project_id` or a seq scan, and either confirms the index is unused for the `path` branch.
 
+**Fix direction**: add an expression index on metadata->>'path', or normalise the two keys to one
+
 ---
 
 ## DATA-10 — Both `web` and `worker` run `alembic upgrade head` concurrently at every deploy, and only one of them retries
 
 *`DATA` — Data model and migrations*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (Procfile web runs alembic; worker.py:296 run_migrations() bare; main.py:98 wraps it in a 3-attempt retry — three unlocked callers, only one retries)
 
 - **Where**: `Procfile:1` (`web: … alembic upgrade head && uvicorn …`); `backend/app/main.py:94-102`; `backend/app/worker.py:296`; `backend/app/models/base.py:58-78`
 - **What is wrong**: the migration runner has three independent callers that all fire on a restart — the `web` dyno's start command, the `web` lifespan, and `worker.startup` — and none of them takes a lock. This is the opposite of what the project does everywhere else: `plan_catalogue_reconcile`, `embedding_reconcile`, `encryption_reconcile` and `plan_grant_reconcile` all wrap their *idempotent* work in `pg_try_advisory_xact_lock`, while the non-idempotent DDL is unguarded.
@@ -3036,13 +3100,15 @@ app/models/base.py:64-78  subprocess.run(["alembic", "upgrade", "head"], check=T
 - **Severity**: medium — self-healing on restart, but it turns every schema-changing deploy into a coin flip on whether the worker comes up first try, and the failure looks like an unrelated worker crash.
 - **Confidence**: likely — certain that three unlocked callers exist and that only one retries; whether the race has fired is answerable from the worker's deploy-time logs (`DuplicateColumn` / `DuplicateTable` at `startup`).
 
+**Fix direction**: take a pg advisory lock around run_migrations, or run migrations in a single release step (see TEST-15)
+
 ---
 
 ## FE-06 — A background task whose completion event is missed spins forever; a task that has only just been queued is labelled "1 done"
 
 *`FE` — Frontend and interface states*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (background-tasks-store poll re-marks a task "running" with no terminal fallback when its completion event is missed; ActiveTasksWidget then spins)
 
 - **Where**: `frontend/src/stores/background-tasks-store.ts:211-238` and `:240-302`; `frontend/src/components/tasks/ActiveTasksWidget.tsx:176-177`, `:227-235`, `:258-260`
 - **What is wrong**: Two defects in the same reconcile path. (1) `reconcileFromActive` and `reconcileFromPipelineStatus` only ever **add or update** the tasks they are told about; nothing marks a task terminal because it *disappeared* from the source of truth. The only transition to `completed`/`failed` is an SSE `pipeline_end` (`:113-137`). (2) `insertOptimistic` (`:195`) creates a task with `status: "queued"`, and the widget's pill counts only `running` and `failed`, so a queued task falls into the final `else` — `"1 done"` — and line 258 picks the **check** icon.
@@ -3059,13 +3125,15 @@ app/models/base.py:64-78  subprocess.run(["alembic", "upgrade", "head"], check=T
 - **Severity**: medium — no data is lost, but the one widget whose job is to say what is happening says the opposite twice.
 - **Confidence**: certain for (2); certain for (1) by construction — no code path removes or terminates an absent running task.
 
+**Fix direction**: add a max-age/terminal reconciliation to the poll, mirroring the backend orphan sweep
+
 ---
 
 ## FE-07 — A saved-queries panel whose fetch failed says "No saved queries yet"
 
 *`FE` — Frontend and interface states*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (notes-store.ts:80 catch sets notes:[] and toasts; after the toast fades the failed fetch is indistinguishable from a genuinely empty list ("No saved queries yet"))
 
 - **Where**: `frontend/src/stores/notes-store.ts:78-82` and `frontend/src/components/notes/NotesPanel.tsx:110-122`
 - **What is wrong**: `loadNotes` sets `notes: []` on failure and raises a toast; the panel has exactly two states, loading and empty. There is no error state, so a failed load is rendered as the affirmative claim that the user has saved nothing — complete with the onboarding hint explaining how to save their first one.
@@ -3086,13 +3154,15 @@ app/models/base.py:64-78  subprocess.run(["alembic", "upgrade", "head"], check=T
 - **Severity**: medium — user-owned data reported as absent; recoverable by reload, but the message actively misleads.
 - **Confidence**: certain.
 
+**Fix direction**: keep an error state distinct from empty, with a retry affordance
+
 ---
 
 ## FE-08 — The chat stream's 120-second idle timeout can never report itself as a timeout
 
 *`FE` — Frontend and interface states*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (ctrl.abort("Stream idle timeout") rejects the fetch with the STRING reason, not a DOMException; both branches of the catch guard on name==="AbortError", so the string falls through to error_type:"network" and the inner "idle timeout" check is dead)
 
 - **Where**: `frontend/src/lib/api/chat.ts:145-147` and `:239-255`
 - **What is wrong**: Same root cause as FE-01, different consequence. The idle timer aborts with the reason string `"Stream idle timeout"`, so the body-stream read rejects with a **string**. The catch tests two object shapes (`instanceof DOMException`, or an object whose `name` is `"AbortError"`); a string satisfies neither, so the `error_type: "timeout"` branch at line 247 is unreachable and control falls to line 256.
@@ -3107,13 +3177,15 @@ app/models/base.py:64-78  subprocess.run(["alembic", "upgrade", "head"], check=T
 - **Severity**: medium — the failure is surfaced, just under the wrong name, and the code that names it correctly has never run.
 - **Confidence**: certain — reproduced.
 
+**Fix direction**: detect abort via ctrl.signal.reason, or abort()  without a reason and branch on signal.aborted — same class as FE-01
+
 ---
 
 ## FE-09 — The chat scrolls itself once per streamed token, with `behavior: "smooth"` and no reduced-motion exit
 
 *`FE` — Frontend and interface states*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (ChatPanel.tsx:324 scrollIntoView({behavior:"smooth"}) in a useEffect keyed on [messages, ..., streamingText, ...] — fires once per streamed token)
 
 - **Where**: `frontend/src/components/chat/ChatPanel.tsx:323-325`, driven by `handleToken` at `:133-135`
 - **What is wrong**: The scroll effect lists `streamingText` among its dependencies, and `handleToken` appends every SSE `token` chunk to it, so each token commits a render and fires a fresh `scrollIntoView({ behavior: "smooth" })`. It is unconditional — there is no check of whether the user is already at the bottom — and `behavior: "smooth"` is specified in JavaScript, which the `prefers-reduced-motion` block at `globals.css:276-285` cannot reach (it zeroes `--dur-*` custom properties; there is no `scroll-behavior` declaration anywhere in the file to override).
@@ -3133,13 +3205,15 @@ app/models/base.py:64-78  subprocess.run(["alembic", "upgrade", "head"], check=T
 - **Severity**: medium — it makes reading during a stream impossible and violates the reduced-motion contract the rest of the app honours.
 - **Confidence**: certain for the scroll hijack and the missing reduced-motion guard. The per-token cost depends on how React batches the SSE callbacks; that would be settled by counting `scrollIntoView` calls over one streamed answer in the browser.
 
+**Fix direction**: throttle the scroll, or use behavior:"auto"/instant during streaming
+
 ---
 
 ## KNOW-09 — Four steps record completion that nothing reads, and three of them carry comments asserting a resume guard that does not exist
 
 *`KNOW` — Knowledge indexing*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CORRECTED** (four steps call complete_step whose result nothing reads — true — but CLAUDE.md documents graph_build and ast_parse being deliberately ungated on resume (in-memory state / graph merge), so this is partly intended, not uniformly a defect)
 
 - **Where**: `backend/app/knowledge/pipeline_runner.py:626-628` (`graph_build`), `:940-946` (`graph_clustering`), `:1444-1447` (`bm25_build`), `:843` (`graph_db_bridge`), `:978` (`enrich_docs`) — against the only five reads of `done`, at `:298`, `:521`, `:550`, `:651`, `:703`.
 - **What is wrong**: `complete_step` is called for twelve step names; `done` is consulted for five. The three gated writes are each guarded by a success flag with a comment explaining that a resume must re-run a failed step — but no resume ever reads those names, so the guard is inert in both directions. The `bm25_build` comment ("A failed BM25 build must NOT mark the step complete — otherwise a resume would skip the rebuild and the hybrid retriever would degrade silently") describes a mechanism that is not wired; the `graph_build` comment at `:626` says it "mirror[s] the bm25/clustering gate", mirroring something equally inert. Behaviourally these three steps always re-run, which is safe; the cost is that a reader auditing resume safety will conclude it is enforced when it is not, and `graph_clustering` — whose re-run costs LLM tokens for `label_clusters` — repeats its spend on every resume despite code written specifically to prevent that.
@@ -3161,13 +3235,15 @@ app/models/base.py:64-78  subprocess.run(["alembic", "upgrade", "head"], check=T
 - **Severity**: medium — no wrong data today, but it is a documented safety property that is not implemented, sitting directly on the path a future change will take.
 - **Confidence**: certain (the two greps above are the whole proof).
 
+**Fix direction**: gate the steps whose completion is safe to skip (bm25/clustering) and leave a comment on those deliberately ungated
+
 ---
 
 ## OPS-02 — The web lifespan runs its boot reaper sweep before the task queue exists — the exact defect fixed in the worker on 2026-09-09, in the file the fix's test does not read
 
 *`OPS` — Background work, observability, deploy-time ops*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: adversarial verifier, 2026-09-09 — **RESEVERITY (high → medium; defect real)**
 >
 > **Severity**: reclassified high → medium — verifier: bites only when a run is ≥300s stale at web boot — needs >5 min downtime or a crash-loop
 
@@ -3193,13 +3269,17 @@ def _startup_code() -> str:
 - **Severity**: high — a run destroyed at boot and not requeued is exactly the loss `reaper_requeue_enabled` exists to prevent, and `index_repo` is the one kind the nightly cron cannot redo (`force_full=False`).
 - **Confidence**: certain. Both orderings are in the same function; the test's source is quoted above.
 
+**Wave-2 verifier notes**
+
+Verified: `main.py:121 await run_reaper_sweep()` precedes `main.py:132 await init_task_queue(redis_url)`; `_requeue` → `enqueue` → `_arq_pool is None` → in-process fallback → `None` (task_queue.py:150-152), logged but lost; the regression test (`test_worker_can_enqueue.py:36-43`) inspects only `worker.startup` source. **Severity delta:** the broken pass only bites when a run is already ≥300 s stale *at web boot* — an ordinary deploy/dyno-cycle reboots in ~1 min, so the run is reaped later by `reaper_loop` (post-init, pool built) and requeue works. Trigger needs >5 min downtime, a crash-loop, or the worker dead while web boots — rare, but when it fires the row is terminal and no later pass retries it. Web only. Fix: move the boot sweep below `init_task_queue` and extend the ordering test to `main.py`'s lifespan.
+
 ---
 
 ## OPS-08 — The worker will run eight repo indexes at once, and one already exceeds the dyno's memory
 
 *`OPS` — Background work, observability, deploy-time ops*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: adversarial verifier, 2026-09-09 — **RESEVERITY (high → medium; defect real, latent)**
 >
 > **Severity**: reclassified high → medium — verifier: latent on a one-project deployment; real for self-hosted multi-project installs
 
@@ -3216,6 +3296,10 @@ def _startup_code() -> str:
 ```
 - **Severity**: high — the single most memory-sensitive job in the system has an 8-wide concurrency limit and a fan-out path that reaches it, on a dyno where one instance already runs over quota.
 - **Confidence**: certain on the code; the production consequence is untested only because the deployment has one project. `heroku ps` plus `SELECT count(*) FROM projects` confirms the exposure.
+
+**Wave-2 verifier notes**
+
+`worker.py:446 max_jobs = 8` and `embedding_reconcile.py:89-90` fan out one `force_full` per project with no per-kind cap — verified; the DB's partial unique index constrains per-project only. Severity delta: firing requires a fingerprint-bump deploy on a deployment with ≥2 heavy projects; this deployment has one (CLAUDE.md anchor `esim-php`). Self-hosted installs are exposed. Worker only. Fix: a dedicated arq queue for `run_repo_index` with concurrency 1 (or a semaphore/stagger in `queue_embedding_reindex`).
 
 ---
 
@@ -3381,7 +3465,7 @@ app/ops/capability_report.py:180:def report_capabilities() -> list[Claim]:
 
 *`ORCH` — Orchestrator and pipeline*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (orchestrator builds StageValidator() with no llm_router at :2500 and :3020, overriding the default that passes one (stage_executor.py:143) — LLM business-rule validation off in both pipelines)
 
 - **Where**: `backend/app/agents/orchestrator.py:2500` and `:3020`, overriding the default at `backend/app/agents/stage_executor.py:143`
 - **What is wrong**: `StageExecutor.__init__` deliberately defaults to `StageValidator(llm_router=llm_router)` so planner-supplied business rules get the LLM evaluator its class docstring describes ("This makes the check AI-first and schema-agnostic", `stage_validator.py:72-77`). Both call sites that actually run in production pass a bare `StageValidator()`, so `self._llm_router is None` and `_evaluate_business_rule_async` returns immediately to the heuristic (`stage_validator.py:204-206`). That heuristic recognises exactly one rule shape: the literal substring `"no negative"` (`:317-318`). Every other rule the planner writes is a silent no-op that still reports itself as evaluated.
@@ -3400,13 +3484,15 @@ app/ops/capability_report.py:180:def report_capabilities() -> list[Claim]:
 - **Severity**: medium — both evaluators only `warn` (`:329`, `:227`), so no stage passes that would otherwise have failed; the loss is a check reported as performed and never performed.
 - **Confidence**: certain.
 
+**Fix direction**: pass llm_router into both StageValidator() constructions
+
 ---
 
 ## ORCH-05 — two per-workflow caches on the process-lifetime orchestrator singleton are never swept
 
 *`ORCH` — Orchestrator and pipeline*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (_cleanup_stale_results enumerates stale ids from _wf_enriched only (written solely by _handle_process_data); a workflow that ran query_database but not process_data never enters _wf_enriched, so its _wf_sql_results (full QueryResult, all rows) is never swept)
 
 - **Where**: `backend/app/agents/orchestrator.py:513-527` (`_cleanup_stale_results`), populated at `:1845` and `:632`/`:641`
 - **What is wrong**: the sweep enumerates stale ids from `self._wf_enriched` only, and `_wf_enriched` is written in exactly one place — `ToolDispatcher._handle_process_data` (`tool_dispatcher.py:628`). Every workflow that runs `query_database` writes `_wf_sql_results[wf_id]` (a list of `SQLAgentResult`, each holding a full `QueryResult` with all rows) and possibly `_wf_correction_counts[wf_id]`; unless that same workflow also called `process_data`, neither key is ever reachable by the sweep and neither has a `pop_*` drain. `chat.py:62` builds `ConversationalAgent()` at module scope, so these dicts live for the life of the dyno.
@@ -3426,13 +3512,15 @@ after sweep, _wf_correction_counts = {'wf-0': 1, 'wf-1': 1, 'wf-2': 1}
 - **Severity**: medium — unbounded growth on a memory-constrained long-lived process; not a wrong answer, but the failure mode is an OOM kill mid-request.
 - **Confidence**: certain (reproduced above).
 
+**Fix direction**: key the sweep on a union of all per-workflow maps, or timestamp each map independently
+
 ---
 
 ## ORCH-06 — the resumed pipeline runs without the answer-quality gate and without the freshness warning the fresh path supplies
 
 *`ORCH` — Orchestrator and pipeline*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (fresh path :2600-2606 passes staleness_warning and answer_directive; resumed synth at :3070-3082 passes neither and runs no AnswerQualityGate)
 
 - **Where**: `backend/app/agents/orchestrator.py:3034-3040` and `:3078`, against the fresh path at `:2514-2521` and `:2600-2606`
 - **What is wrong**: `_execute_resume` is a second implementation of the pipeline tail and has drifted from `_run_complex_pipeline` in two places. It calls `executor.execute(...)` with no `staleness_warning`, so no stage prompt and no synthesis prompt on the resumed run carries the knowledge-freshness block that `_build_stage_question` (`stage_executor.py:730-731`) and `_synthesize` (`:1404-1408`) inject on the fresh path. And it calls `ResponseBuilder.build_pipeline_response(exec_result, wf_id, None, run_id)` with no `answer_directive`, so `AnswerQualityGate` (`_evaluate_pipeline_answer`) never runs — `answer_directive` defaults to `None` (`response_builder.py:50`) and the `is not None` guard at `:104` skips the downgrade.
@@ -3453,13 +3541,15 @@ after sweep, _wf_correction_counts = {'wf-0': 1, 'wf-1': 1, 'wf-2': 1}
 - **Severity**: medium — a documented gate (ORCH-A02) is bypassed on a first-class UX flow, and the bypass is invisible.
 - **Confidence**: certain.
 
+**Fix direction**: apply the same freshness warning and answer gate on the resumed path
+
 ---
 
 ## ORCH-07 — a fallback to the flat loop overwrites the router's real verdict, so metrics and the persisted trace report `explore`/`moderate`
 
 *`ORCH` — Orchestrator and pipeline*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (the continuation/fallback writes a synthetic RouteResult (route="explore", complexity="moderate", "Continuation...") at :776-783, overwriting the router's real verdict that metrics and the trace then record)
 
 - **Where**: `backend/app/agents/orchestrator.py:2317-2342` (`_fallback_to_unified`) → `:776-783` and `:800-815`
 - **What is wrong**: `_fallback_to_unified` re-enters `run()` with `_skip_complexity` set. That flag takes the branch at `:776` which synthesises `RouteResult(route="explore", complexity="moderate", estimated_queries=2)`, and `:800-808` / `:811-815` then overwrite both `context.extra` and `self._wf_routing[wf_id]` with those constants. The docstring two hundred lines below claims the opposite: *"Preserve the original `complexity` from `context.extra` so a single bad JSON does not permanently downgrade a complex turn to `moderate`/`explore`"* (`:2330-2332`). Nothing preserves it. `_wf_routing` is drained into the response and thence into `request_traces` (`app/core/agent.py:106-110`) — the exact column Ш0a existed to make honest.
@@ -3478,13 +3568,15 @@ after sweep, _wf_correction_counts = {'wf-0': 1, 'wf-1': 1, 'wf-2': 1}
 - **Severity**: medium — a summary computed from a synthetic input rather than from what happened, in the field a prior fix (222/222 `"unknown"`) was written to make trustworthy.
 - **Confidence**: certain.
 
+**Fix direction**: record the real router verdict separately from the continuation override
+
 ---
 
 ## ORCH-08 — a failed final synthesis is reported as `pipeline_complete` whenever the plan does not end in a `synthesize` stage
 
 *`ORCH` — Orchestrator and pipeline*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (stage_executor.py:387 returns status="completed" unconditionally after _synthesize, discarding the _degraded_reason it returned)
 
 - **Where**: `backend/app/agents/stage_executor.py:387`
 - **What is wrong**: `_synthesize` returns `(answer, degraded_reason)` and the fallback path in `execute()` discards the second element into `_degraded_reason`, then returns `status="completed"`. `_StageExecutorResult` has no field for it (`:1580-1604`), and `ResponseBuilder` derives "degraded" solely by scanning stage results for `status == "degraded"` (`response_builder.py:86-91`) — a status only `_synthesize_stage` ever sets. On this path no stage result exists to carry it, so the response is typed `pipeline_complete` with `error=None`.
@@ -3500,13 +3592,15 @@ after sweep, _wf_correction_counts = {'wf-0': 1, 'wf-1': 1, 'wf-2': 1}
 - **Severity**: medium — the answer text is honest, the response metadata is not, so `response_type`/`error` and any dashboard built on them under-report synthesis failures.
 - **Confidence**: certain.
 
+**Fix direction**: propagate the degraded reason into the status/response_type
+
 ---
 
 ## ORCH-09 — the pipeline's truncation caveat and its answer gate read only the *last* stage that produced rows
 
 *`ORCH` — Orchestrator and pipeline*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (response_builder.py:71-72 keeps overwriting last_sql_result with each stage that has a query_result, so the caveat and gate read only the LAST such stage)
 
 - **Where**: `backend/app/agents/response_builder.py:71-72` and `:92-101`; the same shape at `backend/app/agents/orchestrator.py:3294-3297`
 - **What is wrong**: `last_sql_result` is assigned by every stage with a non-`None` `query_result` in plan order, so it ends up holding the last such stage rather than the truncated one. The `PARTIAL DATA` caveat and the `results`/`query` fields returned to the UI are both derived from it, and `_evaluate_pipeline_answer` overwrites `last_row_count`/`last_truncated` in the same loop before handing them to `AnswerValidator`. A truncated earlier stage is therefore invisible to both.
@@ -3527,13 +3621,15 @@ after sweep, _wf_correction_counts = {'wf-0': 1, 'wf-1': 1, 'wf-2': 1}
 - **Severity**: medium — truncated data presented as complete, which is precisely what the W1/T14 truncation plumbing exists to prevent; requires a multi-source plan to bite.
 - **Confidence**: certain about the code path; needs-verification on frequency — grep production `pipeline_runs` for runs whose non-final stage carries `truncated` to size it.
 
+**Fix direction**: aggregate truncation/caveat across all query-bearing stages, not just the last
+
 ---
 
 ## ORCH-10 — a resumed stage's prompt reports the original row count beside ten persisted sample rows and never says the set is a sample
 
 *`ORCH` — Orchestrator and pipeline*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (stage_context.py:276-282 prints the original query_result.row_count beside a rows[:5] sample on a resumed stage (the finding says ten; the cap here is 5) — the count and the shown rows disagree)
 
 - **Where**: `backend/app/agents/stage_context.py:276-282`; the same omission at `backend/app/agents/stage_executor.py:1361-1363`
 - **What is wrong**: `StageResult.from_summary_dict` restores at most `_MAX_SAMPLE_ROWS = 10` rows while keeping the original `row_count`, and marks the result `truncated=True` with a WARNING log (`stage_context.py:200-208`). `build_context_for_stage` then renders `Rows: {row_count}` and `Sample data (first N rows)` and never reads `truncated`. `_synthesize` builds its prompt the same way. So the string handed to the model asserts a row count that no longer exists in memory.
@@ -3551,13 +3647,15 @@ after sweep, _wf_correction_counts = {'wf-0': 1, 'wf-1': 1, 'wf-2': 1}
 - **Severity**: medium — prompt dishonesty on the resume path, bounded to plans containing an LLM stage downstream of a checkpoint.
 - **Confidence**: certain.
 
+**Fix direction**: label the sample as a sample and carry the true persisted-row count
+
 ---
 
 ## ORCH-11 — a connection error re-runs the identical statement with no idempotency check, including DML on a writable connection
 
 *`ORCH` — Orchestrator and pipeline*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (validation_loop.py:452 logs "re-running the same query" on a transient/connection error with no idempotency check — a non-SELECT (ssh-exec writable path) could repeat)
 
 - **Where**: `backend/app/core/validation_loop.py:446-462`
 - **What is wrong**: `_try_repair` treats `QueryErrorType.CONNECTION_ERROR` as purely environmental and re-issues `failed_query` verbatim after a backoff. That reasoning holds for `SELECT` and is stated as such in `app/core/error_types.py:41-44` ("it is NOT a query problem"). It does not hold for a statement that may have committed before the socket dropped, and nothing distinguishes the two: `SafetyGuard` is at `SafetyLevel.ALLOW_DML` whenever `connection_config.is_read_only` is false (`validation_loop.py:83-86`), and the SQL prompt permits writes on request ("Generate only SELECT / read-only queries **unless explicitly asked otherwise**", `app/agents/prompts/sql_prompt.py:146`). The repo already has the right primitive for this — `core/safety.is_read_only_statement`, used by the SSH path's F-SSH-07 fix — and it is not consulted here.
@@ -3577,13 +3675,15 @@ NON_RETRYABLE_ERRORS = frozenset({QueryErrorType.PERMISSION_DENIED})
 - **Severity**: medium — a silent duplicate write, gated behind a non-default connection setting (`Connection.is_read_only` defaults `True`, `app/models/connection.py:92`) and an explicit user request for a write.
 - **Confidence**: certain about the code path; needs-verification on exposure — query production for connections with `is_read_only = false` to decide whether this is theoretical here.
 
+**Fix direction**: derive idempotency from is_read_only before re-running, as the SSH reconnect path (F-SSH-07) already does
+
 ---
 
 ## RET-04 — the dense leg's degradation reason says the cause is unknown while the retriever itself is the cause
 
 *`RET` — Retrieval*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (hybrid_retriever.py:184 emits reason="empty_cause_unknown" for the dense leg while the distance filter at :257-270 is a known cause the retriever just applied)
 
 - **Where**: `backend/app/knowledge/hybrid_retriever.py:180-189`, filter at `:257-270`.
 - **What is wrong**: the comment justifies `reason="empty_cause_unknown"` with "the dense leg has no cause channel yet (a missing collection and a query that matched nothing both surface as `[]`)". That was true before `chroma_max_distance` was wired: there is now a third cause, created inside `_run_chroma` itself, and it is the one that fires. `_run_chroma` knows `len(hits)` before filtering and `len(filtered)` after, and discards both. This is the mirror of the F-KNOW-07 fix that gave BM25 real causes (`no_snapshot`/`corrupt`/`schema_mismatch`/`score_error`) — the dense side kept the unusable label, so `retrieval_degraded_total{leg="dense"}` again proves nothing.
@@ -3592,13 +3692,15 @@ NON_RETRYABLE_ERRORS = frozenset({QueryErrorType.PERMISSION_DENIED})
 - **Severity**: medium — no wrong answers on its own, but it is what makes RET-01 undiagnosable from telemetry.
 - **Confidence**: certain.
 
+**Fix direction**: label the dense leg "filtered_by_distance" when the filter emptied it
+
 ---
 
 ## RET-07 — the tokenizer fallback under-counts code tokens by up to 67%, and the chunk it lets through carries no truncation signal
 
 *`RET` — Retrieval*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (tokenizer_window.py:165 _fallback_count = ceil(len/_FALLBACK_CHARS_PER_TOKEN) — a fixed 3 chars/token; code tokenises denser, so the count under-reports and _truncate_fallback lets an over-budget chunk through (magnitude measured by the module agent))
 
 - **Where**: `backend/app/knowledge/tokenizer_window.py:28-32` and `:164-167` (`_fallback_count`), `:169-179` (`_truncate_fallback`); consumed at `backend/app/knowledge/chunker.py:108` and `backend/app/knowledge/code_symbol_chunker.py:102-104`.
 - **What is wrong**: the module claims the `ceil(len(text)/3)` fallback "means we always over-estimate token count (safe: chunks stay *within* the window …)" and "never under-counts". That is false for punctuation- and regex-dense source, where WordPiece emits far more than one token per three characters. The fallback activates silently whenever `Tokenizer.from_pretrained` fails — `tokenizers` reaches the HuggingFace hub on first use and `_get_tokenizer` swallows every failure into `logger.debug` (`:154-161`). When it is active, `chunk_document`'s fast path (`chunker.py:108`) and `build_code_chunks`' fast path (`code_symbol_chunker.py:102`) emit a single chunk with `chunk_index="0"` and **no** `truncated` flag, because the estimate says it fits. The embedder then truncates at 256 tokens and nothing records it.
@@ -3616,13 +3718,15 @@ NON_RETRYABLE_ERRORS = frozenset({QueryErrorType.PERMISSION_DENIED})
 - **Severity**: medium — the blast radius is bounded by how often the tokenizer load fails, but the loss is exactly the class CLAUDE.md documents as costing 28.9% of the index in the 512-vs-256 incident, and this path reproduces it without the log line that made that one findable.
 - **Confidence**: certain that the fallback under-counts and that the resulting chunk carries no flag. Needs verification whether the HF tokenizer resolves on the production dyno — settle it by grepping the boot log for `tokenizer_window: loaded real tokenizer`, which is currently `logger.debug` and therefore invisible.
 
+**Fix direction**: raise the fallback ratio for code, or fail closed when the real tokenizer is unavailable
+
 ---
 
 ## RET-09 — the eval's nDCG normalises against what was retrieved, not against what exists, so it cannot see a recall regression
 
 *`RET` — Retrieval*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (retrieval_metrics.py:78 ideal_hits = min(k, relevant-IN-top) — idcg normalises against what was retrieved, not what exists in the corpus, so recall failures can still score nDCG 1.0)
 
 - **Where**: `backend/app/eval/retrieval_metrics.py:69-80`, threshold at `backend/app/eval/harness.py:50` (`ndcg_at_k: float = 0.50`).
 - **What is wrong**: `ideal_hits = min(k, sum(1 for d in top if is_relevant(d))) or 1` computes the ideal DCG from the relevant documents **present in the returned top-k**, not from the case's labelled relevant set. The metric therefore self-normalises: any retriever that puts its hits at the front scores 1.0 regardless of how many labelled documents it missed. The docstring calls it "Binary nDCG@k (ideal DCG assumes all top slots are relevant)", which describes the code but not the property a gate needs.
@@ -3637,6 +3741,8 @@ NON_RETRYABLE_ERRORS = frozenset({QueryErrorType.PERMISSION_DENIED})
   (run against `app.eval.retrieval_metrics.ndcg_at_k` directly.) Related, non-blocking: `context_recall` takes an `is_relevant` predicate at `:47-51` and never uses it — recall is computed purely by substring against `relevant_ids`.
 - **Severity**: medium — one of four regression floors is inert, and it is the one whose name implies it measures ranking quality across the whole relevant set.
 - **Confidence**: certain.
+
+**Fix direction**: compute idcg from the total relevant set for the query, not from the retrieved slice
 
 ---
 
@@ -4006,7 +4112,7 @@ Both guards verified; both targets exist (`app/agents/result_validation.py`; `de
 
 *`TEST` — Tests, CI gates, deploy pipeline, UX scenario tooling*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: adversarial verifier, 2026-09-09 — **CONFIRMED; needs-verification clause settled (latent, no live divergence)**
 
 - **Where**: `/Users/sshlg/DATA/checkmydata-ai/backend/tests/unit/test_mcp_mount_wiring.py:9-27`
 - **What is wrong**: Both tests reload `app.main` inside a settings patch and reload again to restore. Reload rebinds `app.main.app` to a **new** FastAPI instance; the six test modules that do `from app.main import app` at module scope bound the original during collection and keep it. `tests/integration/conftest.py:102` imports `app` *lazily inside the client fixture*, so it installs `dependency_overrides[get_db]` on whichever object is current. In `pytest tests/` (what `make test-all` and `make check` run) unit and integration share one process, so the override can land on a different object than the one a test module is driving. In CI they are two processes (`ci.yml:81`, `:93`), so CI never exercises this shape — `make check` and CI are not the same check. Separately, the restore reload at `:15`/`:27` sits after the assertion, so a failing assertion inside the `with` leaves the module permanently swapped for every later test in the session.
@@ -4025,6 +4131,12 @@ tests/integration/test_ws_auth.py:13: from app.main import app      # bound at c
 ```
 - **Severity**: medium — no failure today (`pytest tests/unit/test_mcp_mount_wiring.py tests/integration/test_ws_auth.py -q` → 6 passed), but it is an unguarded process-global mutation with no finalizer.
 - **Confidence**: certain on the mechanism; needs-verification on whether any current test pair actually diverges — settled by running the full `pytest tests/` in one process and diffing against the two-process CI result.
+
+**Wave-2 verifier notes**
+
+Reload split reproduced in the repo venv (`e is m.app`: True → False). Restore placement verified: first test asserts at `:14` *before* restore `:15`; second asserts inside the `with` at `:26` before restore `:27` — a failing assertion leaves the swap permanent. Six module-scope `from app.main import app` binders found (5 unit + `tests/integration/test_ws_auth.py:13`); conftest lazy import at `conftest.py:102` installs overrides on whichever object is current.
+**Settled by inspection instead of the forbidden full run:** the only integration module binding `app` at module scope (`test_ws_auth`) never uses the conftest `client` fixture — it builds its own `TestClient` on its own binding — so no currently existing pair diverges. Latent exactly as claimed.
+**Fix:** try/finally (or fixture) around the reload, or test the mount decision through a factory instead of `importlib.reload`.
 
 ---
 
@@ -4111,7 +4223,7 @@ Doc blockquote (`docs/ANALYTICS_SOURCES.md:275-280`: "the entry is currently **i
 
 *`API` — HTTP routes and contracts*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (feed.py:82 except swallows per-connection failure; :90 returns connections_scanned=len(connection_ids) — count from input; no error field unlike the single-connection sibling)
 
 - **Where**: `backend/app/api/routes/feed.py:76-91`
 - **What is wrong**: The handler loops over every connection, swallows any per-connection exception into a `logger.warning`, and then returns `"connections_scanned": len(connection_ids)` — the length of the input list. A connection whose scan raised is counted as scanned, and the response carries no error field at all, unlike the single-connection sibling at `feed.py:38-42` which returns `"errors": result.errors[:5]`. This is the pattern the project already documents as a defect class ("Three claims computed from the input instead of the outcome, in a row", CLAUDE.md §0d).
@@ -4131,13 +4243,15 @@ Doc blockquote (`docs/ANALYTICS_SOURCES.md:275-280`: "the entry is currently **i
 - **Severity**: low — no data is corrupted, but the endpoint cannot report its own failure and the caller has no way to learn of it.
 - **Confidence**: certain.
 
+**Fix direction**: count successes and surface per-connection errors (mirror the single-connection route)
+
 ---
 
 ## API-13 — `API.md`'s rate-limiting paragraph names five throttled endpoints as unthrottled and states a route count that is 7 low
 
 *`API` — HTTP routes and contracts*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (AST walk measures 127 mutating routes, 3 unthrottled (logout, complete_onboarding, billing webhook) — the finding already states 127/3; API.md still says "112 of 120 / 8" and lists throttled routes as unthrottled with wrong paths)
 
 - **Where**: `API.md:632-640`
 - **What is wrong**: The paragraph reads *"112 of 120 mutations; the 8 unthrottled exceptions include `POST /api/checkout`, `POST /api/portal`, `PATCH /api/schedules/{id}`, `POST /api/chat/ws-ticket`, `POST /api/data-validation/investigate/{id}/confirm-fix`, `POST /api/auth/logout`, `POST /api/auth/complete-onboarding`, and the Stripe `POST /api/webhook`"*. Measured against the tree: **127** mutating routes, **124** carrying `@limiter.limit`, **3** without. Five of the eight named exceptions now carry limiters — `billing.py:95` (`10/minute`), `billing.py:119` (`10/minute`), `schedules.py:168`, `chat.py:1443`, `data_investigations.py:241`. The paragraph also gives the billing paths as `/api/checkout` and `/api/webhook`, whereas the router declares `prefix="/billing"` (`billing.py:25`), making them `/api/billing/checkout` and `/api/billing/webhook`.
@@ -4153,13 +4267,15 @@ without @limiter.limit: 3
 - **Severity**: low — documentation drift in the safe direction, but it names specific endpoints wrongly and its paths do not resolve.
 - **Confidence**: certain.
 
+**Fix direction**: regenerate the rate-limit paragraph from the route tree
+
 ---
 
 ## AUTH-08 — `update_member_role` writes the role without validating it; the F-PROJ-07 guard was applied to only one of the two writers
 
 *`AUTH` — Authentication, tenancy, access control*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (update_member_role (membership_service.py:222) sets member.role = new_role with no vocabulary check (only blocks changing an owner); an arbitrary string is written)
 
 - **Where**: `backend/app/services/membership_service.py:221` (in `update_member_role`, defined at `:200`)
 - **What is wrong**: `_require_valid_role` exists precisely because `ROLE_HIERARCHY.get(x, 0)` ranks an unknown role at 0, below every real role — the reasoning is spelled out at `:19-25` and `:135-137`. `add_member` calls it (`:143`); `update_member_role` assigns `member.role = new_role` with no check at all. The service is the layer that documents this invariant, and the only thing currently enforcing it is a Pydantic `Literal` in one route (`invites.py:32,59`), i.e. the shape of one caller rather than the rule.
@@ -4181,13 +4297,15 @@ without @limiter.limit: 3
 - **Severity**: low — not currently reachable with a bad value; it is a missing invariant in the layer that claims to own it, with a documented lockout as the failure mode.
 - **Confidence**: certain.
 
+**Fix direction**: validate new_role against {owner,editor,viewer} before the write
+
 ---
 
 ## BIZ-15 — The Privacy Policy describes an architecture that is not the deployed one: SQLite/ChromaDB "local-first", and an auth token in localStorage
 
 *`BIZ` — Business logic vs stated promises*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (privacy page:225 claims SQLite storage, :389 claims localStorage auth token; production runs Supabase pgvector and httpOnly cookies)
 
 - **The promise**: `frontend/src/app/(marketing)/privacy/page.tsx:221-227` — *"CheckMyData.ai follows a **local-first architecture**: Internal application data is stored in **SQLite** (for structured data) and **ChromaDB** (for vector embeddings), both running alongside the application"*. And `:386-392`, §9 Cookies: *"**Authentication token** — stored in your browser's **local storage** to keep you signed in across sessions"*, followed by *"We do **not** use third-party cookies, advertising cookies, or tracking cookies of any kind."*
 - **Where the code differs**: `backend/app/config.py:239`; `frontend/src/lib/api/_client.ts:116-122`
@@ -4222,6 +4340,8 @@ without @limiter.limit: 3
 - **Duplicate-subscription guard fires before the charge** — `billing_service.py:205-211`, with `trialing` counted as live.
 - **The open-source claim is true** — `api.github.com/repos/CheckMyData-AI/checkmydata-ai` reports `"private": false`, and `git ls-remote origin refs/heads/main` matches local `HEAD` exactly, so the public repository is the deployed code.
 - **`vision.md` §8 "not a BI dashboard tool"** — dashboards remain a sharing surface (`/dashboard/[id]` viewer + `dashboards` routes); the primary interaction is still the chat panel. No drift found.
+
+**Fix direction**: rewrite the storage and cookies sections to the deployed architecture
 
 ---
 
@@ -4259,7 +4379,7 @@ without @limiter.limit: 3
 
 *`DATA` — Data model and migrations*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (ix_code_graph_symbols_cluster in migration e9f0a1b2c3d4:50; grep count 0 in code_graph.py model)
 
 - **Where**: `backend/alembic/versions/e9f0a1b2c3d4_add_code_clusters_table.py:50`; `backend/app/models/code_graph.py:32-41` (the `__table_args__` that should carry it)
 - **What is wrong**: the clustering migration adds `ix_code_graph_symbols_cluster` on `(project_id, cluster_id)` with `batch_op.create_index`, and `CodeGraphSymbol.__table_args__` declares four indexes, none of them this one. The model is the only description of the table the test suite and the `create_all` fallback ever read.
@@ -4280,13 +4400,15 @@ app/models/code_graph.py:32-41  __table_args__ = (
 - **Severity**: low — `clustering_enabled` is off by default, so `cluster_id` is currently all-NULL and nothing depends on the index yet. It becomes a real gap the day clustering is turned on.
 - **Confidence**: certain.
 
+**Fix direction**: add the index to CodeGraphSymbol.__table_args__ (latent until clustering_enabled)
+
 ---
 
 ## FE-10 — The MCP token list paints two states in raw Tailwind palette colours that do not follow the theme
 
 *`FE` — Frontend and interface states*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CONFIRMED** (McpTokenManager.tsx:30 text-emerald-400 and :194 hover:text-rose-400 are raw Tailwind palette classes, against the semantic-token rule in DESIGN_SYSTEM.md)
 
 - **Where**: `frontend/src/components/mcp/McpTokenManager.tsx:30` and `:194`
 - **What is wrong**: `text-emerald-400` marks a token "active" and `hover:text-rose-400` marks the Revoke action, where the design system requires the semantic tokens (`text-success` / `text-ok`, `text-danger`). Tailwind's default palette is still registered (globals.css uses `@theme inline` and never resets `--color-*`), so the classes compile — which is why nothing failed — but they are fixed hexes: they do not change between the light and dark twins the pack ships, and they are the only two such classes left in `components/`.
@@ -4301,13 +4423,15 @@ app/models/code_graph.py:32-41  __table_args__ = (
 - **Severity**: low — cosmetic, confined to one admin panel, but it falsifies a claim the design document makes about itself.
 - **Confidence**: certain.
 
+**Fix direction**: swap to semantic tokens (text-status-*/text-danger)
+
 ---
 
 ## FE-11 — The readiness cache records when it was checked and nothing ever reads it
 
 *`FE` — Frontend and interface states*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: main session, 2026-09-09 — **CORRECTED** (the finding says "nothing ever reads" the cache, but ReadinessGate.tsx:48 reads readinessCache[projectId]?.ready and :74 reads r.ready. What is written-and-never-read is the checkedAt TIMESTAMP specifically — so the cache has no time-based staleness, a narrower defect than stated)
 
 - **Where**: `frontend/src/stores/app-store.ts:100-103`, written at `frontend/src/components/chat/ReadinessGate.tsx:72` and `:114`, consumed at `frontend/src/components/chat/ChatPanel.tsx:76-78`
 - **What is wrong**: `ReadinessCacheEntry` carries `{ ready, checkedAt }`. `checkedAt` is written twice and read nowhere, so the cache has no TTL: once `ready: true` is recorded for a project, `showReadinessGate` (`ChatPanel.tsx:751`) is false for the rest of the document's life. Invalidation is entirely event-driven (`clearReadinessCache` on pipeline completion and on the index/sync poll endings), so any state change that arrives by no event is never noticed.
@@ -4321,6 +4445,8 @@ app/models/code_graph.py:32-41  __table_args__ = (
   ```
 - **Severity**: low — degrades a nudge, not a guarantee; the failure is recoverable and self-explaining once the query runs.
 - **Confidence**: certain that the field is unread; needs-verification on how often the cross-tab scenario occurs in practice.
+
+**Fix direction**: either use checkedAt for a TTL, or drop the field
 
 ---
 
@@ -4421,7 +4547,7 @@ The measurement is right for the golden-set assertion *in isolation* — but the
 
 *`TEST` — Tests, CI gates, deploy pipeline, UX scenario tooling*
 
-> **Verification**: module agent only — adversarial pass interrupted (spend limit); treat line numbers as unverified
+> **Verification**: adversarial verifier, 2026-09-09 — **CONFIRMED (citations corrected, plus one extra site)**
 
 - **Where**: `/Users/sshlg/DATA/checkmydata-ai/scripts/ux_verification_status.py:71` (`git grep -noE "SCN-[0-9]+"`), against the row regex at `:52` which accepts `SCN-\d+[a-z]?`
 - **What is wrong**: The row parser was widened to accept a lowercase suffix (`SCN-101a`) after that row was found invisible to every count; `anchored_ids()` two functions below was not. A code reference to `SCN-101a` is captured by the grep as `SCN-101`, so the intersection at `:110` credits the anchor to a **different scenario** and leaves the suffixed one reported as having no anchor a machine could check it by. `audit_backlog`'s `stale_ids` regex at `:196` has the same omission, so a suffixed scenario never appears in the re-audit backlog either.
@@ -4436,6 +4562,11 @@ docs/ux/scenarios.md:146: | SCN-101a | Billing on, no subscription (unpaid accou
   Currently latent: the only two files naming `SCN-101a` are both in `_NOT_AN_ANCHOR` (`:64-67`).
 - **Severity**: low — latent today, wrong the first time a suffixed scenario gets a test.
 - **Confidence**: certain.
+
+**Wave-2 verifier notes**
+
+Mechanism verified: `_ROW` accepts the suffix at **`:49`** (not :52); `anchored_ids()` greps `SCN-[0-9]+` at `:71` (grep on `# SCN-101a:` yields `SCN-101`); intersection at `:111`. The backlog's suffix-blind regex is at **`:179-183`** (not :196) — and there is a **third** miss the report didn't name: the body split `re.split(r"^### (SCN-\d+)", …)` at `:187`, so a suffixed scenario's Coverage block can't enter the changed-files backlog at all. Latency confirmed: `git grep SCN-101a` hits only the two `_NOT_AN_ANCHOR` files.
+**Fix:** `SCN-[0-9]+[a-z]?` in the git-grep and `SCN-\d+[a-z]?` in both regexes at `:179`/`:187`.
 
 ---
 
