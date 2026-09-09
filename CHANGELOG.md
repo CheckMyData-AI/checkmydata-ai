@@ -6,6 +6,186 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the nightly index had been dying for a month, and every fix exposed the next one
+
+`index_repo` failed 54 of 66 scheduled runs over thirty days, always at `graph_build` or
+`code_symbol_embed`, always with `error='stale run reaped'`. Six defects, found in that
+order because each one hid the one behind it.
+
+**Building the code graph blocked the event loop.** `CodeGraph.__init__` used
+`key=f"{e.edge_type}:{len(self._graph.edges)}"`, and `G.edges` is a view whose `__len__`
+walks the adjacency structure — so asking once per edge made construction O(E×(V+E)).
+Measured at the production shape (25 695 symbols, 68 263 edges): **209.6 s on a laptop**,
+several times that on a dyno, all of it synchronous. `StaleRunReaper` measures whether a
+coroutine can be *scheduled*, so a live run read as dead. The key's value is read by
+nothing — it only keeps parallel edges distinct — so the position in the list serves:
+**0.10 s**. Production after deploy: `graph_build: completed … 49625ms`, where the gap had
+been fourteen and a half minutes.
+
+**A beat nobody can schedule is worth what no beat is worth.** Two earlier fixes were both
+necessary and both insufficient: N1 (2026-08-25) put the beat inside `RunCoordinator.step`,
+and the repo-index paths do not enter a `step`; the follow-up gave them a beat on
+`IndexingCheckpoint`, which is not the row the reaper reads. Both are recorded because the
+failure hid the same way twice — *a heartbeat does exist nearby, on a different row.*
+
+**An incremental save rewrote the whole graph.** `save_incremental` merged in memory and
+handed the union to `save()`, which deleted and reinserted everything: **837 571 parameter
+values for a 408-symbol delta**, now **1 176**. Merge semantics are unchanged, including
+R3-1's dangling prune — reframed from a whole-project question to `doomed_uids − new uids`,
+which is 0.06 s where a correlated `NOT EXISTS` took **1 195 s**. That narrowing also
+settled a disagreement between the two write paths in the surprising direction: `CodeGraph`
+keeps edges to unresolved UIDs deliberately and a full rebuild stores them, while the old
+incremental prune deleted every one — so the incremental was the lossy path.
+
+**A restart is not a failing run.** Three rebuilds died in one night; two matched deploys
+to the second, and the third was `SIGTERM` seven seconds after the last beat with no
+release behind it — Heroku cycles dynos on its own. `StaleRunReaper._requeue` was the only
+recovery and it is the wrong instrument twice: it waits 300 s to conclude death, and it
+spends a budget meant for runs that fail on their own merits, so the third reap was refused
+with *"failing for its own reasons, not a restart"*. A restarting worker now puts back what
+it replaced, before taking any job: runs carry `boot_id` and `owner`, and an `index_repo`
+run still `running` under a different boot id belonged to the process this one took over
+from. `BOOT_ID` rather than the release, so a deploy and a dyno-cycle are covered alike.
+
+**The worker could not enqueue anything at all.** `init_task_queue` was called in the
+FastAPI lifespan and nowhere in the worker, so `_arq_pool` was always `None` there. The
+worker *consumes* through arq's own connection, which is why this was invisible — but
+everything that puts work *back* returned `None`, including `StaleRunReaper._requeue`
+reached from the worker's own reaper loop. The requeue budget had looked *exhausted* when
+it was *unusable*. Found within the hour by the ERROR line the orphan sweep above was
+given for exactly that purpose. arq's own retry does exist, and arrives after the full
+`job_timeout` — **21 611 s**, which is not recovery in any useful sense.
+
+**A reindex that drops the vectors must confirm the rebuild was queued.**
+`queue_embedding_reindex` dropped a project's collection and then logged
+`enqueued run_repo_index … (job=None)` at INFO — a failure in the grammar of a success —
+while `reconcile_embeddings` discarded the return value, advanced the
+`embedding_fingerprint` marker and reported `len(ids)`. Three claims computed from the
+input instead of the outcome, in a row. The marker is no longer advanced when nothing
+could be queued, so the next boot retries.
+
+### Fixed — sampling a customer's live database was unbounded, and `auto` meant a person
+
+`db_index` runs with `trigger='auto'` took **30 279 s (8 h 25 m)** and **23 198 s** against
+the same 213 tables a scheduled run covers in **1 544 s** on average. All completed, all
+ended at `fetch_samples`, and the log named **not one table**.
+
+Establishing who starts an `auto` run changed what those hours were: three paths reach it,
+and the only background one (`FreshnessReconciler`) is gated on a flag that is **not set on
+production**. So every one of those runs was started by a person pressing "test connection"
+or "refresh schema", and what they saw was an operation that never came back.
+
+`db_index_fetch_samples_budget_seconds` (1800; non-positive raises at boot rather than
+being clamped) now bounds the step. On exhaustion it keeps what it sampled and skips the
+rest **by name**, and the run completes — a table without column statistics is a gap the
+prompt can work around. Per-table timing is logged above 5 s only, and the one-line summary
+prints on clean runs too, so silence never reads as a passing check.
+
+### Fixed — a rebuild re-bought prose about files that had not changed
+
+`generate_docs` is the most expensive step the product runs: ~9 375 s of a 12 039 s full
+rebuild, 758 documents, 1.7–2.0M tokens — and **535 of them describe database migrations**,
+files never edited after they merge. Full rebuilds are routine, since every extractor- or
+embedding-schema bump enqueues one, so each structural fix paid for the same prose again.
+
+`knowledge_docs.content_hash` now records what a document was generated *from* — content,
+`doc_type`, enrichment context and `DOC_GEN_SCHEMA` — and `should_reuse_document` decides.
+The commit sha and the UID/graph constants are deliberately absent: a rebuild triggered by
+a schema bump has not edited one migration. And `DOC_GEN_SCHEMA` stays out of
+`embedding_fingerprint()` for the mirror reason, asserted in both directions.
+
+`existing_docs_map` was loaded only on the incremental branch, which is why the expensive
+path had nothing to compare against at all. First production run with the cache:
+**`reused 304 cached doc(s)` — migration=113, orm_model=181** — 459 of 763 documents left
+to generate.
+
+### Fixed — a zero token total was stored as a measurement, and the budget summed it
+
+Ten `token_usage` rows carried real prompt and completion counts with `total_tokens = 0`,
+among them `prompt=175 669 / completion=4 587` at $0.99. `check_budget` sums exactly that
+column, so those calls charged **nothing** against daily, monthly and plan limits with
+billing on.
+
+This was the 2026-08-28 defect, half-fixed: that change put the derivation in
+`router.py::_usage_total`, the per-LLM-call sink, while the four request-level writers in
+`chat.py` still read `usage.get("total_tokens", 0)` and handed the zero through. The
+derivation now lives in `UsageService.record_usage` — the one funnel all five writers pass
+— and treats a falsy total as absent. Not backfilled: 361 410 uncounted tokens against
+64 263 898 counted is 0.56%.
+
+The test that was supposed to be the belt asserted the literal string
+`if total_tokens is None`, and its docstring said `chat.py` passes `None`. It passes a
+zero. Grepping for the spelling made a wrong belief look verified.
+
+### Fixed — a table with no side in either place was reported as existing in the database
+
+Of 256 rows in `code_db_sync`, **43 named tables absent from `db_index`** and 20 of them
+carried `db_only` — a claim about the customer's database, made about `axios`, `vue`,
+`const`, `export` and `import`. `resolve_sync_status` returned `db_only` from inside the
+branch that had just established there is no database side, contradicting its own
+docstring. It returns `unknown` now, a write-path guard refuses any status claiming a
+database side for a table absent from `db_index`, and `_scan_table_usage` no longer
+registers a table before knowing whether anything reads or writes it. Production after the
+fix: **0 phantoms of 308 rows.**
+
+### Added — the plan sells a 1 GB index, and something compares against it now
+
+`plans.max_index_bytes` has been sold since 2026-08-31 and `estimate_index_bytes` existed
+beside it, called from a test and nothing else. Over quota now puts one warning line on the
+rail and increments `index_over_quota_total`; indexing runs exactly as before, for the
+reason the scheduled-work gate already settled. The `Entitlements` protocol is deliberately
+**not** widened — a warning asks no permission — so the figure is read through a module
+helper that degrades open.
+
+### Added — the nightly sync says when it nearly ran out of night
+
+The longest **completed** `daily_sync` took **7 214.9 s** against a 7 200 s budget. It
+finished by luck and nothing said so; ARQ's timeout does not warn on the way up, it
+cancels. `budget_warning()` logs above 85% of the budget as a *fraction*, not a second
+constant — a hard-coded alarm beside a configurable limit fires on every run after the
+ceiling is raised, until someone deletes it.
+
+### Fixed — the connection budget could not be checked against the pooler's limit
+
+Supavisor session mode caps this project at `pool_size: 15`; the application was configured
+for up to **34** (`db_pool_size` 5 + `db_pool_overflow` 10 + the psycopg pool
+`PgVectorStore` builds inside itself). It survived only because the pools are lazy — 14 of
+15 at rest, no headroom — and one `psql` session was enough to produce
+`PoolTimeout` on `web` and `EMAXCONNSESSION` outside, while `/api/health` stayed 200.
+
+The arithmetic lived in three files that never referred to each other. `DB_CONNECTION_
+CEILING` is what the pooler permits in total, and when set the boot refuses a configuration
+that cannot fit, reserving one connection for an operator — the saturation was found by a
+`psql` session failing. Default `0` checks nothing, so no existing deployment changes.
+
+### Fixed — repo integration tests depended on live public DNS
+
+`validate_repo_url` DNS-resolves the host as an SSRF guard and rejects what it cannot
+resolve, so `https://github.com/org/repo.git` becomes a 422 whenever the runner's DNS
+hiccups. Five tests failed that way on a documentation-only branch. Resolution is stubbed
+for the four public hosts these tests name; anything else falls through to the real
+resolver, so a test that deliberately points at a private host still exercises the guard.
+
+### Changed — `EMBEDDING_UPSERT_BATCH_SIZE` stays at 8, and now there is a measurement for why
+
+The worker is Standard-2X (1 GiB), twice the quota that picked 8, so 32 was the obvious
+move. `code_symbol_embed` went over quota **within twenty seconds** of starting on 26 014
+symbols — 1082 → 1094 MiB, climbing — and was reverted the same hour. So the sentence to
+carry is not "8 was for 512 MiB": **batch 32 does not fit in 1 GiB on this workload
+either**, and doubling the dyno bought less than doubling the batch. 16 is untested and
+stays untested; each trial costs a full rebuild of the only production project.
+
+### Changed — repo-index mutual exclusion was documented as an open gap; it was not
+
+The note said exclusion was per-process only, because `_indexing_locks` is a dict of
+`asyncio.Lock`. Both halves of that evidence were true and the conclusion was not:
+`IndexingRun` is constructed in exactly one place, and the rule is enforced by
+`uq_indexing_runs_active_one` — a partial unique index declared for **both** SQLite and
+PostgreSQL — with the TOCTOU window closed by catching `IntegrityError`. Now proven by a
+test that inserts a duplicate row by hand, bypassing the coordinator entirely. A Redis lock
+would add nothing, and its TTL would need renewing by the same heartbeat that failed in the
+incident that prompted the note.
+
 ### Changed — four paid tiers priced on data, and no free one under them
 
 An unsubscribed account resolved to the retired `free` plan and inherited its
