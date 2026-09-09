@@ -89,9 +89,12 @@ class TestTheCeilingIsEnforcedAtBoot:
     def test_a_configuration_that_fits_boots(self) -> None:
         """4 + 1 + 2 = 7 per process, 14 across two, one spare for an operator session."""
         s = Settings(db_connection_ceiling=15, db_pool_size=4, db_pool_overflow=1)
-        assert worst_case_connections_per_process(
-            pool_size=s.db_pool_size, overflow=s.db_pool_overflow
-        ) == 7
+        assert (
+            worst_case_connections_per_process(
+                pool_size=s.db_pool_size, overflow=s.db_pool_overflow
+            )
+            == 7
+        )
 
     def test_it_reserves_one_connection_for_a_human(self) -> None:
         """The saturation was found by a `psql` session failing. A budget that fills the
