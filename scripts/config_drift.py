@@ -61,16 +61,15 @@ DELIBERATE: dict[str, str] = {
         "an additional authenticated surface, and a self-hosted install should opt in."
     ),
     "STALE_RUNNING_HEARTBEAT_TIMEOUT_SECONDS": (
-        "TEMPORARY, and it is silencing an alarm rather than fixing a fault — remove it "
-        "the moment T12 closes. Three rebuilds of the one production project died at "
-        "`code_symbol_embed` on 2026-09-08/09: the beat continued ~4.5 minutes into the "
-        "step and then stopped, and the reaper killed a run that was working. Memory is "
-        "not the cause (no R14 at batch 8) and the step is already inside "
-        "`asyncio.to_thread`, so the T10 mechanism does not explain it either. Raised to "
-        "3600 so the project would not be left with NO embeddings after "
-        "`queue_embedding_reindex` dropped its collection. Note the cost, which was "
-        "measured the same night: this value also widens `_find_active`'s liveness "
-        "window to 2x itself, so a wrongly-reaped row blocks a replacement run for two "
+        "TEMPORARY and already obsolete — unset it, and delete this entry, as soon as the "
+        "full rebuild started 2026-09-09 00:29 UTC finishes. Raised to 3600 that night to "
+        "work around what looked like a heartbeat defect in `code_symbol_embed` (T12). "
+        "The defect does not exist: the beats stopped within a second of v352 and v353, "
+        "which were deploys restarting the worker under a running index — the reaper was "
+        "killing runs that really were dead. It is still set only because unsetting it "
+        "restarts the dyno, which would kill the rebuild currently running and repeat the "
+        "mistake it documents. Note the cost while it is on: this value also doubles into "
+        "`_find_active`'s liveness window, so a reaped row blocks its replacement for two "
         "hours instead of ten minutes."
     ),
     "DEFAULT_LLM_PROVIDER": (
