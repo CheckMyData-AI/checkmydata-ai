@@ -792,6 +792,40 @@ manual route and the daily sync always minted theirs, which is why the gap was i
 It falls back to the bare workflow if the row cannot be written — the row is bookkeeping,
 the index is the work.
 
+**A restart is not a failing run, and the reaper could not tell (2026-09-09).** Three
+full rebuilds of `esim-php` died in one night. The first two matched deploys to the
+second — `v352` at 23:47:54 against a last beat of 23:47:53, `v353` at 00:00:45 against
+00:00:25 — and the third was `Stopping all processes with SIGTERM` seven seconds after
+its last beat, **with no release behind it**: Heroku cycles dynos on its own. A full
+rebuild of that repository takes hours and the platform restarts the dyno roughly daily,
+so the two collide without anybody doing anything wrong.
+
+`StaleRunReaper._requeue` was the only recovery, and it is the wrong instrument twice: it
+waits `stale_running_heartbeat_timeout_seconds` (300) to conclude the run is dead, and it
+spends `reaper_requeue_max_attempts` (2 per 6 h) — a budget meant for runs that fail on
+their own merits. Two restarts exhausted it, so the third reap was refused with *"the run
+is failing for its own reasons, not a restart"*, which was wrong and unknowable from its
+data. Observed live at 01:01:26 while measuring this.
+
+Two changes, and the first is the one that matters. **A restarting worker puts back what
+it replaced** (`app/ops/orphan_runs.py`, called from `worker.startup` before it takes any
+job): a run is stamped with `boot_id` and `owner` when it starts, and an `index_repo` run
+still `running` under a *different* boot id belonged to the process this one took over
+from. The replacement is the only thing in the system that knows that for free — and a
+new `BOOT_ID` is generated on every process start, so a deploy and a dyno-cycle are
+covered alike, where `HEROKU_RELEASE_VERSION` only moves on the first. It marks the row
+terminal with its own `ORPHAN_ERROR` (never `REAP_ERROR`, which spends the failure budget
+and which `run_coordinator` compares verbatim) and enqueues the replacement inheriting
+`force_full`.
+
+Second, `_requeue_attempts` no longer counts a reap whose run started under a different
+release. An unstamped run still counts — unknown means counted, or the bound stops
+bounding.
+
+Ownership matters because `index_repo` runs on **both** process types: the queue path on
+`worker`, the manual route on `web`. A worker sweeping the web dyno's runs would kill an
+index that is running perfectly.
+
 **A reaped `index_repo` is now put back (2026-08-31).** The reaper destroyed the run and
 re-enqueued nothing, which most kinds survive — the nightly cron re-runs them. `index_repo`
 does not: `reconcile_embeddings` advances the `embedding_fingerprint` marker on **enqueue**,
