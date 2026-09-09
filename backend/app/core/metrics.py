@@ -152,6 +152,16 @@ class MetricsCollector:
         """
         self.inc("daily_sync_budget_near_ceiling_total")
 
+    def record_db_index_sample_budget_exhausted(self) -> None:
+        """`fetch_samples` hit its wall-clock budget and indexed the rest of the tables
+        without column statistics (T04).
+
+        Worth a counter rather than only a log line: this is a silent quality reduction
+        in what the agent later reasons over, and it is the number that says whether
+        `db_index_fetch_samples_budget_seconds` is set too low for a given customer.
+        """
+        self.inc("db_index_sample_budget_exhausted_total")
+
     def record_filter_guard_degrade(self) -> None:
         """The required-filter guard degraded to a warning instead of hard-failing (SYNC-L1)."""
         self.inc("filter_guard_degrade_total")

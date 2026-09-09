@@ -448,6 +448,37 @@ The degrade-on-final-attempt rule (SYNC-L1) stays, but it is no longer load-bear
 existed to survive a guard nothing could satisfy, and its warning — "the answer is
 returned WITHOUT them" — was false every time it fired on a correct query.
 
+### `db_index` and `trigger='auto'`: a person pressed a button, and it did not come back
+
+**Who starts an `auto` run — measured 2026-09-09, because a run nobody can attribute is a
+run nobody can explain.** Three paths reach `trigger="auto"`, all through
+`_ensure_db_index_wf` (`connections.py:70`): the `FreshnessReconciler` loop
+(`main.py:821`, gated on `freshness_reconciler_enabled` — default `False` and **not set on
+production**, so it has never run there), `POST /connections/{id}/test`, and
+`POST /connections/{id}/refresh-schema` (only where an index already exists). The manual
+`/index-db` route mints its own run and is `trigger='manual'`.
+
+So every `auto` run on production was **user-initiated**, which is what makes the measured
+durations a product problem rather than a background one: **30 279 s (8 h 25 m) on
+2026-08-13 and 23 198 s on 2026-08-19**, against the same 213 tables a `schedule` run
+covers in **1 544 s** on average. All completed; all ended at `fetch_samples`; and the log
+named **not one table**, so the cause cannot be recovered from it.
+
+Nothing bounded the step: one `asyncio.gather` over every table, each doing a sample query
+plus up to `db_index_stats_max_columns` distinct-value queries plus approximate statistics,
+against the customer's database and often through an SSH tunnel.
+`db_index_fetch_samples_budget_seconds` (1800, non-positive raises at boot) now bounds it.
+On exhaustion the step keeps what it sampled and skips the rest **by name**, and the run
+completes — a table without column statistics is a gap the prompt can work around, eight
+hours against a live database is not. A skipped table is given the same empty `QueryResult`
+a failed sample produces, deliberately: downstream already branches on "no evidence for
+this table", and a third state would need a new branch at every reader.
+
+Per-table timing is logged above `SamplingBudget.SLOW_TABLE_SECONDS` (5 s) only — 213 lines
+per run would hide the four that explain the duration — and the one-line summary prints on
+clean runs too, so silence never reads as a passing check. Counter:
+`db_index_sample_budget_exhausted_total`.
+
 ### Data validation, investigations, insights
 
 - **DataGate** — intermediate stage quality (`data_gate.py`); hard checks block impossible percentages/dates when `data_gate_hard_checks_enabled=True`.

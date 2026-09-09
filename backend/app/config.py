@@ -448,6 +448,19 @@ class Settings(BaseSettings):
     #: Non-positive is rejected at boot — "0" would read as configured and behave as
     #: absent. Env: SQL_TIMEOUT_BREAKER_THRESHOLD.
     sql_timeout_breaker_threshold: int = 2
+    #: Wall-clock budget for the `fetch_samples` step of a `db_index` run, in seconds.
+    #:
+    #: The step queries the CUSTOMER's database — a sample plus up to
+    #: `db_index_stats_max_columns` distinct-value queries plus approximate statistics,
+    #: per table, often through an SSH tunnel — and until 2026-09-09 nothing bounded it.
+    #: Measured on production: `trigger='auto'` runs of 30 279 s and 23 198 s against the
+    #: same 213 tables a scheduled run covers in 1 544 s on average, and every one of
+    #: those was started by a person pressing "test connection" or "refresh schema".
+    #:
+    #: On exhaustion the step keeps what it has and skips the rest by name; the run
+    #: completes. A table without statistics is a gap the prompt can work around, and
+    #: eight hours against a live database is not.
+    db_index_fetch_samples_budget_seconds: int = 1800
     #: Honour the orchestrator's remaining wall clock *inside* the SQL tool loop.
     #: Without it the loop is bounded only by `max_sql_iterations`: the orchestrator
     #: checks its own budget between its iterations, and the entire SQL agent runs
@@ -1153,6 +1166,13 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _validate_sql_loop_bounds(self) -> "Settings":
         """A bound that silently means "never" is worse than no bound at all."""
+        if self.db_index_fetch_samples_budget_seconds <= 0:
+            raise ValueError(
+                "DB_INDEX_FETCH_SAMPLES_BUDGET_SECONDS must be positive (got "
+                f"{self.db_index_fetch_samples_budget_seconds}). Not clamped: a `0` that "
+                "reads as configured and behaves as absent is how this step came to be "
+                "unbounded in the first place."
+            )
         if self.sql_timeout_breaker_threshold < 1:
             raise ValueError(
                 "SQL_TIMEOUT_BREAKER_THRESHOLD must be >= 1 "
