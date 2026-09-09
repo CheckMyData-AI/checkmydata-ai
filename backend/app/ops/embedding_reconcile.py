@@ -87,16 +87,37 @@ async def reconcile_embeddings(
 
             previous = stored.value
             ids = list((await session.scalars(select(Project.id))).all())
-            await queue_embedding_reindex(ids)
+            jobs = await queue_embedding_reindex(ids)
+            queued = sum(1 for j in jobs if j is not None)
+            if ids and queued == 0:
+                # The marker is advanced on ENQUEUE, deliberately — the rebuild is
+                # asynchronous and waiting for it would block boot. But it has to be
+                # advanced on an enqueue that HAPPENED. Advancing here would leave:
+                # collections dropped, nothing queued, and a marker asserting the rebuild
+                # already ran — which the nightly cron cannot undo, because it is
+                # `force_full=False` and only a clean run rebuilds. Leaving the marker
+                # alone means the next boot tries again, which is the recoverable state.
+                logger.error(
+                    "Embedding config changed (%s -> %s) but NOTHING could be queued for "
+                    "%d project(s); leaving the fingerprint marker at the old value so "
+                    "the next start-up retries. Vectors for those projects have been "
+                    "dropped and are not being rebuilt.",
+                    previous,
+                    current,
+                    len(ids),
+                )
+                return ReconcileResult("error", fingerprint=current)
             stored.value = current
             await session.commit()
-            logger.info(
-                "Embedding config changed (%s -> %s); reindexed %d project(s).",
+            log = logger.info if queued == len(ids) else logger.warning
+            log(
+                "Embedding config changed (%s -> %s); queued %d of %d project(s).",
                 previous,
                 current,
+                queued,
                 len(ids),
             )
-            return ReconcileResult("reindexed", reindexed=len(ids), fingerprint=current)
+            return ReconcileResult("reindexed", reindexed=queued, fingerprint=current)
     except Exception:
         logger.warning("reconcile_embeddings failed; marker untouched", exc_info=True)
         return ReconcileResult("error", fingerprint=current)

@@ -146,6 +146,24 @@ which is why the expensive path had nothing to compare against).
 `INDEXING_LLM_MODEL_BY_DOC_TYPE` (JSON, empty by default) overrides the model per doc type.
 Setting it in production is a config change and belongs in `DELIBERATE`.
 
+**0d. A reindex that drops the vectors must confirm the rebuild was queued (2026-09-09).**
+Found by doing it, while measuring T05. `queue_embedding_reindex` drops the project's
+collection and then calls `enqueue`, which returns `None` on failure rather than raising —
+so the failure was logged as `enqueued run_repo_index for project X (job=None)` at INFO,
+and the summary said `done — 1 project(s) queued` **counted from the argument list**.
+
+One level up it is worse: `reconcile_embeddings` **discarded the return value**, advanced
+the `embedding_fingerprint` marker unconditionally, and logged "reindexed N project(s)"
+from `len(ids)`. A failed enqueue therefore left the collections dropped, nothing queued,
+and a marker asserting the rebuild had happened — which the nightly cron cannot undo,
+because it is `force_full=False` and only a clean run rebuilds. Three claims computed from
+the input instead of the outcome, in a row.
+
+Now: a `None` job id logs at ERROR naming the consequence, both summaries count what
+actually happened, and the marker is **not advanced** when nothing could be queued, so the
+next boot retries. The marker still advances on ENQUEUE rather than on completion — that
+part was right, since waiting for an asynchronous rebuild would block boot.
+
 **0b. The symbol-UID schema bump reindexes itself — no operator step**
 `SYMBOL_UID_SCHEMA` (`app/knowledge/ast_parser.py`) is part of
 `embedding_fingerprint()`, so the 2026-08-19 UID change (methods now carry their

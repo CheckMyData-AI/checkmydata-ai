@@ -78,15 +78,32 @@ async def queue_embedding_reindex(project_ids: list[str]) -> list[str | None]:
             project_id=pid,
             force_full=True,
         )
-        logger.info(
-            "queue_embedding_reindex: enqueued run_repo_index for project %s (job=%s)",
-            pid[:8],
-            job_id,
-        )
+        if job_id is None:
+            # The collection above is already gone. `enqueue` returns None rather than
+            # raising, so this used to be logged at INFO as
+            # "enqueued run_repo_index for project X (job=None)" — a failure written in
+            # the grammar of a success. Observed doing exactly that on 2026-09-09.
+            logger.error(
+                "queue_embedding_reindex: project %s has had its vectors dropped and "
+                "NOTHING was queued to rebuild them. The nightly sync is incremental and "
+                "cannot recover this; a full re-index must be enqueued by hand.",
+                pid[:8],
+            )
+        else:
+            logger.info(
+                "queue_embedding_reindex: enqueued run_repo_index for project %s (job=%s)",
+                pid[:8],
+                job_id,
+            )
         results.append(job_id)
 
-    logger.info(
-        "queue_embedding_reindex: done — %d project(s) queued for re-embedding.",
+    queued = sum(1 for r in results if r is not None)
+    # Counted from the outcome, not from the argument list. The previous version said
+    # "1 project(s) queued" about a run that queued none.
+    log = logger.info if queued == len(project_ids) else logger.error
+    log(
+        "queue_embedding_reindex: done — %d of %d project(s) queued for re-embedding.",
+        queued,
         len(project_ids),
     )
     return results
