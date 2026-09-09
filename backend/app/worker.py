@@ -296,10 +296,22 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
     run_migrations()
     await init_db()
 
-    # Before taking any job: put back what the process this one replaced was running.
-    # A deploy and a platform dyno-cycle both land here, and this worker is the only
-    # thing that knows for free that the previous boot's runs are dead — the reaper
-    # would wait 300 s and then spend a budget meant for genuine failures.
+    redis_url = os.getenv("REDIS_URL")
+
+    # BEFORE anything in this process tries to enqueue. `app.core.task_queue.enqueue`
+    # routes through a module-level pool that only `init_task_queue` builds, and until
+    # 2026-09-09 the worker never called it — it was only in the FastAPI lifespan. The
+    # worker CONSUMES through arq's own connection, so taking work was fine; everything
+    # that puts work BACK silently did nothing. That is the orphan sweep below and
+    # `StaleRunReaper._requeue`, reached from `reaper_loop` further down.
+    from app.core.task_queue import init_task_queue
+
+    await init_task_queue(redis_url)
+
+    # Now: put back what the process this one replaced was running. A deploy and a
+    # platform dyno-cycle both land here, and this worker is the only thing that knows
+    # for free that the previous boot's runs are dead — the reaper would wait 300 s and
+    # then spend a budget meant for genuine failures.
     try:
         from app.models.base import async_session_factory
         from app.ops.orphan_runs import requeue_orphaned_runs
@@ -308,7 +320,6 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
             await requeue_orphaned_runs(_orphan_db)
     except Exception:
         logger.warning("orphan sweep failed at worker start-up", exc_info=True)
-    redis_url = os.getenv("REDIS_URL")
     await redis_client.connect(redis_url)
     tracker.enable_cross_process_publish()
     from app.services.run_coordinator import RunCoordinator

@@ -827,6 +827,28 @@ manual route and the daily sync always minted theirs, which is why the gap was i
 It falls back to the bare workflow if the row cannot be written — the row is bookkeeping,
 the index is the work.
 
+**And the worker could not enqueue anything at all (2026-09-09).** Found within the hour
+by the ERROR line the orphan sweep above was given for exactly this purpose:
+
+```
+04:30:09  ERROR app.core.task_queue: No coro_factory for in-process fallback of task run_repo_index
+04:30:09  ERROR app.ops.orphan_runs: … orphaned by a restart and could NOT be put back
+04:30:09  INFO  app.ops.orphan_runs: 1 running index_repo run(s) seen, 0 put back
+```
+
+`app.core.task_queue.enqueue` routes through a module-level `_arq_pool`, and
+`init_task_queue` — the only thing that builds it — was called in `app/main.py`'s FastAPI
+lifespan and **nowhere in the worker**. The worker *consumes* through arq's own connection,
+so taking work was never affected; everything in that process that puts work **back** was
+a no-op that returned `None`. That is the orphan sweep, and `StaleRunReaper._requeue`
+reached from the worker's own `reaper_loop` — so the reaper's re-enqueue after a reap had
+never worked from the worker, only from the copy on `web`. Which is why the requeue budget
+looked *exhausted* when it was really *unusable*.
+
+`worker.startup` now calls `init_task_queue(redis_url)` before anything enqueues, and a
+test pins that ORDER rather than merely its presence — the sweep ran two lines too early
+and that was the whole defect.
+
 **A restart is not a failing run, and the reaper could not tell (2026-09-09).** Three
 full rebuilds of `esim-php` died in one night. The first two matched deploys to the
 second — `v352` at 23:47:54 against a last beat of 23:47:53, `v353` at 00:00:45 against
