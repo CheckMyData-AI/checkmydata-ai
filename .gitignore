@@ -76,3 +76,14 @@ notes.md
 
 # Code graph — rebuilt locally with `graphify . --code-only`; graph.json is ~28 MB
 graphify-out/
+
+# Machine-local agent tooling: third-party skill packs installed into this
+# checkout. The repo ships exactly one skill of its own (checkmydata-mcp);
+# everything else under .claude/skills/ is per-machine and must not become a
+# second channel for packs that are installed globally.
+.claude/skills/*
+!.claude/skills/checkmydata-mcp/
+
+# Supabase CLI link state (.temp carries the production project ref — an
+# infrastructure identifier that has no business in a public repository).
+supabase/
