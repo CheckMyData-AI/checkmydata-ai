@@ -92,6 +92,13 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "claude-3-5-sonnet-20241022": 200_000,
     "claude-3-haiku-20240307": 200_000,
     "claude-3-opus-20240229": 200_000,
+    # OpenRouter ids this deployment actually runs on (catalogue-checked 2026-09-09).
+    "deepseek/deepseek-v4-flash-0731": 1_310_720,
+    "z-ai/glm-5.2": 1_048_576,
+    "qwen/qwen3.8-flash": 1_000_000,
+    "qwen/qwen3.7-plus": 1_000_000,
+    "moonshotai/kimi-k2.5": 262_144,
+    "anthropic/claude-opus-4.8": 1_000_000,
 }
 
 _DEFAULT_CONTEXT_WINDOW = 16_000
@@ -325,6 +332,10 @@ class LLMRouter:
         last_error: Exception | None = None
         sink = usage_sink or self._sink
         chosen = chain[0] if chain else None
+        # A caller that names no model gets the deployment's default, not the
+        # adapter's hardcoded one — DEFAULT_LLM_MODEL is how an operator moves
+        # every unpinned call site at once. An explicit model always wins.
+        model = model or (settings.default_llm_model or None)
 
         for provider_name in chain:
             if provider_name != chosen:
@@ -392,6 +403,7 @@ class LLMRouter:
         chain = self._get_fallback_chain(preferred_provider)
         last_error: Exception | None = None
         chosen = chain[0] if chain else None
+        model = model or (settings.default_llm_model or None)
 
         for provider_name in chain:
             if provider_name != chosen:
