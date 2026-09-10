@@ -53,6 +53,23 @@ STATIC_MODELS: dict[str, list[dict]] = {
             "name": "Claude 3.5 Haiku",
             "context_length": 200000,
         },
+        # The Chinese open-weight flagships this deployment actually runs on
+        # (see DEFAULT_LLM_MODEL and the per-project overrides). Prices and the
+        # full catalogue come from the live endpoint; this list only has to keep
+        # the selector usable when that endpoint is unreachable.
+        {
+            "id": "deepseek/deepseek-v4-flash-0731",
+            "name": "DeepSeek V4 Flash (0731)",
+            "context_length": 1310720,
+        },
+        {"id": "z-ai/glm-5.2", "name": "GLM-5.2", "context_length": 1048576},
+        {"id": "qwen/qwen3.8-flash", "name": "Qwen3.8 Flash", "context_length": 1000000},
+        {"id": "qwen/qwen3.7-plus", "name": "Qwen3.7 Plus", "context_length": 1000000},
+        {
+            "id": "moonshotai/kimi-k2.5",
+            "name": "Kimi K2.5",
+            "context_length": 262144,
+        },
         {"id": "openai/gpt-4o", "name": "GPT-4o", "context_length": 128000},
         {"id": "openai/gpt-4o-mini", "name": "GPT-4o Mini", "context_length": 128000},
         {"id": "openai/o1", "name": "o1", "context_length": 200000},

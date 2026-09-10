@@ -210,6 +210,15 @@ class Settings(BaseSettings):
 
     default_llm_provider: str = "openai"
 
+    # The model every call site that names none resolves to (env DEFAULT_LLM_MODEL).
+    # Empty keeps each adapter's own default, which is what self-hosted installs
+    # expect. A slash-namespaced id ("deepseek/deepseek-v4-flash-0731") is an
+    # OpenRouter id and is refused at boot unless the default provider is
+    # openrouter — handed to a native OpenAI/Anthropic adapter it would 404 on
+    # the first fallback instead of at start-up, which is the wrong place to
+    # find out.
+    default_llm_model: str = ""
+
     # F-LLM-01. The router falls back to another vendor when the chosen one fails, and
     # the messages it retries with are the user's question, their schema and their query
     # results — so a transient 503 at Anthropic sends that content to OpenAI. Fallback
@@ -1323,6 +1332,12 @@ class Settings(BaseSettings):
             raise ValueError("LEARNING_ANALYZER_MODE must be one of: heuristic, hybrid, llm_first")
         if self.default_llm_provider not in {"openai", "anthropic", "openrouter"}:
             raise ValueError("DEFAULT_LLM_PROVIDER must be one of: openai, anthropic, openrouter")
+        if "/" in self.default_llm_model and self.default_llm_provider != "openrouter":
+            raise ValueError(
+                "DEFAULT_LLM_MODEL looks like an OpenRouter id "
+                f"({self.default_llm_model!r}) but DEFAULT_LLM_PROVIDER is "
+                f"{self.default_llm_provider!r} — a native adapter would 404 on it."
+            )
         # R1-2: reject unknown SSH host-key policies early so a typo can't
         # silently fall back to the insecure "disabled" behavior at runtime.
         if self.ssh_host_key_policy not in {"disabled", "tofu", "strict"}:
