@@ -134,7 +134,7 @@ const FEATURES = [
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     ),
     title: "Privacy-first by design",
-    desc: "No tracking, no telemetry, read-only by default — and the source is open, so you can verify exactly how your data is handled.",
+    desc: "No advertising or analytics trackers, read-only by default, and errors reported with secrets scrubbed twice — the source is open, so you can verify exactly how your data is handled.",
   },
 ] as { icon: React.ReactNode; title: string; desc: string; highlight?: boolean }[];
 

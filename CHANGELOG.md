@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — five public claims the code contradicts
+
+P0-5; BIZ-03, BIZ-09, BIZ-11, BIZ-13, BIZ-15. In all five the code does what it was built
+to do and the false statement is on the page, which is why the guards added here read the
+pages rather than the code.
+
+**The Privacy Policy told a security reviewer that result rows never reach the model.** Its
+two-column table listed `Raw database rows/values` under **NOT sent to LLM**, while
+`format_query_results` renders up to 20 of the customer's actual rows into the
+`execute_query` tool message on every answer, and sampled column values ride the schema
+context. The product's entire ask is production database credentials; this is the sentence
+diligence reads first. The row now says what is sent and how much.
+
+**Two processors were missing from §6.** Stripe receives the user's email and display name
+at first checkout; Sentry receives error events from the backend and the browser. §6 named
+only LLM providers and Google OAuth, and the landing page said "No tracking, no telemetry"
+— which is not true of error monitoring under any reading a reader would accept. The
+section now has 6.3 and 6.4, and the landing claim is narrowed to what it can support: no
+advertising or analytics trackers, and errors scrubbed twice before they leave.
+
+**The architecture described was not the deployed one.** §5 sold a "local-first
+architecture" of SQLite and ChromaDB; the hosted service runs managed PostgreSQL with
+pgvector, and SQLite is the self-hosted path — a different sentence, now written as two.
+§9 said the authentication token sits in local storage; it is an httpOnly cookie, which is
+the stronger claim and the one a reviewer checks.
+
+**The pricing FAQ still sold a Free plan and a Pro tier**, both retired on 2026-08-31 —
+and `_no_plan()` means an unsubscribed account resolves to no tier at all rather than to
+the cheapest one.
+
+**The README advertised the cross-encoder reranker as default-on.** It is default-off, its
+dependency is not in the production image, and it has therefore been a no-op in every
+deployment that has ever run.
+
+No brand pack exists in this repository (`docs/brand/` is absent), so the voice layer was
+deliberately skipped rather than improvised: each page keeps its own register and only
+false statements changed. `/brand-init` is the route if a pack is wanted.
 ### Fixed — the "hybrid" retriever was running as BM25-only
 
 P1 row 8; RET-01, RET-02, RET-04.
