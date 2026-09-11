@@ -155,9 +155,9 @@ class TestNothingRetiredIsStillForSale:
         for retired in ("Free", "Pro"):
             if retired in names:  # pragma: no cover - only if the ladder changes back
                 continue
-            assert f"{retired} " not in text.replace("free trial", "").replace(
-                "for free", ""
-            ), f"the pricing page still names the retired tier {retired!r}"
+            assert f"{retired} " not in text.replace("free trial", "").replace("for free", ""), (
+                f"the pricing page still names the retired tier {retired!r}"
+            )
 
 
 class TestTheReadmeDoesNotSellAnInertFeature:

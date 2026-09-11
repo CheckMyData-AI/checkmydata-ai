@@ -69,7 +69,7 @@ All routine commands are driven through the root `Makefile`. It bootstraps a ven
 | `make test-integration` | Backend integration tests. |
 | `make test-all` | Everything under `backend/tests/`. |
 | `make test-frontend` | Vitest (`vitest run`). |
-| `make lint` | `ruff check app/ tests/`. |
+| `make lint` | `ruff format --check app/ tests/` **then** `ruff check app/ tests/`. The format check is first because CI runs it first — and because it was absent here until 2026-09-11, which cost two CI cycles in one afternoon: `make check` passed locally on a tree CI rejected in sixty seconds. |
 | `make check` | `make lint` + `make test-all` (backend only — no frontend lint/tsc). |
 
 **CI parity** (`.github/workflows/ci.yml`):
