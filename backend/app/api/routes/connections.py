@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.config import settings as app_config
+from app.connectors.exec_templates import validate_command_template
 from app.connectors.host_guard import HostNotAllowedError, check_connection_targets
 from app.connectors.ssh_pre_commands import validate_pre_commands
 from app.core import task_queue
@@ -364,6 +365,15 @@ class _ConnectionFieldRules(BaseModel):
         # F-SEC-5: restrict pre-commands to the env-setup allowlist.
         if v is not None:
             validate_pre_commands(v)
+        return v
+
+    @field_validator("ssh_command_template", check_fields=False)
+    @classmethod
+    def validate_ssh_command_template(cls, v: str | None) -> str | None:
+        # SQL-06: the template is joined onto the same shell line as ssh_pre_commands,
+        # which ARE screened. Screening one half of a shell line is screening neither.
+        if v:
+            validate_command_template(v)
         return v
 
     @field_validator("name", "connection_string", mode="before", check_fields=False)

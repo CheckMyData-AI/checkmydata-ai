@@ -94,7 +94,7 @@ class TestRetryNeedsPermission:
     @pytest.mark.asyncio
     async def test_an_idempotent_command_is_retried_after_reconnect(self):
         c, calls = _connector()
-        out, _, code = await c._run_command("psql -c 'SELECT 1'", idempotent=True)
+        out, _, code, _ = await c._run_command("psql -c 'SELECT 1'", idempotent=True)
         assert out == "ok" and code == 0
         assert len(calls["sent"]) == 2, calls["sent"]
 

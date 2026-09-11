@@ -122,15 +122,36 @@ class TestNoTemplateStillInterpolatesTheSecret:
 
 
 class TestTheQueryStillGetsThrough:
-    """The password takes the first line of the channel's stdin and the query is piped in
-    after it. If that ordering were wrong the client would try to run the password."""
+    """The password takes the first line of the channel's stdin; the query does not follow it.
 
-    def test_the_query_is_still_piped_to_the_client(self):
+    **What this class asserted until 2026-09-11, and why it had to be inverted.** It read:
+
+        assert "|" in command
+        assert command.index("read -r DBPASS") < command.index("SELECT 42")
+
+    — the query is piped into the client after the password line. That was the shape this
+    file's own fix produced, and it is the shape SQL-01 exploits: text on `psql`'s stdin is
+    interactive input, where a line beginning `\\` is a client command and `\\!` runs a shell
+    command on the bastion. The query is now passed as an **argument** (`-c`/`-e`/`-q`),
+    which is the one place a client treats it as a statement and nothing else.
+
+    What this file exists for is unchanged and still checked below: the PASSWORD is on
+    stdin and in no argv.
+    """
+
+    def test_the_query_reaches_the_client_as_an_argument(self):
         command, _ = _connector()._build_command("query", "SELECT 42")
 
         assert "SELECT 42" in command
-        assert "|" in command
-        assert command.index("read -r DBPASS") < command.index("SELECT 42")
+        assert "read -r DBPASS" in command
+        assert "echo " not in command, (
+            "the query is piped to the client's stdin again — that is SQL-01, where a "
+            "backslash line becomes a psql meta-command"
+        )
+        assert command.index("read -r DBPASS") < command.index("SELECT 42"), (
+            "the reader must still run before the client, or the password line is fed to "
+            "the client as input"
+        )
 
     def test_pre_commands_still_run_first(self):
         command, _ = _connector(

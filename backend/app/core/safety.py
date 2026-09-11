@@ -4,7 +4,11 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
-from app.core.sql_text import strip_sql_comments
+from app.core.sql_text import (
+    sql_dialect_for,
+    strip_sql_comments,
+    strip_sql_comments_and_literals,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +32,86 @@ DANGEROUS_PATTERNS_SQL = [
     re.compile(r"\bLOAD\s+DATA\b", re.IGNORECASE),
     re.compile(r"(^|;)\s*DO\s+(\$|LANGUAGE\b|')", re.IGNORECASE | re.MULTILINE),
 ]
+
+# A line whose first non-whitespace character is a backslash. `psql` reads client
+# meta-commands from stdin in non-interactive mode exactly as it does interactively —
+# `\!` runs a shell command, `\copy … TO PROGRAM` runs one, `\i`/`\o` read and write files —
+# and the SSH-exec connector pipes the query to psql's stdin. So the text this guard checks
+# and the text that executes are the same string while the EXECUTOR is the client, not the
+# engine every other rule here was written against (SQL-01).
+#
+# Checked against the query with comments **and string literals** blanked, so a Windows path
+# in a WHERE clause is not a false refusal. Blocked at every level below UNRESTRICTED,
+# because shell execution on the bastion is not a SQL permission question.
+#
+# **Any** backslash, not only one at the start of a line.** The first draft anchored on
+# `^[ \t]*\\` and let `SELECT 1 \copy users TO PROGRAM \'id\'` through — psql takes a
+# meta-command after SQL on the same line, which is exactly how the familiar `\g` terminator
+# works. Outside a literal, a backslash has no meaning in any dialect this product speaks, so
+# refusing all of them costs a quoted identifier containing one and nothing else.
+_META_COMMAND_LINE = re.compile(r"\\")
+
+# Functions and table functions that read the server's filesystem or make a network request.
+# Every one of them is a SELECT, so the leading-token allow-list passes it and the DML
+# denylist never looks (SQL-11). A DB-enforced read-only session does not block a read
+# either, so on this class the guard is the only layer that exists.
+#
+# Scoped by dialect, and an unknown dialect gets all of them: a false refusal is recoverable,
+# and this list only ever grows by finding another one the hard way. The trailing `\s*\(`
+# is what keeps `SELECT file, url FROM downloads` — ordinary column names — working.
+_SERVER_ACCESS_FUNCS: dict[str, tuple[str, ...]] = {
+    "postgres": (
+        "pg_read_file",
+        "pg_read_binary_file",
+        "pg_ls_dir",
+        "pg_stat_file",
+        "pg_ls_logdir",
+        "pg_ls_waldir",
+        "lo_import",
+        "lo_export",
+        "dblink",
+        "dblink_connect",
+    ),
+    "mysql": ("load_file",),
+    "clickhouse": (
+        "file",
+        "url",
+        "s3",
+        "hdfs",
+        "remote",
+        "remotesecure",
+        "jdbc",
+        "odbc",
+        "mysql",
+        "postgresql",
+        "mongodb",
+        "sqlite",
+        "azureblobstorage",
+    ),
+}
+
+
+def _server_access_pattern(dialect: str) -> re.Pattern[str]:
+    """The file/network function denylist for *dialect*; every list when it is unknown."""
+    if dialect in _SERVER_ACCESS_FUNCS:
+        names = _SERVER_ACCESS_FUNCS[dialect]
+    else:
+        names = tuple(n for group in _SERVER_ACCESS_FUNCS.values() for n in group)
+    return re.compile(r"\b(" + "|".join(sorted(set(names))) + r")\s*\(", re.IGNORECASE)
+
+
+# A data-modifying statement in a position the table-name regexes below cannot reach: the
+# body of a CTE. `WITH t AS (UPDATE "my table" SET x=1 RETURNING id) SELECT * FROM t` passed
+# the read-only guard because `DML_PATTERNS_SQL`'s UPDATE pattern spans the table name and a
+# space inside a quoted identifier breaks it (SQL-12). Anchoring on the keyword's POSITION —
+# the start of the text, or just after `(` or `;` — needs to know nothing about table names.
+#
+# `(?!\s*\()` excludes the function forms: MySQL's `REPLACE(str, a, b)` and `INSERT(str, …)`
+# are perfectly ordinary inside a SELECT, and both would otherwise sit right after a `(`.
+_DML_IN_ANY_POSITION = re.compile(
+    r"(?:^|[(;])\s*(UPDATE|DELETE|INSERT|MERGE|UPSERT|REPLACE)\b(?!\s*\()",
+    re.IGNORECASE,
+)
 
 DML_PATTERNS_SQL = [
     re.compile(r"\b(INSERT)\s+INTO\b", re.IGNORECASE),
@@ -105,6 +189,20 @@ class SafetyGuard:
 
     def validate_sql(self, query: str, db_type: str = "") -> SafetyResult:
         stripped = _strip_sql_comments(query, db_type).strip().rstrip(";")
+        # Literals blanked as well: the three checks added for SQL-01/11/12 look for a
+        # character or a call, both of which appear inside ordinary string data.
+        scrubbed = strip_sql_comments_and_literals(query, db_type)
+
+        if _META_COMMAND_LINE.search(scrubbed):
+            logger.warning("Blocked client meta-command line in SQL")
+            return SafetyResult(
+                is_safe=False,
+                reason=(
+                    "Client meta-command (a line starting with '\\') is not allowed: "
+                    "the database client executes these itself, outside SQL"
+                ),
+                query=query,
+            )
 
         for pattern in DANGEROUS_PATTERNS_SQL:
             match = pattern.search(stripped)
@@ -139,6 +237,28 @@ class SafetyGuard:
                         "Only read-only statements (SELECT/WITH/SHOW/EXPLAIN/…) "
                         "are allowed in read-only mode"
                     ),
+                    query=query,
+                )
+
+            access = _server_access_pattern(sql_dialect_for(db_type)).search(scrubbed)
+            if access:
+                logger.warning("Blocked server-side file/network function: %s", access.group(1))
+                return SafetyResult(
+                    is_safe=False,
+                    reason=(
+                        f"{access.group(1)}() reads the server's filesystem or the network, "
+                        "which is not allowed in read-only mode"
+                    ),
+                    query=query,
+                )
+
+            # Positionally anchored, so a quoted table name with a space cannot hide it.
+            cte_dml = _DML_IN_ANY_POSITION.search(scrubbed)
+            if cte_dml:
+                logger.warning("Blocked DML in read-only mode: %s", cte_dml.group(1))
+                return SafetyResult(
+                    is_safe=False,
+                    reason=f"DML not allowed in read-only mode: {cte_dml.group(1)}",
                     query=query,
                 )
 
