@@ -143,8 +143,18 @@ class TestPipelineSQLStageResultValidation:
         assert result.query_result is qr
 
     @pytest.mark.asyncio
-    async def test_empty_result_with_retry_flag_produces_stage_error(self, monkeypatch):
-        """0-row result with query_empty_result_retry=True → requery → stage error."""
+    async def test_empty_result_with_retry_flag_is_a_warning_not_a_failure(self, monkeypatch):
+        """0-row result with query_empty_result_retry=True → requery → stage warning.
+
+        This test used to demand `status == "error"`, and that was ORCH-02. One gate
+        then produced two opposite outcomes depending on which execution path the
+        router happened to pick: the flat loop appends the identical directive as a
+        warning and keeps the answer, while the stage became error/data_missing —
+        non-retryable, so the orchestrator burned both planner replans and returned a
+        failed pipeline for a question whose answer was zero. By the time the
+        directive is evaluated the SQL agent's own ValidationLoop has already spent
+        its empty-result retries and concluded that zero is the truth.
+        """
         from app.config import settings
 
         monkeypatch.setattr(settings, "query_empty_result_retry", True)
@@ -162,7 +172,9 @@ class TestPipelineSQLStageResultValidation:
 
         result = await ex._run_sql_stage("how many orders", stage, ctx)
 
-        assert result.status == "error"
+        assert result.status == "success"
+        assert "DATA QUALITY WARNING (REQUERY)" in result.summary
+        assert result.query_result is qr
 
     @pytest.mark.asyncio
     async def test_truncated_result_produces_warning_in_summary(self):

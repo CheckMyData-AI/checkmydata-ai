@@ -348,9 +348,18 @@ class TestCollect:
             broken
         }
 
-    async def test_quota_exhaustion_is_isolated_to_its_period(
+    async def test_quota_exhaustion_stops_the_report_rather_than_spending_it(
         self, db: AsyncSession, connection_id: str
     ):
+        """It used to demand that every later period was still attempted.
+
+        That was the premise ANA-02 rests on and it is wrong: a GA4 bucket is
+        per property per window, so every remaining period of this report draws
+        on the same spent one. Continuing produced nothing but journal writes —
+        and, before ANA-02, three vendor calls per doomed period, at exactly the
+        moment quota was scarcest. The periods stay `pending`, so the next run
+        collects them once the window has rolled over.
+        """
         adapter = FakeAdapter(
             reports=_only("overview"),
             failures={("overview", EXPECTED_DAYS[0]): QuotaExhaustedError("tokens_per_day spent")},
@@ -358,8 +367,11 @@ class TestCollect:
 
         outcome = await _service(adapter).collect_in_session(db, connection_id)
 
-        assert outcome.status == "partial"
-        assert adapter.periods_for("overview") == EXPECTED_DAYS
+        assert outcome.status == "failed"
+        assert adapter.periods_for("overview") == EXPECTED_DAYS[:1]
+        journal = await _journal(db, "overview")
+        assert journal[EXPECTED_DAYS[0]].status == "failed"
+        assert set(journal) == {EXPECTED_DAYS[0]}
 
     async def test_bare_analytics_error_is_journalled_not_raised(
         self, db: AsyncSession, connection_id: str

@@ -46,7 +46,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, tuple_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,7 +56,9 @@ from app.analytics.errors import (
     AnalyticsAuthError,
     AnalyticsEmpty,
     AnalyticsError,
+    AnalyticsInvalidRequestError,
     AnalyticsPermissionError,
+    QuotaExhaustedError,
 )
 from app.analytics.ga4.config import CREDENTIAL_SECRET_KEY, SOURCE_CONFIG_KEY
 from app.analytics.outcome import CollectOutcome
@@ -114,6 +116,21 @@ class FactTable:
     model: type[Any]
     key_columns: tuple[str, ...]
 
+
+class _QuotaWallError(Exception):
+    """Internal signal: the vendor's quota is spent for every configured property.
+
+    Not part of the error taxonomy and never raised outward — it exists only to
+    carry "stop the whole run" from one report's loop to the loop over reports,
+    having already journalled the period that hit the wall.
+    """
+
+
+#: The part of a fact table's natural key that identifies *what was fetched*
+#: rather than *what was in it*. Every GA4 fact table is keyed on these two plus
+#: its own dimensions; the revised-away sweep (ANA-12) deletes inside one of
+#: these scopes and never across them.
+_SWEEP_SCOPE_COLUMNS: tuple[str, ...] = ("property_id", "date")
 
 #: GA4 report name -> fact table (spec §1.4). Keys must match
 #: :data:`app.analytics.ga4.reports.GA4_REPORTS`; a unit test asserts both that
@@ -333,16 +350,30 @@ class AnalyticsCollectService:
         try:
             backfill_days = self._backfill_days(conn)
             for spec in adapter.available_reports():
-                await self._collect_report(
-                    session,
-                    adapter=adapter,
-                    conn=conn,
-                    report=spec.name,
-                    grain=spec.grain,
-                    table=tables.get(spec.name),
-                    backfill_days=backfill_days,
-                    outcome=outcome,
-                )
+                try:
+                    await self._collect_report(
+                        session,
+                        adapter=adapter,
+                        conn=conn,
+                        report=spec.name,
+                        grain=spec.grain,
+                        table=tables.get(spec.name),
+                        backfill_days=backfill_days,
+                        outcome=outcome,
+                    )
+                except _QuotaWallError:
+                    # The adapter only raises quota out of a fetch once *every*
+                    # configured property is spent (a GA4 bucket is per property),
+                    # and every remaining report of this connection draws on the
+                    # same buckets. Stopping here is the difference between one
+                    # honest error and one per report saying the same thing — and,
+                    # before ANA-02, between stopping and spending three vendor
+                    # calls on each of ~150 doomed period/report pairs.
+                    logger.warning(
+                        "Analytics collect: connection %s stopped — vendor quota is spent",
+                        conn.id[:8],
+                    )
+                    break
         finally:
             await adapter.disconnect()
 
@@ -498,9 +529,17 @@ class AnalyticsCollectService:
                 )
                 outcome.periods_empty += 1
                 continue
-            except (AnalyticsAuthError, AnalyticsPermissionError) as exc:
+            except (
+                AnalyticsAuthError,
+                AnalyticsPermissionError,
+                AnalyticsInvalidRequestError,
+            ) as exc:
                 # Configuration error: every remaining period of this report
                 # would fail the same way. Stop the report, keep the run.
+                # An invalid request (400/404) joined this branch deliberately:
+                # a retired metric or a deleted property fails identically on
+                # every period, and isolating it re-issued the whole window's
+                # worth of doomed calls once a day, for ever.
                 message = f"{conn.name}/{report}: {exc}"
                 await journal.record(
                     session,
@@ -517,11 +556,34 @@ class AnalyticsCollectService:
                     exc,
                 )
                 return
+            except QuotaExhaustedError as exc:
+                # A spent bucket is spent for the whole window, and every
+                # remaining period of this report draws on the same one — so
+                # continuing produces nothing but journal writes and, before
+                # ANA-02 was fixed, three vendor calls per doomed period. The
+                # period is journalled `failed`, which keeps it pending, so the
+                # next run collects it once the window has rolled over.
+                message = f"{conn.name}/{report} {period}: {exc}"
+                await journal.record(
+                    session,
+                    connection_id=conn.id,
+                    report=report,
+                    period=period,
+                    status="failed",
+                    error=str(exc),
+                )
+                outcome.errors.append(message)
+                logger.warning(
+                    "Analytics collect: report %r stopped on an exhausted quota: %s",
+                    report,
+                    exc,
+                )
+                raise _QuotaWallError from exc
             except AnalyticsError as exc:
-                # Transient, quota, or a bare AnalyticsError from an unusable
-                # payload — all isolated to this period. Anything that is *not*
-                # an AnalyticsError (e.g. ValueError for an unknown report name)
-                # is a programming error and propagates.
+                # Transient, or a bare AnalyticsError from an unusable payload —
+                # isolated to this period. Anything that is *not* an
+                # AnalyticsError (e.g. ValueError for an unknown report name) is
+                # a programming error and propagates.
                 await journal.record(
                     session,
                     connection_id=conn.id,
@@ -613,8 +675,55 @@ class AnalyticsCollectService:
             logger.debug("Analytics upsert falling back to select-then-write on %s", dialect)
             await self._upsert_portable(session, table, values, payload_columns, conflict_columns)
 
+        await self._sweep_revised_away(session, connection_id, table, values)
         await session.flush()
         return len(values)
+
+    @staticmethod
+    async def _sweep_revised_away(
+        session: AsyncSession,
+        connection_id: str,
+        table: FactTable,
+        values: list[dict[str, Any]],
+    ) -> None:
+        """Delete rows the vendor has stopped reporting for a refetched period.
+
+        The tail refetch exists because vendors revise, and a revision can
+        *remove* a row — GA4 spam-filters events and reattributes geo. The upsert
+        alone is INSERT … ON CONFLICT DO UPDATE, so the stale natural key
+        survived and kept counting into totals published as real measurements
+        (ANA-12).
+
+        Scoped to the ``(property_id, date)`` pairs the fresh response actually
+        covered, never to the whole period. With per-property isolation (ANA-11)
+        a failed property contributes no rows at all, and treating its absence as
+        a removal would turn one property's outage into data loss.
+        """
+        dimension_columns = [
+            column for column in table.key_columns if column not in _SWEEP_SCOPE_COLUMNS
+        ]
+        if not dimension_columns:
+            # The natural key IS the scope, so every row in it was just written;
+            # there is nothing a refetch could have left behind.
+            return
+
+        model = table.model
+        fresh: dict[tuple[Any, ...], set[tuple[Any, ...]]] = {}
+        for record in values:
+            scope = tuple(record[column] for column in _SWEEP_SCOPE_COLUMNS)
+            fresh.setdefault(scope, set()).add(
+                tuple(record[column] for column in dimension_columns)
+            )
+
+        for scope, keys in fresh.items():
+            conditions = [model.connection_id == connection_id]
+            conditions += [
+                getattr(model, column) == value
+                for column, value in zip(_SWEEP_SCOPE_COLUMNS, scope, strict=True)
+            ]
+            dimension_expr = tuple_(*(getattr(model, c) for c in dimension_columns))
+            conditions.append(dimension_expr.not_in([tuple(key) for key in sorted(keys)]))
+            await session.execute(delete(model).where(*conditions))
 
     @staticmethod
     async def _upsert_portable(

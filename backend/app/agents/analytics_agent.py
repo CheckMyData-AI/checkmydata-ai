@@ -68,6 +68,7 @@ from app.agents.base import AgentContext, AgentResult, BaseAgent
 from app.agents.data_gate import DataGate
 from app.agents.prompts import get_current_datetime_str
 from app.agents.prompts.analytics_prompt import build_analytics_system_prompt
+from app.agents.validation import _MENTIONS_A_NUMBER
 from app.analytics.ga4.reports import GA4_REPORTS, GA4ReportSpec
 from app.analytics.journal import DONE_STATUSES
 from app.config import settings
@@ -376,6 +377,9 @@ class AnalyticsResult(AgentResult):
     columns: list[str] = field(default_factory=list)
     rows: list[list[Any]] = field(default_factory=list)
     truncated: bool = False
+    #: How many report windows were actually read. Zero means every figure in the
+    #: answer came from somewhere other than a measurement (ANA-07).
+    windows_opened: int = 0
 
 
 @dataclass
@@ -447,6 +451,31 @@ class _RunState:
 
 
 SessionFactory = Callable[[], Any]
+
+
+def _degraded_periods(
+    periods: Sequence[str], statuses: Mapping[str, tuple[str, str | None]]
+) -> list[str]:
+    """The periods a *truncation* caveat is owed for, and only those.
+
+    A collected period can still carry a caveat: the collect service writes the
+    vendor's ``degraded`` sentence into ``error`` on an otherwise ``ok`` row.
+    Reading only ``missing``/``failed`` drops it, and the window then reports
+    itself complete while a period inside it was truncated.
+
+    The predicate is ``status == "ok"`` rather than ``status in DONE_STATUSES``
+    (ANA-01). ``error`` carries two unrelated meanings — the vendor's truncation
+    sentence on an ``ok`` row, and the ``AnalyticsEmpty`` text on an ``empty``
+    one — and ``empty`` is a done status, so the wider predicate reported a day
+    GA4 genuinely had nothing for as *"the vendor truncated this period … the
+    values below are real, but lower than the true total"*. Nothing was
+    truncated and the totals were complete.
+    """
+    return [
+        f"{period}: {statuses[period][1]}"
+        for period in periods
+        if statuses.get(period, ("", None))[0] == "ok" and statuses[period][1]
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -859,15 +888,7 @@ class AnalyticsAgent(BaseAgent):
         missing = [p for p in unrecorded if p not in with_rows]
         unjournalled = [p for p in unrecorded if p in with_rows]
         failed = [p for p in periods if statuses.get(p, ("", None))[0] == "failed"]
-        # A collected period can still carry a caveat: the collect service writes
-        # the vendor's ``degraded`` sentence into ``error`` on an otherwise ``ok``
-        # row. Reading only ``missing``/``failed`` drops it, and the window then
-        # reports itself complete while a period inside it was truncated.
-        degraded = [
-            f"{p}: {statuses[p][1]}"
-            for p in periods
-            if statuses.get(p, ("", None))[0] in DONE_STATUSES and statuses[p][1]
-        ]
+        degraded = _degraded_periods(periods, statuses)
         window = _Window(
             report=binding.name,
             start=start.isoformat(),
@@ -1220,6 +1241,7 @@ class AnalyticsAgent(BaseAgent):
 
         caveats: list[str] = []
         # 2. Truncation / partial-data caveats.
+        caveats.extend(self._no_window_caveat(state, raw_answer))
         caveats.extend(self._partial_caveats(state))
         if state.truncated:
             caveats.append(
@@ -1250,7 +1272,35 @@ class AnalyticsAgent(BaseAgent):
             columns=state.columns,
             rows=state.rows,
             truncated=state.truncated,
+            windows_opened=len(state.windows),
         )
+
+    @staticmethod
+    def _no_window_caveat(state: _RunState, raw_answer: str) -> list[str]:
+        """Say so when a figure is published with no report window behind it.
+
+        ``has_grounding`` is satisfied by ``list_reports()`` or ``coverage()``,
+        and neither returns a measurement. With no window open, every honesty
+        gate downstream is keyed on something that does not exist:
+        ``_partial_caveats`` is empty, ``_freshness_lines`` short-circuits,
+        ``pending_periods`` is empty, and the validator's numeric warning is
+        keyed on ``pending``. So an invented figure shipped past all of them
+        (ANA-07).
+
+        A refusal was the obvious fix and is the wrong one: both catalogue tools
+        have legitimate numeric answers — how many reports exist, how many
+        periods are collected — so refusing every figure without a window would
+        refuse correct answers. What was missing is the sentence saying which
+        kind of number this is.
+        """
+        if state.windows or not _MENTIONS_A_NUMBER.search(raw_answer):
+            return []
+        return [
+            "NO REPORT DATA WAS READ: no report window was opened for this answer — "
+            "only the source catalogue (report names, grains, how many periods are "
+            "collected). Any figure above describes collection coverage, NOT a "
+            "measurement of your analytics."
+        ]
 
     def _partial_caveats(self, state: _RunState) -> list[str]:
         caveats: list[str] = []

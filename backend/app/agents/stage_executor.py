@@ -384,9 +384,18 @@ class StageExecutor:
                     status="completed", stage_ctx=stage_ctx, final_answer=last_result.summary
                 )
 
-        final_answer, _degraded_reason = await self._synthesize(stage_ctx, context)
+        final_answer, synthesis_degraded = await self._synthesize(stage_ctx, context)
         return _StageExecutorResult(
-            status="completed", stage_ctx=stage_ctx, final_answer=final_answer
+            status="completed",
+            stage_ctx=stage_ctx,
+            final_answer=final_answer,
+            # ORCH-08: this reason used to be assigned to a throwaway. The
+            # response is then typed from stage statuses alone — and `degraded`
+            # is a status only `_synthesize_stage` ever sets, which on this path
+            # never ran. So a failed final synthesis was sealed as
+            # `pipeline_complete` with `error=None` whenever the plan did not end
+            # in a `synthesize` stage, which the planner's own prompt sanctions.
+            degraded_reason=synthesis_degraded,
         )
 
     async def _process_one_stage(
@@ -808,18 +817,36 @@ class StageExecutor:
                     truncated=qr.truncated,
                     skip_data_gate=True,
                 )
-                if directive.action in ("block", "requery"):
+                if directive.action == "block":
+                    # DataGate's hard verdict: the numbers are impossible, so the
+                    # result must not reach a user under any label.
                     return StageResult(
                         stage_id=stage.stage_id,
                         status="error",
                         error=directive.reason,
-                        error_category="data_missing"
-                        if directive.action == "requery"
-                        else "configuration",
+                        error_category="configuration",
                         token_usage=sql_result.token_usage,
                     )
-                if directive.action == "warn":
-                    _rv_warning_suffix = f"\n\n**DATA QUALITY WARNING:** {directive.reason}"
+                if directive.action in ("warn", "requery"):
+                    # `requery` used to share the error return, and that is ORCH-02.
+                    # One gate then produced two opposite outcomes depending on
+                    # which execution path the router happened to pick: the flat
+                    # loop appends this same directive as a warning and keeps the
+                    # answer (sql_agent.py), while the stage became
+                    # error/data_missing — non-retryable, so `_execute_with_retries`
+                    # short-circuited and the orchestrator spent its two planner
+                    # replans before returning a failed pipeline.
+                    #
+                    # The commonest cause is a clean zero-row result, and by the
+                    # time the directive is evaluated the SQL agent's own
+                    # ValidationLoop has already spent its empty-result retries
+                    # and concluded that zero is the truth. Failing the stage also
+                    # defeated `_ensure_validation_criteria`'s deliberate
+                    # `min_rows=0` injection, which never got to run.
+                    _rv_warning_suffix = (
+                        f"\n\n**DATA QUALITY WARNING ({directive.action.upper()}):** "
+                        f"{directive.reason}"
+                    )
             except Exception:
                 # Gate failure is non-critical — log and proceed so a gate bug
                 # never silently kills a valid pipeline stage.
@@ -1592,10 +1619,14 @@ class _StageExecutorResult:
         failed_validation: StageValidationOutcome | None = None,
         data_gate_outcome: DataGateOutcome | None = None,
         replan_eligible: bool = True,
+        degraded_reason: str | None = None,
     ) -> None:
         self.status = status  # completed | checkpoint | stage_failed
         self.stage_ctx = stage_ctx
         self.final_answer = final_answer
+        #: Why the final answer is less than the plan promised — set when the
+        #: synthesis itself degraded, which no stage result can carry (ORCH-08).
+        self.degraded_reason = degraded_reason
         self.checkpoint_stage = checkpoint_stage
         self.checkpoint_result = checkpoint_result
         self.failed_stage = failed_stage

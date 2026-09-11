@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 #: "Does this answer state a figure?" — one digit is enough. Deliberately blunt:
 #: the cost of a false positive is one extra caveat, the cost of a false negative
 #: is a number presented over data that was never collected.
+#: A figure of any kind. Shared with the analytics agent so "does this answer
+#: state a number" is one rule rather than two that can drift apart.
 _MENTIONS_A_NUMBER = re.compile(r"\d")
 
 
@@ -163,6 +165,17 @@ class AgentResultValidator:
 
         pending = list(getattr(result, "pending_periods", None) or [])
         judged = getattr(result, "raw_answer", "") or answer
+        if int(getattr(result, "windows_opened", 0) or 0) == 0 and _MENTIONS_A_NUMBER.search(
+            judged
+        ):
+            # No report window was opened, so `pending_periods` is empty and the
+            # warning below — the only numeric one — can never fire. That is how
+            # a figure invented on top of `list_reports()` passed every gate
+            # (ANA-07).
+            outcome.warnings.append(
+                "The answer states a figure but no report window was read, so nothing "
+                "measured stands behind it."
+            )
         if pending and _MENTIONS_A_NUMBER.search(judged):
             outcome.warnings.append(
                 "The answer reports figures for a window that is not fully collected — "

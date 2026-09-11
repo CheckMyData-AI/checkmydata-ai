@@ -243,9 +243,22 @@ Frontend (ChatPanel)
               → Per-stage sub-agents: SQLAgent / KnowledgeAgent / VizAgent / GitAgent / McpSourceAgent / InvestigationAgent
               → StageValidator + DataGate (intermediate quality checks; DATA_GATE_HARD_CHECKS_ENABLED blocks impossible numbers)
               → Stage failures classified as transient | configuration | data_missing | fatal (non-retryable short-circuits retry)
-        → Shared gates (both paths — ORCH-A01/A02):
+        → Shared gates (both paths — ORCH-A01/A02, and on RESUME since 2026-09-11):
             → ResultValidation (DataGate + result gate + reconcile) on every SQL result
-            → AnswerQualityGate on final answer
+              — a `requery` directive is a **warning**, not a stage failure. It used to
+              be an error only on the pipeline path, so a clean zero-row result ("how
+              many refunds in July?" against a month with none) burned both planner
+              replans and returned a failed pipeline, while the flat loop answered it
+              (ORCH-02). Only `block` — DataGate's impossible-value verdict — fails a
+              stage.
+            → AnswerQualityGate on final answer. `_execute_resume` is a second
+              implementation of the tail and ran without it, and without the freshness
+              warning, publishing as `pipeline_complete` an answer the fresh path
+              downgrades to `step_limit_reached` (ORCH-06).
+            → Truncation is aggregated across **every** query-bearing stage, for the
+              caveat, for the table shown, and for the answer gate. Both read only the
+              *last* stage with rows, so a capped SQL stage followed by a fresh GA4
+              stage published the capped total as complete (ORCH-09).
       → AgentResultValidator (final check before user)
     → WorkflowTracker emits SSE events throughout; TracePersistenceService accumulates spans and batch-inserts RequestTrace + TraceSpan rows at pipeline_end
 ```
@@ -301,7 +314,7 @@ adapter → journal → fact tables → AnalyticsAgent
 
 | Stage | Where | What it does |
 |---|---|---|
-| **Adapter** | `app/analytics/ga4/adapter.py` (`GA4Adapter`), reports in `ga4/reports.py`, knobs vs secret split in `ga4/config.py` | Pages GA4's Data API on `offset` (Δ1 — a single un-paginated call silently truncates at 10 000 rows), requests `keep_empty_rows` so a dead day is a zero and not a gap (Δ2), and reads `PropertyQuota` (Δ3). Maps vendor failures onto the taxonomy in `app/analytics/errors.py`: 401→auth, 403→permission, 404→empty, 429/5xx→transient, spent bucket→quota. **Only transient/quota are retried** (`app/analytics/http.py::retry_async`, honours `Retry-After`, bounded at 60 s) — retrying an auth/permission error burns quota and can never succeed. |
+| **Adapter** | `app/analytics/ga4/adapter.py` (`GA4Adapter`), reports in `ga4/reports.py`, knobs vs secret split in `ga4/config.py` | Pages GA4's Data API on `offset` (Δ1 — a single un-paginated call silently truncates at 10 000 rows), requests `keep_empty_rows` so a dead day is a zero and not a gap (Δ2), and reads `PropertyQuota` (Δ3). Maps vendor failures onto the taxonomy in `app/analytics/errors.py`: 401→auth, 403→permission, **400/404→invalid-request**, 429/5xx→transient, spent bucket→quota. **Only transient/quota are retried** (`app/analytics/http.py::retry_async`, honours `Retry-After`, bounded at 60 s) — retrying an auth/permission error burns quota and can never succeed. `AnalyticsEmpty` now means one thing only — *a 2xx that carried no rows*; 404 used to map there, and `empty` is a **done** status, so a deleted property recorded every period as "collected, and it was zero" while the badge read `ok`. A spent bucket is noted from the response and refuses the **next** call for that property rather than discarding the page that spent it, and a property that fails inside `fetch` no longer discards the properties that succeeded. |
 | **Journal** | `app/analytics/journal.py`, table `analytics_imports`, UNIQUE `(connection_id, report, period)` | One verdict per period: `ok` \| `empty` \| `failed`. Pending is **`expected − done`**, never `max(period)` — a hole below the high-water mark must refill, so a `failed` period stays owed while an `empty` one is complete. The most recent `analytics_refetch_tail_periods` are always re-fetched (vendors revise). `prune()` runs in the 24 h maintenance cron. |
 | **Fact tables** | `app/models/analytics_ga4.py`; `ga4_overview_daily`, `ga4_geo_daily`, `ga4_platform_daily`, `ga4_trend_daily`, `ga4_event_daily` | Natural-keyed on `(connection_id, property_id, date, …dimensions)` with `ON CONFLICT DO UPDATE`, so re-collecting a period overwrites rather than duplicates. Counts are `BigInteger`, revenue is `Numeric(18,4)` — never float. **Raw vendor payloads are never persisted.** |
 | **Collection** | `app/services/analytics_collect_service.py` | Per-period isolation: one failing period never aborts the run but is always journalled; an auth/permission error stops that report. Exit contract `ok` \| `partial` \| `failed` — errors with rows written is `partial`, errors with none is `failed`, and **no errors with zero rows is `ok`** (nothing was due). A run that dies before any report is journalled under the reserved report name `_connect`. |

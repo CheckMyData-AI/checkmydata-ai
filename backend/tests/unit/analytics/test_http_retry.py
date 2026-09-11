@@ -22,6 +22,7 @@ from app.analytics.errors import (
     AnalyticsAuthError,
     AnalyticsEmpty,
     AnalyticsError,
+    AnalyticsInvalidRequestError,
     AnalyticsPermissionError,
     AnalyticsTransientError,
     QuotaExhaustedError,
@@ -92,7 +93,12 @@ async def _call(http: FakeHttp, sleep: FakeSleep, **kwargs: object) -> Resp:
 def test_retryable_errors_are_exactly_transient_and_quota() -> None:
     assert set(RETRYABLE_ERRORS) == {AnalyticsTransientError, QuotaExhaustedError}
     assert all(issubclass(cls, AnalyticsError) for cls in RETRYABLE_ERRORS)
-    for configuration_error in (AnalyticsAuthError, AnalyticsPermissionError, AnalyticsEmpty):
+    for configuration_error in (
+        AnalyticsAuthError,
+        AnalyticsPermissionError,
+        AnalyticsEmpty,
+        AnalyticsInvalidRequestError,
+    ):
         assert not issubclass(configuration_error, RETRYABLE_ERRORS)
 
 
@@ -164,19 +170,30 @@ async def test_403_raises_permission_error_and_is_not_retried() -> None:
     assert sleep.delays == []
 
 
-async def test_404_raises_analytics_empty_and_is_not_retried() -> None:
+async def test_404_is_an_invalid_request_and_is_not_retried() -> None:
+    """It used to raise `AnalyticsEmpty`, and that is ANA-04.
+
+    `empty` is a *done* journal status that never refills, so a deleted or
+    mistyped property recorded every period as "collected, and it was zero" —
+    permanently, invisibly, with the connection badge reading `ok`.
+    """
     http = FakeHttp([_resp(404)])
     sleep = FakeSleep()
 
-    with pytest.raises(AnalyticsEmpty):
+    with pytest.raises(AnalyticsInvalidRequestError):
         await _call(http, sleep, attempts=3)
 
     assert http.call_count == 1
     assert sleep.delays == []
 
 
-async def test_400_raises_the_base_error_and_is_not_retried() -> None:
-    """A malformed request is a bug, not weather — never worth retrying."""
+async def test_400_is_an_invalid_request_and_is_not_retried() -> None:
+    """A malformed request is a bug, not weather — never worth retrying.
+
+    It used to raise the *base* `AnalyticsError`, which the collect service
+    isolates per period and continues past, so a retired GA4 metric re-issued
+    every period in the window once a day for ever (ANA-03).
+    """
     http = FakeHttp([_resp(400, body=b"invalid dimension")])
     sleep = FakeSleep()
 

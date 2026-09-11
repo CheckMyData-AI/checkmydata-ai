@@ -17,6 +17,7 @@ from app.agents.sql_result_reconciliation import build_reconciliation_note
 if TYPE_CHECKING:
     from app.agents.orchestrator import AgentResponse
 from app.agents.result_validation import ResultDirective
+from app.agents.stage_context import StageResult
 from app.agents.stage_executor import _StageExecutorResult
 from app.connectors.base import QueryResult
 from app.core.types import RAGSource
@@ -58,6 +59,8 @@ class ResponseBuilder:
             "total_tokens": 0,
         }
         tool_call_log: list[dict] = []
+        truncated_stages: list[str] = []
+        first_truncated: StageResult | None = None
         for stage in exec_result.stage_ctx.plan.stages:
             sr = exec_result.stage_ctx.get_result(stage.stage_id)
             if not sr:
@@ -69,7 +72,27 @@ class ResponseBuilder:
                     {"tool": "query_database", "stage": stage.stage_id, "query": sr.query}
                 )
             if sr.query_result:
+                # ORCH-09: this used to be a bare `last_sql_result = sr`, so every
+                # stage with any rows overwrote it and it ended up holding the
+                # LAST such stage rather than the truncated one. The caveat, the
+                # `results`/`query` fields returned to the UI and the answer gate
+                # all read it, so a capped stage followed by a fresh one published
+                # the capped total as a complete figure.
+                #
+                # Truncation is now aggregated across every query-bearing stage,
+                # and the stage the UI shows is the first truncated one when there
+                # is one — the user cannot act on a caveat about a table they are
+                # not being shown.
+                if sr.query_result.truncated:
+                    truncated_stages.append(stage.stage_id)
+                    if first_truncated is None:
+                        first_truncated = sr
                 last_sql_result = sr
+
+        # What the UI is shown. Identical to `last_sql_result` unless a stage was
+        # truncated, in which case that is the one the caveat is about — a user
+        # cannot act on a warning about a table they are not being shown (ORCH-09).
+        shown_result = first_truncated or last_sql_result
 
         n_stages = len(exec_result.stage_ctx.plan.stages)
         completed = sum(
@@ -83,23 +106,30 @@ class ResponseBuilder:
                 "The analysis pipeline completed, but no summary was generated. "
                 "Please review the data or try rephrasing your question."
             )
-            degraded_reason = None
+            # ORCH-08: the synthesis' own degraded reason has no stage result to
+            # ride on, because `degraded` is a status only `_synthesize_stage`
+            # sets — so a failed final synthesis on a plan ending in
+            # `analyze_results` was reported as a clean completion.
+            degraded_reason = getattr(exec_result, "degraded_reason", None)
             for stage in exec_result.stage_ctx.plan.stages:
+                if degraded_reason:
+                    break
                 sr = exec_result.stage_ctx.get_result(stage.stage_id)
                 if sr and sr.status == "degraded" and sr.degraded_reason:
                     degraded_reason = sr.degraded_reason
                     break
-            if (
-                last_sql_result
-                and last_sql_result.query_result
-                and last_sql_result.query_result.truncated
-            ):
+            if truncated_stages:
+                where = (
+                    f"stage {truncated_stages[0]}"
+                    if len(truncated_stages) == 1
+                    else "stages " + ", ".join(truncated_stages)
+                )
                 answer = (
                     f"{answer}\n\n"
-                    "PARTIAL DATA: the result shown was capped/truncated, so any total "
-                    "above is a lower bound over an incomplete set — not a full-population "
-                    "figure. Re-run with a tighter filter or server-side aggregation for an "
-                    "exact total."
+                    f"PARTIAL DATA: the result of {where} was capped/truncated, so any "
+                    "total above is a lower bound over an incomplete set — not a "
+                    "full-population figure. Re-run with a tighter filter or server-side "
+                    "aggregation for an exact total."
                 )
             if answer_directive is not None and answer_directive.action != "accept":
                 # ORCH-A02: AnswerQualityGate rejected the final answer — downgrade
@@ -113,12 +143,12 @@ class ResponseBuilder:
                 response_type = "pipeline_complete"
             return AgentResponse(
                 answer=answer,
-                query=last_sql_result.query if last_sql_result else None,
-                results=last_sql_result.query_result if last_sql_result else None,
+                query=shown_result.query if shown_result else None,
+                results=shown_result.query_result if shown_result else None,
                 workflow_id=wf_id,
                 staleness_warning=staleness_warning,
                 response_type=response_type,
-                viz_type="table" if last_sql_result else "text",
+                viz_type="table" if shown_result else "text",
                 viz_config={"pipeline_run_id": pipeline_run_id},
                 token_usage=total_usage,
                 tool_call_log=tool_call_log,
@@ -176,8 +206,8 @@ class ResponseBuilder:
         # stages already produced. Tell the user what completed and attach the
         # last successful result so the frontend can still render it.
         partial_note = ""
-        if completed > 0 and last_sql_result and last_sql_result.query_result:
-            rc = last_sql_result.query_result.row_count
+        if completed > 0 and shown_result and shown_result.query_result:
+            rc = shown_result.query_result.row_count
             partial_note = (
                 f"\n\n{completed} of {n_stages} stage(s) completed before the failure; "
                 f"the latest intermediate result ({rc} row(s)) is shown below."
@@ -186,12 +216,12 @@ class ResponseBuilder:
             answer=f"{error_detail}{partial_note}\n\n"
             "Would you like me to **retry** with a different approach, "
             "or **modify** the request?",
-            query=last_sql_result.query if last_sql_result else None,
-            results=last_sql_result.query_result if last_sql_result else None,
+            query=shown_result.query if shown_result else None,
+            results=shown_result.query_result if shown_result else None,
             workflow_id=wf_id,
             staleness_warning=staleness_warning,
             response_type="stage_failed",
-            viz_type="table" if last_sql_result and last_sql_result.query_result else "text",
+            viz_type="table" if shown_result and shown_result.query_result else "text",
             viz_config={
                 "pipeline_run_id": pipeline_run_id,
                 "stage_id": (exec_result.failed_stage.stage_id if exec_result.failed_stage else ""),
