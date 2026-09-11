@@ -189,7 +189,7 @@ S (< 1 day), M (1–3 days), L (workstream).
 > **Measured 2026-09-11 while harvesting this row, and it moves TEST-15 from latent to live.** `heroku ps` shows the web formation running `sh -c uvicorn app.main:app …` — **no alembic**. Production's `alembic_version` is `b8c9d0e1f2a3`, which does equal the repository head, so the schema is currently correct; it is correct because the last migration was applied through some other channel, not because this pipeline applies one. The next PR carrying a migration deploys code onto the old schema with every step green.
 | 5 | **Legal/marketing truth pass**: Privacy Policy (rows→LLM, Stripe/Sentry, architecture), pricing FAQ retired tiers, README reranker | BIZ-03/09/11/13/15 | S–M |
 | 6 | **Stripe webhook robustness**: roll ledger claim back on side-effect failure; ordering guard; checkout-time duplicate guard; plan-id from price; `to_thread` the blocking call | BILL-03/04/05/06/07/08 | M |
-| 7 | **Run the security gap sweep** the spend limit killed: headers/CSP/HSTS, cookie flags, secrets hygiene, webhook replay, WS ticket lifecycle, demo path, key-rotation edges | (open audit item) | M |
+| 7 | ✅ **DONE 2026-09-11** — no new hole; see `docs/audits/2026-09-11-security-gap-sweep.md` — **Run the security gap sweep** the spend limit killed: headers/CSP/HSTS, cookie flags, secrets hygiene, webhook replay, WS ticket lifecycle, demo path, key-rotation edges | (open audit item) | M |
 
 **P0-1 closed 2026-09-11** — PR #334, live on production as v370. The token ceiling binds
 (`ADR-0003`); `PAID_TIERS` derives the ceilings from each tier's promised dollars and is the

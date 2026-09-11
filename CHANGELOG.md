@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — the sweep the audit could not finish, run and made repeatable
+
+P0-7. The 2026-09-09 audit's cross-cutting gap hunter was killed by an account spend limit
+and recorded its ground as **not covered**: headers and CSP, cookie flags, secrets hygiene,
+webhook replay, the WS ticket lifecycle, the demo path, key-rotation edges.
+
+**Run on 2026-09-11: no new hole.** The two real gaps in that territory — `AUTH-05` (one
+global webhook secret for any project id) and `API-05` (rate limiting keyed on the proxy's
+address) — were already on the board and stay ranked where the audit put them; this sweep
+produced no evidence that changes either.
+
+A sweep that finds nothing is worth what not sweeping is worth unless it leaves something
+behind, so five checks now run on every commit
+(`tests/unit/test_security_sweep_invariants.py`): every route is authenticated or named in
+an allowlist that says **which credential stands in for the session**; no value whose name
+suggests a secret reaches a log line; the CSRF double-submit is compared in constant time;
+and a retired encryption key can never write. The full pass, with what was read for each
+area, is `docs/audits/2026-09-11-security-gap-sweep.md`.
+
+Two measurements worth keeping: of eleven log arguments naming a secret, **none carries
+one** — they are token counts, ids, a fingerprint, a redacted form — and of every HTTP and
+WebSocket handler, **eleven take no session**, each authenticated by a signature, a ticket,
+a single-use token, or public by design.
+
 ### Fixed — a Stripe webhook that lost money and could resurrect a cancelled account
 
 Six findings, one handler chain (P0-6; BILL-03, BILL-04, BILL-05, BILL-06, BILL-07,
