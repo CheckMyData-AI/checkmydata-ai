@@ -74,20 +74,28 @@ async def trigger_full_scan(
     total_created = 0
     total_updated = 0
 
+    scanned = 0
+    failures: list[str] = []
     for conn_id in connection_ids:
         try:
             result = await agent.run_scan(db, project_id, conn_id)
             total_created += result.insights_created
             total_updated += result.insights_updated
+            scanned += 1
         except Exception as exc:
+            # API-12: counted, named and returned. The count used to be
+            # `len(connection_ids)` — the connections asked for — so a connection whose
+            # scan raised was reported as scanned and the response carried no sign of it.
             logger.warning("Scan failed for connection %s: %s", conn_id, exc)
+            failures.append(conn_id)
 
     await db.commit()
 
     return {
         "total_insights_created": total_created,
         "total_insights_updated": total_updated,
-        "connections_scanned": len(connection_ids),
+        "connections_scanned": scanned,
+        "connections_failed": failures,
     }
 
 

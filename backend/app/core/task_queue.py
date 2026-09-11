@@ -192,3 +192,31 @@ def is_arq_active() -> bool:
     in-memory task handle — is the authoritative signal of progress.
     """
     return _arq_pool is not None
+
+
+class EnqueueFailedError(RuntimeError):
+    """The task was not started, and the caller must say so rather than answer "queued".
+
+    `enqueue` returns ``None`` on failure rather than raising — deliberately, because some
+    callers legitimately continue without the job. Five HTTP handlers, two cron dispatchers
+    and a scan did not: each had already minted a run row set to `running`, and each
+    answered `202 {"status": "queued"}` over an enqueue that never happened (API-03,
+    OPS-05). The run row then blocks the single-active-run guard until the reaper times it
+    out, and the user waits for something nobody is doing.
+    """
+
+
+async def enqueue_or_fail(task_name: str, **kwargs) -> str:
+    """`enqueue`, but a failure is an exception rather than a ``None`` nobody reads.
+
+    Returns the job id. Raises :class:`EnqueueFailedError` when the task was not started,
+    so a caller that forgets to check gets a 500 instead of a false 202 — the failure mode
+    that at least tells the truth.
+    """
+    job_id = await enqueue(task_name, **kwargs)
+    if not job_id:
+        raise EnqueueFailedError(
+            f"{task_name} was not enqueued: the queue refused it and in-process execution "
+            "is not an acceptable substitute here"
+        )
+    return job_id
