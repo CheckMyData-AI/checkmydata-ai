@@ -614,7 +614,29 @@ async def _run_index_background(
             async with async_session_factory() as db:
                 existing_cp = await _checkpoint_svc.get_active(db, project_id)
 
-                if existing_cp and not body.force_full:
+                # KNOW-08: a checkpoint left by an interrupted FULL rebuild carries
+                # `last_sha = None` and the entire blob list as `changed_files`, so an
+                # incremental resume reads it as "everything changed" and quietly redoes a
+                # full rebuild — measured at 5 600–12 300 s — under the nightly sync's
+                # 7 200 s ceiling, while calling itself incremental. `force_full is None`
+                # is a checkpoint written before this column existed: unknown, and treated
+                # as full, because resuming an unknown as incremental is the mistake here.
+                if (
+                    existing_cp is not None
+                    and existing_cp.force_full is not False
+                    and not body.force_full
+                ):
+                    logger.info(
+                        "index: not resuming project %s — its checkpoint came from a full "
+                        "rebuild (force_full=%r), which cannot be continued incrementally",
+                        project_id[:8],
+                        existing_cp.force_full,
+                    )
+                if (
+                    existing_cp is not None
+                    and existing_cp.force_full is False
+                    and not body.force_full
+                ):
                     existing_cp.workflow_id = wf_id
                     existing_cp.status = "running"
                     await db.commit()
@@ -627,6 +649,7 @@ async def _run_index_background(
                         wf_id,
                         head_sha="",
                         last_sha=None,
+                        force_full=bool(body.force_full),
                     )
 
                 live_table_names = await _fetch_live_table_names(db, project_id)

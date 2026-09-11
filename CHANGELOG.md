@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — three indexing steps reported success for work they did not do
+
+P1 row 9, first seam; KNOW-05, KNOW-07, KNOW-08.
+
+**A parser outage wiped the code graph and the run said "complete".** `_run_graph_build`
+skipped only when `parsed_files` was *empty* — but a `ParsedFile` carrying `parse_errors`
+and zero symbols is still stored, so a full rebuild saw a non-empty file list and an empty
+graph, and `save()` is delete-then-insert. The **incremental** path has had a zero-symbol
+guard since R3-3; the full path — the one every `force_full` and every fingerprint bump
+takes — never got it. It keeps the last-good graph now and says why.
+
+**`code_symbol_embed` counted its own input.** Three layers turned a failure into a
+non-event: the per-batch `except` continued the loop, the step's blanket `except` swallowed
+what got past it, and the number it logged was `sum(len(pf.symbols) …)` — the work asked
+for. A store rejecting every write produced log warnings and a checkpoint saying the step
+was done, so every later resume skipped it. The chunker now returns `(written, attempted)`,
+a partial write is an ERROR naming both numbers, a total rejection raises, and
+`complete_step` is gated on the outcome the way `graph_build` already was.
+
+**The nightly incremental silently continued an abandoned full rebuild.** A checkpoint left
+by an interrupted `force_full=True` run carries `last_sha = None` and the whole blob list as
+`changed_files`, which a resume reads as "everything changed" — so the nightly sync redid a
+full rebuild (measured 5 600–12 300 s) under its own 7 200 s ceiling while calling itself
+incremental. `indexing_checkpoint.force_full` records how a checkpoint was produced, and the
+resume refuses anything that is not explicitly incremental. `NULL` — a checkpoint written
+before the column existed — counts as full, because treating an unknown as incremental is
+the mistake being fixed.
+
 ### Fixed — five public claims the code contradicts
 
 P0-5; BIZ-03, BIZ-09, BIZ-11, BIZ-13, BIZ-15. In all five the code does what it was built

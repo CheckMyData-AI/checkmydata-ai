@@ -68,6 +68,7 @@ class CheckpointService:
         workflow_id: str,
         head_sha: str,
         last_sha: str | None = None,
+        force_full: bool | None = None,
     ) -> IndexingCheckpoint:
         old = await self.get_active(session, project_id)
         if old:
@@ -75,6 +76,7 @@ class CheckpointService:
             await session.flush()
 
         cp = IndexingCheckpoint(
+            force_full=force_full,
             project_id=project_id,
             workflow_id=workflow_id,
             head_sha=head_sha,

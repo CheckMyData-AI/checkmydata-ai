@@ -656,8 +656,12 @@ class IndexingPipelineRunner:
                     "code_symbol_embed",
                     f"Embedding {symbol_count} code symbols from {len(state.parsed_files)} file(s)",
                 ):
-                    await self._run_code_symbol_embed(state, project_id, wf_id)
-                await self._cp_svc.complete_step(db, cp_id, "code_symbol_embed")
+                    embedded_ok = await self._run_code_symbol_embed(state, project_id, wf_id)
+                # KNOW-07: gated on the outcome, the way `graph_build` already is. An
+                # unconditional `complete_step` after a failed embed is what made the
+                # resume skip a step that had written nothing.
+                if embedded_ok:
+                    await self._cp_svc.complete_step(db, cp_id, "code_symbol_embed")
 
         # --- Step 6: analyze_files (always re-run; ~60s but deterministic) ---
         async with tracker.step(
@@ -1616,31 +1620,45 @@ class IndexingPipelineRunner:
         state: _PipelineState,
         project_id: str,
         wf_id: str,
-    ) -> None:
+    ) -> bool:
         """CODEIDX-C3: upsert raw code-symbol chunks into the vector store.
 
-        Runs synchronously in a thread (via ``asyncio.to_thread``) to avoid
-        blocking the event loop on disk I/O and ChromaDB upserts.  Failures
-        here are non-fatal — the pipeline continues without raw-code chunks if
-        something goes wrong.
+        Runs synchronously in a thread (via ``asyncio.to_thread``) to avoid blocking the
+        event loop on disk I/O and vector-store upserts. A failure is still non-fatal to the
+        *pipeline* — the rest of the index is worth having without raw-code chunks.
+
+        **Returns whether it worked** (KNOW-07), so the caller can decide whether to
+        checkpoint. It used to return nothing and swallow, and `complete_step` ran
+        unconditionally afterwards: a store that rejected every batch left a checkpoint
+        saying this step was done, and the next resume skipped it forever.
         """
         if state.repo_dir is None or not state.parsed_files:
-            return
+            return True
         try:
             chunker = _make_symbol_chunker()
             repo_dir = state.repo_dir
             parsed_files = state.parsed_files
             vs = self._vector_store
-            await asyncio.to_thread(
+            written, attempted = await asyncio.to_thread(
                 chunker.embed_symbols,
                 project_id,
                 parsed_files,
                 repo_dir,
                 vs,
             )
+            # KNOW-07: the count is what the STORE took, not what the run asked it to take.
+            # It used to be `sum(len(pf.symbols) …)` — the input — so a store rejecting
+            # every batch logged the same number as one accepting every batch.
             symbol_count = sum(len(pf.symbols) for pf in parsed_files.values())
+            if attempted and not written:
+                raise RuntimeError(
+                    f"code_symbol_embed wrote 0 of {attempted} chunks for project "
+                    f"{project_id}: the vector store accepted nothing"
+                )
             logger.info(
-                "code_symbol_embed: upserted symbols from %d file(s) (%d total symbols)",
+                "code_symbol_embed: %d of %d chunks accepted, from %d file(s) (%d symbols parsed)",
+                written,
+                attempted,
                 len(parsed_files),
                 symbol_count,
             )
@@ -1648,11 +1666,14 @@ class IndexingPipelineRunner:
                 wf_id,
                 "code_symbol_embed",
                 "completed",
-                f"Upserted code symbols from {len(parsed_files)} file(s) ({symbol_count} symbols)",
+                f"Upserted {written} of {attempted} code chunks from "
+                f"{len(parsed_files)} file(s) ({symbol_count} symbols parsed)",
             )
+            return True
         except Exception:
-            logger.warning(
-                "code_symbol_embed: non-fatal failure for project %s",
+            logger.error(
+                "code_symbol_embed: FAILED for project %s — the step is not checkpointed, "
+                "so a later run retries it",
                 project_id,
                 exc_info=True,
             )
@@ -1662,6 +1683,7 @@ class IndexingPipelineRunner:
                 "warning",
                 "code_symbol_embed encountered an error — raw-code chunks skipped",
             )
+            return False
 
     async def _run_ast_parse(
         self,
@@ -1824,6 +1846,23 @@ class IndexingPipelineRunner:
             )
             graph = await asyncio.to_thread(builder.build, state.parsed_files)
             svc = CodeGraphService()
+            # KNOW-05: the guard the incremental path has had since R3-3, on the path that
+            # actually needed it. `parsed_files` being non-empty does not mean the parse
+            # WORKED: a `ParsedFile` carrying `parse_errors` and zero symbols is still
+            # stored, so a parser outage — a grammar that failed to load, a tree-sitter
+            # version bump — produces a non-empty file list and an empty graph. `save()`
+            # is delete-then-insert, so that graph replaces the real one with nothing and
+            # the step reports success. Keeping the last-good graph costs one stale run; a
+            # later clean parse reconciles it.
+            if is_full and not graph.symbols and state.parsed_files:
+                logger.warning(
+                    "graph_build: full rebuild produced 0 symbols from %d parsed file(s) — "
+                    "keeping the existing graph rather than replacing it with nothing "
+                    "(parse failures: %d)",
+                    len(state.parsed_files),
+                    len(getattr(state, "ast_failed_files", ()) or ()),
+                )
+                return True
             if is_full:
                 state.code_graph = graph
                 sym_count, edge_count = await svc.save(db, project_id, graph)

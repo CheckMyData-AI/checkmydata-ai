@@ -145,8 +145,12 @@ class CodeSymbolChunker:
         parsed_files: dict[str, ParsedFile],
         repo_dir: Path,
         vector_store: VectorStore,
-    ) -> None:
+    ) -> tuple[int, int]:
         """Chunk every symbol in *parsed_files* and upsert into *vector_store*.
+
+        Returns ``(written, attempted)`` — KNOW-07. It used to return nothing, so the step
+        above reported a symbol count derived from its own input and could not tell a store
+        that accepted everything from one that accepted nothing.
 
         This is a **synchronous** operation intended to be wrapped in
         ``asyncio.to_thread`` by the pipeline runner.  Errors per symbol are
@@ -166,8 +170,9 @@ class CodeSymbolChunker:
             The project's :class:`~app.knowledge.vector_store.VectorStore` instance.
         """
         if not parsed_files:
-            return
+            return 0, 0
 
+        written = attempted = 0
         # Accumulate all chunks across all files before flushing in batches.
         batch_ids: list[str] = []
         batch_docs: list[str] = []
@@ -239,11 +244,27 @@ class CodeSymbolChunker:
                     batch_metas.append(chunk.metadata)
 
                     if len(batch_ids) >= _BATCH_SIZE:
-                        self._flush(project_id, batch_ids, batch_docs, batch_metas, vector_store)
+                        written += self._flush(
+                            project_id, batch_ids, batch_docs, batch_metas, vector_store
+                        )
+                        attempted += len(batch_ids)
                         batch_ids, batch_docs, batch_metas = [], [], []
 
         if batch_ids:
-            self._flush(project_id, batch_ids, batch_docs, batch_metas, vector_store)
+            written += self._flush(project_id, batch_ids, batch_docs, batch_metas, vector_store)
+            attempted += len(batch_ids)
+        if attempted and written < attempted:
+            # KNOW-07: loud here rather than three layers up, because this is the only
+            # place that knows both numbers. A partial write leaves a project whose
+            # retrieval silently covers less than the run reported.
+            logger.error(
+                "code_symbol_chunker: only %d of %d code chunks were accepted for project "
+                "%s — retrieval will not see the rest",
+                written,
+                attempted,
+                project_id,
+            )
+        return written, attempted
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -269,8 +290,13 @@ class CodeSymbolChunker:
         docs: list[str],
         metas: list[dict],
         vector_store: VectorStore,
-    ) -> None:
-        """Upsert a batch of chunks into the vector store."""
+    ) -> int:
+        """Upsert a batch of chunks; return how many were **accepted**.
+
+        KNOW-07: this used to return nothing and swallow, so a store rejecting every batch
+        looked exactly like one accepting every batch — three layers up, the step logged a
+        symbol count taken from its own input and checkpointed itself as done.
+        """
         try:
             vector_store.add_documents(
                 project_id=project_id,
@@ -283,6 +309,7 @@ class CodeSymbolChunker:
                 len(ids),
                 project_id,
             )
+            return len(ids)
         except Exception:
             logger.warning(
                 "code_symbol_chunker: failed to upsert %d chunks for project %s",
@@ -290,6 +317,7 @@ class CodeSymbolChunker:
                 project_id,
                 exc_info=True,
             )
+            return 0
 
 
 def make_chunker(*, max_tokens: int | None = None) -> CodeSymbolChunker:

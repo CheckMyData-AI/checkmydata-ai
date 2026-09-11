@@ -1,7 +1,17 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -38,6 +48,14 @@ class IndexingCheckpoint(Base):
     workflow_id: Mapped[str] = mapped_column(String(36), nullable=False)
     head_sha: Mapped[str] = mapped_column(String(40), nullable=False)
     last_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    #: Whether the run that created this checkpoint was a FULL rebuild (KNOW-08).
+    #: A full-rebuild checkpoint carries `last_sha = None` and the whole blob list as
+    #: `changed_files`, which an incremental resume reads as "everything changed" — so the
+    #: nightly sync silently continued an abandoned full rebuild under a ceiling sized for
+    #: a different job. `NULL` means a checkpoint written before this column existed:
+    #: unknown, and treated as full, because resuming an unknown as incremental is the
+    #: mistake this records.
+    force_full: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
