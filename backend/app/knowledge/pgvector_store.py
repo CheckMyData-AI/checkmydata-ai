@@ -32,6 +32,7 @@ import threading
 from typing import Any
 
 from app.config import settings
+from app.core.db_url import sync_dsn as _sync_dsn
 from app.models.doc_embedding import EMBEDDING_DIM
 
 logger = logging.getLogger(__name__)
@@ -45,9 +46,10 @@ class EmbeddingDimensionError(RuntimeError):
     """
 
 
-def _sync_dsn(url: str) -> str:
-    """SQLAlchemy's async URL is not a libpq DSN — psycopg wants the driver gone."""
-    return url.replace("+asyncpg", "").replace("postgresql+psycopg", "postgresql")
+# `_sync_dsn` moved to `app/core/db_url.py` on 2026-09-11 (imported at the top of this
+# module): `run_migrations` needs the same conversion to open the connection that holds the
+# migration advisory lock, and a second copy of a one-line rule is the one that stops
+# matching.
 
 
 class _ProjectHandle:

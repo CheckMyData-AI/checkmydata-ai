@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the only gate between a merged commit and production could not report a failure
+
+Five findings, one pipeline (P0-4; TEST-01, TEST-15, TEST-16, TEST-17, DATA-10).
+
+**The release step could not fail.** The two `curl -s -X PATCH` calls that put the new image
+into production passed no `--fail`, and `curl` exits 0 on any HTTP status — so a rotated
+`HEROKU_API_KEY` (401), a quota refusal (403), a renamed app (404) or an image id Heroku
+will not accept (422) was a **passing step**. The verification that followed then polled the
+public health URL, which is served by whatever release is currently live: when the release
+never happened, the *old* one answered 200 and the job went green. Production could stop
+receiving deploys with the pipeline reporting success indefinitely.
+
+The release is now read from the API that creates it: the release version is captured
+**before** the PATCH and the job waits for a *higher* version whose `status` is `succeeded`,
+failing loudly on `failed`. "A release exists and is healthy" and "my release happened" are
+different statements, and only a before/after comparison tells them apart.
+
+**Migrations ran in no channel this pipeline uses.** `deploy.yml` PATCHes the formation with
+images whose CMD is uvicorn-only; `Dockerfile.worker` already recorded that "the repo
+Procfile is not honored" for container releases; `heroku.yml`'s `run.web` belongs to a
+channel this pipeline does not use. Measured on production 2026-09-11: `heroku ps` shows
+`sh -c uvicorn app.main:app …` and no alembic, while `alembic_version` happens to equal the
+repository head — correct because some other channel applied it once, not because anything
+in the pipeline does. The next PR carrying a migration would have deployed code onto the old
+schema with every step green.
+
+`Dockerfile.release` is now built from the deployed backend image with one different CMD —
+the shape `Dockerfile.worker` already uses — and the formation PATCH declares it as the
+`release` process type, which Heroku runs **before** the new release goes live. A migration
+that does not apply now aborts the release instead of booting new code on an old schema.
+Verified by building the image and running it against a throwaway database: exit 0, full
+chain applied to `b8c9d0e1f2a3`.
+
+**The worker was verified by nothing** — both checks speak HTTP and the worker serves none,
+on the process type this repo's incident history names as the recurring failure surface. The
+job now polls `/dynos` until a `worker` dyno is `up` **on the new release version**.
+
+**`cancel-in-progress: true` could cancel between the two release steps**, leaving the
+backend on the new commit and the frontend on the old one until the next run's ten-minute
+build. Deploys queue now.
+
+**And the one piece of non-idempotent DDL was the only thing without a lock.** Three callers
+run `alembic upgrade head` on a restart — the start command, the web lifespan and
+`worker.startup` — while every *idempotent* reconcile in `app/ops/` takes an advisory lock.
+`run_migrations` now takes a session-level `pg_advisory_lock`, blocking rather than the
+`try_` form: the caller's next line assumes the schema is at head, so a migration that
+quietly did not run is worse than one that waited.
+
 ### Security — a chat session with no owner belonged to everybody
 
 Three findings, one guard chain (P0-3; AUTH-02, AUTH-03, BIZ-04).

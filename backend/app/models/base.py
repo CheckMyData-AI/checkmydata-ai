@@ -1,5 +1,6 @@
 import logging
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -55,8 +56,90 @@ class Base(DeclarativeBase):
     pass
 
 
+#: Serialises `alembic upgrade head` across processes. DATA-10: three callers fire on a
+#: restart — the `web` start command, the `web` lifespan and `worker.startup` — and none of
+#: them took a lock, while every *idempotent* reconcile in `app/ops/` takes one. A deploy
+#: carrying a new migration restarted both process types at once; both read the same
+#: revision, both planned the same DDL, and the second failed on a column that now existed.
+_MIGRATION_LOCK_KEY = 0x4D49_4752_4154_4501
+
+#: Failures that mean "this environment cannot lend us a lock", as opposed to a defect here.
+#: Built at import rather than written as `except Exception`, and `psycopg.Error` is on it
+#: for a reason worth keeping: a refused connection raises `psycopg.OperationalError`, which
+#: does **not** inherit from `OSError` — the first draft of this narrow catch would have let
+#: it escape and turned a missing lock into a failed boot.
+_LOCK_UNAVAILABLE: tuple[type[BaseException], ...] = (ImportError, OSError)
+try:  # pragma: no cover - depends on the installed driver set
+    import psycopg as _psycopg
+
+    _LOCK_UNAVAILABLE += (_psycopg.Error,)
+except ImportError:
+    pass
+
+
+def _migration_lock_connection():
+    """A psycopg connection for the migration advisory lock, or raise.
+
+    Separate from the app's pool on purpose: the lock is **session-level**, so it must
+    outlive the statement that takes it and die with a connection nobody else is using.
+    """
+    import psycopg
+
+    from app.core.db_url import sync_dsn
+
+    return psycopg.connect(sync_dsn(settings.database_url), autocommit=True)
+
+
+@contextmanager
+def _serialised_across_processes():
+    """Hold the migration lock for the duration, on PostgreSQL only.
+
+    **Blocking (`pg_advisory_lock`), not the `try_` form the reconciles use.** They are right
+    to skip when someone else holds it — their work is idempotent and the holder is doing it.
+    This one must not skip: the caller's next line assumes the schema is at head, so a
+    migration that quietly did not run is worse than one that waited.
+
+    A database that cannot be reached for the lock does not stop the migration: the attempt
+    that follows will fail on its own and say why, and refusing to migrate because an
+    advisory lock could not be taken would turn a degraded path into an outage.
+    """
+    from app.core.db_url import is_postgres
+
+    if not is_postgres(settings.database_url):
+        yield
+        return
+
+    # Narrow on purpose: a driver that is absent (ImportError) or a database that refuses
+    # the connection (OSError, psycopg.Error) is a degraded environment the migration can
+    # still be attempted in. Anything else is a bug here and must not be swallowed.
+    try:
+        conn = _migration_lock_connection()
+    except _LOCK_UNAVAILABLE as exc:
+        logger.warning(
+            "Could not open a connection for the migration lock (%s); running unserialised",
+            exc.__class__.__name__,
+        )
+        yield
+        return
+
+    try:
+        with conn as c:
+            c.execute(f"SELECT pg_advisory_lock({_MIGRATION_LOCK_KEY})")
+            try:
+                yield
+            finally:
+                c.execute(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_KEY})")
+    finally:
+        conn.close()
+
+
 def run_migrations() -> None:
     """Run Alembic migrations programmatically (sync, called at startup)."""
+    with _serialised_across_processes():
+        _run_alembic()
+
+
+def _run_alembic() -> None:
     import os
 
     backend_dir = Path(__file__).resolve().parent.parent.parent
