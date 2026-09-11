@@ -49,6 +49,7 @@ from app.analytics.errors import (
     AnalyticsAuthError,
     AnalyticsEmpty,
     AnalyticsError,
+    AnalyticsInvalidRequestError,
     AnalyticsPermissionError,
     AnalyticsTransientError,
     QuotaExhaustedError,
@@ -450,6 +451,17 @@ async def test_exhausted_quota_raises_quota_exhausted_error() -> None:
     # attempts=1: this test is about the quota *mapping*. Exhaustion is
     # retryable, and the retry path has its own test below.
     adapter = await _connected(client, attempts=1)
+
+    # This test used to assert the opposite — that the fetch raises. It was
+    # asserting ANA-02: GA4's `remaining` is what is left AFTER the request, so
+    # `remaining == 0` describes the call that legally spent the last token, and
+    # its page is complete. Raising discarded it, and the raise is retryable, so
+    # two more doomed calls followed at exactly the moment quota was scarcest.
+    report = await adapter.fetch("overview", PERIOD)
+    assert len(report.rows) == 1
+    assert adapter._quota_exhausted == {PROPERTY: "tokens_per_day"}
+
+    # The exhaustion is not forgotten: the *next* vendor call is refused.
     with pytest.raises(QuotaExhaustedError, match="tokens_per_day"):
         await adapter.fetch("overview", PERIOD)
 
@@ -499,11 +511,16 @@ async def test_absent_quota_block_is_not_read_as_exhaustion() -> None:
     [
         (gexc.Unauthenticated("bad key"), AnalyticsAuthError, 1),
         (gexc.PermissionDenied("property not shared"), AnalyticsPermissionError, 1),
-        (gexc.NotFound("no such property"), AnalyticsEmpty, 1),
+        # 404 used to map to AnalyticsEmpty — a *done* journal status, so a
+        # deleted property read as "collected, and it was zero" for ever (ANA-04).
+        (gexc.NotFound("no such property"), AnalyticsInvalidRequestError, 1),
         (gexc.ResourceExhausted("slow down"), AnalyticsTransientError, ATTEMPTS),
         (gexc.ServiceUnavailable("backend down"), AnalyticsTransientError, ATTEMPTS),
         (gexc.InternalServerError("boom"), AnalyticsTransientError, ATTEMPTS),
-        (gexc.InvalidArgument("bad dimension"), AnalyticsError, 1),
+        # 400 used to be the bare AnalyticsError, which the collector isolates
+        # and continues — so a retired metric re-issued the whole window daily,
+        # indefinitely (ANA-03).
+        (gexc.InvalidArgument("bad dimension"), AnalyticsInvalidRequestError, 1),
     ],
 )
 async def test_client_errors_map_onto_the_taxonomy_and_only_transient_ones_retry(
@@ -655,8 +672,16 @@ async def test_an_absurd_vendor_retry_after_is_clamped() -> None:
     assert sleep.delays == [MAX_RETRY_DELAY]
 
 
-async def test_quota_exhaustion_is_retried_and_can_recover() -> None:
-    """Δ3's quota check runs *inside* the retried attempt, so a rollover heals it."""
+async def test_the_page_that_spent_the_last_token_costs_one_vendor_call() -> None:
+    """One request, one page kept — where this used to be two requests and a loss.
+
+    Its previous name was `test_quota_exhaustion_is_retried_and_can_recover`, and
+    its docstring said *"Δ3's quota check runs inside the retried attempt, so a
+    rollover heals it"*. It demonstrated the discard without noticing: the
+    `exhausted` response carries a real row that the passing test silently lost,
+    and the recovery it showed was fabricated — without a vendor `Retry-After`
+    the backoff is 1 s then 2 s, against GA4 buckets that are hourly and daily.
+    """
     exhausted = _FakeResponse(
         [_FakeRow(["20260731", "Germany"], ["1", "1"])],
         1,
@@ -669,7 +694,8 @@ async def test_quota_exhaustion_is_retried_and_can_recover() -> None:
     adapter = await _connected(client, sleep=sleep, retry_base_delay=1.0)
 
     assert len((await adapter.fetch("geo", PERIOD)).rows) == 1
-    assert len(client.requests) == 2
+    assert len(client.requests) == 1
+    assert sleep.delays == []
 
 
 async def test_an_unmapped_client_exception_still_propagates_unretried() -> None:

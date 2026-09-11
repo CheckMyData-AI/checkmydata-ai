@@ -2497,7 +2497,12 @@ class OrchestratorAgent(BaseAgent):
             knowledge_agent=self._knowledge,
             llm_router=self._llm,
             tracker=self._tracker,
-            validator=StageValidator(),
+            # ORCH-04: the executor's own default is
+            # `StageValidator(llm_router=llm_router)`, and a bare one here
+            # overrode it — leaving a single substring ("no negative") as the
+            # entire business-rule evaluator, while the stage still published
+            # {"passed": true, "errors": []} on every rule nobody read.
+            validator=StageValidator(llm_router=self._llm),
             data_gate=data_gate,
             mcp_source_agent=self._mcp_source,
             git_agent=self._git,
@@ -3017,7 +3022,7 @@ class OrchestratorAgent(BaseAgent):
                 knowledge_agent=self._knowledge,
                 llm_router=self._llm,
                 tracker=self._tracker,
-                validator=StageValidator(),
+                validator=StageValidator(llm_router=self._llm),  # ORCH-04
                 data_gate=DataGate(),
                 mcp_source_agent=self._mcp_source,
                 git_agent=self._git,
@@ -3031,12 +3036,20 @@ class OrchestratorAgent(BaseAgent):
                 ),
             )
             resume_deadline = _new_pipeline_deadline()
+            # ORCH-06: `_execute_resume` is a second implementation of the
+            # pipeline tail and had drifted from the fresh path in two places.
+            # This is the first: with no `staleness_warning`, neither
+            # `_build_stage_question` nor `_synthesize` injected the
+            # knowledge-freshness block, so a user who clicked "continue" was
+            # never told the DB index was stale or the clone behind HEAD.
+            resume_staleness = await self._resume_staleness_warning(context, wf_id)
             exec_result = await executor.execute(
                 plan,
                 resume_ctx,
                 resume_from=resume_from,
                 stage_ctx=stage_ctx,
                 deadline=resume_deadline,
+                staleness_warning=resume_staleness,
             )
 
             # R5-6: a resumed pipeline can also hit a failing stage. Give it the
@@ -3056,7 +3069,7 @@ class OrchestratorAgent(BaseAgent):
                     adaptive=adaptive,
                     table_map=resume_table_map,
                     db_type=resume_db_type,
-                    staleness_warning=None,
+                    staleness_warning=resume_staleness,
                     run_id=run_id,
                     wf_id=wf_id,
                     deadline=resume_deadline,
@@ -3075,7 +3088,40 @@ class OrchestratorAgent(BaseAgent):
             raise
 
         await self._end_pipeline_workflow(wf_id, exec_result, label="resumed_pipeline")
-        return ResponseBuilder.build_pipeline_response(exec_result, wf_id, None, run_id)
+        # ORCH-06, second half: `answer_directive` defaults to None and the
+        # downgrade is guarded on `is not None`, so AnswerQualityGate never ran
+        # here — an answer the fresh path downgrades to `step_limit_reached` with
+        # a "Continue analysis" CTA was published as `pipeline_complete` with
+        # `error=None`. A green seal on an answer the gate refused.
+        resume_directive = await self._evaluate_pipeline_answer(
+            exec_result=exec_result, context=context, wf_id=wf_id
+        )
+        return ResponseBuilder.build_pipeline_response(
+            exec_result,
+            wf_id,
+            resume_staleness,
+            run_id,
+            answer_directive=resume_directive,
+        )
+
+    async def _resume_staleness_warning(self, context: AgentContext, wf_id: str) -> str | None:
+        """The freshness block for a resumed run, derived exactly as on entry.
+
+        Recomputed rather than carried: a checkpoint can be resumed hours later,
+        and a warning frozen at pause time would be a claim about how fresh the
+        knowledge *was*.
+        """
+        cfg = context.connection_config
+        connection_id = cfg.connection_id if cfg else None
+        if not connection_id and not self._ctx_loader.has_knowledge_base(context.project_id):
+            return None
+        # No wrapper: `check_staleness` catches its own failures and returns the
+        # STALENESS_UNKNOWN sentinel rather than raising, precisely so a failed
+        # check is visible as a third state instead of reading as "fresh".
+        # Catching here would convert that sentinel-bearing path into silence.
+        return await self._ctx_loader.check_staleness(
+            context.project_id, wf_id, connection_id=connection_id
+        )
 
     async def _create_pipeline_run(
         self,
@@ -3294,7 +3340,11 @@ class OrchestratorAgent(BaseAgent):
                     sql_summaries.append(sr.summary[:200])
                 if sr.query_result is not None:
                     last_row_count = sr.query_result.row_count
-                    last_truncated = bool(sr.query_result.truncated)
+                    # ORCH-09: `last_truncated` used to be *reassigned* here, so a
+                    # capped early stage followed by an uncapped later one told the
+                    # gate `truncated=False`. Truncation anywhere in the plan is
+                    # truncation of the answer.
+                    last_truncated = last_truncated or bool(sr.query_result.truncated)
 
             directive: ResultDirective = await gate.evaluate(
                 question=context.user_question,

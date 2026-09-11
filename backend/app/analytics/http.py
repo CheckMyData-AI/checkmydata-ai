@@ -42,8 +42,8 @@ from urllib.parse import urlsplit, urlunsplit
 from app.analytics.errors import (
     RETRYABLE_ERRORS,
     AnalyticsAuthError,
-    AnalyticsEmpty,
     AnalyticsError,
+    AnalyticsInvalidRequestError,
     AnalyticsPermissionError,
     AnalyticsTransientError,
 )
@@ -140,8 +140,11 @@ def classify_response(resp: Resp) -> AnalyticsError | None:
         return AnalyticsAuthError(detail)
     if resp.status == 403:
         return AnalyticsPermissionError(detail)
-    if resp.status == 404:
-        return AnalyticsEmpty(detail)
+    if resp.status in (400, 404):
+        # Neither can be fixed by repeating it, and neither is an empty period.
+        # 404 used to map to AnalyticsEmpty — a *done* status — so a deleted
+        # property read as "collected, and it was zero" for ever.
+        return AnalyticsInvalidRequestError(detail)
     if resp.status == 429 or resp.status >= 500:
         return AnalyticsTransientError(detail)
     return AnalyticsError(detail)
@@ -269,7 +272,7 @@ async def request_with_retry(
 
     Raises:
         ValueError: ``attempts`` is below 1.
-        AnalyticsAuthError, AnalyticsPermissionError, AnalyticsEmpty,
+        AnalyticsAuthError, AnalyticsPermissionError, AnalyticsInvalidRequestError,
         AnalyticsError: non-retryable failures, raised on the first occurrence.
         AnalyticsTransientError, QuotaExhaustedError: the last failure after the
             retry budget is spent.

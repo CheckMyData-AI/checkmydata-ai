@@ -957,7 +957,10 @@ class ConnectionService:
             status = "ok"
 
         newest_failure = _newest(rows, lambda row: row.status == "failed" and bool(row.error))
-        newest_caveat = _newest(rows, lambda row: row.status != "failed" and bool(row.error))
+        # ``ok``, not "not failed" (ANA-01). ``error`` on an ``empty`` row is the
+        # AnalyticsEmpty text — a correct, quiet day — and rendering it amber as
+        # `Caveat: …` makes a healthy connection look broken.
+        newest_caveat = _newest(rows, lambda row: row.status == "ok" and bool(row.error))
         newest_row = _newest(rows, lambda _row: True)
 
         return {
@@ -1008,8 +1011,10 @@ def _report_status(
     pending = sorted(set(expected) - done)
 
     last_failure = _newest(entries, lambda e: e.status == "failed" and bool(e.error))
-    # A caveat rides in ``error`` on a row whose status is *not* failed.
-    last_caveat = _newest(entries, lambda e: e.status != "failed" and bool(e.error))
+    # A caveat rides in ``error`` on an ``ok`` row — the vendor's truncation
+    # sentence. On an ``empty`` row the same column holds "GA4 returned no rows",
+    # which is a correct outcome and not a caveat at all (ANA-01).
+    last_caveat = _newest(entries, lambda e: e.status == "ok" and bool(e.error))
     last_run = _newest(entries, lambda _e: True)
 
     return {

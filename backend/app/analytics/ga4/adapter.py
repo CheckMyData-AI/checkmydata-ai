@@ -249,6 +249,13 @@ class GA4Adapter(AnalyticsSourceAdapter):
         self._retry_base_delay = max(0.0, float(retry_base_delay))
         self._sleep = sleep
         self._config: GA4Config | None = None
+        #: ``property_id -> bucket`` for every property whose quota the vendor has
+        #: reported spent. Written from a successful response and read before the
+        #: next request to that property. Keyed by property because GA4's buckets
+        #: are per property: an adapter-wide flag would let one exhausted property
+        #: refuse every other one, which is ANA-11 by another route. An adapter is
+        #: built per collection run, so this never outlives the window it describes.
+        self._quota_exhausted: dict[str, str] = {}
 
     # -- DataSourceAdapter ------------------------------------------------
 
@@ -337,28 +344,59 @@ class GA4Adapter(AnalyticsSourceAdapter):
         rows: list[list[Any]] = []
         truncated = False
         capped_properties: list[str] = []
+        # One property's failure must not destroy another's rows (ANA-11). The
+        # loop used to let any raise propagate, so a single deleted property
+        # discarded every healthy property's already-fetched data — and the
+        # period was then journalled `empty`, a *done* status that never refills.
+        failures: list[tuple[str, AnalyticsError]] = []
         for property_id in config.property_ids:
-            property_rows, property_truncated = await self._fetch_property(
-                spec, property_id, start_date, end_date
-            )
+            try:
+                property_rows, property_truncated = await self._fetch_property(
+                    spec, property_id, start_date, end_date
+                )
+            except AnalyticsError as exc:
+                failures.append((property_id, exc))
+                logger.warning(
+                    "GA4 report %r period %s: property %s failed (%s); "
+                    "continuing with the remaining properties",
+                    spec.name,
+                    period,
+                    property_id,
+                    exc,
+                )
+                continue
             rows.extend(property_rows)
             if property_truncated:
                 truncated = True
                 capped_properties.append(property_id)
 
         if not rows:
+            if failures:
+                # Nothing survived, so there is no partial result to publish and
+                # the first failure is the report's failure. Raising it rather
+                # than AnalyticsEmpty keeps a misconfiguration out of a `done`
+                # status.
+                raise failures[0][1]
             raise AnalyticsEmpty(
                 f"GA4 returned no rows for report {spec.name!r} on period {period!r}"
             )
 
-        degraded: str | None = None
+        notes: list[str] = []
         if truncated:
-            degraded = (
+            notes.append(
                 f"GA4 report '{spec.name}' for {period} exceeded the {self._max_rows:,}-row "
                 f"fetch cap on property/properties {', '.join(capped_properties)}; "
                 f"only the first {len(rows):,} rows were collected."
             )
-            logger.warning("GA4 fetch truncated: %s", degraded)
+        if failures:
+            notes.append(
+                f"GA4 report '{spec.name}' for {period} is missing "
+                + ", ".join(f"property {pid} ({exc})" for pid, exc in failures)
+                + "; the values are real but cover only the remaining properties."
+            )
+        degraded: str | None = "; ".join(notes) if notes else None
+        if degraded:
+            logger.warning("GA4 fetch degraded: %s", degraded)
 
         return AnalyticsReport(
             columns=spec.columns,
@@ -466,13 +504,20 @@ class GA4Adapter(AnalyticsSourceAdapter):
                     raise
                 hint = _vendor_retry_after(exc)
                 raise mapped from exc
-            # Inside the retried attempt on purpose (Δ3): an exhausted bucket is
-            # a retryable condition, and a quota window that rolls over between
-            # attempts heals the very request that hit it.
-            self._check_quota(getattr(response, "property_quota", None))
             return response
 
-        return await retry_async(
+        property_id = str(getattr(request, "property", "")).removeprefix("properties/")
+        spent = self._quota_exhausted.get(property_id)
+        if spent:
+            # The bucket was already known spent when this call was made, so the
+            # request is refused before it reaches the vendor rather than after
+            # (ANA-02).
+            raise QuotaExhaustedError(
+                f"GA4 quota {spent} for property {property_id} was reported exhausted "
+                "earlier in this run; refusing to spend another vendor call on it"
+            )
+
+        response = await retry_async(
             attempt,
             attempts=self._attempts,
             base_delay=self._retry_base_delay,
@@ -480,10 +525,18 @@ class GA4Adapter(AnalyticsSourceAdapter):
             retry_after=lambda: hint,
             label=f"GA4 runReport {request.property}",
         )
+        # AFTER the response, and it does not raise (ANA-02). GA4's
+        # `QuotaStatus.remaining` is what is left *after* this request, so
+        # remaining == 0 describes the call that legally spent the last token —
+        # the one whose page is complete. Raising here discarded it, and the
+        # raise was retryable, so two more doomed calls followed at exactly the
+        # moment quota was scarcest. The bucket is remembered instead, and the
+        # *next* request is the one refused.
+        self._note_quota(property_id, getattr(response, "property_quota", None))
+        return response
 
-    @staticmethod
-    def _check_quota(quota: Any) -> None:
-        """Raise :class:`QuotaExhaustedError` when a reported bucket is spent (Δ3)."""
+    def _note_quota(self, property_id: str, quota: Any) -> None:
+        """Record a spent bucket (Δ3) without discarding the page that spent it."""
         if quota is None:
             return
         for bucket in _QUOTA_BUCKETS:
@@ -497,9 +550,15 @@ class GA4Adapter(AnalyticsSourceAdapter):
                 # an all-zero proto default must not read as exhaustion.
                 continue
             if remaining <= 0:
-                raise QuotaExhaustedError(
-                    f"GA4 quota {bucket} is exhausted (consumed={consumed}, remaining=0)"
+                self._quota_exhausted[property_id] = bucket
+                logger.warning(
+                    "GA4 quota %s for property %s is exhausted (consumed=%d, remaining=0); "
+                    "this page is kept and the next vendor call for it will be refused",
+                    bucket,
+                    property_id,
+                    consumed,
                 )
+                return
             logger.debug("GA4 quota %s: %d remaining", bucket, remaining)
 
     @staticmethod

@@ -6,6 +6,80 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — twelve places the analyzer described a run that did not happen
+
+P1 row 12; ORCH-02/04/06/08/09 and ANA-01/02/03/04/07/11/12. None of these is a
+crash. Every one of them publishes data — correctly fetched, correctly stored —
+under a label that is false, which is the failure mode this product exists to
+refuse.
+
+**The collector's taxonomy had no class for "this request can never work."** A 404
+became `AnalyticsEmpty`, whose own docstring says the period is *done* and is never
+retried — so a deleted or mistyped GA4 property recorded every period as *collected,
+and it was zero*, the connection badge read `ok`, and the agent answered over the
+fabricated zero with "all 30 periods in this window have been collected, so the
+values below are real measurements". A 400 became the bare `AnalyticsError`, which
+the collector isolates per period and continues past — so a metric GA4 has retired
+re-issued every period in the window, once a day, indefinitely.
+`AnalyticsInvalidRequestError` now covers both and stops the report the way auth and
+permission already did, and `AnalyticsEmpty` keeps its one honest meaning: a 2xx that
+carried no rows.
+
+**One property's failure discarded every other property's rows.** `fetch` accumulates
+across `property_ids` and any raise propagated out of the whole loop, so a
+multi-property connection with one dead property journalled the period `empty` —
+permanently — while the healthy properties had real traffic. Each property is isolated
+now; what survived is published with a degraded sentence naming what did not, and only
+a period where *every* property failed raises.
+
+**The request that legally spent the last quota token was destroyed.** GA4's
+`QuotaStatus.remaining` is what is left *after* the request, so `remaining == 0`
+describes the call that succeeded and emptied the bucket. The check ran inside the
+retried attempt and raised before returning, so a complete page was thrown away and
+two more doomed calls followed — at exactly the moment quota was scarcest. The bucket
+is remembered instead and the *next* request is the one refused.
+
+**A refetch overwrote but never deleted.** The tail refetch exists because vendors
+revise, and GA4's revisions include removals — spam-filtered events, reattributed geo.
+A dimension value that vanished from the fresh response kept counting into totals
+published as real measurements. The sweep is scoped to the `(property, date)` pairs the
+response actually covered, never the whole period: with per-property isolation a failed
+property contributes no rows, and treating its absence as a removal would turn one
+outage into data loss.
+
+**A quiet day was reported as a truncation.** The journal's `error` column carries the
+vendor's degraded sentence on an `ok` row and the `AnalyticsEmpty` text on an `empty`
+one, and every reader keyed the truncation caveat on `status in DONE_STATUSES and
+error`. So a day GA4 genuinely had nothing for was announced as *"the vendor truncated
+this period … the values below are real, but lower than the true total"*, and the
+health panel rendered the same string amber on a correct connection.
+
+**A figure with no window behind it shipped bare.** Grounding is satisfied by
+`list_reports()` or `coverage()`, neither of which returns a measurement — and with no
+window open, the partial caveats are empty, the freshness lines short-circuit,
+`pending_periods` is empty, and the validator's only numeric warning is keyed on
+`pending`. Refusing was the obvious fix and is the wrong one, because both catalogue
+tools have legitimate numeric answers; what was missing is the sentence saying which
+kind of number this is.
+
+**And the pipeline disagreed with the flat loop about zero.** `ResultValidation`
+returns `requery` for a clean zero-row result, which the flat loop appends as a warning
+and the pipeline mapped onto a non-retryable stage error — so *"how many refunds were
+there in July?"* against a month with none burned both planner replans and returned a
+failed pipeline. One gate, two opposite outcomes, decided by which path the router
+happened to pick.
+
+Three more of the same shape: both production call sites built `StageValidator()`
+without a router, leaving one substring (`"no negative"`) as the entire business-rule
+evaluator while every stage still published `{"passed": true}`; the resumed pipeline
+ran with no freshness warning and no answer-quality gate, publishing as
+`pipeline_complete` an answer the fresh path downgrades; `execute()` discarded the
+synthesis' own degraded reason, so a failed final synthesis was sealed as a clean
+completion whenever the plan ended in `analyze_results` — which the planner prompt
+sanctions; and the truncation caveat and the answer gate read only the *last* stage
+with rows, so a capped SQL stage followed by a fresh GA4 stage published the capped
+total as complete.
+
 ### Fixed — the background process was the one nobody could see
 
 P1 row 11, first seam; OPS-01, OPS-04, OPS-06, OPS-09, OPS-13. (OPS-03 — worker metrics

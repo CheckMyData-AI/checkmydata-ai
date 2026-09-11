@@ -197,9 +197,10 @@ class FakeGA4Client:
         sessions_by_day: Sessions the property reports per day. A day present
             with value ``0`` is a *collected zero* — the whole point of Δ2's
             ``keep_empty_rows`` — and is served as a real row, not as no rows.
-        quota_exhausted: ``(report, period)`` pairs answered with a response
-            whose quota block is spent, which is how a real mid-run quota wall
-            arrives. The adapter turns that into ``QuotaExhaustedError``.
+        quota_exhausted: ``(report, period)`` pairs answered with a complete
+            response whose quota block is spent, which is how a real mid-run
+            quota wall arrives. The adapter keeps that page and refuses the
+            *next* request for the property.
         row_capped: ``(report, period)`` pairs whose response declares
             ``row_count = ROW_CAPPED_TOTAL`` while still handing over one row —
             the vendor saying "there is more than you took". Paired with a small
@@ -224,17 +225,6 @@ class FakeGA4Client:
         spec = _spec_for(request)
         day = request.date_ranges[0].start_date
 
-        if (spec.name, day) in self.quota_exhausted:
-            return RunReportResponse(
-                dimension_headers=[DimensionHeader(name=n) for n in spec.dimension_names],
-                metric_headers=[MetricHeader(name=n) for n in spec.metric_names],
-                rows=[],
-                row_count=0,
-                property_quota=PropertyQuota(
-                    tokens_per_hour=QuotaStatus(consumed=40_000, remaining=0)
-                ),
-            )
-
         if int(request.offset or 0) > 0:
             # One page holds everything this fake has; a second page is empty.
             return RunReportResponse(
@@ -254,11 +244,22 @@ class FakeGA4Client:
             ],
         )
         capped = (spec.name, day) in self.row_capped
+        # A response whose quota block is spent is otherwise an ordinary,
+        # complete response — GA4's `remaining` is what is left AFTER the
+        # request, so the call that empties the bucket is the one that
+        # succeeded. This fake used to serve it with `rows=[]`, which hid what
+        # ANA-02 costs: that row was being discarded.
+        spent = (spec.name, day) in self.quota_exhausted
         return RunReportResponse(
             dimension_headers=[DimensionHeader(name=n) for n in spec.dimension_names],
             metric_headers=[MetricHeader(name=n) for n in spec.metric_names],
             rows=[row],
             row_count=ROW_CAPPED_TOTAL if capped else 1,
+            property_quota=(
+                PropertyQuota(tokens_per_hour=QuotaStatus(consumed=40_000, remaining=0))
+                if spent
+                else None
+            ),
         )
 
 
@@ -624,10 +625,27 @@ async def test_rerunning_the_same_collection_writes_no_duplicates(
 async def test_a_failed_period_yields_partial_and_the_answer_carries_the_caveat(
     db_session: AsyncSession, engine: Any, ga4_connection: str
 ) -> None:
-    """One period hits the vendor's quota wall; the user is told."""
+    """The run hits the vendor's quota wall; the user is told.
+
+    Two things about this test changed with ANA-02, and both were the defect
+    rather than the design.
+
+    It used to mark 2026-07-14 as the *failed* day, because the response that
+    reported ``remaining == 0`` was thrown away. GA4's ``remaining`` is what is
+    left *after* the request, so that response is the one that succeeded and
+    emptied the bucket: its rows are now kept, and the day that fails is the
+    next one — the first request made against a bucket already known spent.
+
+    And it used to assert that every later period and every other report still
+    collected. A GA4 bucket is per property per window, so once every configured
+    property is spent there is nothing left for any of them to spend. The run
+    stops, the remaining periods stay pending, and the next run collects them
+    once the window has rolled over.
+    """
     connection_id = ga4_connection
-    failed_day = COLLECTED_DAYS[1]
-    vendor = Vendor(quota_exhausted=frozenset({("overview", failed_day)}))
+    spent_day = COLLECTED_DAYS[1]
+    failed_day = COLLECTED_DAYS[2]
+    vendor = Vendor(quota_exhausted=frozenset({("overview", spent_day)}))
 
     outcome = await _collect(db_session, connection_id, vendor)
 
@@ -637,7 +655,7 @@ async def test_a_failed_period_yields_partial_and_the_answer_carries_the_caveat(
     assert failed_day in outcome.errors[0]
     assert "quota" in outcome.errors[0].lower()
 
-    # The other periods of the same report still wrote…
+    # The page that spent the last token is kept, not discarded.
     stored_days = sorted(
         row.date.isoformat()
         for row in (
@@ -648,19 +666,21 @@ async def test_a_failed_period_yields_partial_and_the_answer_carries_the_caveat(
         .scalars()
         .all()
     )
-    assert stored_days == [COLLECTED_DAYS[0], COLLECTED_DAYS[2]]
-    # …and every other report is untouched by one report's bad day.
+    assert stored_days == [COLLECTED_DAYS[0], spent_day]
+
+    # `overview` is the first report; the wall stops the run before the rest.
+    overview_statuses = {
+        row.period: row.status for row in await _journal_rows(db_session, connection_id, "overview")
+    }
+    assert overview_statuses == {
+        COLLECTED_DAYS[0]: "ok",
+        spent_day: "ok",
+        failed_day: "failed",
+    }
     for spec in GA4_REPORTS:
-        rows = await _journal_rows(db_session, connection_id, spec.name)
-        statuses = {row.period: row.status for row in rows}
         if spec.name == "overview":
-            assert statuses == {
-                COLLECTED_DAYS[0]: "ok",
-                failed_day: "failed",
-                COLLECTED_DAYS[2]: "ok",
-            }
-        else:
-            assert statuses == dict.fromkeys(COLLECTED_DAYS, "ok"), spec.name
+            continue
+        assert not await _journal_rows(db_session, connection_id, spec.name), spec.name
 
     failure = next(
         row
@@ -688,7 +708,7 @@ async def test_a_failed_period_yields_partial_and_the_answer_carries_the_caveat(
     assert "NOT zero" in result.answer
     assert result.pending_periods == [failed_day]
     # The totals really are the surviving days only, and the answer quotes them.
-    surviving = SESSIONS_BY_DAY[COLLECTED_DAYS[0]] + SESSIONS_BY_DAY[COLLECTED_DAYS[2]]
+    surviving = SESSIONS_BY_DAY[COLLECTED_DAYS[0]] + SESSIONS_BY_DAY[spent_day]
     assert str(surviving) in result.answer
     assert result.rows[0][1] == surviving
 

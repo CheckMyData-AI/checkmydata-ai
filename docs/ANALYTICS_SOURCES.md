@@ -206,9 +206,26 @@ coroutine in-process — the schedule still works, single-dyno.
 **What one run does.** For each of the five reports, it computes the expected
 periods (backfill window ending **yesterday**), asks the journal which of them
 are still pending, and fetches those. Per-period isolation: one failing period
-never aborts the run, but it is always journalled and always reported. An
-auth/permission failure *does* stop that report — the credential is wrong, and
-continuing would only burn quota.
+never aborts the run, but it is always journalled and always reported.
+
+Three failures are not isolated, for the same reason in three forms — every
+remaining period would fail identically, so continuing only burns quota:
+
+- **auth / permission (401, 403)** stops that report: the credential is wrong.
+- **an invalid request (400, 404)** stops that report: a property that does not
+  exist, or a metric or dimension GA4 has retired. This used to be isolated, and
+  a 404 was worse than isolated — it was recorded as an *empty* period, which is
+  a `done` status, so a deleted property read as "collected, and it was zero" for
+  ever while the connection badge said `ok`.
+- **an exhausted quota** stops the whole **connection**: a GA4 bucket is per
+  property per window, and the adapter only reports the wall once every
+  configured property is spent. The periods stay pending and the next run
+  collects them once the window has rolled over.
+
+**Per-property isolation** sits underneath all of that: inside one period's
+fetch, a property that fails no longer discards the properties that succeeded.
+What survived is written, and the journal row carries a sentence naming the
+property that did not.
 
 **Collect now.** `POST /api/connections/{id}/collect` (or the **Collect now**
 button on the collection row) enqueues exactly the same job with the same
@@ -306,9 +323,18 @@ new credential, re-point the connection at it, and delete the old credential.
 
 ### Quota exhaustion
 
-GA4's per-property/per-project token buckets are read from every response. When a
-bucket reports zero remaining, that period is journalled `failed`, the run
-**continues** with the next period, and the outcome is `partial` — not success.
+GA4's per-property/per-project token buckets are read from every response —
+**after** it has been parsed and kept. `QuotaStatus.remaining` is what is left
+*after* the request, so `remaining == 0` describes the call that succeeded and
+emptied the bucket; its rows are stored, and the *next* request for that property
+is the one refused. (Until 2026-09-11 the check ran before the response was
+returned, so that complete page was discarded and two more doomed calls followed
+— at exactly the moment quota was scarcest.)
+
+When the wall is hit, the period that could not be fetched is journalled
+`failed`, the run **stops**, and the outcome is `partial` — not success. The
+remaining periods stay pending.
+
 Transient failures (429, 5xx, network) and quota errors are retried up to
 `ANALYTICS_HTTP_ATTEMPTS` times with exponential backoff that honours the
 vendor's `Retry-After`, bounded at 60 s per wait so a hostile header cannot park
