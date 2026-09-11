@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.deps import get_current_user
@@ -1509,26 +1510,101 @@ async def _maintenance_loop() -> None:
     happened after startup and stale knowledge accumulated indefinitely.
     """
     interval_seconds = max(1, settings.maintenance_interval_hours) * 3600
+    # OPS-04: the interval is a gap between RUNS, not a gap between process starts. It used
+    # to be the first thing this loop did — `sleep(24h)` measured from boot, with nothing
+    # persisted — on a platform that cycles dynos roughly daily. Billing reconcile,
+    # telemetry retention, the analytics journal prune and insight decay were therefore
+    # gated behind uptime the platform does not grant, and nothing said so: a job that
+    # never starts logs nothing at all.
+    #
+    # The marker is the same `deploy_state` table the embedding and encryption reconciles
+    # use, so a restart resumes the schedule instead of restarting it.
+    poll_seconds = min(interval_seconds, 600)
 
     while True:
         try:
-            await asyncio.sleep(interval_seconds)
+            due = await _maintenance_is_due(interval_seconds)
+            if not due:
+                await asyncio.sleep(poll_seconds)
+                continue
             # Multi-dyno single-flight: confidence decay / insight TTL / freshness
             # must run once per interval, not once per dyno — otherwise every
             # extra dyno applies the decay again (double/triple confidence drop).
             async with redis_lock("cron:maintenance", ttl_seconds=900) as acquired:
                 if not acquired:
+                    await asyncio.sleep(poll_seconds)
                     continue
+                await _mark_maintenance_run()
                 await _periodic_learning_decay()
                 await _periodic_insight_maintenance()
                 await _freshness_reconcile()
                 await _sweep_telemetry_retention()
                 await _prune_analytics_journal()
                 await _reconcile_billing()
+            await asyncio.sleep(poll_seconds)
         except asyncio.CancelledError:
             break
         except Exception:
             logger.exception("Maintenance loop iteration failed; will retry next cycle")
+            await asyncio.sleep(poll_seconds)
+
+
+MAINTENANCE_MARKER_KEY = "maintenance_last_run"
+
+
+async def _maintenance_is_due(interval_seconds: int) -> bool:
+    """True when `interval_seconds` have passed since the last recorded run (OPS-04).
+
+    Degrades **open**: a marker that cannot be read means the schedule is unknown, and the
+    work here is idempotent — decay, TTL expiry, prunes and a reconcile — so running it once
+    more costs a query, while never running it is what this fixes.
+    """
+    from sqlalchemy import select
+
+    from app.models.deploy_state import DeployState
+
+    try:
+        async with async_session_factory() as session:
+            row = (
+                await session.execute(
+                    select(DeployState).where(DeployState.key == MAINTENANCE_MARKER_KEY)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return True
+            last = datetime.fromisoformat(row.value)
+            return (datetime.now(UTC) - last).total_seconds() >= interval_seconds
+    except (SQLAlchemyError, ValueError):
+        # SQLAlchemyError: the table or the connection. ValueError: a marker that is not a
+        # timestamp. Both mean "the schedule is unknown", which degrades OPEN because the
+        # work is idempotent — and neither hides a defect in this function.
+        logger.warning(
+            "Maintenance: could not read the last-run marker; running anyway", exc_info=True
+        )
+        return True
+
+
+async def _mark_maintenance_run() -> None:
+    """Record that maintenance ran, so a restart resumes rather than restarts the clock."""
+    from sqlalchemy import select
+
+    from app.models.deploy_state import DeployState
+
+    try:
+        async with async_session_factory() as session:
+            row = (
+                await session.execute(
+                    select(DeployState).where(DeployState.key == MAINTENANCE_MARKER_KEY)
+                )
+            ).scalar_one_or_none()
+            now = datetime.now(UTC).isoformat()
+            if row is None:
+                session.add(DeployState(key=MAINTENANCE_MARKER_KEY, value=now))
+            else:
+                row.value = now
+            await session.commit()
+    except SQLAlchemyError:
+        logger.warning("Maintenance: could not record the last-run marker", exc_info=True)
 
 
 async def _sweep_telemetry_retention() -> None:

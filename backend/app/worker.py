@@ -293,8 +293,28 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
         json_format=os.getenv("LOG_FORMAT", "text") == "json",
         level=os.getenv("LOG_LEVEL", "INFO"),
     )
+
+    # OPS-01. `init_sentry()` is called at import time of `app/main.py`, which only the web
+    # dyno loads — `arq app.worker.WorkerSettings` never imports it. So every exception
+    # raised by the repo index, the nightly sync and analytics collection has been invisible
+    # to error reporting since Sentry was wired, in the process this repository's own
+    # incident history names as the recurring failure surface.
+    from app.core.sentry import init_sentry
+
+    # No wrapper: `init_sentry` returns False when there is no DSN and swallows its own
+    # import/config failures (`sentry.py:124-133`). A second `except` here would be belt on
+    # belt, and the suppression ratchet is right to count it.
+    init_sentry()
+
     run_migrations()
     await init_db()
+
+    # OPS-13: the report runs on web and not here, in the process whose capabilities decide
+    # whether indexing works at all.
+    from app.ops.capability_report import report_capabilities
+
+    # Its own docstring: "Never raises."
+    report_capabilities(process="worker")
 
     redis_url = os.getenv("REDIS_URL")
 
@@ -339,16 +359,28 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
     try:
         from app.ops.bm25_local_reconcile import reconcile_local_bm25
 
-        _bm25 = await reconcile_local_bm25()
-        logger.info(
-            "BM25 local reconcile (worker): %s (rebuilt=%d present=%d failed=%d)",
-            _bm25.status,
-            _bm25.rebuilt,
-            _bm25.skipped_present,
-            _bm25.failed,
-        )
-    except Exception:
-        logger.warning("BM25 local reconcile failed in worker startup", exc_info=True)
+        # OPS-09: detached, because `on_startup` is awaited to completion before arq polls
+        # and this comment has said "never blocks the worker from taking jobs" while it did
+        # exactly that. The reconcile reads every project's KnowledgeDoc rows and rebuilds
+        # a BM25 index per project; the jobs waiting behind it are the ones that matter.
+        async def _reconcile_bm25_in_background() -> None:
+            try:
+                _bm25 = await reconcile_local_bm25()
+                logger.info(
+                    "BM25 local reconcile (worker): %s (rebuilt=%d present=%d failed=%d)",
+                    _bm25.status,
+                    _bm25.rebuilt,
+                    _bm25.skipped_present,
+                    _bm25.failed,
+                )
+            except Exception:
+                logger.warning("BM25 local reconcile failed in worker startup", exc_info=True)
+
+        ctx["_bm25_task"] = asyncio.create_task(_reconcile_bm25_in_background())
+    except (ImportError, RuntimeError):
+        # ImportError: the module is missing. RuntimeError: no running loop to attach the
+        # task to. Anything else here is a defect in this function and must not be hidden.
+        logger.warning("BM25 local reconcile could not be scheduled", exc_info=True)
 
 
 async def shutdown(ctx: dict) -> None:  # noqa: ARG001
@@ -408,6 +440,12 @@ def _repo_index_timeout() -> int:  # pragma: no cover
     return settings.repo_index_job_timeout_seconds
 
 
+def _db_index_timeout() -> int:  # pragma: no cover
+    from app.config import settings
+
+    return settings.db_index_job_timeout_seconds
+
+
 def _redis_settings():  # pragma: no cover
     """Build ARQ RedisSettings from REDIS_URL env var."""
     from app.core.redis_tls import arq_redis_settings
@@ -420,8 +458,12 @@ class WorkerSettings:  # pragma: no cover
     """ARQ discovers this class automatically."""
 
     functions = [
-        run_db_index,
-        run_code_db_sync,
+        # OPS-06: their own ceiling. Inheriting `job_timeout` below gave `run_db_index` a
+        # 1800 s whole-job limit identical to `db_index_fetch_samples_budget_seconds` — the
+        # budget of one of its steps — so arq could kill the job while that step was still
+        # within its allowance and the rest had not started.
+        _arq_func_with_timeout(run_db_index, _db_index_timeout()),
+        _arq_func_with_timeout(run_code_db_sync, _db_index_timeout()),
         run_batch,
         # AUD-0819-20: the repo index gets its own ceiling rather than inheriting
         # the class-level `job_timeout` below. It is the longest job here, and it

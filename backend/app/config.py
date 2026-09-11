@@ -499,6 +499,14 @@ class Settings(BaseSettings):
     #: completes. A table without statistics is a gap the prompt can work around, and
     #: eight hours against a live database is not.
     db_index_fetch_samples_budget_seconds: int = 1800
+
+    #: Whole-job ceiling for `run_db_index` and `run_code_db_sync` (OPS-06). It used to be
+    #: the worker-wide `job_timeout` of 1800 s — **exactly** the value of
+    #: `db_index_fetch_samples_budget_seconds`,
+    #: the budget of ONE of this job's steps — so arq could cancel the job while that step
+    #: was still inside its own allowance and every other step had yet to run. Sized as the
+    #: sampling budget plus room for introspection, statistics and the LLM description pass.
+    db_index_job_timeout_seconds: int = 5400
     #: Honour the orchestrator's remaining wall clock *inside* the SQL tool loop.
     #: Without it the loop is bounded only by `max_sql_iterations`: the orchestrator
     #: checks its own budget between its iterations, and the entire SQL agent runs

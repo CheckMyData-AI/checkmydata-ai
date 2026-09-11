@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the background process was the one nobody could see
+
+P1 row 11, first seam; OPS-01, OPS-04, OPS-06, OPS-09, OPS-13. (OPS-03 — worker metrics
+with no endpoint to read them — needs a shared store and follows separately.)
+
+The worker is where this product does its expensive unattended work, and this repository's
+own incident history names it as the recurring failure surface. It was also the process
+with **no error reporting at all**: `init_sentry()` runs at import time of `app/main.py`,
+which only the `web` dyno loads, so no exception from the repository index, the nightly sync
+or analytics collection has ever reached Sentry. It now initialises in `worker.startup`,
+alongside the **capability report**, which also ran only on web — in the process whose
+capabilities decide whether indexing works at all.
+
+**A claim that could not be evaluated is not a claim that passed.** The capability report
+logged such a claim at DEBUG — invisible at production's INFO — and still printed "all
+satisfied", in the module whose own docstring says silence must not read as a pass. It now
+warns, names the claims, and refuses the clean summary when any could not be checked.
+
+**Four maintenance jobs were gated behind uptime the platform does not grant.**
+`_maintenance_loop` slept a full 24 h *before* its first tick, measured from process start,
+with nothing persisted — and Heroku cycles dynos roughly daily. Billing reconcile, telemetry
+retention, the analytics journal prune and insight decay therefore may never have run on
+this deployment, and a job that never starts logs nothing at all. The schedule is anchored
+on a `deploy_state` marker now, the same table the embedding and encryption reconciles use,
+so a restart resumes it rather than restarting it.
+
+**The BM25 reconcile blocked job pickup** while its own comment said it never does: it was
+`await`ed inside `on_startup`, which arq completes before it polls. Detached.
+
+**`run_db_index` inherited a whole-job ceiling identical to one of its own steps' budgets**
+— 1800 s, exactly `db_index_fetch_samples_budget_seconds` — so arq could cancel the job
+while that step was still inside its allowance and every later step had yet to run.
+`DB_INDEX_JOB_TIMEOUT_SECONDS` (5400) is its own knob, shared with the code↔DB sync.
+
 ### Fixed — nine places reported the work they asked for, not the work that happened
 
 P1 row 10; API-03, API-12, OPS-05, OPS-17, ANA-10.
