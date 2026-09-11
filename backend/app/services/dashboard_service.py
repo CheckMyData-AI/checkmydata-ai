@@ -28,6 +28,9 @@ class DashboardService:
         session: AsyncSession,
         project_id: str,
         user_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[Dashboard]:
         stmt = (
             select(Dashboard)
@@ -40,6 +43,12 @@ class DashboardService:
             )
             .order_by(Dashboard.updated_at.desc())
         )
+        # API-09: the route's limit/offset used to bound the response body and
+        # nothing else — not the query, not the rows deserialised, not the memory.
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 

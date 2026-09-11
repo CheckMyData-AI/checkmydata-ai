@@ -155,8 +155,9 @@ async def list_notes(
     if scope not in ("mine", "shared", "all"):
         raise HTTPException(status_code=400, detail="scope must be mine, shared, or all")
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    notes = await _svc.list_by_project(db, project_id, user["user_id"], scope=scope)
-    return notes[offset : offset + limit]
+    return await _svc.list_by_project(
+        db, project_id, user["user_id"], scope=scope, limit=limit, offset=offset
+    )
 
 
 @router.get("/{note_id}", response_model=NoteResponse)

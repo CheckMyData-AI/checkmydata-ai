@@ -151,8 +151,7 @@ async def list_dashboards(
     user: dict = Depends(get_current_user),
 ):
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    dashboards = await _svc.list_for_project(db, project_id, user["user_id"])
-    return dashboards[offset : offset + limit]
+    return await _svc.list_for_project(db, project_id, user["user_id"], limit=limit, offset=offset)
 
 
 @router.get("/{dashboard_id}", response_model=DashboardResponse)

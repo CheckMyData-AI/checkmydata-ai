@@ -29,6 +29,9 @@ class NoteService:
         project_id: str,
         user_id: str,
         scope: str = "mine",
+        *,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[SavedNote]:
         base = select(SavedNote).where(SavedNote.project_id == project_id)
 
@@ -48,6 +51,13 @@ class NoteService:
             base = base.where(SavedNote.user_id == user_id)
 
         stmt = base.order_by(SavedNote.updated_at.desc())
+        # API-09: the bounds reach SQL. `sql` on this table is up to 50 000
+        # characters, so loading the whole list to return a page of it was the
+        # expensive half of a decorative pagination contract.
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
