@@ -684,754 +684,787 @@ async def ask_stream(
             "Please wait for it to complete.",
         ) from exc
 
+    # API-01: everything between taking the per-session lock and handing it to the
+    # streaming generator now runs under ONE release path. It used to be three bare
+    # statements and one narrow guard, and that guard's own comment named the
+    # consequence — "otherwise the session is wedged 'busy'". The agent limiter's
+    # 429, the most frequently taken of the three, sat outside it, so a routine
+    # refusal left the session answering 409 "currently processing another request"
+    # until the TTLCache entry expired — up to an hour, on a session where nothing
+    # was processing. The non-streaming /ask has had this shape all along.
+    lock_handed_off = False
     try:
+        # No bespoke guard here any more: the outer `finally` releases the lock on
+        # every path out of this block, and releasing twice would raise.
         user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
         user_message_id = user_msg.id
         history = await _chat_svc.get_history_as_messages(db, session_id)
-    except Exception:
-        # Release the per-session lock acquired above if the initial message
-        # persistence fails before the streaming generator (whose finally owns
-        # the release) is created — otherwise the session is wedged "busy".
-        try:
-            await _stream_lock_cm.__aexit__(None, None, None)
-        except Exception:
-            logger.debug("Session lock release failed", exc_info=True)
-        raise
 
-    logger.info(
-        "Chat stream request: project=%s session=%s conn=%s",
-        body.project_id[:8],
-        session_id[:8],
-        (body.connection_id or "none")[:8],
-    )
-
-    project = await _project_svc.get(db, body.project_id)
-    agent_provider = body.preferred_provider or (project.agent_llm_provider if project else None)
-    agent_model = body.model or (project.agent_llm_model if project else None)
-    sql_provider = (project.sql_llm_provider if project else None) or agent_provider
-    sql_model = (project.sql_llm_model if project else None) or agent_model
-    project_name = project.name if project else None
-    stream_max_steps = body.max_steps or (
-        getattr(project, "max_orchestrator_steps", None) if project else None
-    )
-
-    from app.config import settings as app_settings
-
-    # --- Session rotation: detect context exhaustion before running agent ---
-    rotated_from: str | None = None
-    rotation_summary: SessionSummary | None = None
-    if (
-        app_settings.session_rotation_enabled
-        and body.session_id  # only rotate existing sessions
-        and len(history) >= 4
-    ):
-        history_chars = sum(len(m.content) for m in history)
-        history_tokens_est = history_chars // CHARS_PER_TOKEN
-        threshold = int(
-            app_settings.max_context_tokens * app_settings.session_rotation_threshold_pct / 100
+        logger.info(
+            "Chat stream request: project=%s session=%s conn=%s",
+            body.project_id[:8],
+            session_id[:8],
+            (body.connection_id or "none")[:8],
         )
-        if history_tokens_est >= threshold:
-            logger.info(
-                "Session rotation triggered: session=%s tokens_est=%d threshold=%d",
-                session_id[:8],
-                history_tokens_est,
-                threshold,
+
+        project = await _project_svc.get(db, body.project_id)
+        agent_provider = body.preferred_provider or (
+            project.agent_llm_provider if project else None
+        )
+        agent_model = body.model or (project.agent_llm_model if project else None)
+        sql_provider = (project.sql_llm_provider if project else None) or agent_provider
+        sql_model = (project.sql_llm_model if project else None) or agent_model
+        project_name = project.name if project else None
+        stream_max_steps = body.max_steps or (
+            getattr(project, "max_orchestrator_steps", None) if project else None
+        )
+
+        from app.config import settings as app_settings
+
+        # --- Session rotation: detect context exhaustion before running agent ---
+        rotated_from: str | None = None
+        rotation_summary: SessionSummary | None = None
+        if (
+            app_settings.session_rotation_enabled
+            and body.session_id  # only rotate existing sessions
+            and len(history) >= 4
+        ):
+            history_chars = sum(len(m.content) for m in history)
+            history_tokens_est = history_chars // CHARS_PER_TOKEN
+            threshold = int(
+                app_settings.max_context_tokens * app_settings.session_rotation_threshold_pct / 100
             )
-            try:
-                from app.llm.router import LLMRouter
-                from app.services.sync_budget import build_metering_sink
-
-                # Records, refuses nothing (BILL-10). The request's own gate ran at the top
-                # of this handler; refusing the rotation summary mid-stream would wedge the
-                # session it exists to keep usable, while leaving it unmetered is spend the
-                # ceiling never sees.
-                _rotation_llm = LLMRouter(
-                    usage_sink=build_metering_sink(user["user_id"], body.project_id)
-                )
-                rotation_summary = await summarize_session(
-                    db,
-                    session_id,
-                    _rotation_llm,
-                    preferred_provider=agent_provider,
-                    model=agent_model,
-                )
-                old_title = await get_session_title(db, session_id)
-                rotated_from = session_id
-
-                new_chat_session = await _chat_svc.create_session(
-                    db,
-                    body.project_id,
-                    title=f"Continued: {old_title}",
-                    user_id=user["user_id"],
-                    connection_id=body.connection_id,
-                )
-                session_id = new_chat_session.id
-
-                await _chat_svc.add_message(
-                    db,
-                    session_id,
-                    "system",
-                    f"[Previous conversation summary"
-                    f" ({rotation_summary.message_count} messages)]"
-                    f"\n{rotation_summary.text}",
-                )
-                user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
-                user_message_id = user_msg.id
-                history = await _chat_svc.get_history_as_messages(db, session_id)
-
+            if history_tokens_est >= threshold:
                 logger.info(
-                    "Session rotated: old=%s new=%s summary_len=%d",
-                    rotated_from[:8],
+                    "Session rotation triggered: session=%s tokens_est=%d threshold=%d",
                     session_id[:8],
-                    len(rotation_summary.text),
+                    history_tokens_est,
+                    threshold,
                 )
-            except Exception:
-                logger.warning(
-                    "Session rotation failed, continuing with original session",
-                    exc_info=True,
-                )
-                rotated_from = None
-                rotation_summary = None
-
-    limit_err = await agent_limiter.acquire(user["user_id"])
-    if limit_err:
-        raise HTTPException(status_code=429, detail=limit_err)
-
-    stream_timeout_seconds = app_settings.stream_timeout_seconds
-
-    from app.models.base import async_session_factory as _stream_session_factory
-
-    # Mark the session as processing so the frontend can detect in-progress runs
-    async with _stream_session_factory() as _status_db:
-        await _chat_svc.update_session_status(_status_db, session_id, "processing")
-
-    async def _background_finalize(
-        bg_task: asyncio.Task,
-        bg_session_id: str,
-        bg_body: ChatRequest,
-        bg_user_message_id: str,
-        bg_user_id: str,
-        bg_request_app,
-    ) -> None:
-        """Await the agent task and persist results even after SSE disconnect."""
-        bg_timeout = stream_timeout_seconds + 30
-        try:
-            try:
-                await asyncio.wait_for(asyncio.shield(bg_task), timeout=bg_timeout)
-            except TimeoutError:
-                logger.warning("Background finalize timed out for session %s", bg_session_id[:8])
-                bg_task.cancel()
                 try:
-                    await bg_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-                return
-            except (asyncio.CancelledError, Exception):
-                logger.debug(
-                    "Background task error for session %s",
-                    bg_session_id[:8],
-                    exc_info=True,
-                )
-                return
+                    from app.llm.router import LLMRouter
+                    from app.services.sync_budget import build_metering_sink
 
-            if not bg_task.done() or bg_task.cancelled():
-                return
-            try:
-                bg_result = bg_task.result()
-            except Exception:
-                logger.debug(
-                    "Background task raised for session %s",
-                    bg_session_id[:8],
-                    exc_info=True,
-                )
-                return
-            if bg_result is None:
-                return
+                    # Records, refuses nothing (BILL-10). The request's own gate ran at the top
+                    # of this handler; refusing the rotation summary mid-stream would wedge the
+                    # session it exists to keep usable, while leaving it unmetered is spend the
+                    # ceiling never sees.
+                    _rotation_llm = LLMRouter(
+                        usage_sink=build_metering_sink(user["user_id"], body.project_id)
+                    )
+                    rotation_summary = await summarize_session(
+                        db,
+                        session_id,
+                        _rotation_llm,
+                        preferred_provider=agent_provider,
+                        model=agent_model,
+                    )
+                    old_title = await get_session_title(db, session_id)
+                    rotated_from = session_id
 
-            bg_viz_data = None
-            if bg_result.results and not bg_result.error:
-                bg_viz_data = render(
-                    result=bg_result.results,
-                    viz_type=bg_result.viz_type,
-                    config=bg_result.viz_config,
-                    summary=bg_result.answer,
-                )
+                    new_chat_session = await _chat_svc.create_session(
+                        db,
+                        body.project_id,
+                        title=f"Continued: {old_title}",
+                        user_id=user["user_id"],
+                        connection_id=body.connection_id,
+                    )
+                    session_id = new_chat_session.id
 
-            bg_raw_result = _build_raw_result(bg_result.results)
-            bg_rag = [
-                {"source_path": s.source_path, "distance": s.distance, "doc_type": s.doc_type}
-                for s in bg_result.knowledge_sources
-            ]
-            bg_tool_calls_str = (
-                json.dumps(bg_result.tool_call_log, default=str)
-                if bg_result.tool_call_log
-                else None
-            )
-            bg_usage = bg_result.token_usage or {}
-            bg_priced = await _estimate_cost(
-                bg_result.llm_model,
-                bg_usage.get("prompt_tokens", 0),
-                bg_usage.get("completion_tokens", 0),
-            )
-            bg_enriched_usage = (
-                {
-                    **(bg_result.token_usage or {}),
-                    "provider": bg_result.llm_provider or "unknown",
-                    "model": bg_result.llm_model or "unknown",
-                    "estimated_cost_usd": bg_priced[0],
-                    "prompt_version": bg_result.prompt_version,
-                }
-                if bg_result.token_usage
-                else None
-            )
-            bg_sql_results = _build_sql_results_payload(bg_result.sql_results, bg_result.answer)
+                    await _chat_svc.add_message(
+                        db,
+                        session_id,
+                        "system",
+                        f"[Previous conversation summary"
+                        f" ({rotation_summary.message_count} messages)]"
+                        f"\n{rotation_summary.text}",
+                    )
+                    user_msg = await _chat_svc.add_message(db, session_id, "user", body.message)
+                    user_message_id = user_msg.id
+                    history = await _chat_svc.get_history_as_messages(db, session_id)
 
-            async with _stream_session_factory() as bg_db:
-                bg_assistant_msg = await _chat_svc.add_message(
-                    bg_db,
-                    bg_session_id,
-                    "assistant",
-                    bg_result.answer,
-                    metadata={
-                        "query": bg_result.query,
-                        "query_explanation": bg_result.query_explanation,
-                        "question": bg_body.message,
-                        "viz_type": bg_result.viz_type,
-                        "visualization": bg_viz_data,
-                        "raw_result": bg_raw_result,
-                        "error": bg_result.error,
-                        "workflow_id": bg_result.workflow_id,
-                        "row_count": (bg_result.results.row_count if bg_result.results else None),
-                        "execution_time_ms": (
-                            bg_result.results.execution_time_ms if bg_result.results else None
-                        ),
-                        "rag_sources": bg_rag,
-                        "token_usage": bg_enriched_usage,
-                        "response_type": bg_result.response_type,
-                        "staleness_warning": bg_result.staleness_warning,
-                        "insights": bg_result.insights or [],
-                        "suggested_followups": bg_result.suggested_followups or [],
-                        "clarification_data": bg_result.clarification_data,
-                        "sql_results": bg_sql_results,
-                        "continuation_context": bg_result.continuation_context,
-                        "exposed_learning_ids": bg_result.exposed_learning_ids,
-                    },
-                    tool_calls_json=bg_tool_calls_str,
-                )
-
-                # R4-2: credit exposed learnings on a validated background result.
-                await credit_validated_learnings(
-                    bg_result, bg_body.connection_id, message_id=bg_assistant_msg.id
-                )
-
-                # R5-7: auto-route a suspicious background result to investigation.
-                await maybe_auto_investigate(
-                    bg_result,
-                    project_id=bg_body.project_id,
-                    connection_id=bg_body.connection_id,
-                    session_id=bg_session_id,
-                    message_id=bg_assistant_msg.id,
-                )
-
-                try:
-                    await _usage_svc.record_usage(
-                        bg_db,
-                        user_id=bg_user_id,
-                        project_id=bg_body.project_id,
-                        session_id=bg_session_id,
-                        message_id=bg_assistant_msg.id,
-                        provider=bg_result.llm_provider or "unknown",
-                        model=bg_result.llm_model or "unknown",
-                        prompt_tokens=bg_usage.get("prompt_tokens", 0),
-                        completion_tokens=bg_usage.get("completion_tokens", 0),
-                        total_tokens=bg_usage.get("total_tokens", 0),
-                        estimated_cost_usd=bg_priced[0],
+                    logger.info(
+                        "Session rotated: old=%s new=%s summary_len=%d",
+                        rotated_from[:8],
+                        session_id[:8],
+                        len(rotation_summary.text),
                     )
                 except Exception:
-                    logger.warning("Background finalize: failed to record usage", exc_info=True)
+                    logger.warning(
+                        "Session rotation failed, continuing with original session",
+                        exc_info=True,
+                    )
+                    rotated_from = None
+                    rotation_summary = None
 
-                if bg_result.workflow_id:
+        limit_err = await agent_limiter.acquire(user["user_id"])
+        if limit_err:
+            raise HTTPException(status_code=429, detail=limit_err)
+
+        stream_timeout_seconds = app_settings.stream_timeout_seconds
+
+        from app.models.base import async_session_factory as _stream_session_factory
+
+        # Mark the session as processing so the frontend can detect in-progress runs
+        async with _stream_session_factory() as _status_db:
+            await _chat_svc.update_session_status(_status_db, session_id, "processing")
+
+        # API-02: the request session has done all its reading, and every one of them
+        # autobegan a transaction. FastAPI does not close a streaming request's
+        # dependencies until the generator finishes, so without this the connection
+        # sat idle-in-transaction for the whole run — up to `stream_timeout_seconds`
+        # (360) — holding one of the scarcest resources in the deployment while doing
+        # nothing. Nothing below uses `db`; the generator opens its own sessions.
+        await db.commit()
+
+        async def _background_finalize(
+            bg_task: asyncio.Task,
+            bg_session_id: str,
+            bg_body: ChatRequest,
+            bg_user_message_id: str,
+            bg_user_id: str,
+            bg_request_app,
+        ) -> None:
+            """Await the agent task and persist results even after SSE disconnect."""
+            bg_timeout = stream_timeout_seconds + 30
+            try:
+                try:
+                    await asyncio.wait_for(asyncio.shield(bg_task), timeout=bg_timeout)
+                except TimeoutError:
+                    logger.warning(
+                        "Background finalize timed out for session %s", bg_session_id[:8]
+                    )
+                    bg_task.cancel()
                     try:
-                        trace_svc = getattr(bg_request_app.state, "trace_persistence_service", None)
-                        if trace_svc is not None:
-                            await trace_svc.finalize_trace(
-                                bg_result.workflow_id,
-                                project_id=bg_body.project_id,
-                                user_id=bg_user_id,
-                                session_id=bg_session_id,
-                                message_id=bg_user_message_id,
-                                assistant_message_id=bg_assistant_msg.id,
-                                question=bg_body.message,
-                                meta=_trace_meta(bg_result, priced=bg_priced),
-                                response_type=bg_result.response_type or "text",
-                                status="failed" if bg_result.error else "completed",
-                                error_message=bg_result.error,
-                            )
-                    except Exception:
-                        logger.warning("Background finalize: trace failed", exc_info=True)
+                        await bg_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                    return
+                except (asyncio.CancelledError, Exception):
+                    logger.debug(
+                        "Background task error for session %s",
+                        bg_session_id[:8],
+                        exc_info=True,
+                    )
+                    return
 
-            logger.info("Background finalize completed for session %s", bg_session_id[:8])
-        except Exception:
-            logger.warning(
-                "Background finalize failed for session %s",
-                bg_session_id[:8],
-                exc_info=True,
+                if not bg_task.done() or bg_task.cancelled():
+                    return
+                try:
+                    bg_result = bg_task.result()
+                except Exception:
+                    logger.debug(
+                        "Background task raised for session %s",
+                        bg_session_id[:8],
+                        exc_info=True,
+                    )
+                    return
+                if bg_result is None:
+                    return
+
+                bg_viz_data = None
+                if bg_result.results and not bg_result.error:
+                    bg_viz_data = render(
+                        result=bg_result.results,
+                        viz_type=bg_result.viz_type,
+                        config=bg_result.viz_config,
+                        summary=bg_result.answer,
+                    )
+
+                bg_raw_result = _build_raw_result(bg_result.results)
+                bg_rag = [
+                    {"source_path": s.source_path, "distance": s.distance, "doc_type": s.doc_type}
+                    for s in bg_result.knowledge_sources
+                ]
+                bg_tool_calls_str = (
+                    json.dumps(bg_result.tool_call_log, default=str)
+                    if bg_result.tool_call_log
+                    else None
+                )
+                bg_usage = bg_result.token_usage or {}
+                bg_priced = await _estimate_cost(
+                    bg_result.llm_model,
+                    bg_usage.get("prompt_tokens", 0),
+                    bg_usage.get("completion_tokens", 0),
+                )
+                bg_enriched_usage = (
+                    {
+                        **(bg_result.token_usage or {}),
+                        "provider": bg_result.llm_provider or "unknown",
+                        "model": bg_result.llm_model or "unknown",
+                        "estimated_cost_usd": bg_priced[0],
+                        "prompt_version": bg_result.prompt_version,
+                    }
+                    if bg_result.token_usage
+                    else None
+                )
+                bg_sql_results = _build_sql_results_payload(bg_result.sql_results, bg_result.answer)
+
+                async with _stream_session_factory() as bg_db:
+                    bg_assistant_msg = await _chat_svc.add_message(
+                        bg_db,
+                        bg_session_id,
+                        "assistant",
+                        bg_result.answer,
+                        metadata={
+                            "query": bg_result.query,
+                            "query_explanation": bg_result.query_explanation,
+                            "question": bg_body.message,
+                            "viz_type": bg_result.viz_type,
+                            "visualization": bg_viz_data,
+                            "raw_result": bg_raw_result,
+                            "error": bg_result.error,
+                            "workflow_id": bg_result.workflow_id,
+                            "row_count": (
+                                bg_result.results.row_count if bg_result.results else None
+                            ),
+                            "execution_time_ms": (
+                                bg_result.results.execution_time_ms if bg_result.results else None
+                            ),
+                            "rag_sources": bg_rag,
+                            "token_usage": bg_enriched_usage,
+                            "response_type": bg_result.response_type,
+                            "staleness_warning": bg_result.staleness_warning,
+                            "insights": bg_result.insights or [],
+                            "suggested_followups": bg_result.suggested_followups or [],
+                            "clarification_data": bg_result.clarification_data,
+                            "sql_results": bg_sql_results,
+                            "continuation_context": bg_result.continuation_context,
+                            "exposed_learning_ids": bg_result.exposed_learning_ids,
+                        },
+                        tool_calls_json=bg_tool_calls_str,
+                    )
+
+                    # R4-2: credit exposed learnings on a validated background result.
+                    await credit_validated_learnings(
+                        bg_result, bg_body.connection_id, message_id=bg_assistant_msg.id
+                    )
+
+                    # R5-7: auto-route a suspicious background result to investigation.
+                    await maybe_auto_investigate(
+                        bg_result,
+                        project_id=bg_body.project_id,
+                        connection_id=bg_body.connection_id,
+                        session_id=bg_session_id,
+                        message_id=bg_assistant_msg.id,
+                    )
+
+                    try:
+                        await _usage_svc.record_usage(
+                            bg_db,
+                            user_id=bg_user_id,
+                            project_id=bg_body.project_id,
+                            session_id=bg_session_id,
+                            message_id=bg_assistant_msg.id,
+                            provider=bg_result.llm_provider or "unknown",
+                            model=bg_result.llm_model or "unknown",
+                            prompt_tokens=bg_usage.get("prompt_tokens", 0),
+                            completion_tokens=bg_usage.get("completion_tokens", 0),
+                            total_tokens=bg_usage.get("total_tokens", 0),
+                            estimated_cost_usd=bg_priced[0],
+                        )
+                    except Exception:
+                        logger.warning("Background finalize: failed to record usage", exc_info=True)
+
+                    if bg_result.workflow_id:
+                        try:
+                            trace_svc = getattr(
+                                bg_request_app.state, "trace_persistence_service", None
+                            )
+                            if trace_svc is not None:
+                                await trace_svc.finalize_trace(
+                                    bg_result.workflow_id,
+                                    project_id=bg_body.project_id,
+                                    user_id=bg_user_id,
+                                    session_id=bg_session_id,
+                                    message_id=bg_user_message_id,
+                                    assistant_message_id=bg_assistant_msg.id,
+                                    question=bg_body.message,
+                                    meta=_trace_meta(bg_result, priced=bg_priced),
+                                    response_type=bg_result.response_type or "text",
+                                    status="failed" if bg_result.error else "completed",
+                                    error_message=bg_result.error,
+                                )
+                        except Exception:
+                            logger.warning("Background finalize: trace failed", exc_info=True)
+
+                logger.info("Background finalize completed for session %s", bg_session_id[:8])
+            except Exception:
+                logger.warning(
+                    "Background finalize failed for session %s",
+                    bg_session_id[:8],
+                    exc_info=True,
+                )
+            finally:
+                async with _stream_session_factory() as _fin_db:
+                    await _chat_svc.update_session_status(_fin_db, bg_session_id, "idle")
+                await agent_limiter.release(bg_user_id)
+                try:
+                    await _stream_lock_cm.__aexit__(None, None, None)
+                except Exception:
+                    logger.debug("Stream session lock release failed", exc_info=True)
+
+        async def _generate():
+            result_holder: list = []
+            # Tenant-scope the subscription: the workflow tracker is a process-wide
+            # singleton, so an unfiltered subscribe() would relay EVERY user's
+            # in-flight workflow events (question previews, SQL, table names) to this
+            # stream and let it latch onto another user's workflow. Pass the caller's
+            # identity so the tracker's tenancy filter only delivers their events.
+            queue = await tracker.subscribe(
+                user_id=user["user_id"],
+                accessible_project_ids={body.project_id},
             )
-        finally:
-            async with _stream_session_factory() as _fin_db:
-                await _chat_svc.update_session_status(_fin_db, bg_session_id, "idle")
-            await agent_limiter.release(bg_user_id)
+            released = False
+            lock_released = False
+
+            # Emit session_rotated event before any other events
+            if rotated_from and rotation_summary:
+                rotation_event = {
+                    "old_session_id": rotated_from,
+                    "new_session_id": session_id,
+                    "summary_preview": rotation_summary.text[:200],
+                    "message_count": rotation_summary.message_count,
+                    "topics": rotation_summary.topics[:5],
+                }
+                yield f"event: session_rotated\ndata: {json.dumps(rotation_event, default=str)}\n\n"
+
+            stream_extra: dict = {"session_id": session_id}
+            if body.pipeline_action:
+                stream_extra["pipeline_action"] = body.pipeline_action
+            if body.pipeline_run_id:
+                stream_extra["pipeline_run_id"] = body.pipeline_run_id
+            if body.modification:
+                stream_extra["modification"] = body.modification
+            if body.continuation_context:
+                stream_extra["continuation_context"] = body.continuation_context
+
+            async def _process():
+                res = await _agent.run(
+                    question=body.message,
+                    project_id=body.project_id,
+                    connection_config=config,
+                    chat_history=history[:-1],
+                    preferred_provider=agent_provider,
+                    model=agent_model,
+                    sql_provider=sql_provider,
+                    sql_model=sql_model,
+                    project_name=project_name,
+                    user_id=user["user_id"],
+                    extra=stream_extra,
+                    max_steps=stream_max_steps,
+                )
+                result_holder.append(res)
+                return res
+
+            task = asyncio.create_task(_process())
+
+            async def _finalize_on_error(workflow_id: str | None, error_msg: str) -> None:
+                effective_wf_id = workflow_id or f"stream-error-{session_id}"
+                if not workflow_id:
+                    logger.warning(
+                        "Stream error but wf_id is None; using fallback ID %s",
+                        effective_wf_id[:16],
+                    )
+                try:
+                    trace_svc = getattr(request.app.state, "trace_persistence_service", None)
+                    if trace_svc is not None:
+                        await trace_svc.finalize_trace(
+                            effective_wf_id,
+                            project_id=body.project_id,
+                            user_id=user["user_id"],
+                            session_id=session_id,
+                            message_id=user_message_id,
+                            question=body.message,
+                            # A stream that errored has no response to read routing
+                            # from: the failure may predate the router entirely.
+                            meta=TraceMeta.aborted(fk.FATAL),
+                            response_type="error",
+                            status="failed",
+                            error_message=error_msg[:500],
+                        )
+                except Exception:
+                    logger.warning("Failed to finalize trace on error path", exc_info=True)
+
+            try:
+                wf_id = None
+                safety = app_settings.stream_safety_margin_seconds
+                loop_deadline = time.monotonic() + stream_timeout_seconds + safety
+                last_heartbeat = time.monotonic()
+                while not task.done() or not queue.empty():
+                    if time.monotonic() > loop_deadline:
+                        logger.warning("SSE event loop exceeded safety timeout, breaking")
+                        break
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=0.5)
+                    except TimeoutError:
+                        now = time.monotonic()
+                        if now - last_heartbeat >= 20:
+                            yield ": heartbeat\n\n"
+                            last_heartbeat = now
+                        continue
+                    if wf_id is None and event.step == "pipeline_start":
+                        wf_id = event.workflow_id
+                    if wf_id and event.workflow_id != wf_id:
+                        continue
+
+                    event_data = {
+                        "workflow_id": event.workflow_id,
+                        "step": event.step,
+                        "status": event.status,
+                        "detail": event.detail,
+                        "elapsed_ms": event.elapsed_ms,
+                    }
+
+                    pipeline_events = frozenset(
+                        {
+                            "plan",
+                            "plan_summary",
+                            "stage_start",
+                            "stage_result",
+                            "stage_validation",
+                            "stage_complete",
+                            "checkpoint",
+                            "stage_retry",
+                            "data_gate",
+                        }
+                    )
+
+                    if event.step == "token":
+                        yield (
+                            f"event: token\ndata: "
+                            f"{json.dumps({'chunk': event.detail}, default=str)}\n\n"
+                        )
+                        continue
+                    if event.step == "thinking":
+                        yield f"event: thinking\ndata: {json.dumps(event_data, default=str)}\n\n"
+                    elif event.step in pipeline_events:
+                        event_data["extra"] = event.extra
+                        yield (
+                            f"event: {event.step}\ndata: {json.dumps(event_data, default=str)}\n\n"
+                        )
+                    elif event.step.startswith("tool:") or ":tool:" in event.step:
+                        yield f"event: tool_call\ndata: {json.dumps(event_data, default=str)}\n\n"
+                    elif any(
+                        event.step.startswith(p) for p in ("orchestrator:", "sql:", "knowledge:")
+                    ):
+                        agent_name = event.step.split(":")[0]
+                        event_data["agent"] = agent_name
+                        if event.extra:
+                            event_data["extra"] = event.extra
+                        payload = json.dumps(event_data, default=str)
+                        if event.status == "started":
+                            yield f"event: agent_start\ndata: {payload}\n\n"
+                        elif event.status in ("completed", "failed"):
+                            yield f"event: agent_end\ndata: {payload}\n\n"
+                        else:
+                            yield f"event: step\ndata: {json.dumps(event_data, default=str)}\n\n"
+                    else:
+                        yield f"event: step\ndata: {json.dumps(event_data, default=str)}\n\n"
+
+                    if event.step == "pipeline_end":
+                        break
+
+                _grace_period = min(20, stream_timeout_seconds)
+                wait_deadline = time.monotonic() + _grace_period
+                while not task.done():
+                    remaining = wait_deadline - time.monotonic()
+                    if remaining <= 0:
+                        task.cancel()
+                        await _finalize_on_error(wf_id, "Request timed out")
+                        async with _stream_session_factory() as _err_db:
+                            await _chat_svc.update_session_status(_err_db, session_id, "idle")
+                        error_payload = {
+                            "error": "Request timed out",
+                            "error_type": "timeout",
+                            "is_retryable": True,
+                            "user_message": (
+                                "The request took too long to complete. "
+                                "Please try again with a simpler question."
+                            ),
+                        }
+                        yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+                        return
+                    try:
+                        await asyncio.wait_for(asyncio.shield(task), timeout=min(20, remaining))
+                    except TimeoutError:
+                        yield ": heartbeat\n\n"
+                    except Exception as exc:
+                        await _finalize_on_error(wf_id, str(exc))
+                        async with _stream_session_factory() as _err_db:
+                            await _chat_svc.update_session_status(_err_db, session_id, "idle")
+                        error_payload = _build_structured_error(exc)
+                        yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+                        return
+                result = result_holder[0] if result_holder else None
+                if not result:
+                    _task_err_msg = "No result produced"
+                    if task.done() and not task.cancelled():
+                        try:
+                            task_exc = task.exception()
+                            if task_exc:
+                                _task_err_msg = f"Agent error: {task_exc}"[:500]
+                        except Exception:
+                            pass
+                    await _finalize_on_error(wf_id, _task_err_msg)
+                    async with _stream_session_factory() as _err_db:
+                        await _chat_svc.update_session_status(_err_db, session_id, "idle")
+                    error_payload = {
+                        "error": "No result",
+                        "error_type": "internal",
+                        "is_retryable": True,
+                        "user_message": "An unexpected error occurred. Please try again.",
+                    }
+                    yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+                    return
+                viz_data = None
+                if result.results and not result.error:
+                    viz_data = render(
+                        result=result.results,
+                        viz_type=result.viz_type,
+                        config=result.viz_config,
+                        summary=result.answer,
+                    )
+
+                raw_result = _build_raw_result(result.results)
+
+                stream_rag = [
+                    {
+                        "source_path": s.source_path,
+                        "distance": s.distance,
+                        "doc_type": s.doc_type,
+                    }
+                    for s in result.knowledge_sources
+                ]
+
+                tool_calls_str = (
+                    json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
+                )
+
+                s_usage = result.token_usage or {}
+                s_cost, _ = await _estimate_cost(
+                    result.llm_model,
+                    s_usage.get("prompt_tokens", 0),
+                    s_usage.get("completion_tokens", 0),
+                )
+                s_enriched_usage = (
+                    {
+                        **(result.token_usage or {}),
+                        "provider": result.llm_provider or "unknown",
+                        "model": result.llm_model or "unknown",
+                        "estimated_cost_usd": s_cost,
+                        "prompt_version": result.prompt_version,
+                    }
+                    if result.token_usage
+                    else None
+                )
+
+                stream_sql_results = _build_sql_results_payload(result.sql_results, result.answer)
+
+                async with _stream_session_factory() as stream_db:
+                    assistant_msg = await _chat_svc.add_message(
+                        stream_db,
+                        session_id,
+                        "assistant",
+                        result.answer,
+                        metadata={
+                            "query": result.query,
+                            "query_explanation": result.query_explanation,
+                            "question": body.message,
+                            "viz_type": result.viz_type,
+                            "visualization": viz_data,
+                            "raw_result": raw_result,
+                            "error": result.error,
+                            "workflow_id": result.workflow_id,
+                            "row_count": (result.results.row_count if result.results else None),
+                            "execution_time_ms": (
+                                result.results.execution_time_ms if result.results else None
+                            ),
+                            "rag_sources": stream_rag,
+                            "token_usage": s_enriched_usage,
+                            "response_type": result.response_type,
+                            "staleness_warning": result.staleness_warning,
+                            "insights": result.insights or [],
+                            "suggested_followups": result.suggested_followups or [],
+                            "clarification_data": result.clarification_data,
+                            "sql_results": stream_sql_results,
+                            "continuation_context": result.continuation_context,
+                            "exposed_learning_ids": result.exposed_learning_ids,
+                        },
+                        tool_calls_json=tool_calls_str,
+                    )
+
+                    # R4-2: credit exposed learnings on a validated streamed result.
+                    await credit_validated_learnings(
+                        result, body.connection_id, message_id=assistant_msg.id
+                    )
+
+                    # R5-7: auto-route a suspicious streamed result to investigation.
+                    await maybe_auto_investigate(
+                        result,
+                        project_id=body.project_id,
+                        connection_id=body.connection_id,
+                        session_id=session_id,
+                        message_id=assistant_msg.id,
+                    )
+
+                    if stream_rag:
+                        try:
+                            await _rag_feedback_svc.record(
+                                session=stream_db,
+                                project_id=body.project_id,
+                                rag_sources=stream_rag,
+                                query_succeeded=not result.error,
+                                question_snippet=body.message[:200],
+                            )
+                        except Exception:
+                            logger.warning("Failed to record RAG feedback", exc_info=True)
+
+                    stream_usage = result.token_usage or {}
+                    try:
+                        await _usage_svc.record_usage(
+                            stream_db,
+                            user_id=user["user_id"],
+                            project_id=body.project_id,
+                            session_id=session_id,
+                            message_id=assistant_msg.id,
+                            provider=result.llm_provider or "unknown",
+                            model=result.llm_model or "unknown",
+                            prompt_tokens=stream_usage.get("prompt_tokens", 0),
+                            completion_tokens=stream_usage.get("completion_tokens", 0),
+                            total_tokens=stream_usage.get("total_tokens", 0),
+                            estimated_cost_usd=(
+                                await _estimate_cost(
+                                    result.llm_model,
+                                    stream_usage.get("prompt_tokens", 0),
+                                    stream_usage.get("completion_tokens", 0),
+                                )
+                            )[0],
+                        )
+                    except Exception:
+                        logger.warning("Failed to record token usage", exc_info=True)
+
+                    if result.workflow_id:
+                        try:
+                            trace_svc = getattr(
+                                request.app.state, "trace_persistence_service", None
+                            )
+                            if trace_svc is not None:
+                                await trace_svc.finalize_trace(
+                                    result.workflow_id,
+                                    project_id=body.project_id,
+                                    user_id=user["user_id"],
+                                    session_id=session_id,
+                                    message_id=user_message_id,
+                                    assistant_message_id=assistant_msg.id,
+                                    question=body.message,
+                                    response_type=result.response_type or "text",
+                                    status="failed" if result.error else "completed",
+                                    error_message=result.error,
+                                    total_duration_ms=result.results.execution_time_ms
+                                    if result.results
+                                    else None,
+                                    total_tokens=stream_usage.get("total_tokens", 0)
+                                    or (
+                                        stream_usage.get("prompt_tokens", 0)
+                                        + stream_usage.get("completion_tokens", 0)
+                                    ),
+                                    meta=_trace_meta(
+                                        result,
+                                        priced=await _estimate_cost(
+                                            result.llm_model,
+                                            stream_usage.get("prompt_tokens", 0),
+                                            stream_usage.get("completion_tokens", 0),
+                                        ),
+                                    ),
+                                    llm_provider=result.llm_provider or "unknown",
+                                    llm_model=result.llm_model or "unknown",
+                                    steps_used=result.steps_used,
+                                    steps_total=result.steps_total,
+                                    tool_call_log=result.tool_call_log,
+                                )
+                        except Exception:
+                            logger.warning(
+                                "Failed to finalize request trace (stream)", exc_info=True
+                            )
+
+                final = {
+                    "session_id": session_id,
+                    "answer": result.answer,
+                    "query": result.query,
+                    "query_explanation": result.query_explanation,
+                    "visualization": viz_data,
+                    "viz_config": result.viz_config or None,
+                    "raw_result": raw_result,
+                    "error": result.error,
+                    "workflow_id": result.workflow_id,
+                    "rag_sources": stream_rag,
+                    "staleness_warning": result.staleness_warning,
+                    "token_usage": s_enriched_usage,
+                    "response_type": result.response_type,
+                    "assistant_message_id": assistant_msg.id,
+                    "user_message_id": user_message_id,
+                    "rules_changed": _has_rules_changed(result.tool_call_log),
+                    "insights": result.insights or [],
+                    "suggested_followups": result.suggested_followups or [],
+                    "steps_used": result.steps_used,
+                    "steps_total": result.steps_total,
+                    "continuation_context": result.continuation_context,
+                    "clarification_data": result.clarification_data,
+                    "sql_results": stream_sql_results,
+                }
+                yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
+                # Normal completion: mark session idle
+                async with _stream_session_factory() as _idle_db:
+                    await _chat_svc.update_session_status(_idle_db, session_id, "idle")
+            finally:
+                await tracker.unsubscribe(queue)
+                if not task.done():
+                    # Client disconnected while agent is still running.
+                    # Schedule a background finalizer to persist results instead of cancelling.
+                    _bg_task = asyncio.create_task(
+                        _background_finalize(
+                            bg_task=task,
+                            bg_session_id=session_id,
+                            bg_body=body,
+                            bg_user_message_id=user_message_id,
+                            bg_user_id=user["user_id"],
+                            bg_request_app=request.app,
+                        )
+                    )
+                    _background_finalize_tasks.add(_bg_task)
+                    _bg_task.add_done_callback(_background_finalize_tasks.discard)
+                else:
+                    # Task already done (normal flow or error already handled).
+                    # Release the limiter only if background finalizer wasn't scheduled.
+                    if not released:
+                        released = True
+                        await agent_limiter.release(user["user_id"])
+                    # Release the per-session processing lock. On the disconnect
+                    # path the lock is released inside _background_finalize; on the
+                    # normal-completion path it must be released here, otherwise the
+                    # session stays "busy" (asyncio.Lock held) and every subsequent
+                    # request to it gets HTTP 409 until the 1h TTL evicts the entry.
+                    if not lock_released:
+                        lock_released = True
+                        try:
+                            await _stream_lock_cm.__aexit__(None, None, None)
+                        except Exception:
+                            logger.debug("Stream session lock release failed", exc_info=True)
+
+        _stream_response = StreamingResponse(
+            _generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+        lock_handed_off = True
+        return _stream_response
+    finally:
+        if not lock_handed_off:
             try:
                 await _stream_lock_cm.__aexit__(None, None, None)
             except Exception:
                 logger.debug("Stream session lock release failed", exc_info=True)
-
-    async def _generate():
-        result_holder: list = []
-        # Tenant-scope the subscription: the workflow tracker is a process-wide
-        # singleton, so an unfiltered subscribe() would relay EVERY user's
-        # in-flight workflow events (question previews, SQL, table names) to this
-        # stream and let it latch onto another user's workflow. Pass the caller's
-        # identity so the tracker's tenancy filter only delivers their events.
-        queue = await tracker.subscribe(
-            user_id=user["user_id"],
-            accessible_project_ids={body.project_id},
-        )
-        released = False
-        lock_released = False
-
-        # Emit session_rotated event before any other events
-        if rotated_from and rotation_summary:
-            rotation_event = {
-                "old_session_id": rotated_from,
-                "new_session_id": session_id,
-                "summary_preview": rotation_summary.text[:200],
-                "message_count": rotation_summary.message_count,
-                "topics": rotation_summary.topics[:5],
-            }
-            yield f"event: session_rotated\ndata: {json.dumps(rotation_event, default=str)}\n\n"
-
-        stream_extra: dict = {"session_id": session_id}
-        if body.pipeline_action:
-            stream_extra["pipeline_action"] = body.pipeline_action
-        if body.pipeline_run_id:
-            stream_extra["pipeline_run_id"] = body.pipeline_run_id
-        if body.modification:
-            stream_extra["modification"] = body.modification
-        if body.continuation_context:
-            stream_extra["continuation_context"] = body.continuation_context
-
-        async def _process():
-            res = await _agent.run(
-                question=body.message,
-                project_id=body.project_id,
-                connection_config=config,
-                chat_history=history[:-1],
-                preferred_provider=agent_provider,
-                model=agent_model,
-                sql_provider=sql_provider,
-                sql_model=sql_model,
-                project_name=project_name,
-                user_id=user["user_id"],
-                extra=stream_extra,
-                max_steps=stream_max_steps,
-            )
-            result_holder.append(res)
-            return res
-
-        task = asyncio.create_task(_process())
-
-        async def _finalize_on_error(workflow_id: str | None, error_msg: str) -> None:
-            effective_wf_id = workflow_id or f"stream-error-{session_id}"
-            if not workflow_id:
-                logger.warning(
-                    "Stream error but wf_id is None; using fallback ID %s",
-                    effective_wf_id[:16],
-                )
-            try:
-                trace_svc = getattr(request.app.state, "trace_persistence_service", None)
-                if trace_svc is not None:
-                    await trace_svc.finalize_trace(
-                        effective_wf_id,
-                        project_id=body.project_id,
-                        user_id=user["user_id"],
-                        session_id=session_id,
-                        message_id=user_message_id,
-                        question=body.message,
-                        # A stream that errored has no response to read routing
-                        # from: the failure may predate the router entirely.
-                        meta=TraceMeta.aborted(fk.FATAL),
-                        response_type="error",
-                        status="failed",
-                        error_message=error_msg[:500],
-                    )
-            except Exception:
-                logger.warning("Failed to finalize trace on error path", exc_info=True)
-
-        try:
-            wf_id = None
-            safety = app_settings.stream_safety_margin_seconds
-            loop_deadline = time.monotonic() + stream_timeout_seconds + safety
-            last_heartbeat = time.monotonic()
-            while not task.done() or not queue.empty():
-                if time.monotonic() > loop_deadline:
-                    logger.warning("SSE event loop exceeded safety timeout, breaking")
-                    break
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=0.5)
-                except TimeoutError:
-                    now = time.monotonic()
-                    if now - last_heartbeat >= 20:
-                        yield ": heartbeat\n\n"
-                        last_heartbeat = now
-                    continue
-                if wf_id is None and event.step == "pipeline_start":
-                    wf_id = event.workflow_id
-                if wf_id and event.workflow_id != wf_id:
-                    continue
-
-                event_data = {
-                    "workflow_id": event.workflow_id,
-                    "step": event.step,
-                    "status": event.status,
-                    "detail": event.detail,
-                    "elapsed_ms": event.elapsed_ms,
-                }
-
-                pipeline_events = frozenset(
-                    {
-                        "plan",
-                        "plan_summary",
-                        "stage_start",
-                        "stage_result",
-                        "stage_validation",
-                        "stage_complete",
-                        "checkpoint",
-                        "stage_retry",
-                        "data_gate",
-                    }
-                )
-
-                if event.step == "token":
-                    yield (
-                        f"event: token\ndata: "
-                        f"{json.dumps({'chunk': event.detail}, default=str)}\n\n"
-                    )
-                    continue
-                if event.step == "thinking":
-                    yield f"event: thinking\ndata: {json.dumps(event_data, default=str)}\n\n"
-                elif event.step in pipeline_events:
-                    event_data["extra"] = event.extra
-                    yield (f"event: {event.step}\ndata: {json.dumps(event_data, default=str)}\n\n")
-                elif event.step.startswith("tool:") or ":tool:" in event.step:
-                    yield f"event: tool_call\ndata: {json.dumps(event_data, default=str)}\n\n"
-                elif any(event.step.startswith(p) for p in ("orchestrator:", "sql:", "knowledge:")):
-                    agent_name = event.step.split(":")[0]
-                    event_data["agent"] = agent_name
-                    if event.extra:
-                        event_data["extra"] = event.extra
-                    if event.status == "started":
-                        yield (
-                            f"event: agent_start\ndata: {json.dumps(event_data, default=str)}\n\n"
-                        )
-                    elif event.status in ("completed", "failed"):
-                        yield (f"event: agent_end\ndata: {json.dumps(event_data, default=str)}\n\n")
-                    else:
-                        yield f"event: step\ndata: {json.dumps(event_data, default=str)}\n\n"
-                else:
-                    yield f"event: step\ndata: {json.dumps(event_data, default=str)}\n\n"
-
-                if event.step == "pipeline_end":
-                    break
-
-            _grace_period = min(20, stream_timeout_seconds)
-            wait_deadline = time.monotonic() + _grace_period
-            while not task.done():
-                remaining = wait_deadline - time.monotonic()
-                if remaining <= 0:
-                    task.cancel()
-                    await _finalize_on_error(wf_id, "Request timed out")
-                    async with _stream_session_factory() as _err_db:
-                        await _chat_svc.update_session_status(_err_db, session_id, "idle")
-                    error_payload = {
-                        "error": "Request timed out",
-                        "error_type": "timeout",
-                        "is_retryable": True,
-                        "user_message": (
-                            "The request took too long to complete. "
-                            "Please try again with a simpler question."
-                        ),
-                    }
-                    yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
-                    return
-                try:
-                    await asyncio.wait_for(asyncio.shield(task), timeout=min(20, remaining))
-                except TimeoutError:
-                    yield ": heartbeat\n\n"
-                except Exception as exc:
-                    await _finalize_on_error(wf_id, str(exc))
-                    async with _stream_session_factory() as _err_db:
-                        await _chat_svc.update_session_status(_err_db, session_id, "idle")
-                    error_payload = _build_structured_error(exc)
-                    yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
-                    return
-            result = result_holder[0] if result_holder else None
-            if not result:
-                _task_err_msg = "No result produced"
-                if task.done() and not task.cancelled():
-                    try:
-                        task_exc = task.exception()
-                        if task_exc:
-                            _task_err_msg = f"Agent error: {task_exc}"[:500]
-                    except Exception:
-                        pass
-                await _finalize_on_error(wf_id, _task_err_msg)
-                async with _stream_session_factory() as _err_db:
-                    await _chat_svc.update_session_status(_err_db, session_id, "idle")
-                error_payload = {
-                    "error": "No result",
-                    "error_type": "internal",
-                    "is_retryable": True,
-                    "user_message": "An unexpected error occurred. Please try again.",
-                }
-                yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
-                return
-            viz_data = None
-            if result.results and not result.error:
-                viz_data = render(
-                    result=result.results,
-                    viz_type=result.viz_type,
-                    config=result.viz_config,
-                    summary=result.answer,
-                )
-
-            raw_result = _build_raw_result(result.results)
-
-            stream_rag = [
-                {
-                    "source_path": s.source_path,
-                    "distance": s.distance,
-                    "doc_type": s.doc_type,
-                }
-                for s in result.knowledge_sources
-            ]
-
-            tool_calls_str = (
-                json.dumps(result.tool_call_log, default=str) if result.tool_call_log else None
-            )
-
-            s_usage = result.token_usage or {}
-            s_cost, _ = await _estimate_cost(
-                result.llm_model,
-                s_usage.get("prompt_tokens", 0),
-                s_usage.get("completion_tokens", 0),
-            )
-            s_enriched_usage = (
-                {
-                    **(result.token_usage or {}),
-                    "provider": result.llm_provider or "unknown",
-                    "model": result.llm_model or "unknown",
-                    "estimated_cost_usd": s_cost,
-                    "prompt_version": result.prompt_version,
-                }
-                if result.token_usage
-                else None
-            )
-
-            stream_sql_results = _build_sql_results_payload(result.sql_results, result.answer)
-
-            async with _stream_session_factory() as stream_db:
-                assistant_msg = await _chat_svc.add_message(
-                    stream_db,
-                    session_id,
-                    "assistant",
-                    result.answer,
-                    metadata={
-                        "query": result.query,
-                        "query_explanation": result.query_explanation,
-                        "question": body.message,
-                        "viz_type": result.viz_type,
-                        "visualization": viz_data,
-                        "raw_result": raw_result,
-                        "error": result.error,
-                        "workflow_id": result.workflow_id,
-                        "row_count": (result.results.row_count if result.results else None),
-                        "execution_time_ms": (
-                            result.results.execution_time_ms if result.results else None
-                        ),
-                        "rag_sources": stream_rag,
-                        "token_usage": s_enriched_usage,
-                        "response_type": result.response_type,
-                        "staleness_warning": result.staleness_warning,
-                        "insights": result.insights or [],
-                        "suggested_followups": result.suggested_followups or [],
-                        "clarification_data": result.clarification_data,
-                        "sql_results": stream_sql_results,
-                        "continuation_context": result.continuation_context,
-                        "exposed_learning_ids": result.exposed_learning_ids,
-                    },
-                    tool_calls_json=tool_calls_str,
-                )
-
-                # R4-2: credit exposed learnings on a validated streamed result.
-                await credit_validated_learnings(
-                    result, body.connection_id, message_id=assistant_msg.id
-                )
-
-                # R5-7: auto-route a suspicious streamed result to investigation.
-                await maybe_auto_investigate(
-                    result,
-                    project_id=body.project_id,
-                    connection_id=body.connection_id,
-                    session_id=session_id,
-                    message_id=assistant_msg.id,
-                )
-
-                if stream_rag:
-                    try:
-                        await _rag_feedback_svc.record(
-                            session=stream_db,
-                            project_id=body.project_id,
-                            rag_sources=stream_rag,
-                            query_succeeded=not result.error,
-                            question_snippet=body.message[:200],
-                        )
-                    except Exception:
-                        logger.warning("Failed to record RAG feedback", exc_info=True)
-
-                stream_usage = result.token_usage or {}
-                try:
-                    await _usage_svc.record_usage(
-                        stream_db,
-                        user_id=user["user_id"],
-                        project_id=body.project_id,
-                        session_id=session_id,
-                        message_id=assistant_msg.id,
-                        provider=result.llm_provider or "unknown",
-                        model=result.llm_model or "unknown",
-                        prompt_tokens=stream_usage.get("prompt_tokens", 0),
-                        completion_tokens=stream_usage.get("completion_tokens", 0),
-                        total_tokens=stream_usage.get("total_tokens", 0),
-                        estimated_cost_usd=(
-                            await _estimate_cost(
-                                result.llm_model,
-                                stream_usage.get("prompt_tokens", 0),
-                                stream_usage.get("completion_tokens", 0),
-                            )
-                        )[0],
-                    )
-                except Exception:
-                    logger.warning("Failed to record token usage", exc_info=True)
-
-                if result.workflow_id:
-                    try:
-                        trace_svc = getattr(request.app.state, "trace_persistence_service", None)
-                        if trace_svc is not None:
-                            await trace_svc.finalize_trace(
-                                result.workflow_id,
-                                project_id=body.project_id,
-                                user_id=user["user_id"],
-                                session_id=session_id,
-                                message_id=user_message_id,
-                                assistant_message_id=assistant_msg.id,
-                                question=body.message,
-                                response_type=result.response_type or "text",
-                                status="failed" if result.error else "completed",
-                                error_message=result.error,
-                                total_duration_ms=result.results.execution_time_ms
-                                if result.results
-                                else None,
-                                total_tokens=stream_usage.get("total_tokens", 0)
-                                or (
-                                    stream_usage.get("prompt_tokens", 0)
-                                    + stream_usage.get("completion_tokens", 0)
-                                ),
-                                meta=_trace_meta(
-                                    result,
-                                    priced=await _estimate_cost(
-                                        result.llm_model,
-                                        stream_usage.get("prompt_tokens", 0),
-                                        stream_usage.get("completion_tokens", 0),
-                                    ),
-                                ),
-                                llm_provider=result.llm_provider or "unknown",
-                                llm_model=result.llm_model or "unknown",
-                                steps_used=result.steps_used,
-                                steps_total=result.steps_total,
-                                tool_call_log=result.tool_call_log,
-                            )
-                    except Exception:
-                        logger.warning("Failed to finalize request trace (stream)", exc_info=True)
-
-            final = {
-                "session_id": session_id,
-                "answer": result.answer,
-                "query": result.query,
-                "query_explanation": result.query_explanation,
-                "visualization": viz_data,
-                "viz_config": result.viz_config or None,
-                "raw_result": raw_result,
-                "error": result.error,
-                "workflow_id": result.workflow_id,
-                "rag_sources": stream_rag,
-                "staleness_warning": result.staleness_warning,
-                "token_usage": s_enriched_usage,
-                "response_type": result.response_type,
-                "assistant_message_id": assistant_msg.id,
-                "user_message_id": user_message_id,
-                "rules_changed": _has_rules_changed(result.tool_call_log),
-                "insights": result.insights or [],
-                "suggested_followups": result.suggested_followups or [],
-                "steps_used": result.steps_used,
-                "steps_total": result.steps_total,
-                "continuation_context": result.continuation_context,
-                "clarification_data": result.clarification_data,
-                "sql_results": stream_sql_results,
-            }
-            yield f"event: result\ndata: {json.dumps(final, default=str)}\n\n"
-            # Normal completion: mark session idle
-            async with _stream_session_factory() as _idle_db:
-                await _chat_svc.update_session_status(_idle_db, session_id, "idle")
-        finally:
-            await tracker.unsubscribe(queue)
-            if not task.done():
-                # Client disconnected while agent is still running.
-                # Schedule a background finalizer to persist results instead of cancelling.
-                _bg_task = asyncio.create_task(
-                    _background_finalize(
-                        bg_task=task,
-                        bg_session_id=session_id,
-                        bg_body=body,
-                        bg_user_message_id=user_message_id,
-                        bg_user_id=user["user_id"],
-                        bg_request_app=request.app,
-                    )
-                )
-                _background_finalize_tasks.add(_bg_task)
-                _bg_task.add_done_callback(_background_finalize_tasks.discard)
-            else:
-                # Task already done (normal flow or error already handled).
-                # Release the limiter only if background finalizer wasn't scheduled.
-                if not released:
-                    released = True
-                    await agent_limiter.release(user["user_id"])
-                # Release the per-session processing lock. On the disconnect
-                # path the lock is released inside _background_finalize; on the
-                # normal-completion path it must be released here, otherwise the
-                # session stays "busy" (asyncio.Lock held) and every subsequent
-                # request to it gets HTTP 409 until the 1h TTL evicts the entry.
-                if not lock_released:
-                    lock_released = True
-                    try:
-                        await _stream_lock_cm.__aexit__(None, None, None)
-                    except Exception:
-                        logger.debug("Stream session lock release failed", exc_info=True)
-
-    return StreamingResponse(
-        _generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
 
 
 class WsTicketRequest(BaseModel):

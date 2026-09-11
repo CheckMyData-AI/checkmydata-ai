@@ -7,6 +7,7 @@ workflows belonging to a project they're a member of. Admin users
 
 import asyncio
 import logging
+import time
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -26,12 +27,28 @@ _membership_svc = MembershipService()
 async def _event_generator(
     queue: asyncio.Queue[WorkflowEvent],
     workflow_id_filter: str | None,
+    *,
+    max_seconds: float,
 ):
-    """Yield SSE-formatted events from the queue."""
+    """Yield SSE-formatted events from the queue, for at most *max_seconds*.
+
+    The ceiling is not tidiness. FastAPI closes a yield dependency's exit stack
+    only after the response is sent, and for a ``StreamingResponse`` that means
+    after this generator finishes — so before API-02 an open tab held one pooled
+    database connection for as long as it stayed open, on a route with no rate
+    limit. The connection is returned before the loop starts now, and this bounds
+    everything else the stream holds; EventSource reconnects on its own, so a
+    client sees a reconnect rather than an end.
+    """
+    deadline = time.monotonic() + max_seconds
     try:
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                yield ": stream-max-duration reached, reconnect\n\n"
+                return
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                event = await asyncio.wait_for(queue.get(), timeout=min(30.0, remaining))
             except TimeoutError:
                 yield ": keepalive\n\n"
                 continue
@@ -64,8 +81,13 @@ async def workflow_events(
             user_id=user["user_id"],
             accessible_project_ids=accessible,
         )
+    # API-02: that SELECT autobegan a transaction and checked a connection out of
+    # the pool, and the dependency's exit stack does not close until the generator
+    # below finishes. Commit here and the connection goes back now, rather than
+    # when the user closes the tab.
+    await db.commit()
     return StreamingResponse(
-        _event_generator(queue, workflow_id),
+        _event_generator(queue, workflow_id, max_seconds=settings.sse_max_stream_seconds),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

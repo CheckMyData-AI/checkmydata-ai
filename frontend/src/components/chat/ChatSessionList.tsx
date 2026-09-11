@@ -29,12 +29,24 @@ export function mapDtoToMessages(msgs: { id: string; role: string; content: stri
       error: (meta.error as string) || undefined,
       metadataJson: m.metadata_json || undefined,
       stalenessWarning: (meta.staleness_warning as string) || undefined,
-      responseType: (meta.response_type as "text" | "sql_result" | "knowledge" | "error") || undefined,
+      // The union used to stop at "error", so every interactive response type came
+      // back as `undefined` on a reload (FE-05). `ChatMessage["responseType"]` has
+      // carried all nine for as long as the backend has written them.
+      responseType: (meta.response_type as ChatMessage["responseType"]) || undefined,
       userRating: m.user_rating ?? undefined,
       toolCallsJson: m.tool_calls_json || undefined,
       rawResult: (meta.raw_result as { columns: string[]; rows: unknown[][]; total_rows: number }) ?? undefined,
       timestamp: new Date(m.created_at).getTime(),
       sqlResults: _hydrateSqlResults(meta.sql_results),
+      // FE-05: the backend persists both of these inside metadata_json, and this
+      // is the ONE function that rebuilds history for a reload, a session switch
+      // and the background poll. Without them the amber "Question" chip came back
+      // and the card with the answer buttons did not — the product asked a
+      // question and removed the means of answering it — while "Continue
+      // analysis" restarted without the state the backend had saved for it.
+      clarificationData:
+        (meta.clarification_data as ChatMessage["clarificationData"]) ?? undefined,
+      continuationContext: (meta.continuation_context as string) ?? undefined,
     };
   });
 }

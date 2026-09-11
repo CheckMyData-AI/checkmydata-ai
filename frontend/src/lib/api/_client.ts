@@ -107,7 +107,16 @@ export async function request<T>(
       onAbort = () => controller.abort(existingSignal.reason);
       existingSignal.addEventListener("abort", onAbort);
     }
-    const timeout = setTimeout(() => controller.abort("Request timed out"), timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    // FE-01: abort() WITHOUT a reason. Aborting with a string rejects the fetch
+    // promise with that string, not with a DOMException — so the guard below never
+    // matched, the timeout fell through to the retry path, and one GET became three
+    // requests and ~182 s of waiting against a backend already too slow to answer.
+    // `timedOut` carries what the reason used to.
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
     let res: Response;
     try {
@@ -131,8 +140,14 @@ export async function request<T>(
     } catch (err) {
       clearTimeout(timeout);
       if (existingSignal && onAbort) existingSignal.removeEventListener("abort", onAbort);
-      if (err instanceof DOMException && err.name === "AbortError") {
+      if (timedOut) {
+        // Never retried, for any method: the budget is spent and repeating it
+        // would spend it again on a server that has just shown it cannot answer.
         throw new Error("Request timed out. Please try again.");
+      }
+      if (controller.signal.aborted) {
+        // A caller-supplied signal fired — Stop, a navigation, a session switch.
+        throw new Error("Request aborted");
       }
       lastError = err instanceof Error ? err : new Error(String(err));
       if (safe && attempt < MAX_RETRIES) continue;

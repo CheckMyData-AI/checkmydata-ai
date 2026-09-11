@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
+import type { ChatSession } from "@/lib/api";
 import { mapDtoToMessages } from "@/components/chat/ChatSessionList";
 import { POLL_INTERVAL_MS, MAX_POLL_MS } from "@/lib/polling";
 
@@ -11,6 +12,29 @@ import { POLL_INTERVAL_MS, MAX_POLL_MS } from "@/lib/polling";
  * but we are not actively streaming (i.e. the user navigated away and came back).
  * Stops polling when new messages appear or the session goes idle.
  */
+
+/**
+ * Write a polled session back, but only if the user is still looking at it.
+ *
+ * `poll()` closes over the session id it started with. The effect's cleanup clears
+ * the interval, but an already-awaited `Promise.all` cannot be cancelled and nothing
+ * re-checked which session was active when it resolved (FE-02). `setActiveSession`
+ * also swaps the message list, so a poll landing after a sidebar click changed the
+ * whole panel underneath the user and their click looked ignored. `ChatPanel` guards
+ * the same kind of write; this call site did not.
+ *
+ * @returns whether the write was applied.
+ */
+export function applyPolledSession(
+  polledId: string,
+  session: ChatSession,
+): boolean {
+  const store = useAppStore.getState();
+  if (store.activeSession && store.activeSession.id !== polledId) return false;
+  store.setActiveSession(session);
+  return true;
+}
+
 export function useSessionPolling() {
   const activeSession = useAppStore((s) => s.activeSession);
   const activeProject = useAppStore((s) => s.activeProject);
@@ -59,7 +83,7 @@ export function useSessionPolling() {
 
         const updatedSession = sessions.find((s) => s.id === sessionId);
         if (updatedSession) {
-          store.setActiveSession(updatedSession);
+          applyPolledSession(sessionId, updatedSession);
         }
 
         const mapped = mapDtoToMessages(msgs);
