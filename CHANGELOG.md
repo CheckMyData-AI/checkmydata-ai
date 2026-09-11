@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — an incremental run lost the edges it could not see
+
+P1 row 9, third seam; KNOW-04. **KNOW-06 stays open**, and the reason is recorded below
+rather than worked around.
+
+`_resolve_call` resolves a callee through `file_local`, `import_map` and `global_index`, all
+built from the symbols of `parsed_files` — which on an incremental run is the changed files
+alone. A call from a changed file into an unchanged one therefore resolved to nothing and
+its edge was never emitted, while `save_incremental` had already deleted the edges that file
+owned. **The graph lost edges on every incremental run** and recovered them only at the next
+full rebuild.
+
+`build()` now takes `resolution_symbols`: symbols from files this run did not parse, usable
+as callees and **not** emitted as the graph's own — those rows belong to files the merge is
+about to preserve. The incremental branch already loads the pre-merge graph for its
+reverse-dependency closure, so this costs one rebuild of the changed batch and no extra
+query. `GRAPH_EXTRACTION_SCHEMA` is bumped, which is what makes the deploy enqueue the one
+idempotent full rebuild a better resolver needs to be applied everywhere.
+
+**Why KNOW-06 is not fixed with it.** The audit's direction — "drop entities whose defining
+file no longer yields them" — presumes `_incremental_update` re-extracts entities per file.
+It does not: `knowledge.entities` comes from the **database schemas**, and `file_path` only
+records where a matching model was once found. "Absent from the fresh set" therefore cannot
+distinguish *the file stopped defining it* from *no schemas were passed to this run*.
+Implementing it as written turned `test_deleted_file_entities_removed` red on a changed file
+whose class is still present. Closing it needs a per-file model re-scan that does not exist
+yet; the constraint is now pinned by a test so the next attempt starts from it.
+
 ### Fixed — the vector store kept losing chunks nobody asked it to lose
 
 P1 row 9, second seam; KNOW-01, KNOW-02, KNOW-03. Each is invisible from outside, because a

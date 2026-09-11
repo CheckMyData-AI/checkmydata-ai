@@ -1972,6 +1972,23 @@ class IndexingPipelineRunner:
                 # present, and included in affected_files so their stale edges
                 # are pruned before the fresh re-parsed edges splice in.
                 existing_for_rdeps = await svc.load_graph(db, project_id)
+                # KNOW-04: rebuild with the rest of the repository visible as CALLEES.
+                # `parsed_files` holds only the changed files, so `global_index` knew about
+                # nothing else — a call from a changed file into an unchanged one resolved
+                # to nothing and its edge was never emitted, while `save_incremental` had
+                # already deleted the edges that file owned. The graph lost edges on every
+                # incremental run and recovered them only at a full rebuild.
+                #
+                # The graph is already loaded here for the reverse-dependency closure, so
+                # this costs one rebuild of the CHANGED batch and no extra query.
+                if existing_for_rdeps is not None:
+                    graph = await asyncio.to_thread(
+                        functools.partial(
+                            builder.build,
+                            state.parsed_files,
+                            resolution_symbols=list(existing_for_rdeps.symbols.values()),
+                        )
+                    )
                 extra_files: set[str] = set()
                 if existing_for_rdeps is not None:
                     extra_files = CodeGraphBuilder.reverse_dependents(existing_for_rdeps, changed)
@@ -1985,8 +2002,17 @@ class IndexingPipelineRunner:
                             sorted(missing_from_parse)[:10],
                         )
                         await self._run_ast_parse(state, wf_id, missing_from_parse)
-                        # Rebuild the graph now that the reverse-deps are parsed.
-                        graph = await asyncio.to_thread(builder.build, state.parsed_files)
+                        # Rebuild the graph now that the reverse-deps are parsed — still
+                        # with the rest of the repository visible as callees (KNOW-04).
+                        graph = await asyncio.to_thread(
+                            functools.partial(
+                                builder.build,
+                                state.parsed_files,
+                                resolution_symbols=list(existing_for_rdeps.symbols.values())
+                                if existing_for_rdeps is not None
+                                else None,
+                            )
+                        )
                 # R3-3: a changed file whose AST parse failed this run produced
                 # no (or partial) symbols. Purging it on merge would wrongly
                 # drop its last-good symbols, so exclude it from the affected

@@ -430,7 +430,7 @@ SYMBOL_UID_SCHEMA = 2
 #: 2 — PHP call sites (`scoped_call_expression`, `member_call_expression`) and Ruby
 #:     `call`; PHP/Ruby import statements parsed rather than stored whole; module paths
 #:     resolved by path suffix, so PHP namespaces and Ruby requires reach a file at all.
-GRAPH_EXTRACTION_SCHEMA = 2
+GRAPH_EXTRACTION_SCHEMA = 3
 
 
 def _make_uid(

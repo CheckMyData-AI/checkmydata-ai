@@ -496,6 +496,15 @@ def _incremental_update(
         if name not in knowledge.entities:
             knowledge.entities[name] = entity
 
+    # KNOW-06 is NOT fixed here, and the reason is worth the paragraph. The audit's fix
+    # direction — "drop entities whose defining file no longer yields them" — presumes this
+    # function re-extracts entities per FILE. It does not: `knowledge.entities` comes from
+    # `_extract_entities_from_schemas`, i.e. from the DATABASE schemas, and `file_path` only
+    # records where a matching model was once found. So "absent from the fresh set" cannot
+    # distinguish "the file stopped defining it" from "no schemas were passed to this run",
+    # and dropping on that basis deletes live entities — measured, by
+    # `test_deleted_file_entities_removed` going red on a changed file whose class is still
+    # there. Closing it needs a per-file model re-scan that does not exist yet.
     stale_set = set(changed_files) | set(deleted_files or [])
 
     for tbl, usage in cached.table_usage.items():

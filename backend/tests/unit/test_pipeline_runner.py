@@ -356,7 +356,10 @@ class TestGraphBuildPreservesFailedParseSymbols:
         state.parsed_files = {"good.py": MagicMock()}
 
         built_graph = MagicMock()
-        built_graph.symbols = [MagicMock()]  # good.py produced symbols
+        # A dict, as the real `CodeGraph.symbols` is (uid -> Symbol). It was a list here
+        # and nothing noticed, because nothing read it as a mapping until KNOW-04 made the
+        # incremental build resolve against the existing graph's symbols.
+        built_graph.symbols = {"uid-1": MagicMock()}  # good.py produced symbols
 
         captured: dict = {}
 
@@ -400,7 +403,7 @@ class TestGraphBuildPreservesFailedParseSymbols:
         state.parsed_files = {"broken.py": MagicMock()}
 
         built_graph = MagicMock()
-        built_graph.symbols = []  # nothing parsed cleanly
+        built_graph.symbols = {}  # nothing parsed cleanly (a dict, as the real graph is)
 
         captured: dict = {"affected": None}
 
