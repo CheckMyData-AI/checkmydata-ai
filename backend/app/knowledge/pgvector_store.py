@@ -277,17 +277,25 @@ class PgVectorStore:
             for r in rows
         ]
 
-    def delete_by_source_path(self, project_id: str, source_path: str) -> int:
-        """Remove every chunk of one file. Returns how many rows went."""
+    def delete_by_source_path(self, project_id: str, source_path: str, *, kind: str = "all") -> int:
+        """Remove chunks of one file. Returns how many rows went.
+
+        ``kind`` mirrors `VectorStore.delete_by_source_path` exactly — see its docstring
+        for why one file's two kinds must be separable (KNOW-02). This is the backend
+        production actually runs (`VECTOR_STORE_BACKEND=auto` resolves to pgvector on
+        Postgres), so a filter reaching only Chroma would reach only development.
+        """
+        kind_clause = ""
+        if kind == "symbol":
+            kind_clause = " AND doc_id LIKE 'sym:%'"
+        elif kind == "prose":
+            kind_clause = " AND doc_id NOT LIKE 'sym:%'"
         with self._pool.connection() as conn:
             cur = conn.execute(
-                # Both keys — see `vector_store.delete_by_source_path`. This is
-                # the backend production actually runs (`VECTOR_STORE_BACKEND=auto`
-                # resolves to pgvector on Postgres), so a fix reaching only Chroma
-                # would have fixed only development.
+                # Both keys — see `vector_store.delete_by_source_path`.
                 "DELETE FROM doc_embeddings "
                 "WHERE project_id = %s AND ("
-                "metadata ->> 'source_path' = %s OR metadata ->> 'path' = %s)",
+                "metadata ->> 'source_path' = %s OR metadata ->> 'path' = %s)" + kind_clause,
                 (project_id, source_path, source_path),
             )
             return cur.rowcount or 0

@@ -142,6 +142,21 @@ def _parse_chroma_server_url(value: str) -> tuple[str, int, bool]:
     return host, port, False
 
 
+#: Symbol chunks are the ones whose id starts with this. Prose chunk ids are
+#: ``{doc_id}:{chunk_index}``, so the prefix is the whole discriminator and neither store
+#: needs a metadata round trip to tell them apart.
+SYMBOL_CHUNK_ID_PREFIX = "sym:"
+
+
+def _filter_ids_by_kind(ids: list[str], kind: str) -> list[str]:
+    """The ids of *kind* among *ids*. Unknown kinds keep everything, as ``"all"`` does."""
+    if kind == "symbol":
+        return [i for i in ids if i.startswith(SYMBOL_CHUNK_ID_PREFIX)]
+    if kind == "prose":
+        return [i for i in ids if not i.startswith(SYMBOL_CHUNK_ID_PREFIX)]
+    return list(ids)
+
+
 class VectorStoreLike(Protocol):
     """What a retrieval consumer needs from a vector store — stated structurally.
 
@@ -284,10 +299,20 @@ class VectorStore:
         self,
         project_id: str,
         source_path: str,
+        *,
+        kind: str = "all",
     ) -> int:
-        """Delete all chunks whose metadata.source_path matches *source_path*.
+        """Delete chunks whose metadata.source_path matches *source_path*.
 
-        Returns the number of IDs removed (0 if collection doesn't exist yet).
+        ``kind`` selects which chunks go: ``"all"`` (the historical behaviour),
+        ``"prose"`` (generated documents) or ``"symbol"`` (code symbols, ids prefixed
+        ``sym:``). Returns the number of IDs removed (0 if the collection does not exist).
+
+        **The filter exists because one file has both kinds** (KNOW-02). `code_symbol_embed`
+        writes symbol chunks under `source_path = symbol.file_path` at step 5d; step 9 then
+        deleted every chunk with that path before writing the file's prose — so any file
+        carrying both lost its symbols on every run that regenerated its document, in the
+        same run that had just written them.
         """
         try:
             collection = self.get_or_create_collection(project_id)
@@ -302,7 +327,7 @@ class VectorStore:
                 where={"$or": [{"source_path": source_path}, {"path": source_path}]},
                 include=[],
             )
-            ids_to_delete = existing["ids"]
+            ids_to_delete = _filter_ids_by_kind(existing["ids"], kind)
             if ids_to_delete:
                 collection.delete(ids=ids_to_delete)
                 logger.debug(
