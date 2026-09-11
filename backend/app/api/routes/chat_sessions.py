@@ -136,12 +136,26 @@ class SessionUpdate(BaseModel):
 
 
 async def _require_session_owner(db: AsyncSession, session_id: str, user_id: str):
-    """Return the session if the user owns it, else raise 403/404."""
+    """Return the session if the user owns it *and* still belongs to its project.
+
+    Two holes, both AUTH-02. The guard read ``if session_obj.user_id and … != user_id``,
+    so a **falsy owner short-circuited the comparison** and an ownerless session authorised
+    everyone — and `chat_sessions.user_id` is ON DELETE SET NULL, so ownerless rows are the
+    ordinary residue of an account deletion rather than a corner case. And it checked no
+    project membership at all, so the caller need not belong to the session's project or to
+    the tenant.
+
+    An unattributable session is orphaned, not public (D-TENANCY-1): nothing can recover
+    whose it was, and the alternative to refusing it is handing one person's questions,
+    generated SQL and sample rows to whoever holds the id.
+    """
     session_obj = await _chat_svc.get_session(db, session_id)
     if not session_obj:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session_obj.user_id and session_obj.user_id != user_id:
+    if session_obj.user_id != user_id:
         raise HTTPException(status_code=403, detail="Not your session")
+    # Ownership is not membership: a person removed from a project keeps their user id.
+    await _membership_svc.require_role(db, session_obj.project_id, user_id, "viewer")
     return session_obj
 
 

@@ -433,6 +433,7 @@ async def delete_account(
     """Permanently delete the current user and all associated data."""
     from sqlalchemy import delete, func, select, update
 
+    from app.models.chat_session import ChatSession
     from app.models.connection import Connection
     from app.models.mcp_api_key import McpApiKey
     from app.models.project import Project
@@ -508,6 +509,16 @@ async def delete_account(
         # Explicit MCP-key revocation (defensive; FK cascade also covers it now that
         # SQLite FKs are enforced — F-AUTH-01).
         await db.execute(delete(McpApiKey).where(McpApiKey.user_id == user_id))
+        # BIZ-04: chat sessions in projects this user does NOT own survive the project
+        # deletion above, and `chat_sessions.user_id` is ON DELETE SET NULL — so without
+        # this the transcripts stay, ownerless, in someone else's project, which is also
+        # what widened who may read them (AUTH-02/03). Messages follow: their FK to the
+        # session is ON DELETE CASCADE.
+        #
+        # Deleted rather than anonymised. The handler's contract is "permanently delete the
+        # current user and all associated data", and an anonymised transcript still carries
+        # the questions they asked and the rows they were shown.
+        await db.execute(delete(ChatSession).where(ChatSession.user_id == user_id))
         await db.execute(delete(ProjectMember).where(ProjectMember.user_id == user_id))
         await db.execute(delete(User).where(User.id == user_id))
 

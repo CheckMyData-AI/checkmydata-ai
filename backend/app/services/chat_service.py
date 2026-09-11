@@ -163,7 +163,10 @@ class ChatService:
     ) -> list[ChatSession]:
         stmt = select(ChatSession).where(ChatSession.project_id == project_id)
         if user_id:
-            stmt = stmt.where((ChatSession.user_id == user_id) | (ChatSession.user_id.is_(None)))
+            # AUTH-03: no `| user_id.is_(None)`. `chat_sessions.user_id` is SET NULL, so an
+            # ownerless row is a departed account's transcript, not a shared one — the same
+            # union `ssh_key_service.py:71-76` refuses by name for exactly this reason.
+            stmt = stmt.where(ChatSession.user_id == user_id)
         stmt = stmt.order_by(ChatSession.created_at.desc()).offset(skip).limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
@@ -284,7 +287,7 @@ class ChatService:
             .select_from(ChatSession)
             .where(
                 ChatSession.project_id == project_id,
-                (ChatSession.user_id == user_id) | (ChatSession.user_id.is_(None)),
+                ChatSession.user_id == user_id,  # AUTH-03: ownerless is not "mine"
             )
         )
         total = (await session.execute(count_stmt)).scalar_one()
@@ -344,6 +347,11 @@ class ChatService:
             return None
         if chat.project_id != project_id:
             return None
-        if chat.user_id and chat.user_id != user_id:
+        # AUTH-02/03: `chat.user_id and …` short-circuits on a falsy owner, so a NULL owner
+        # authorised everyone. An unattributable session is orphaned, not public
+        # (D-TENANCY-1): there is no way to recover whose it was, and the alternative to
+        # refusing it is handing one person's questions, SQL and sample rows to the next
+        # caller who asks.
+        if chat.user_id != user_id:
             return None
         return chat
