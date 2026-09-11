@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — a chat session with no owner belonged to everybody
+
+Three findings, one guard chain (P0-3; AUTH-02, AUTH-03, BIZ-04).
+
+`chat_sessions.user_id` is `ON DELETE SET NULL`, and the migration that added it made the
+column nullable with no backfill — so an ownerless row is what an account deletion leaves
+behind, not a corner case. `_require_session_owner` guarded with
+`if session_obj.user_id and session_obj.user_id != user_id`: a falsy owner short-circuits
+the comparison, so **any authenticated user** holding the session id could read the
+transcript — the questions, the generated SQL, the sample rows, every turn's metadata —
+and rename or delete it. The same function checked no project membership at all, so the
+caller need not belong to the project or to the tenant.
+
+`list_sessions` and the welcome-session count **unioned** `user_id IS NULL` into a
+user-scoped query. That is an affirmative widening, and it is the delivery mechanism: it
+hands the ids to every remaining member of the project. `validate_session_access` — which
+`POST /api/chat/ask` and `/ask/stream` use to decide whether a session may be continued —
+repeated the short-circuit, so those members could append their own turns to a departed
+colleague's history and have both interleaved in one persisted transcript.
+
+The codebase already refuses this exact union by name for its other two owner-scoped
+stores, with the reason written out: `ssh_key_service.py:71-76` and
+`vendor_credential_service.py:158-165`.
+
+**An unattributable session is orphaned, not public.** Nothing can recover whose it was,
+and inventing an owner would assert something false, so the row becomes unreachable rather
+than shared — and there is no backfill for the same reason. Measured before shipping:
+production holds 28 sessions, **0 of them ownerless**, so no live access changed.
+
+`DELETE /api/auth/account` now deletes the user's sessions wherever they live. Projects
+they owned cascaded; sessions in **other people's** projects did not, and the `SET NULL`
+then widened who could read them. Deleted rather than anonymised: the handler's contract is
+"permanently delete the current user and all associated data", and an anonymised transcript
+still carries the questions they asked.
+
+Two existing tests asserted the defect as the requirement — one of them named
+`test_allows_null_user_sessions` — and were inverted with what they used to claim. That
+makes ten occurrences of the shape in this programme.
+
 ### Security — SSH-exec was the weakest surface in the product, and the guard above it was written against the wrong executor
 
 Seven audit findings, one seam (P0-2; SQL-01/02/04/06/11/12/13).

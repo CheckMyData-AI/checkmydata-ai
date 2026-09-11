@@ -147,8 +147,12 @@ class TestListSessions:
 
         titles = {s.title for s in sessions}
         assert "User1" in titles
-        assert "NoUser" in titles
         assert "User2" not in titles
+        # Was `assert "NoUser" in titles` — an ownerless session listed to whoever asked.
+        # `chat_sessions.user_id` is ON DELETE SET NULL, so that row is a departed
+        # account's transcript, and listing it is how a co-member learns the id that
+        # AUTH-02 then let them read and delete (AUTH-03).
+        assert "NoUser" not in titles
 
     @pytest.mark.asyncio
     async def test_skip_and_limit(self, db):
@@ -504,14 +508,22 @@ class TestValidateSessionAccess:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_allows_null_user_sessions(self, db):
+    async def test_refuses_null_user_sessions(self, db):
+        """Was `test_allows_null_user_sessions`, asserting `result is not None`.
+
+        It named the hole exactly: a session with no owner was access-granted to any caller
+        who asked, and `POST /api/chat/ask` uses this method to decide whether a session may
+        be continued — so the next person appended their turns to a departed colleague's
+        transcript. A NULL owner is unattributable, which makes it orphaned, not public
+        (D-TENANCY-1).
+        """
         proj = await _make_project(db)
         user = await _make_user(db)
         chat = await svc.create_session(db, proj.id, user_id=None)
 
         result = await svc.validate_session_access(db, chat.id, proj.id, user.id)
 
-        assert result is not None
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_for_nonexistent(self, db):
