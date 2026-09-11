@@ -80,6 +80,10 @@ async def submit_feedback(
             connection_id = getattr(session_row, "connection_id", None) if session_row else None
 
             if connection_id:
+                from app.llm.router import LLMRouter
+                from app.services.sync_budget import build_metering_sink
+
+                _fb_project_id = getattr(session_row, "project_id", "") or ""
                 async with async_session_factory() as learn_session:
                     await process_negative_feedback_learning_effects(
                         learn_session,
@@ -88,6 +92,9 @@ async def submit_feedback(
                         query=query,
                         question=question,
                         exposed_learning_ids=exposed_ids,
+                        llm_router=LLMRouter(
+                            usage_sink=build_metering_sink(user["user_id"], _fb_project_id)
+                        ),
                     )
         except Exception:
             logger.debug("Feedback-triggered learning extraction failed", exc_info=True)
@@ -272,6 +279,7 @@ async def process_negative_feedback_learning_effects(
     query: str | None,
     question: str,
     exposed_learning_ids: list[str],
+    llm_router=None,
 ) -> bool:
     """Apply the thumbs-down learning rollback exactly ONCE per message (AQ-1).
 
@@ -305,7 +313,9 @@ async def process_negative_feedback_learning_effects(
     if query:
         from app.knowledge.learning_analyzer import LearningAnalyzer
 
-        analyzer = LearningAnalyzer()
+        # Metered to the user who pressed the button (BILL-10). `None` keeps the helper
+        # callable from a context with no user — the analyzer's own fallback then applies.
+        analyzer = LearningAnalyzer(llm_router)
         await analyzer.analyze_negative_feedback(
             session=session,
             connection_id=connection_id,

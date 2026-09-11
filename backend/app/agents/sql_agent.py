@@ -2195,7 +2195,11 @@ class SQLAgent(BaseAgent):
             from app.knowledge.learning_analyzer import LearningAnalyzer
             from app.models.base import async_session_factory
 
-            analyzer = LearningAnalyzer()
+            # `self._llm` carries the asking user's DbUsageSink; a fresh LearningAnalyzer
+            # falls back to a class-level bare router whose sink records nothing, so the
+            # extraction that follows nearly every answer spent tokens against no ceiling
+            # and appeared in no usage figure (BILL-10).
+            analyzer = LearningAnalyzer(self._llm)
             async with async_session_factory() as session:
                 await analyzer.analyze(
                     session=session,
@@ -2209,7 +2213,7 @@ class SQLAgent(BaseAgent):
                 try:
                     from app.knowledge.learning_analyzer import LLMAnalyzer
 
-                    llm_analyzer = LLMAnalyzer()
+                    llm_analyzer = LLMAnalyzer(self._llm)
                     async with async_session_factory() as session:
                         await llm_analyzer.analyze(
                             session=session,

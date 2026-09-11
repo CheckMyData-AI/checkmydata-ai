@@ -24,12 +24,14 @@ from app.core.workflow_tracker import tracker
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
 from app.services.suggestion_engine import SuggestionEngine
+from app.services.usage_service import UsageService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _project_svc = ProjectService()
 _membership_svc = MembershipService()
+_usage_svc = UsageService()
 _suggestion_engine = SuggestionEngine()
 
 _SQL_EXPLAIN_CACHE: OrderedDict[str, dict] = OrderedDict()
@@ -361,9 +363,19 @@ async def explain_sql(
 
     from app.llm.base import Message as LLMMessage
     from app.llm.router import LLMRouter
+    from app.llm.usage_sink import DbUsageSink
 
     db_hint = f" (Database: {body.db_type})" if body.db_type else ""
-    llm_router = LLMRouter()
+
+    # The budget gate sits AFTER the cache lookup on purpose: a cached explanation spends
+    # no tokens, and refusing one would ration something that costs nothing (API-08).
+    budget_error = await _usage_svc.check_token_budget(db, user["user_id"])
+    if budget_error:
+        raise HTTPException(status_code=429, detail=budget_error)
+
+    llm_router = LLMRouter(
+        usage_sink=DbUsageSink(user_id=user["user_id"], project_id=body.project_id)
+    )
     _es_wf_id = await tracker.begin(
         "explain_sql",
         context={"project_id": body.project_id, "user_id": user["user_id"]},
@@ -487,6 +499,7 @@ async def summarize_message(
 
     from app.llm.base import Message as LLMMessage
     from app.llm.router import LLMRouter
+    from app.llm.usage_sink import DbUsageSink
 
     project = await _project_svc.get(db, body.project_id)
     provider = (project.agent_llm_provider if project else None) or None
@@ -503,7 +516,13 @@ async def summarize_message(
     if data_preview:
         prompt_parts.append(f"\nData:\n{data_preview[:3000]}")
 
-    llm_router = LLMRouter()
+    budget_error = await _usage_svc.check_token_budget(db, user["user_id"])
+    if budget_error:
+        raise HTTPException(status_code=429, detail=budget_error)
+
+    llm_router = LLMRouter(
+        usage_sink=DbUsageSink(user_id=user["user_id"], project_id=body.project_id)
+    )
     _sm_wf_id = await tracker.begin(
         "summarize",
         context={"project_id": body.project_id, "user_id": user["user_id"]},

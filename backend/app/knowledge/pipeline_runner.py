@@ -892,8 +892,23 @@ class IndexingPipelineRunner:
                         # soft dependency (graceful default = "Cluster N").
                         try:
                             from app.llm.router import LLMRouter
+                            from app.models.base import async_session_factory
+                            from app.services.sync_budget import (
+                                build_metering_sink,
+                                resolve_owner_user_id,
+                            )
 
-                            llm_router = LLMRouter()
+                            async with async_session_factory() as _label_db:
+                                _label_owner = await resolve_owner_user_id(_label_db, project_id)
+                            # Same attribution as `generate_docs` two steps down: cluster
+                            # labels are LLM calls the project's owner pays for. Without an
+                            # owner the labels still run unmetered — the alternative is
+                            # refusing to label a project whose owner row is missing.
+                            llm_router = LLMRouter(
+                                usage_sink=build_metering_sink(_label_owner, project_id)
+                                if _label_owner
+                                else None
+                            )
                         except Exception:
                             logger.debug(
                                 "LLMRouter unavailable; skipping cluster labeling",

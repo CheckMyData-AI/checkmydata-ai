@@ -739,8 +739,15 @@ async def ask_stream(
             )
             try:
                 from app.llm.router import LLMRouter
+                from app.services.sync_budget import build_metering_sink
 
-                _rotation_llm = LLMRouter()
+                # Records, refuses nothing (BILL-10). The request's own gate ran at the top
+                # of this handler; refusing the rotation summary mid-stream would wedge the
+                # session it exists to keep usable, while leaving it unmetered is spend the
+                # ceiling never sees.
+                _rotation_llm = LLMRouter(
+                    usage_sink=build_metering_sink(user["user_id"], body.project_id)
+                )
                 rotation_summary = await summarize_session(
                     db,
                     session_id,

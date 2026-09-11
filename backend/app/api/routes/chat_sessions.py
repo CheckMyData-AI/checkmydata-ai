@@ -18,12 +18,22 @@ from app.core.trace_meta import TraceMeta
 from app.core.workflow_tracker import tracker
 from app.services.chat_service import ChatService
 from app.services.membership_service import MembershipService
+from app.services.usage_service import UsageService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _chat_svc = ChatService()
 _membership_svc = MembershipService()
+_usage_svc = UsageService()
+
+
+class _BudgetSkippedError(Exception):
+    """The LLM call was not made because the account is over its token ceiling.
+
+    A distinct type so the fallback path can tell "we chose not to spend" from "the
+    provider failed", which the trace and the operator read differently.
+    """
 
 
 class SessionCreate(BaseModel):
@@ -162,6 +172,7 @@ async def generate_session_title(
     """Auto-generate a session title from the first user message."""
     from app.llm.base import Message as LLMMessage
     from app.llm.router import LLMRouter
+    from app.llm.usage_sink import DbUsageSink
 
     await _require_session_owner(db, session_id, user["user_id"])
 
@@ -189,8 +200,26 @@ async def generate_session_title(
         context={"project_id": _gt_project_id, "user_id": user["user_id"]},
     )
     _gt_error: str | None = None
+
+    # A title is a small call, but it is an LLM call on an authenticated path: it spent
+    # tokens that reached no table and no ceiling (API-08). Checked HERE rather than inside
+    # the `try` below, whose `except Exception` would swallow the refusal and file it as
+    # "LLM call failed" — a gate that reports itself as a malfunction is worse than none.
+    #
+    # An exhausted budget degrades to the fallback title instead of answering 429: the
+    # ceiling exists to stop spend, and a session whose title is its first message is a
+    # working session. The trace says which happened.
+    budget_error = await _usage_svc.check_token_budget(db, user["user_id"])
+    if budget_error:
+        _gt_error = "token budget exhausted; used fallback title"
+        logger.info("generate_title: skipped the LLM call — %s", budget_error)
+
     try:
-        router = LLMRouter()
+        if budget_error:
+            raise _BudgetSkippedError(budget_error)
+        router = LLMRouter(
+            usage_sink=DbUsageSink(user_id=user["user_id"], project_id=_gt_project_id)
+        )
         async with tracker.step(
             wf_id, "generate_title:llm_call", "Generate session title", span_type="llm_call"
         ):
@@ -210,6 +239,8 @@ async def generate_session_title(
                 temperature=0.3,
             )
         title = resp.content.strip().strip('"').strip("'")[:80] or first_user[:50]
+    except _BudgetSkippedError:
+        title = first_user[:50]  # `_gt_error` already says why; do not overwrite it
     except Exception:
         title = first_user[:50]
         _gt_error = "LLM call failed, used fallback title"
