@@ -216,8 +216,8 @@ measured:
 | 9 | ✅ **DONE 2026-09-11** (#343, #344, #345; KNOW-06 stays open with its measurement) — **Vector/chunk lifecycle correctness**: reuse-after-drop re-adds chunks; regenerate stops deleting symbol chunks; changed-file symbol sweep; full-path zero-symbol guard; stale entities; embed-step honesty; force_full-aware resume; CALLS against merged graph | KNOW-01…08 | L |
 | 10 | ✅ **DONE 2026-09-11** (#346) — **Claims-from-outcome sweep**: one enqueue-result helper; fix the five 202 routes, both cron dispatchers, feed scan, collect-now dedup lie | API-03/12, OPS-05/17, ANA-10 | M |
 | 11 | ✅ **DONE 2026-09-11** (#347 — OPS-01/04/06/09/13; OPS-03/10/15/16 carried to 11b) — **Ops visibility**: Sentry in worker; worker metrics into Redis + merged endpoint; wall-clock-anchored maintenance cron + boot sweep; Redis pool retry; orphan-close bookkeeping; `run_db_index` own timeout | OPS-01/03/04/06/15/16, OPS-09/10/13 | M |
-| 12 | 🔶 **IN PROGRESS 2026-09-11** — **Analyzer honesty**: zero-row ≠ stage failure; resumed path gets gates + freshness; degraded synthesis says so; caveats aggregate all stages; StageValidator gets its router; analytics grounding requires a window; per-property isolation; refetch deletions | ORCH-02/04/06/08/09, ANA-01/02/03/04/07/11/12 | L |
-| 13 | **Stream/session UX**: lock release on limiter refusal; abort-reason class fix (both sites); poll guard; 401-only logout; clarification restore; DB session release before streaming | API-01/02, FE-01/02/03/05/08 | M |
+| 12 | ✅ **DONE 2026-09-11** (#348) — **Analyzer honesty**: zero-row ≠ stage failure; resumed path gets gates + freshness; degraded synthesis says so; caveats aggregate all stages; StageValidator gets its router; analytics grounding requires a window; per-property isolation; refetch deletions | ORCH-02/04/06/08/09, ANA-01/02/03/04/07/11/12 | L |
+| 13 | 🔶 **IN PROGRESS 2026-09-11** — **Stream/session UX**: lock release on limiter refusal; abort-reason class fix (both sites); poll guard; 401-only logout; clarification restore; DB session release before streaming | API-01/02, FE-01/02/03/05/08 | M |
 
 ## P2 — robustness and performance
 

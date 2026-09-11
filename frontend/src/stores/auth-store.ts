@@ -207,7 +207,20 @@ export const useAuthStore = create<AuthState>((set) => ({
       const res = await api.auth.refresh();
       storeAuth(set, res);
       scheduleRefresh(set, res);
-    } catch {
+    } catch (err) {
+      // FE-03: only a 401 means the session is gone. This used to be a bare
+      // `catch` that treated a 502, a DNS blip and a CORS failure identically —
+      // and `AuthGate` then redirects to /login with no message, because
+      // `/auth/*` is excluded from the session-expiry flash. `refresh` is a POST,
+      // so the client's retry path does not cover it either. The status is on
+      // the error already, and `logout()` in this same file discriminates on it.
+      const status = (err as { status?: number } | null)?.status;
+      if (status !== 401) {
+        // The stored user stays, so the next reload can still paint their name
+        // and try again, rather than presenting a blank login form as though
+        // they had been signed out.
+        return;
+      }
       storage.removeItem("auth_token");
       storage.removeItem("auth_user");
       set({ user: null, token: null });

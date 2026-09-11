@@ -950,6 +950,13 @@ class Settings(BaseSettings):
     # Streaming settings
     stream_timeout_seconds: int = 360
     stream_safety_margin_seconds: int = 120
+    #: Ceiling on one `/api/workflows/events` SSE connection, in seconds (API-02).
+    #: The route carries no rate limit and its loop was `while True`, so a caller
+    #: decided how long the server held a connection — and FastAPI does not close a
+    #: streaming request's dependencies until the generator finishes. An EventSource
+    #: reconnects by itself, so the client sees a reconnect rather than an end.
+    #: Non-positive raises at boot: 0 would read as configured and behave as absent.
+    sse_max_stream_seconds: int = 3600
     # Idle timeout (seconds) for a chat WebSocket waiting on the next client
     # message; the connection is closed when exceeded so abandoned sockets don't
     # hold server resources. 0 disables the idle timeout.
@@ -1259,6 +1266,13 @@ class Settings(BaseSettings):
                 "SQL_TIMEOUT_BREAKER_THRESHOLD must be >= 1 "
                 f"(got {self.sql_timeout_breaker_threshold}). A non-positive value "
                 "would disable the breaker while still reading as configured."
+            )
+        if self.sse_max_stream_seconds <= 0:
+            raise ValueError(
+                "SSE_MAX_STREAM_SECONDS must be positive (got "
+                f"{self.sse_max_stream_seconds}). Unbounded is what API-02 was: a route "
+                "with no rate limit deciding how long the server holds a pooled "
+                "connection."
             )
         return self
 

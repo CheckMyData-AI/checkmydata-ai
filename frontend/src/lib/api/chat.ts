@@ -10,6 +10,44 @@ import type {
   StreamError,
 } from "./types";
 
+/**
+ * What a failed stream read means, decided from the signal rather than the error.
+ *
+ * `AbortController.abort(reason)` rejects the pending read **with that reason**, so
+ * a string reason produces a string rejection and every `instanceof DOMException` /
+ * `err.name === "AbortError"` test misses it (FE-08). The signal knows what
+ * happened; the error object may be anything the runtime chose.
+ *
+ * @param err - whatever the read rejected with.
+ * @param signal - the stream's own signal.
+ * @param idledOut - true when the idle timer is what aborted it.
+ * @returns the error to surface, or `null` when the abort was deliberate — Stop, a
+ *   session switch, a navigation — where a red banner would be reporting the user's
+ *   own action back to them as a failure.
+ */
+export function classifyStreamError(
+  err: unknown,
+  signal: AbortSignal,
+  idledOut: boolean,
+): StreamError | null {
+  if (idledOut) {
+    return {
+      error: "Stream timed out",
+      error_type: "timeout",
+      is_retryable: true,
+      user_message: "The response timed out. Please try again.",
+    };
+  }
+  if (signal.aborted) return null;
+  return {
+    error: String(err),
+    error_type: "network",
+    is_retryable: true,
+    user_message: "An unexpected error occurred. Please try again.",
+  };
+}
+
+
 const STREAM_IDLE_TIMEOUT_MS = 120_000;
 /**
  * Event types routed to the pipeline handler. Exported so a test can hold the two
@@ -139,11 +177,18 @@ export const chat = {
     onSessionRotated?: (event: SessionRotatedEvent) => void,
   ) => {
     const ctrl = new AbortController();
+    // FE-08: abort() WITHOUT a reason, and remember what it was in a variable.
+    // `ctrl.abort("Stream idle timeout")` rejects the read with that STRING, and
+    // both branches of the catch tested for an object — so the branch that names
+    // this a timeout has never run, and a two-minute stall was reported as "An
+    // unexpected error occurred."
+    let idledOut = false;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     const resetIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
-        ctrl.abort("Stream idle timeout");
+        idledOut = true;
+        ctrl.abort();
       }, STREAM_IDLE_TIMEOUT_MS);
     };
     resetIdleTimer();
@@ -236,29 +281,8 @@ export const chat = {
       })
       .catch((err) => {
         if (idleTimer) clearTimeout(idleTimer);
-        if (
-          (err instanceof DOMException && err.name === "AbortError") ||
-          (err &&
-            typeof err === "object" &&
-            "name" in err &&
-            (err as { name: string }).name === "AbortError")
-        ) {
-          if (String(err.message || err).includes("idle timeout")) {
-            onError({
-              error: "Stream timed out",
-              error_type: "timeout",
-              is_retryable: true,
-              user_message: "The response timed out. Please try again.",
-            });
-          }
-          return;
-        }
-        onError({
-          error: String(err),
-          error_type: "network",
-          is_retryable: true,
-          user_message: "An unexpected error occurred. Please try again.",
-        });
+        const classified = classifyStreamError(err, ctrl.signal, idledOut);
+        if (classified) onError(classified);
       })
       .finally(() => {
         if (idleTimer) clearTimeout(idleTimer);

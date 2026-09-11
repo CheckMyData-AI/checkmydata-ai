@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a stream that held what it had stopped using, and five failures the interface misread
+
+P1 row 13; API-01/02 and FE-01/02/03/05/08.
+
+**A routine 429 wedged a chat session for an hour.** `/ask/stream` entered the
+per-session lock by hand and the matching release lived only in the streaming
+generator's `finally`, created some seven hundred lines later. Three calls could raise
+in between; the author guarded exactly one, and that guard's own comment named the
+consequence — *"otherwise the session is wedged 'busy'"*. The agent limiter's 429 — the
+expected outcome when three streams are already running — sat outside it, and the lock
+then survived until its `TTLCache` entry expired, answering `409 "currently processing
+another request"` on a session where nothing was processing. Everything between taking
+the lock and handing it to the generator now runs under one release path.
+
+**A streaming response pinned its database connection for the whole stream.** FastAPI
+closes a yield dependency's exit stack only after the response is sent, and for a
+`StreamingResponse` that means after the generator finishes. Both streaming routes run a
+bare `SELECT` first, which autobegins a transaction and checks a connection out of the
+pool — so `/api/chat/ask/stream` sat idle-in-transaction for up to 360 s, and
+`/api/workflows/events`, whose loop was `while True` with no rate limit, held one for as
+long as a browser tab stayed open. Against a pooler this deployment's own notes record as
+saturated at 14 of 15 at rest, four tabs is the difference between no headroom and
+`FATAL: (EMAXCONNSESSION)`. Both commit before streaming, and `SSE_MAX_STREAM_SECONDS`
+(3600) bounds the SSE connection — an `EventSource` reconnects by itself.
+
+**`abort(reason)` with a string rejects with that string**, not with a `DOMException`,
+so both catch blocks written for it — one in the HTTP client, one in the chat stream —
+have never run. In the client that turned a 60-second timeout into a three-minute one:
+the timeout fell through to the retry path, so one GET became three requests and ~182 s
+of waiting, tripling load on a backend that had just shown it could not answer. In the
+stream it meant a two-minute stall was reported as *"An unexpected error occurred"*
+instead of *"The response timed out"* — the one message that tells a user retrying is
+reasonable. Both abort with no reason and branch on a flag.
+
+**A poll that landed after a navigation dragged the user back.** `poll()` closes over the
+session id it started with; the effect's cleanup clears the interval but cannot cancel an
+in-flight request, and nothing re-checked which session was active when it resolved.
+`setActiveSession` also swaps the message list, so the whole panel changed underneath the
+user and their sidebar click looked ignored.
+
+**Any refresh failure signed the user out.** A bare `catch` treated a 502, a DNS blip and
+a genuine 401 identically: the persisted session was deleted and `AuthGate` redirected to
+`/login` with no message — and `/auth/*` is excluded from the session-expiry flash, so
+nothing told them the session was fine and the server was not. The status was on the
+error object all along, and `logout()` in the same file already discriminates on it.
+
+**And a clarification question survived a reload while the way to answer it did not.**
+`mapDtoToMessages` is the single function that rebuilds history for a reload, a session
+switch and the background poll, and its `responseType` union stopped at `"error"` while
+the backend has written nine kinds for as long as they have existed. The amber "Question"
+chip came back and the answer card did not; "Continue analysis" restarted without the
+state the backend had saved for it.
+
 ### Fixed — twelve places the analyzer described a run that did not happen
 
 P1 row 12; ORCH-02/04/06/08/09 and ANA-01/02/03/04/07/11/12. None of these is a
