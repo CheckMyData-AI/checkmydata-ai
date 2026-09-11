@@ -177,25 +177,53 @@ CLAIMS: tuple[Claim, ...] = (
 )
 
 
-def report_capabilities() -> list[Claim]:
-    """Log one line per unmet claim; return them. Never raises."""
+def report_capabilities(*, process: str = "web") -> list[Claim]:
+    """Log one line per unmet claim; return them. Never raises.
+
+    ``process`` names which dyno is reporting (OPS-13): this ran on `web` only, and the
+    worker is where the capabilities it checks actually decide whether indexing works.
+
+    **A claim that could not be evaluated is not a claim that passed.** The `except` below
+    logged at DEBUG — invisible at production's INFO — and the summary still said "all
+    satisfied", in the module whose own docstring says silence must not read as a pass.
+    """
     unmet: list[Claim] = []
+    unevaluated: list[str] = []
     for claim in CLAIMS:
         try:
             if claim.asserted() and not claim.provided():
                 unmet.append(claim)
                 logger.log(
                     claim.level,
-                    "Capability check: %s is set, but %s. Remedy: %s",
+                    "Capability check [%s]: %s is set, but %s. Remedy: %s",
+                    process,
                     claim.setting,
                     claim.consequence,
                     claim.remedy,
                 )
         except Exception:
-            logger.debug("capability claim %s could not be evaluated", claim.setting, exc_info=True)
-    if not unmet:
+            unevaluated.append(claim.setting)
+            logger.warning(
+                "Capability check [%s]: claim %s could not be evaluated — it is neither "
+                "satisfied nor unsatisfied, and this line is the only thing that says so",
+                process,
+                claim.setting,
+                exc_info=True,
+            )
+    if not unmet and not unevaluated:
         logger.info(
-            "Capability check: %d configuration claims verified against the runtime, all satisfied",
+            "Capability check [%s]: %d configuration claims verified against the runtime, "
+            "all satisfied",
+            process,
             len(CLAIMS),
+        )
+    elif not unmet:
+        logger.warning(
+            "Capability check [%s]: %d of %d claims verified; %d could NOT be evaluated (%s)",
+            process,
+            len(CLAIMS) - len(unevaluated),
+            len(CLAIMS),
+            len(unevaluated),
+            ", ".join(unevaluated),
         )
     return unmet
