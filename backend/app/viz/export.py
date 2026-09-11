@@ -86,16 +86,24 @@ def export_json(result: QueryResult) -> str:
     return json.dumps(data, indent=2, default=str)
 
 
-def _append_as_text(ws, values: list) -> None:
-    """Append a row, forcing every string cell to text rather than formula.
+def _write_row_as_text(ws, row_idx: int, values: list) -> None:
+    """Write one row, forcing every string cell to text rather than formula.
 
-    ``ws.append`` lets openpyxl guess, and it guesses "formula" for a leading ``=``.
-    Setting ``data_type`` after the fact is what keeps the value intact while removing
-    execution — prefixing, as CSV must do, would change data this format can preserve.
+    Assigning a value lets openpyxl guess the type, and it guesses "formula" for a
+    leading ``=``. Setting ``data_type`` afterwards is what keeps the value intact
+    while removing execution — prefixing, as CSV must do, would change data this
+    format can preserve.
+
+    The row index is passed in rather than read back from the sheet. This used to be
+    ``ws.append(values)`` followed by ``for cell in ws[ws.max_row]``, and that slice
+    lookup calls ``calculate_dimension()``, which scans every cell written so far —
+    so the cost of writing a sheet was quadratic in its rows. Measured at 3 000x20:
+    ``ws.append`` alone 0.09 s, the pair 5.67 s; a 10 000-row export took 102 s, on
+    the event loop, against a schema that permits 50 000 (API-04).
     """
-    ws.append(values)
-    for cell in ws[ws.max_row]:
-        if isinstance(cell.value, str):
+    for col_idx, value in enumerate(values, start=1):
+        cell = ws.cell(row=row_idx, column=col_idx, value=value)
+        if isinstance(value, str):
             cell.data_type = "s"
 
 
@@ -104,9 +112,9 @@ def export_xlsx(result: QueryResult) -> bytes:
     ws = wb.active
     ws.title = "Query Results"
 
-    _append_as_text(ws, [str(c) for c in result.columns])
-    for row in result.rows:
-        _append_as_text(ws, [serialize_value(v) for v in row])
+    _write_row_as_text(ws, 1, [str(c) for c in result.columns])
+    for row_idx, row in enumerate(result.rows, start=2):
+        _write_row_as_text(ws, row_idx, [serialize_value(v) for v in row])
 
     output = io.BytesIO()
     wb.save(output)

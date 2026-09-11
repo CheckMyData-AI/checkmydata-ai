@@ -107,7 +107,12 @@ async def list_metrics(
     project_id = validate_safe_id(project_id, "project_id")
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
     metrics = await _graph_svc.get_metrics(
-        db, project_id, connection_id=connection_id, category=category
+        db,
+        project_id,
+        connection_id=connection_id,
+        category=category,
+        limit=limit,
+        offset=offset,
     )
     return [
         MetricResponse(
@@ -124,7 +129,7 @@ async def list_metrics(
             times_referenced=m.times_referenced,
             connection_id=m.connection_id,
         )
-        for m in metrics[offset : offset + limit]
+        for m in metrics
     ]
 
 
@@ -171,7 +176,9 @@ async def list_relationships(
 ):
     project_id = validate_safe_id(project_id, "project_id")
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    rels = await _graph_svc.get_relationships(db, project_id, metric_id=metric_id)
+    rels = await _graph_svc.get_relationships(
+        db, project_id, metric_id=metric_id, limit=limit, offset=offset
+    )
     return [
         RelationshipResponse(
             id=r.id,
@@ -183,7 +190,7 @@ async def list_relationships(
             description=r.description,
             confidence=r.confidence,
         )
-        for r in rels[offset : offset + limit]
+        for r in rels
     ]
 
 

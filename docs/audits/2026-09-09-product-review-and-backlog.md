@@ -217,13 +217,13 @@ measured:
 | 10 | ✅ **DONE 2026-09-11** (#346) — **Claims-from-outcome sweep**: one enqueue-result helper; fix the five 202 routes, both cron dispatchers, feed scan, collect-now dedup lie | API-03/12, OPS-05/17, ANA-10 | M |
 | 11 | ✅ **DONE 2026-09-11** (#347 — OPS-01/04/06/09/13; OPS-03/10/15/16 carried to 11b) — **Ops visibility**: Sentry in worker; worker metrics into Redis + merged endpoint; wall-clock-anchored maintenance cron + boot sweep; Redis pool retry; orphan-close bookkeeping; `run_db_index` own timeout | OPS-01/03/04/06/15/16, OPS-09/10/13 | M |
 | 12 | ✅ **DONE 2026-09-11** (#348) — **Analyzer honesty**: zero-row ≠ stage failure; resumed path gets gates + freshness; degraded synthesis says so; caveats aggregate all stages; StageValidator gets its router; analytics grounding requires a window; per-property isolation; refetch deletions | ORCH-02/04/06/08/09, ANA-01/02/03/04/07/11/12 | L |
-| 13 | 🔶 **IN PROGRESS 2026-09-11** — **Stream/session UX**: lock release on limiter refusal; abort-reason class fix (both sites); poll guard; 401-only logout; clarification restore; DB session release before streaming | API-01/02, FE-01/02/03/05/08 | M |
+| 13 | ✅ **DONE 2026-09-11** (#349) — **Stream/session UX**: lock release on limiter refusal; abort-reason class fix (both sites); poll guard; 401-only logout; clarification restore; DB session release before streaming | API-01/02, FE-01/02/03/05/08 | M |
 
 ## P2 — robustness and performance
 
 | # | Task | Refs | Effort |
 |---|---|---|---|
-| 14 | Event-loop hygiene: xlsx in threadpool (+63× per-row fix), SQL pagination pushdown, batch bounds + worker routing | API-04/09/11 | M |
+| 14 | 🔶 **IN PROGRESS 2026-09-12** — Event-loop hygiene: xlsx in threadpool (+63× per-row fix), SQL pagination pushdown, batch bounds + worker routing | API-04/09/11 | M |
 | 15 | BM25 lifecycle: shared catalog instance; snapshot staleness by indexed sha | RET-05/06 | M |
 | 16 | Schedules & alerts done right: timezone; evaluate-before-truncate; email delivery for `notification_channels`; retention for notifications/runs; seat enforcement | COR-01/02/03/07, BILL-09 | M |
 | 17 | Rate limiting per actual client: proxy IPs, per-user keys, one 429 shape | API-05/06 | S |

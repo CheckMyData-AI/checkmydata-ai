@@ -3,6 +3,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user
 from app.connectors.base import QueryResult
@@ -53,22 +54,26 @@ async def export_data(
         row_count=len(body.rows),
     )
 
+    # API-04: all three are synchronous CPU work whose size the caller chooses
+    # (`rows` permits 50 000), and this handler is `async def` — so before this
+    # the whole dyno served nothing else for the duration, and a stretch longer
+    # than the heartbeat timeout also read as a dead run.
     if body.format == "csv":
-        content = export_csv(result)
+        content = await run_in_threadpool(export_csv, result)
         return Response(
             content=content,
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=export.csv"},
         )
     elif body.format == "json":
-        content = export_json(result)
+        content = await run_in_threadpool(export_json, result)
         return Response(
             content=content,
             media_type="application/json",
             headers={"Content-Disposition": "attachment; filename=export.json"},
         )
     elif body.format == "xlsx":
-        xlsx_content = export_xlsx(result)
+        xlsx_content = await run_in_threadpool(export_xlsx, result)
         return Response(
             content=xlsx_content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

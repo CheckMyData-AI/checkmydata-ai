@@ -150,11 +150,26 @@ class DocStore:
         self,
         session: AsyncSession,
         project_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[KnowledgeDoc]:
-        """Return all docs for a project.
+        """Return docs for a project, one page at a time when asked.
 
-        Since upsert keys on ``(project_id, source_path)`` there is always
-        exactly one row per source file, so this is equivalent to
+        Since upsert keys on ``(project_id, source_path)`` there is always exactly
+        one row per source file, so an unbounded call is equivalent to
         ``get_docs_for_project``.
+
+        The bounds are optional and default to absent because the indexing pipeline
+        genuinely wants every row. What they fix is the HTTP side (API-09), where
+        `?limit=1` used to load all 763 rows of this table — `content` is `Text`, and
+        it holds the generated prose — to return one object of five scalar fields.
         """
-        return await self.get_docs_for_project(session, project_id)
+        stmt = select(KnowledgeDoc).where(KnowledgeDoc.project_id == project_id)
+        stmt = stmt.order_by(KnowledgeDoc.updated_at.desc())
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())

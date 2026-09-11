@@ -883,7 +883,7 @@ async def list_docs(
 ):
     """List latest version of each indexed document for a project."""
     await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    docs = await _doc_store.get_latest_docs(db, project_id)
+    docs = await _doc_store.get_latest_docs(db, project_id, limit=limit, offset=offset)
     return [
         {
             "id": d.id,
@@ -892,7 +892,7 @@ async def list_docs(
             "commit_sha": d.commit_sha,
             "updated_at": d.updated_at.isoformat() if d.updated_at else None,
         }
-        for d in docs[offset : offset + limit]
+        for d in docs
     ]
 
 

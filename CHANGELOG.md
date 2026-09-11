@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — three ways one request could take the whole web process with it
+
+P2 row 14; API-04, API-09, API-11. One shape in all three: work whose size the caller
+chooses, done where it blocks everybody else.
+
+**An ordinary export blocked the event loop for about a hundred seconds.** `export_xlsx`
+is synchronous Python called straight from an `async def` handler, and the F-VIZ-04
+formula-injection defence added `for cell in ws[ws.max_row]` after every `ws.append` —
+which reaches `Worksheet.max_column`, which walks every cell written so far. Writing a
+sheet was therefore quadratic in its rows: 3 000×20 measured 5.67 s against 0.09 s for
+the appends alone, and a 10 000-row export took **102 s** — on a schema that permits
+50 000 and a rate limit that allows twenty a minute. The row index is passed in now
+instead of read back off the sheet (10 000 rows: **2.4 s**), and all three exporters run
+in a threadpool. That second half matters on its own: this repository has already paid
+for a CPU-bound stretch starving the heartbeat coroutine, at `graph_build`.
+
+**Pagination that bounded the response body and nothing else.** Six endpoints declared
+`limit`/`offset`, ran an unbounded `SELECT` and sliced the Python list.
+`GET /api/repos/{id}/docs?limit=1` loaded all 763 `KnowledgeDoc` rows — `content` is
+`Text` and holds the generated prose — to return one object of five scalar fields. The
+bounds reach SQL now, and they are optional on the service methods because the indexing
+pipeline genuinely wants every row.
+
+**An unbounded batch, run on the process that serves HTTP.** `note_ids` has been capped
+at 100 and `sql` at 50 000 characters since the schema was written, so the bounds were
+placed deliberately — `queries` had none, leaving the 10 MB body limit as the only
+ceiling, and ~150 000 minimal items was an accepted request. It also ran as an in-process
+`asyncio` task even with Redis configured, alone among the product's heavy operations: no
+run row, no heartbeat, no cancel route, no `/api/runs` entry. It goes to the worker now,
+and a failed enqueue marks the batch failed and answers 503 rather than "pending".
+
 ### Fixed — a stream that held what it had stopped using, and five failures the interface misread
 
 P1 row 13; API-01/02 and FE-01/02/03/05/08.

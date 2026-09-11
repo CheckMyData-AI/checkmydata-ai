@@ -193,6 +193,8 @@ class DataGraphService:
         connection_id: str | None = None,
         category: str | None = None,
         active_only: bool = True,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[MetricDefinition]:
         stmt = select(MetricDefinition).where(MetricDefinition.project_id == project_id)
         if connection_id:
@@ -204,6 +206,11 @@ class DataGraphService:
         stmt = stmt.order_by(
             MetricDefinition.confidence.desc(), MetricDefinition.times_referenced.desc()
         )
+        # API-09: the route's bounds reach SQL rather than slicing the loaded list.
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
@@ -220,6 +227,8 @@ class DataGraphService:
         project_id: str,
         *,
         metric_id: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[MetricRelationship]:
         stmt = select(MetricRelationship).where(MetricRelationship.project_id == project_id)
         if metric_id:
@@ -228,6 +237,10 @@ class DataGraphService:
                 | (MetricRelationship.metric_b_id == metric_id)
             )
         stmt = stmt.order_by(MetricRelationship.strength.desc())
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 

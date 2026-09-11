@@ -2,7 +2,7 @@ import asyncio
 import io
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -11,9 +11,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core import task_queue
 from app.core.audit import audit_log
 from app.core.background import spawn_tracked
 from app.core.rate_limit import limiter
+from app.core.task_queue import EnqueueFailedError, enqueue_or_fail
 from app.services.batch_service import BatchService
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
@@ -35,7 +37,12 @@ class BatchExecuteRequest(BaseModel):
     project_id: str
     connection_id: str
     title: str = Field(max_length=200)
-    queries: list[BatchQueryItem] = Field(default_factory=list)
+    # API-11: `note_ids` has been capped at 100 and `sql` at 50 000 characters since
+    # this schema was written, so the bounds were placed deliberately — `queries` had
+    # none, leaving `max_request_body_bytes` (10 MB) as the only ceiling. ~150 000
+    # minimal items was an accepted request. Matched to `note_ids`, because the two
+    # arrive at the same executor and are subject to the same concurrency.
+    queries: list[BatchQueryItem] = Field(default_factory=list, max_length=100)
     note_ids: list[str] | None = Field(None, max_length=100)
 
 
@@ -104,6 +111,34 @@ async def execute_batch(
                 exc,
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
+
+    # API-11: the batch runs on the worker when there is one. Every other heavy
+    # operation in the API already does; this one ran as an in-process asyncio task
+    # on the process that must stay responsive, executing the caller's whole list
+    # against the customer's database with no run row, no heartbeat and no cancel.
+    if task_queue.is_arq_active():
+        try:
+            await enqueue_or_fail(
+                "run_batch",
+                batch_id=batch.id,
+                connection_id=body.connection_id,
+                user_id=user["user_id"],
+                allow_in_process=False,
+            )
+        except EnqueueFailedError as exc:
+            # Claims come from outcomes (API-03): the batch row exists and nothing is
+            # running it, so say so rather than answering "pending".
+            # No `error` column on this model; the results blob is where a batch
+            # already records what went wrong.
+            batch.status = "failed"
+            batch.results_json = json.dumps({"error": str(exc)})
+            batch.completed_at = datetime.now(UTC)
+            await db.commit()
+            raise HTTPException(
+                status_code=503,
+                detail="Could not queue the batch; please try again.",
+            ) from exc
+        return {"batch_id": batch.id, "status": "pending"}
 
     # F-PROJ-05: a done-callback is bookkeeping, not a lifetime — asyncio keeps only a
     # weak reference, and this handler returns on the next line. `spawn_tracked` holds it
