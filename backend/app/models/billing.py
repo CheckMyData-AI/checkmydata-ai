@@ -89,6 +89,20 @@ class Subscription(Base):
         DateTime(timezone=True), nullable=True
     )
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: Stripe's `created` for the most recent subscription event applied to this row.
+    #: BILL-04: Stripe does not guarantee delivery order and the `deleted` branch is a full
+    #: teardown, so an `updated` arriving after it resurrected a cancelled account. `NULL`
+    #: means no event has been applied under the watermark rule yet, which is never treated
+    #: as stale — an unknown must not become a refusal to write.
+    last_event_created: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: When a Checkout session for a subscription was last opened for this account.
+    #: BILL-05: the duplicate guard read `stripe_subscription_id`, which stays NULL until a
+    #: webhook lands minutes later — so it could not see a checkout in flight, which is
+    #: precisely the window its own comment says it exists to close ("before the money
+    #: moves"). Cleared when the subscription id arrives or when the window lapses.
+    checkout_pending_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     trial_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

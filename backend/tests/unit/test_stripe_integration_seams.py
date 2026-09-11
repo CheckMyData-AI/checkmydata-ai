@@ -113,14 +113,25 @@ class TestMetadataIsWrittenTwice:
         plan = MagicMock(id="pro", price_usd_month=49, trial_days=14, stripe_price_id="price_x")
         db = MagicMock()
         db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=lambda: plan))
+        # The checkout marker (BILL-05) is committed where `_ensure_customer` already
+        # commits its customer id — durable before the customer can click a second time.
+        db.commit = AsyncMock()
         stripe = MagicMock()
         stripe.checkout.Session = _Sessions
         user = MagicMock(id="u1", email="a@b.c", display_name="A")
+
+        # A real `None`, not MagicMock's auto-attribute: BILL-05 added a checkout-in-flight
+        # guard that compares this against a window, and an auto-created Mock compares
+        # against a timedelta with a TypeError rather than "no checkout is open".
+        sub_row = MagicMock(user_id="u1", checkout_pending_at=None)
 
         with (
             patch.object(billing_service, "_stripe", return_value=stripe),
             patch.object(svc, "_ensure_customer", new=AsyncMock(return_value="cus_1")),
             patch.object(svc, "_active_subscription_id", new=AsyncMock(return_value=None)),
+            patch.object(
+                svc, "_get_or_create_subscription_row", new=AsyncMock(return_value=sub_row)
+            ),
         ):
             # Awaited, not driven through a nested loop: the first version called
             # `run_until_complete` inside pytest-asyncio's own loop, which passed alone

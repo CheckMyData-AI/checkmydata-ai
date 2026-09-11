@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a Stripe webhook that lost money and could resurrect a cancelled account
+
+Six findings, one handler chain (P0-6; BILL-03, BILL-04, BILL-05, BILL-06, BILL-07,
+BILL-08).
+
+`handle_event` was already right: it claims the event id, applies the event, and on an
+exception **rolls back and re-raises**, so the claim disappears and Stripe redelivers. Four
+handlers underneath it swallowed their failures and returned normally — which committed the
+claim and guaranteed no retry.
+
+**A refund or chargeback whose reversal failed was recorded as processed.** The comment
+said "never raise: the money has already moved, and a failed webhook makes Stripe retry
+something that cannot be un-done". Retrying the *webhook* does not retry the *refund*; it
+retries taking the credit back, which is the thing that did not happen. What the comment was
+right about is double-application — answered now by a claim keyed on the reversal rather
+than by never retrying at all.
+
+**A failed renewal was worse than a skipped grant.** `renew()` bills
+`spent − included_grant_usd` to the purchased pocket, so a period that never rolled leaves
+`usage_at_period_start` behind and the *next* renewal charges purchased credit for spend the
+missed allowance already covered. Claimed per invoice, and allowed to raise.
+
+**Subscription events had no ordering guard.** Stripe does not promise delivery order and
+the `deleted` branch is a full teardown — status `canceled`, spending key revoked — so an
+`updated` arriving after it resurrected a cancelled account and minted it a fresh key.
+`subscriptions.last_event_created` stores Stripe's own `created` for the last event applied;
+anything older is dropped with a log line, and a missing timestamp is never treated as stale.
+
+**The duplicate-subscription guard could not see a checkout in flight.** It read
+`stripe_subscription_id`, which stays NULL until a webhook lands minutes after Checkout is
+created — the exact window its own comment says it exists to close ("before the money
+moves"). `subscriptions.checkout_pending_at` closes it, with a 15-minute window: long enough
+to cover Checkout → webhook, short enough that an abandoned checkout does not lock an
+account out for a day.
+
+**The stale-catalogue fallback wrote a foreign key it never checked**, so a `metadata.plan_id`
+Stripe knows and the catalogue does not made every redelivery 500 — forever, because a 5xx is
+what Stripe retries. And **`Charge.retrieve` ran on the event loop**, against the module's
+own stated invariant; an AST guard now holds every Stripe SDK call to it.
+
+Migration `c9d0e1f2a3b4` adds the two columns, nullable with no backfill: there is nothing
+true to write for rows that predate the rules, and an invented watermark would silently drop
+the next legitimate event.
+
 ### Fixed — the only gate between a merged commit and production could not report a failure
 
 Five findings, one pipeline (P0-4; TEST-01, TEST-15, TEST-16, TEST-17, DATA-10).
