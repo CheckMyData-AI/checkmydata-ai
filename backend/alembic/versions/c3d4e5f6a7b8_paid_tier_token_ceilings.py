@@ -78,26 +78,27 @@ down_revision = "a1c2e3f4b5d6"
 branch_labels = None
 depends_on = None
 
-# Monthly = the credit the plan's own description promises, at the measured blend.
-# Daily = one third of it. See the module docstring for the derivation.
-BLENDED_USD_PER_MILLION_TOKENS = 4.0392
-LIMITS = {
-    "base": {"monthly": 7_500_000, "daily": 2_500_000, "promised_usd": 30},
-    "scale": {"monthly": 22_500_000, "daily": 7_500_000, "promised_usd": 90},
-}
+# ─────────────────────────────────────────────────────────────────────────────
+# NEUTRALISED 2026-09-11 (DATA-01). This migration is kept for its chain and its
+# derivation above; its body no longer writes.
+#
+# What it did: `UPDATE plans SET monthly_token_limit = …` for base and scale. What
+# happened next, on every boot: `plan_catalogue_reconcile` — a blind field-by-field
+# overwrite running in the FastAPI lifespan, i.e. AFTER the release phase's
+# `alembic upgrade head` — carried `PAID_TIERS` into the same columns, and PAID_TIERS
+# still declared 0. Two writers for one number, and the one that ran last held zeros,
+# so the gate this migration exists to arm was disarmed seconds after it was armed and
+# no log line marked the moment.
+#
+# The ceilings now live in `app/services/plan_catalogue.py`, derived from each tier's
+# promised dollars and one measured blend. A migration cannot be that home: it runs once
+# per database, and the reconcile runs on every start.
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def upgrade() -> None:
-    for plan_id, lim in LIMITS.items():
-        op.execute(
-            "UPDATE plans SET "
-            f"monthly_token_limit = {lim['monthly']}, daily_token_limit = {lim['daily']} "
-            f"WHERE id = '{plan_id}'"
-        )
+    """No-op. `plan_catalogue.PAID_TIERS` owns the ceilings; the reconcile writes them."""
 
 
 def downgrade() -> None:
-    for plan_id in LIMITS:
-        op.execute(
-            f"UPDATE plans SET monthly_token_limit = 0, daily_token_limit = 0 WHERE id = '{plan_id}'"
-        )
+    """No-op: nothing to undo."""

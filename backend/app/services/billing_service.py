@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.billing import Plan, StripeEvent, Subscription
 from app.models.user import User
+from app.services.plan_catalogue import PROMISED_CREDIT_USD
 
 logger = logging.getLogger(__name__)
 
@@ -107,18 +108,40 @@ def _period_from(obj: dict) -> tuple[int | None, int | None]:
     return obj.get("current_period_start"), obj.get("current_period_end")
 
 
-#: Included LLM credit per tier, in USD. Scales with the tier because a Scale customer
-#: runs three projects and fifteen data sources and will burn more — giving both tiers the
-#: same $30 would make the top-up an ordinary monthly event rather than an exception.
+#: Included LLM credit per tier, in USD, keyed by plan id. ``None`` means *no ceiling on
+#: the key* — not zero, which is the opposite instruction at the provider.
 #:
-#: Held here rather than on the `plans` row because it is a property of the commercial
-#: offer, and the plans table is what the open-source build still reads for its limits.
-_INCLUDED_CREDIT_USD: dict[str, float] = {"base": 30.0, "scale": 90.0}
+#: The dollar figures are **taken from** ``plan_catalogue.PROMISED_CREDIT_USD`` rather than
+#: restated: that table is also what each tier's token ceiling is derived from, and two
+#: copies of one promise is exactly how a migration and the catalogue came to hold
+#: different numbers for the same column (DATA-01).
+#:
+#: `enterprise` maps to ``None`` (D-SPEND-2b, 2026-09-11). Its description sells "LLM
+#: credit at cost with no monthly cap", so there is no allowance for a key ceiling to
+#: express; it is provisioned no key, and the invoice is the instrument. Until this table
+#: covered four tiers, `team` and `enterprise` fell through a `.get(..., 0.0)` default and
+#: provisioned a key with a **$0 lifetime ceiling** (BIZ-02).
+_INCLUDED_CREDIT_USD: dict[str, float | None] = {
+    **PROMISED_CREDIT_USD,
+    "enterprise": None,
+}
 
 
-def _included_credit_for(plan) -> float:
-    """The tier's monthly credit, or 0 for a tier that includes none."""
-    return _INCLUDED_CREDIT_USD.get(getattr(plan, "id", "") or "", 0.0)
+def _included_credit_for(plan) -> float | None:
+    """The tier's monthly credit; ``None`` for a tier sold without a cap.
+
+    An id absent from the table resolves to ``0.0`` — no headroom, the safe direction for a
+    tier nobody planned for — and logs, because doing it silently is how two live tiers sat
+    at zero.
+    """
+    plan_id = getattr(plan, "id", "") or ""
+    if plan_id in _INCLUDED_CREDIT_USD:
+        return _INCLUDED_CREDIT_USD[plan_id]
+    logger.warning(
+        "billing: plan %r has no included-credit entry; provisioning a $0 key ceiling",
+        plan_id,
+    )
+    return 0.0
 
 
 def _ts_to_dt(ts: int | None) -> datetime | None:
@@ -812,6 +835,10 @@ class BillingService:
             else None
         )
         included = _included_credit_for(plan)
+        if included is None:
+            # A tier sold without a cap holds no key (D-SPEND-2b), so there is no period to
+            # roll: no included pocket expires and no ceiling needs re-pushing.
+            return
         try:
             from app.services.openrouter_credit_service import OpenRouterCreditService
 
@@ -881,14 +908,29 @@ class BillingService:
             )
             await self._provision_key(db, sub.user_id, included_usd=_included_credit_for(plan))
 
-    async def _provision_key(self, db: AsyncSession, user_id: str, *, included_usd: float) -> None:
+    async def _provision_key(
+        self, db: AsyncSession, user_id: str, *, included_usd: float | None
+    ) -> None:
         """Create the account's OpenRouter key. Deliberately allowed to raise.
 
         `handle_event` rolls its idempotency claim back on an exception, so Stripe
         redelivers and this is retried. Swallowing would leave a paying customer with no
         key, no ceiling and no second attempt — the same shape as the top-up that was
         marked processed after failing to credit.
+
+        ``included_usd=None`` is a tier sold without a cap (D-SPEND-2b): no key is minted,
+        and an existing one — from a lower tier the account has just upgraded off — is
+        revoked, because leaving it in place would hold an **enterprise** account to the
+        ceiling it outgrew. That revocation is allowed to raise for the same reason as the
+        rest of this method.
         """
+        if included_usd is None:
+            await self._revoke_key(db, user_id)
+            logger.info(
+                "billing: no key ceiling for user=%s — the tier is sold without a cap",
+                user_id[:8],
+            )
+            return
         from app.services.openrouter_credit_service import OpenRouterCreditService
 
         await OpenRouterCreditService().provision(db, user_id, included_usd=included_usd)

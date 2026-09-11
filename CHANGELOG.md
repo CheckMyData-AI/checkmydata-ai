@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — nothing bounded LLM spend, because each of the two layers was disarmed by the other
+
+Six audit findings, one seam (P0-1; BILL-01/02, BIZ-01/02, DATA-01, API-08, BILL-10).
+Decision recorded as `docs/adr/0003-token-ceiling-is-the-binding-layer.md`.
+
+**The per-account OpenRouter key has never been presented to the provider.** It is minted
+on subscription, Fernet-encrypted, metered in two pockets, renewed on cycle and revoked on
+cancellation — and `OpenRouterAdapter` binds the shared operator key at construction while
+`LLMRouter` carries no account context, so `key_encrypted` is decrypted in exactly one
+place: inside `provision()`, whose only caller discards the return value. The plan's token
+ceilings were `0` (unlimited) *because* the key was believed to hold, in as many words in
+`plan_catalogue.py`'s docstring. Belt off to make room for braces that were never fitted.
+
+**And the ceilings that did exist were erased on every boot.** Migration `c3d4e5f6a7b8`
+wrote 2.5M/7.5M into `plans`; `plan_catalogue_reconcile` runs in the FastAPI lifespan —
+after the release phase — and carried `PAID_TIERS`'s zeros over them. The test that was
+meant to catch this loaded the migration with `importlib` and asserted against its own
+constant, never reading the table a request resolves against.
+
+The token ceiling now binds and lives in one place, **derived** from each tier's promised
+dollars rather than typed. The blend is $0.25/M — 2.2× the $0.1145/M aggregate measured on
+production after the 2026-09-10 model switch. The first calibration used the priciest
+stream, $1.85/M, and capped `base` at 16.2M tokens/month against a real account's
+**16 464 277 tokens in 30 days**: a bound below observed use, for exactly the workload
+`base` is sold for. `agent_llm_model` is customer-settable, so no token figure bounds
+dollars exactly; the margin is named, and the worst case is ~$221 against a $199
+subscription. `base` 40M/day · 120M/month, `scale` 120M · 360M, `team` 200M · 600M,
+`enterprise` unlimited.
+
+**A top-up forgave everything spent before it.** `_limit_for` anchored the ceiling on live
+`usage` rather than on `usage_at_period_start` — the watermark the same class already uses
+to compute "spent this period" — so $28 spent of a $30 allowance plus a $10 top-up produced
+$40 of headroom instead of $12, and a chargeback raised headroom from $2 to $30. The
+existing test enshrined it: `_limit_for(included=30, purchased=20, usage=100) == 150`.
+
+**`team` and `enterprise` provisioned keys with a $0 lifetime ceiling**, through a
+`.get(..., 0.0)` default, while `team`'s own page sells "$150/month of LLM credit". The
+dollar figures now come from the same table the token ceiling is derived from. `enterprise`
+is provisioned **no key**: "no monthly cap" has no ceiling to carry, and `key_hash is None`
+is a state every method already handles.
+
+**Six routers spent through a `NullUsageSink`** — `/explain-sql`, `/summarize`,
+`generate-title`, session rotation, cluster labelling, the MCP orchestrator's default — plus
+the learning analyzer, which `llm_first` fires after nearly every answer that took more than
+one attempt. Those tokens counted against no limit and appeared in no usage figure. All now
+carry a `DbUsageSink`; the chat utilities also check the budget first, and
+`tests/unit/test_no_unmetered_llm_router.py` reads the AST to keep it that way.
+
 ### Fixed — the nightly index had been dying for a month, and every fix exposed the next one
 
 `index_repo` failed 54 of 66 scheduled runs over thirty days, always at `graph_build` or

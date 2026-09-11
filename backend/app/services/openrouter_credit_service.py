@@ -83,12 +83,33 @@ class OpenRouterCreditService:
         return from_included, max(Decimal(0), spent - included)
 
     async def _limit_for(self, row: LlmCredit, usage: Decimal) -> Decimal:
-        """The ceiling to send OpenRouter: everything spent, plus both live pockets.
+        """The ceiling to send OpenRouter: the period's watermark, plus both live pockets.
 
-        Expressed against `usage` rather than as a running total, because OpenRouter's
-        counter is monotonic and a ceiling below it would refuse every further call.
+        OpenRouter's counter is monotonic (`limit_reset: null`), so the ceiling has to be
+        expressed in the same monotonic frame rather than as a remaining balance —
+        `usage_at_period_start` is that frame, and `balance()` below already reads it as
+        "spend this period is `usage − watermark`".
+
+        **Anchored on the watermark, not on `usage`** (BILL-02, fixed 2026-09-11). Anchoring
+        on the live counter re-granted everything spent so far each time the ceiling was
+        pushed, and the two callers that push it — `top_up` and `_adjust` — both fire at a
+        moment the customer chooses. Measured shape: $28 spent of a $30 allowance, then a
+        $10 top-up, produced a ceiling of $68 against a usage of $28 — $40 of headroom for a
+        $10 purchase. The same expression ran on a chargeback, so reversing a $10 payment
+        raised headroom from $2 to $30.
+
+        `usage` stays in the signature because a caller that has just re-read the remote
+        counter must pass it: `renew` assigns `usage_at_period_start = usage` immediately
+        before calling this, which is what rolls the period.
+
+        A ceiling **below** the current usage is a valid outcome here and means the account
+        is out of credit. That refuses the next call, which is the entire purpose.
         """
-        return _q(usage + _q(row.included_grant_usd) + _q(row.purchased_balance_usd))
+        return _q(
+            _q(row.usage_at_period_start or 0)
+            + _q(row.included_grant_usd)
+            + _q(row.purchased_balance_usd)
+        )
 
     # ── operations ────────────────────────────────────────────────────────
 

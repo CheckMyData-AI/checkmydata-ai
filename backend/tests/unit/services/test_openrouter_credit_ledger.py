@@ -58,21 +58,50 @@ class TestTheSplitIsIncludedFirst:
         )
 
 
-class TestTheCeilingIsExpressedAgainstUsage:
-    """OpenRouter's counter is monotonic, so a ceiling sent as a running total rather than
-    as `usage + remaining` would sit below `usage` and refuse every further call."""
+class TestTheCeilingIsAnchoredOnTheWatermark:
+    """The ceiling is `usage_at_period_start + both pockets` — not `usage + both pockets`.
 
-    async def test_the_limit_is_usage_plus_both_pockets(self, svc) -> None:
-        row = _row(included=30, purchased=20)
+    **What the previous version of this class asserted, and why it was wrong** (BILL-02,
+    audit 2026-09-09). It read:
+
+        assert await svc._limit_for(row(included=30, purchased=20), Decimal("100")) \\
+            == Decimal("150.000000")
+
+    — an account that had already spent $100 against a $50 lifetime grant being handed a
+    fresh $50 of headroom. The reasoning in its docstring was sound about a real hazard
+    (OpenRouter's counter is monotonic, so a ceiling expressed as a running total would sit
+    below `usage` and refuse everything) and drew the wrong conclusion from it: anchoring on
+    the *live* usage forgives every dollar spent so far, every time the ceiling is pushed.
+    `_limit_for` is called from `top_up` and from `_adjust` (refund, chargeback), so the
+    customer chooses the moment.
+
+    The hazard is answered by the watermark, which is what `usage_at_period_start` is for —
+    `balance()` in the same class already computed `spent = usage − usage_at_period_start`,
+    so the two readings of the pockets contradicted each other inside one file.
+    """
+
+    async def test_the_limit_is_the_watermark_plus_both_pockets(self, svc) -> None:
+        row = _row(included=30, purchased=20, watermark=100)
         assert await svc._limit_for(row, Decimal("100")) == Decimal("150.000000")
 
-    async def test_a_spent_out_account_still_gets_a_ceiling_above_its_usage(self, svc) -> None:
-        row = _row(included=0, purchased=0)
-        limit = await svc._limit_for(row, Decimal("77.5"))
-        assert limit == Decimal("77.500000"), (
-            "the ceiling must not fall below usage; a lower one refuses every call rather "
-            "than refusing the next dollar"
+    async def test_spending_inside_the_period_does_not_raise_the_ceiling(self, svc) -> None:
+        """The defect, as a number: $28 spent of a $30 allowance, then a $10 top-up."""
+        row = _row(included=30, purchased=10, watermark=0)
+        limit = await svc._limit_for(row, Decimal("28"))
+        assert limit == Decimal("40.000000"), (
+            "the ceiling absorbed the $28 already spent; headroom should be $12 "
+            "($2 left of the allowance plus the $10 just bought), not $40"
         )
+
+    async def test_an_exhausted_account_gets_a_ceiling_below_its_usage(self, svc) -> None:
+        """Refusing every further call is the correct behaviour for a spent-out account.
+
+        The old suite asserted the opposite — that the ceiling must never fall below usage —
+        which is true only while the ceiling is anchored on usage, i.e. only while it can
+        never bind.
+        """
+        row = _row(included=0, purchased=0, watermark=0)
+        assert await svc._limit_for(row, Decimal("77.5")) == Decimal("0.000000")
 
 
 class TestMoneyIsNotAFloat:
@@ -136,13 +165,13 @@ def test_the_error_body_is_never_echoed() -> None:
 # ── helpers ───────────────────────────────────────────────────────────────
 
 
-def _row(*, included: float, purchased: float):
+def _row(*, included: float, purchased: float, watermark: float = 0):
     from app.models.llm_credit import LlmCredit
 
     return LlmCredit(
         user_id="u1",
         key_hash=None,
-        usage_at_period_start=0,
+        usage_at_period_start=watermark,
         included_grant_usd=included,
         purchased_balance_usd=purchased,
         provision_count=0,

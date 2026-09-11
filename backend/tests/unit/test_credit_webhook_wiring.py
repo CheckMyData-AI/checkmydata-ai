@@ -87,7 +87,16 @@ class TestTheGrantScalesWithTheTier:
 
     def test_an_unknown_or_missing_plan_grants_nothing(self) -> None:
         """A retired tier or a null plan must not silently grant the base allowance —
-        crediting a tier nobody sells is money out for revenue that never came in."""
+        crediting a tier nobody sells is money out for revenue that never came in.
+
+        **`team` was in this list, as an example of "a tier nobody sells"** — it had been
+        on the pricing page at $900/month since 2026-08-31, described as including
+        "$150/month of LLM credit at cost". The assertion was true of the code and false of
+        the product, so it certified BIZ-02: `team` and `enterprise` fell through a
+        `.get(..., 0.0)` default and provisioned keys with a $0 lifetime ceiling. Removed
+        2026-09-11; what a sold tier grants is pinned in
+        `test_included_credit_covers_every_tier.py`.
+        """
         assert _included_credit_for(None) == 0.0
-        assert _included_credit_for(type("P", (), {"id": "team"})()) == 0.0
+        assert _included_credit_for(type("P", (), {"id": "retired-pro"})()) == 0.0
         assert _included_credit_for(type("P", (), {})()) == 0.0

@@ -9,10 +9,20 @@ without a subscription has *no plan*, which is a different thing from the cheape
 Resolving an unsubscribed user onto a retired `free` row is what refused a production
 code<->DB sync on 2026-09-06 — see ``test_four_tiers_priced_by_data_volume.py``.
 
-**Token ceilings stay 0.** Established by the 2026-08-31 transition and unchanged here:
-the spend limit lives on the account's OpenRouter key as a dollar balance, which is the
-only place that can enforce it mid-request. A token count in this table would be a second,
-weaker copy of that limit.
+**The token ceiling is what binds, and this table is where it lives** (D-SPEND-1,
+2026-09-11). The previous rule said the opposite — that ceilings stay `0` because "the
+spend limit lives on the account's OpenRouter key as a dollar balance, which is the only
+place that can enforce it mid-request". That key is minted, encrypted, metered and revoked,
+and **no inference call has ever presented it**: `OpenRouterAdapter` binds the shared
+operator key at construction and `LLMRouter` carries no account context (BILL-01/BIZ-01,
+audit 2026-09-09). So the sentence justified an unarmed gate by pointing at an unarmed gate,
+and both belt and braces were off. The key stays — it is attribution at the provider and a
+second belt on the OpenRouter path — but the layer that refuses a request is this one.
+
+**The ceilings are derived, never typed.** Each tier promises a dollar figure of LLM credit
+in its own description; the token ceiling is that promise divided by one measured blend.
+Writing the token count directly is what let a migration and this table hold two different
+numbers for the same promise (DATA-01).
 
 **The tier axis is data.** The previous catalogue already described `base` as "1 GB index"
 and `scale` as "2 GB index per project" while ``plans`` had no column to hold either — a
@@ -35,6 +45,59 @@ BYTES_PER_SYMBOL = 400
 BYTES_PER_EDGE = 150
 #: A 384-dimension float32 vector, the shape `all-MiniLM-L6-v2` produces.
 BYTES_PER_EMBEDDING = 384 * 4
+
+#: The LLM credit each tier's own description sells, in dollars per month. The single
+#: place the promise is a number; the prose repeats it and a test pins the two together.
+#: ``enterprise`` is absent deliberately — it promises "no monthly cap", which is ``0``.
+PROMISED_CREDIT_USD: dict[str, float] = {"base": 30.0, "scale": 90.0, "team": 150.0}
+
+#: Dollars per million tokens: what turns the promise above into a ceiling the token meter
+#: can enforce. **Measured 2026-09-11 against production, then given a named margin.**
+#:
+#: Production `token_usage` since the 2026-09-10 model switch:
+#:
+#: | stream | model | $/M blended |
+#: |---|---|---|
+#: | background | `deepseek/deepseek-v4-flash-0731` | 0.1137 |
+#: | indexing | `qwen/qwen3.8-flash` | 0.2686 |
+#: | chat | `z-ai/glm-5.2` | 1.84 (catalogue 0.966/3.036 at the measured 58/42 mix) |
+#: | **all streams, as actually used** | | **0.1145** |
+#:
+#: Indexing dominates the token count, so the aggregate sits near the cheapest stream. The
+#: figure below is **2.2× that aggregate**, which is the margin for the mix drifting toward
+#: chat — not a pretence that every token is a chat token.
+#:
+#: **Why a margin and not the worst case.** `agent_llm_model` is a per-project field the
+#: customer sets (`api/routes/projects.py:52,97`), so they choose the price per token and a
+#: token ceiling cannot bound dollars exactly. Calibrating on the most expensive stream
+#: bounds the dollars and cuts real work instead: at $1.85/M, `base` would cap at 16.2M
+#: tokens a month, and the heaviest real account on production used **16 464 277 tokens in
+#: 30 days** — the ceiling would have bound a normal month of the workload `base` is sold
+#: for. At the figure below `base` caps at 120M/month, seven times the heaviest observed
+#: month, while the worst case — an account routing every token through the priciest chat
+#: model — is 120M × $1.84 ≈ $221 against a $199 subscription. Bounded, and roughly the
+#: price of the plan.
+#:
+#: The instrument that needs no margin is dollars: `token_usage.estimated_cost_usd` has
+#: been 100% populated since 2026-09-04 (#285), so a cost-denominated gate is now possible
+#: and is on the board. Re-measure this constant with::
+#:
+#:     select model, round((sum(estimated_cost_usd)/nullif(sum(total_tokens),0)*1e6)::numeric,4)
+#:     from token_usage where estimated_cost_usd is not null group by model;
+BLENDED_USD_PER_MILLION_TOKENS = 0.25
+
+
+def _ceilings(promised_usd: float) -> tuple[int, int]:
+    """(daily, monthly) token ceilings for a tier promising *promised_usd* of credit.
+
+    Rounded to 100 000 tokens: the blend is a measurement with two significant figures and
+    a ceiling quoted to the token would claim a precision the input does not have. Daily is
+    a third of monthly — enough that a normal day never touches it (the 95th-percentile
+    real user-day measured 2 111 241 tokens) and a runaway is bounded within one day rather
+    than one month.
+    """
+    monthly = round(promised_usd / BLENDED_USD_PER_MILLION_TOKENS * 1_000_000, -5)
+    return int(round(monthly / 3, -5)), int(monthly)
 
 
 def estimate_index_bytes(
@@ -70,8 +133,8 @@ PAID_TIERS: list[dict[str, Any]] = [
             "1 project, 5 data sources, 1 GB index, $30/month of LLM credit at cost."
         ),
         "price_usd_month": 199,
-        "daily_token_limit": 0,
-        "monthly_token_limit": 0,
+        "daily_token_limit": _ceilings(PROMISED_CREDIT_USD["base"])[0],
+        "monthly_token_limit": _ceilings(PROMISED_CREDIT_USD["base"])[1],
         "max_connections": 5,
         "max_projects": 1,
         "max_index_bytes": 1 * GB,
@@ -87,8 +150,8 @@ PAID_TIERS: list[dict[str, Any]] = [
             "3 projects, 15 data sources, 2 GB index per project, $90/month of LLM credit at cost."
         ),
         "price_usd_month": 599,
-        "daily_token_limit": 0,
-        "monthly_token_limit": 0,
+        "daily_token_limit": _ceilings(PROMISED_CREDIT_USD["scale"])[0],
+        "monthly_token_limit": _ceilings(PROMISED_CREDIT_USD["scale"])[1],
         "max_connections": 15,
         "max_projects": 3,
         "max_index_bytes": 2 * GB,
@@ -105,8 +168,8 @@ PAID_TIERS: list[dict[str, Any]] = [
             "$150/month of LLM credit at cost."
         ),
         "price_usd_month": 900,
-        "daily_token_limit": 0,
-        "monthly_token_limit": 0,
+        "daily_token_limit": _ceilings(PROMISED_CREDIT_USD["team"])[0],
+        "monthly_token_limit": _ceilings(PROMISED_CREDIT_USD["team"])[1],
         "max_connections": 50,
         "max_projects": 10,
         "max_index_bytes": 5 * GB,

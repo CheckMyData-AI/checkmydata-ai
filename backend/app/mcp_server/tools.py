@@ -95,8 +95,15 @@ def _get_trace_svc():
     return runtime.get_trace_service()
 
 
-def _make_orchestrator(router: LLMRouter | None = None) -> OrchestratorAgent:
-    return OrchestratorAgent(llm_router=router or LLMRouter())
+def _make_orchestrator(router: LLMRouter) -> OrchestratorAgent:
+    """The router is required, and the default that used to stand here is why.
+
+    ``_make_orchestrator()`` with no argument built a bare ``LLMRouter``, whose sink is
+    ``NullUsageSink`` — every token an MCP question spent would reach no table and no
+    ceiling. Both live callers already pass a metered router; the default was a loaded
+    gun aimed at the next caller (API-08).
+    """
+    return OrchestratorAgent(llm_router=router)
 
 
 def _clamp_pagination(offset: int | None, limit: int | None) -> tuple[int, int]:

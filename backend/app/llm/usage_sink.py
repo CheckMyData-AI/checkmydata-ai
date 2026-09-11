@@ -118,9 +118,18 @@ class DbUsageSink:
     roughly 758 LLM calls per rebuild, and halting a rebuild because an account is over its
     monthly allowance is a worse product than one whose usage figure is short.
 
-    Under per-account OpenRouter keys the money is right either way: OpenRouter counts and
-    the key's own ceiling stops the spend. What a non-gating sink protects is the display,
-    which was understating what customers spent because those routers recorded nothing.
+    **The reason this was safe was not true** (BILL-01, corrected 2026-09-11). This
+    docstring used to say "under per-account OpenRouter keys the money is right either way:
+    OpenRouter counts and the key's own ceiling stops the spend". No inference call has ever
+    presented a per-account key — `OpenRouterAdapter` binds the shared operator key at
+    construction — so the argument for running background work ungated rested on a ceiling
+    that does not exist.
+
+    It stays ungated anyway, for the first reason alone, and the containment now sits where
+    it can act: the **token ceiling** on the plan (D-SPEND-1), checked at the start of every
+    user-facing request, and `may_run_scheduled_work`, which decides whether unattended work
+    starts at all. Gate at the door, meter throughout — halting a rebuild at document 400 of
+    758 leaves a half-indexed project and still charges for the 400.
 
     A flag rather than a second class, because two objects doing this recording would
     drift and the recording is the half that must not.
