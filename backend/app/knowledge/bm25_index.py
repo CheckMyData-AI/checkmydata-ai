@@ -48,9 +48,18 @@ MISS_SCHEMA_MISMATCH = "schema_mismatch"
 MISS_NO_QUERY_TOKENS = "no_query_tokens"
 MISS_NO_MATCH = "no_match"
 MISS_SCORE_ERROR = "score_error"
+#: The snapshot loaded fine and describes a corpus older than the one the dense leg
+#: is serving (RET-06). Distinct from every reason above: the leg WORKS and answers,
+#: it is simply answering about a repository that has moved. Nameless until
+#: 2026-09-12, so `query_with_reason` reported "ok" for it.
+MISS_STALE_CORPUS = "stale_corpus"
 
 #: Reasons that mean the index is unusable, not merely unhelpful.
 BM25_UNUSABLE = frozenset({MISS_NO_SNAPSHOT, MISS_CORRUPT, MISS_SCHEMA_MISMATCH, MISS_SCORE_ERROR})
+
+#: Every reason a BM25 leg reports something other than a clean hit. The metric
+#: reads this; a reason absent from it is a condition nothing can count.
+BM25_DEGRADED_REASONS = frozenset(BM25_UNUSABLE | {MISS_STALE_CORPUS})
 
 # Tokenization knobs.
 _MAX_TOKENS_PER_DOC = 1024  # cap to keep BM25 fast even on huge files.
@@ -87,7 +96,7 @@ _STOPWORDS: frozenset[str] = frozenset(
 
 # Snapshot format version. Bump on breaking changes; older snapshots will be
 # treated as "missing" and rebuilt on next index run.
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4  # +corpus_fingerprint (RET-06)
 
 
 @dataclass
@@ -104,6 +113,13 @@ class BM25Snapshot:
     #: The tokenized corpus. This is what is persisted; ``bm25`` is rebuilt from it
     #: on load, so nothing on disk has to be a class instance.
     tokenized: list[list[str]] = field(default_factory=list)
+    #: What the corpus looked like when this was built — its own field rather than
+    #: part of ``indexed_sha``, which means the repository's commit and is compared
+    #: to a git head by the pipeline's own staleness repair. A commit cannot say the
+    #: corpus moved: a nightly re-index regenerates documents without the head
+    #: changing, and the local reconcile writes ``"unknown"`` when no indexed commit
+    #: is recorded at all (RET-06). Empty for a builder that does not compute one.
+    corpus_fingerprint: str = ""
 
 
 def tokenize_code(text: str) -> list[str]:
@@ -179,6 +195,10 @@ class BM25Index:
         self._dir = Path(data_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._snapshots: dict[str, BM25Snapshot] = {}
+        #: What the file looked like when the cached snapshot was read —
+        #: `(st_mtime_ns, st_size)`, or `None` when it was absent. Compared on
+        #: every load so a rewrite by another process is noticed (RET-06).
+        self._stamps: dict[str, tuple[int, int] | None] = {}
         self._lock = threading.RLock()
 
     def _safe_name(self, project_id: str) -> str:
@@ -209,6 +229,8 @@ class BM25Index:
         project_id: str,
         indexed_sha: str,
         documents: list[tuple[str, str, dict[str, Any]]],
+        *,
+        corpus_fingerprint: str = "",
     ) -> BM25Snapshot:
         """Build and persist a snapshot atomically.
 
@@ -245,11 +267,13 @@ class BM25Index:
             bm25=bm25,
             raw_texts=raw_texts,
             tokenized=tokenized,
+            corpus_fingerprint=corpus_fingerprint,
         )
         self._persist(project_id, snapshot)
         self._drop_legacy_pickle(project_id)
         with self._lock:
             self._snapshots[project_id] = snapshot
+            self._stamps[project_id] = self._file_stamp(self._path(project_id))
         logger.info(
             "bm25_index: built project=%s docs=%d sha=%s",
             project_id[:8],
@@ -269,6 +293,7 @@ class BM25Index:
             "doc_metadatas": snapshot.doc_metadatas,
             "raw_texts": snapshot.raw_texts,
             "tokenized": snapshot.tokenized,
+            "corpus_fingerprint": snapshot.corpus_fingerprint,
         }
         try:
             with gzip.open(tmp, "wt", encoding="utf-8") as fh:
@@ -300,10 +325,22 @@ class BM25Index:
         the caller's degradation metric labelled all of them identically.
         """
         with self._lock:
+            path = self._path(project_id)
+            stamp = self._file_stamp(path)
             cached = self._snapshots.get(project_id)
             if cached is not None:
-                return cached, "ok"
-            path = self._path(project_id)
+                if self._stamps.get(project_id) == stamp:
+                    return cached, "ok"
+                # RET-06: another process rewrote the file. The cache had no
+                # invalidation and no TTL, so a process that had read once served
+                # that corpus for its whole life — and `web` and `worker` are
+                # separate Heroku process types, so the writer is never this
+                # process. Drop it and read again; one `stat` per load.
+                logger.info(
+                    "bm25_index: snapshot for %s changed on disk; reloading", project_id[:8]
+                )
+                self._snapshots.pop(project_id, None)
+                self._stamps.pop(project_id, None)
             if not path.exists():
                 # A leftover `.pkl` is deliberately NOT consulted here: an absent
                 # snapshot is the honest answer, and the start-up reconcile rebuilds
@@ -344,6 +381,7 @@ class BM25Index:
                     bm25=BM25Okapi(tokenized),
                     raw_texts=[str(t) for t in raw.get("raw_texts", [])],
                     tokenized=tokenized,
+                    corpus_fingerprint=str(raw.get("corpus_fingerprint", "")),
                 )
             except Exception:
                 logger.warning(
@@ -351,6 +389,7 @@ class BM25Index:
                 )
                 return None, MISS_CORRUPT
             self._snapshots[project_id] = snap
+            self._stamps[project_id] = stamp
             return snap, "ok"
 
     def query(
@@ -418,10 +457,20 @@ class BM25Index:
             )
         return out, ("ok" if out else MISS_NO_MATCH)
 
+    @staticmethod
+    def _file_stamp(path) -> tuple[int, int] | None:
+        """`(mtime_ns, size)` for *path*, or ``None`` when it does not exist."""
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
     def delete(self, project_id: str) -> None:
         """Remove a project's snapshot from disk and the in-memory cache."""
         with self._lock:
             self._snapshots.pop(project_id, None)
+            self._stamps.pop(project_id, None)
         path = self._path(project_id)
         try:
             if path.exists():
@@ -429,6 +478,16 @@ class BM25Index:
         except OSError:
             logger.warning("bm25_index: failed to delete %s", path, exc_info=True)
         self._drop_legacy_pickle(project_id)
+
+    def corpus_fingerprint(self, project_id: str) -> str | None:
+        """What the corpus looked like when this snapshot was built.
+
+        ``None`` when there is no snapshot; ``""`` when one exists but was written
+        by a builder that computes no fingerprint — unknown, which is not the same
+        as unchanged, so a caller comparing it will rebuild once and then skip.
+        """
+        snap = self.load(project_id)
+        return snap.corpus_fingerprint if snap else None
 
     def indexed_sha(self, project_id: str) -> str | None:
         """Cheap freshness check that doesn't deserialize the full snapshot.

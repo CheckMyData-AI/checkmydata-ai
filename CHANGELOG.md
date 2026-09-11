@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the lexical leg was rebuilt per question, and then never rebuilt at all
+
+P2 row 15; RET-05 and RET-06. Opposite halves of one seam: the process paying for the
+corpus paid for it over and over, and the copy it paid for could never change.
+
+**Every ContextPack request built a fresh catalog service.** The snapshot cache is an
+*instance* attribute on `BM25Index`, and `build_context_pack` created a
+`KnowledgeCatalogService` as a local variable — so each question constructed a new
+service, a new `HybridRetriever`, a new `BM25Index` with an empty cache, and gunzipped
+and re-indexed the whole corpus. Measured at production shape (31 392 chunks from 763
+documents): **2.23 s and about 245 MiB of RSS per question**, on the process type this
+deployment has repeatedly had SIGKILLed for memory. The two long-lived retrievers —
+`ContextLoader`'s own and `KnowledgeAgent`'s — have always cached; this third path
+never did, and it now shares one catalog for the life of the process.
+
+**And that corpus was frozen at the first read after boot.** `web` and `worker` are
+separate Heroku process types with separate filesystems. Every writer of a snapshot runs
+in the worker; the start-up reconcile on web rebuilds *missing* snapshots only, on
+purpose; and the in-process cache had no invalidation and no TTL. So after the nightly
+re-index, a question about a file added that night fused a current dense hit against a
+lexical corpus that had never seen it — and a file deleted that night still returned a
+BM25 hit whose `doc_id` no longer existed in the vector store. `query_with_reason`
+reported `"ok"` throughout: staleness had no name in the vocabulary at all.
+
+Three things changed. The cache now carries the file's `(mtime, size)` and re-reads when
+they move — one `stat` per load, and enough on its own for any process whose file gets
+rewritten. Snapshots carry a **corpus fingerprint** (document count and newest
+`updated_at`) beside the commit sha, because the sha alone cannot say the corpus moved: a
+nightly re-index regenerates documents without the repository head changing, and the
+reconcile writes `"unknown"` when no indexed commit is recorded. And
+`reconcile_local_bm25(refresh_stale=True)` runs on a loop
+(`BM25_REFRESH_INTERVAL_SECONDS`, 900) that rebuilds on a fingerprint mismatch — two
+aggregates per project per pass, no document body read.
+
+The boot pass stays missing-only, and the reasoning in its docstring still holds: it is
+about the commit sha, which a process with no clone cannot verify. A corpus fingerprint
+is a different claim, and one this process can make for itself — it is two aggregates
+over the very rows the snapshot is derived from.
+
+`MISS_STALE_CORPUS` is the name the condition did not have. It is counted where it is
+found, by the refresher: a per-question check would cost a database round trip on the
+chat path to learn something that changes once a night.
+
 ### Fixed — three ways one request could take the whole web process with it
 
 P2 row 14; API-04, API-09, API-11. One shape in all three: work whose size the caller

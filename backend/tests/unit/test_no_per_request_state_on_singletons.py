@@ -43,7 +43,13 @@ APP = Path(__file__).resolve().parents[2] / "app"
 #:   LLMRouter.start_health_checks — owns the background task handle
 #:   *._get_hybrid_retriever     — caches a PROJECT-AGNOSTIC retriever (the project id
 #:                                 is a query argument, not baked into the object)
-MAX_SELF_WRITES = 10
+#:   ContextLoader._get_catalog  — the same shape, one layer out (RET-05). The catalog
+#:                                 service was built per call, so every question made a
+#:                                 new HybridRetriever with an empty BM25 snapshot cache
+#:                                 and re-indexed the whole corpus: 2.23 s and ~245 MiB
+#:                                 at production shape. It holds no request state — the
+#:                                 project id, question and plan are all arguments.
+MAX_SELF_WRITES = 11
 
 
 def _parse_all() -> dict[str, ast.Module]:

@@ -62,6 +62,25 @@ class ContextLoader:
         # let an MCP-only project be reported as having analytics (and back).
         self._analytics_cache: dict[str, tuple[bool, float]] = {}
         self._hybrid_retriever = None
+        #: RET-05: one per loader, like the retriever above. This used to be a
+        #: local variable in `build_context_pack`, so every question built a new
+        #: service, a new HybridRetriever and a new BM25Index whose snapshot
+        #: cache is an INSTANCE attribute — gunzipping and re-indexing the whole
+        #: corpus each time. Measured at production shape: 2.23 s and ~245 MiB.
+        self._catalog = None
+
+    def _get_catalog(self):
+        """The one KnowledgeCatalogService this loader uses.
+
+        `ConversationalAgent` is built at module scope (`chat.py`), so this lives
+        for the life of the process and its BM25 snapshot cache is shared across
+        every question — which is what the two sibling retrievers have always done.
+        """
+        if self._catalog is None:
+            from app.services.knowledge_catalog_service import KnowledgeCatalogService
+
+            self._catalog = KnowledgeCatalogService(vector_store=self._vector_store)
+        return self._catalog
 
     def _get_hybrid_retriever(self):
         """Lazily build the shared hybrid retriever (BM25 + Chroma + RRF).
@@ -116,7 +135,6 @@ class ContextLoader:
             from app.agents.context_planner import ContextPlanner
             from app.config import settings as _settings
             from app.models.base import async_session_factory
-            from app.services.knowledge_catalog_service import KnowledgeCatalogService
 
             planner = ContextPlanner(mode=_settings.context_planner_mode)
             plan = await planner.plan(
@@ -127,7 +145,7 @@ class ContextLoader:
                 has_repo=has_repo,
                 budget_tokens=_settings.context_planner_budget_tokens,
             )
-            catalog = KnowledgeCatalogService(vector_store=self._vector_store)
+            catalog = self._get_catalog()
             async with async_session_factory() as session:
                 return await catalog.get_context_pack(
                     session,

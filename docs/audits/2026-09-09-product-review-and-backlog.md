@@ -223,8 +223,8 @@ measured:
 
 | # | Task | Refs | Effort |
 |---|---|---|---|
-| 14 | 🔶 **IN PROGRESS 2026-09-12** — Event-loop hygiene: xlsx in threadpool (+63× per-row fix), SQL pagination pushdown, batch bounds + worker routing | API-04/09/11 | M |
-| 15 | BM25 lifecycle: shared catalog instance; snapshot staleness by indexed sha | RET-05/06 | M |
+| 14 | ✅ **DONE 2026-09-12** (#350) — Event-loop hygiene: xlsx in threadpool (+63× per-row fix), SQL pagination pushdown, batch bounds + worker routing | API-04/09/11 | M |
+| 15 | 🔶 **IN PROGRESS 2026-09-12** — BM25 lifecycle: shared catalog instance; snapshot staleness by indexed sha | RET-05/06 | M |
 | 16 | Schedules & alerts done right: timezone; evaluate-before-truncate; email delivery for `notification_channels`; retention for notifications/runs; seat enforcement | COR-01/02/03/07, BILL-09 | M |
 | 17 | Rate limiting per actual client: proxy IPs, per-user keys, one 429 shape | API-05/06 | S |
 | 18 | Schema alignment migration: 81 nullables, BigInteger row_count, audit_log import, error_log dedup index, doc_embeddings path index, mcp index parity, CHECK on status vocabularies | DATA-02/03/04/05/07/08/09/11 | M |
