@@ -1009,6 +1009,10 @@ Stuck `running` DB-index / sync / repo-index rows self-heal: a crashed worker st
 
 Conventional commits: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `security`. Branches: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`. CI must be green; coverage must not drop below 72%. See `CONTRIBUTING.md`.
 
+**A conflicted PR runs no checks at all, and its page looks identical to one whose checks have not started yet (measured 2026-09-11).** GitHub evaluates `pull_request` workflows against `refs/pull/N/merge`, which does not exist while the merge is conflicted — so `gh pr checks` answers *"no checks reported"*, the PR shows no red, and nothing is running. Two PRs sat like that for half an hour before the cause was found; closing and reopening did not help, and neither did an empty commit, because neither addresses the conflict. **Rebase first, then look for the run.**
+
+What made it certain rather than unlucky: **every PR prepends to the same `## [Unreleased]` heading in `CHANGELOG.md`**, so the first one to merge conflicts all the others by construction. With several in flight that is not a risk, it is a guarantee. Either serialise the merges, or keep the changelog entry out of the feature branch and add it in one pass afterwards — and if a branch is cut from another feature branch rather than from `main`, it inherits that branch's conflicts as well, which is its own reason to always name the base: `git checkout -b <new> main`.
+
 ### New features
 
 Read `vision.md` before any new feature. If a request conflicts with §7 invariants or §8 anti-vision, stop and resolve the misalignment with the user before implementing.
