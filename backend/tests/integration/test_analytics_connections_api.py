@@ -415,7 +415,11 @@ class TestCollectNow:
         name, kwargs = calls[0]
         assert name == "run_analytics_collect"
         assert kwargs["connection_id"] == cid
-        assert kwargs["task_id"].startswith(f"analytics_collect:{cid}:")
+        # `manual:` since ANA-10. The button used to share the hourly wave's day-scoped id,
+        # so arq refused it as a duplicate for the rest of the day after any wave run while
+        # this route answered 202 "queued". The wave keeps its day scope — that is what
+        # stops it dispatching one connection twice a day — and the button gets its own key.
+        assert kwargs["task_id"].startswith(f"analytics_collect:manual:{cid}:")
         assert kwargs["_job_timeout"] == settings.analytics_collect_job_timeout_seconds
         assert resp.json()["task_id"] == kwargs["task_id"]
 

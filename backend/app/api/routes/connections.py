@@ -134,7 +134,7 @@ async def _dispatch_db_index(
     if wf_id is None:
         wf_id = await _ensure_db_index_wf(connection_id, project_id)
     if task_queue.is_arq_active():
-        await task_queue.enqueue(
+        await task_queue.enqueue_or_fail(
             "run_db_index",
             # F-SCHED-04: if the enqueue fails, this must not relocate into the web dyno.
             allow_in_process=False,
@@ -195,7 +195,7 @@ async def _dispatch_code_db_sync(
     if wf_id is None:
         wf_id = await _ensure_sync_wf(connection_id, project_id)
     if task_queue.is_arq_active():
-        await task_queue.enqueue(
+        await task_queue.enqueue_or_fail(
             "run_code_db_sync",
             # F-SCHED-04: if the enqueue fails, this must not relocate into the web dyno.
             allow_in_process=False,
@@ -1670,8 +1670,18 @@ async def collect_now(
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "editor")
     _require_analytics_connection(conn, subject="Collecting")
 
-    run_date = datetime.now(ZoneInfo(app_config.daily_knowledge_sync_timezone)).strftime("%Y-%m-%d")
-    task_id = f"analytics_collect:{connection_id}:{run_date}"
+    # ANA-10: a task id of its OWN. This used to be the hourly wave's day-scoped id
+    # (`analytics_collect:{connection}:{date}`), so arq refused the manual request as a
+    # duplicate for the rest of the day after any wave run — while this route answered
+    # "queued". The wave's id must stay day-scoped (that is what stops it dispatching the
+    # same connection twice in a day); the button is a different intention and gets a
+    # different key.
+    #
+    # The route already ignores `collection_enabled` on purpose — pulling on demand is how
+    # a credential fix is verified — and a dedup that silently swallows it defeats the same
+    # reasoning one layer down.
+    now = datetime.now(ZoneInfo(app_config.daily_knowledge_sync_timezone))
+    task_id = f"analytics_collect:manual:{connection_id}:{now.strftime('%Y-%m-%dT%H:%M:%S')}"
 
     async def _run_in_process(*, connection_id: str = connection_id) -> None:
         # Imported at call time so this module never pulls in the vendor SDKs,
@@ -1680,7 +1690,7 @@ async def collect_now(
 
         await AnalyticsCollectService().collect(connection_id)
 
-    await task_queue.enqueue(
+    await task_queue.enqueue_or_fail(
         "run_analytics_collect",
         coro_factory=_run_in_process,
         task_id=task_id,

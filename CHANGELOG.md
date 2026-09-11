@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — nine places reported the work they asked for, not the work that happened
+
+P1 row 10; API-03, API-12, OPS-05, OPS-17, ANA-10.
+
+`task_queue.enqueue` returns `None` on failure rather than raising, and with
+`allow_in_process=False` — correctly set at every one of these sites, because the
+alternative is a repository index running inside the web dyno — a Redis fault produces
+exactly that. Its own docstring says the caller "should surface a retryable failure". Six
+handlers discarded the return value and answered `202 {"status": "queued"}` over a run row
+they had already set to `running`, which then blocked the single-active-run guard until the
+reaper timed it out: the user waits for something nobody is doing, and every retry is
+refused meanwhile.
+
+`enqueue_or_fail` is the one helper they now share — same queue, same guard, an exception
+instead of a `None` nobody reads — and the repository-index route marks its run failed and
+answers `503` rather than leaving the row to the reaper.
+
+**Both cron waves counted their input.** `dispatched += 1` ran unconditionally after an
+enqueue that can return `None`, so a night on which every project failed to queue logged
+exactly what a perfect night logged — and that line is the only record either way. Counted
+from the outcome now, with a `failed=` beside it.
+
+**The feed scan returned `len(connection_ids)`** while swallowing per-connection exceptions,
+so a connection whose scan raised was reported as scanned. It counts successes and returns
+the failures by id.
+
+**"Collect now" shared the hourly wave's day-scoped task id**, so arq refused the manual
+request as a duplicate for the rest of the day after any wave run — while the route answered
+`202 queued`. The wave keeps its day scope, which is what stops it dispatching one
+connection twice a day; the button gets its own key. The route already ignores
+`collection_enabled` on purpose, since pulling on demand is how a credential fix is
+verified, and a dedup that silently swallowed it defeated that reasoning one layer down.
+
 ### Fixed — an incremental run lost the edges it could not see
 
 P1 row 9, third seam; KNOW-04. **KNOW-06 stays open**, and the reason is recorded below

@@ -913,6 +913,7 @@ async def _dispatch_daily_knowledge_sync_wave(at: datetime | None = None) -> Non
         svc = DailyKnowledgeSyncService()
         schedule_svc = SyncScheduleService()
         dispatched = 0
+        failed = 0
         skipped = 0
         unentitled = 0
 
@@ -961,7 +962,7 @@ async def _dispatch_daily_knowledge_sync_wave(at: datetime | None = None) -> Non
 
                     await DailyKnowledgeSyncService().run_for_project(project_id)
 
-                await task_queue.enqueue(
+                job_id = await task_queue.enqueue(
                     "run_daily_project_knowledge_sync",
                     # F-SCHED-04. This does NOT disable the `coro_factory` below: the
                     # guard only applies when Redis is configured and the enqueue throws.
@@ -975,12 +976,24 @@ async def _dispatch_daily_knowledge_sync_wave(at: datetime | None = None) -> Non
                     _job_timeout=settings.daily_knowledge_sync_job_timeout_seconds,
                     project_id=project.id,
                 )
-                dispatched += 1
+                # OPS-17: counted from the OUTCOME. `enqueue` returns None on failure with
+                # `allow_in_process=False`, so incrementing unconditionally made a night on
+                # which every enqueue failed read exactly like a night on which every one
+                # succeeded — and this log line is the only record either way.
+                if job_id:
+                    dispatched += 1
+                else:
+                    failed += 1
+                    logger.error(
+                        "Cron: daily knowledge sync could NOT be queued for project %s",
+                        project.id[:8],
+                    )
 
             logger.info(
-                "Cron: daily knowledge sync wave dispatched projects=%d skipped=%d "
-                "unentitled=%d hour=%d",
+                "Cron: daily knowledge sync wave dispatched projects=%d failed=%d "
+                "skipped=%d unentitled=%d hour=%d",
                 dispatched,
+                failed,
                 skipped,
                 unentitled,
                 current_hour,
@@ -1070,6 +1083,7 @@ async def _dispatch_analytics_collect_wave(at: datetime | None = None) -> None:
             return
 
         dispatched = 0
+        failed = 0
         unentitled = 0
         try:
             async with async_session_factory() as session:
@@ -1129,18 +1143,28 @@ async def _dispatch_analytics_collect_wave(at: datetime | None = None) -> None:
 
                     await AnalyticsCollectService().collect(connection_id)
 
-                await task_queue.enqueue(
+                job_id = await task_queue.enqueue(
                     "run_analytics_collect",
                     coro_factory=_run_in_process,
                     task_id=f"analytics_collect:{cid}:{run_date}",
                     _job_timeout=settings.analytics_collect_job_timeout_seconds,
                     connection_id=cid,
                 )
-                dispatched += 1
+                # OPS-17, same as the knowledge wave: a connection whose enqueue failed is
+                # not a connection that was collected, and this line is the only record.
+                if job_id:
+                    dispatched += 1
+                else:
+                    failed += 1
+                    logger.error(
+                        "Cron: analytics collect could NOT be queued for connection %s",
+                        cid[:8],
+                    )
 
             logger.info(
-                "Cron: analytics collect wave dispatched connections=%d hour=%d",
+                "Cron: analytics collect wave dispatched connections=%d failed=%d hour=%d",
                 dispatched,
+                failed,
                 current_hour,
             )
         except Exception:

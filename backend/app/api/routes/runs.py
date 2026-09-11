@@ -170,7 +170,7 @@ async def _dispatch_for_kind(db: AsyncSession, run: IndexingRun) -> None:
         await _dispatch_code_db_sync(connection_id, run.project_id, wf_id=run.workflow_id)
     elif run.kind == "index_repo":
         if task_queue.is_arq_active():
-            await task_queue.enqueue(
+            await task_queue.enqueue_or_fail(
                 "run_repo_index",
                 # F-SCHED-04: if the enqueue fails, this must not run here.
                 allow_in_process=False,

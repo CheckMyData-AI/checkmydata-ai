@@ -138,7 +138,14 @@ def _heavy_enqueue_sites() -> list[tuple[str, int, str, bool]]:
         except SyntaxError:  # pragma: no cover
             continue
         for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "enqueue"):
+            # Both names. Six HTTP handoff sites moved to `enqueue_or_fail` for P1-10 —
+            # same queue, same guard, an exception instead of a `None` nobody read — and a
+            # sweep that knew only the old name stopped seeing five of its six subjects
+            # while still reporting green on the sixth. Its own "does this find anything at
+            # all" check is what caught that.
+            if not isinstance(node, ast.Call):
+                continue
+            if getattr(node.func, "attr", None) not in ("enqueue", "enqueue_or_fail"):
                 continue
             if not (node.args and isinstance(node.args[0], ast.Constant)):
                 continue

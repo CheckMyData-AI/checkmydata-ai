@@ -298,15 +298,29 @@ async def _spawn_repo_index(
         # ARQ mode: hand off to the worker. The persisted run is authoritative
         # for status; no in-memory handle is kept.
         if task_queue.is_arq_active():
-            await task_queue.enqueue(
-                "run_repo_index",
-                # F-SCHED-04: if the enqueue fails, this must not relocate into the web dyno.
-                allow_in_process=False,
-                task_id=f"repo_index:{project_id}:{uuid.uuid4().hex[:8]}",
-                project_id=project_id,
-                force_full=force_full,
-                wf_id=wf_id,
-            )
+            try:
+                await task_queue.enqueue_or_fail(
+                    "run_repo_index",
+                    # F-SCHED-04: if the enqueue fails, this must not relocate into the
+                    # web dyno.
+                    allow_in_process=False,
+                    task_id=f"repo_index:{project_id}:{uuid.uuid4().hex[:8]}",
+                    project_id=project_id,
+                    force_full=force_full,
+                    wf_id=wf_id,
+                )
+            except task_queue.EnqueueFailedError:
+                # API-03/OPS-05: the run row was minted `running` a few lines up. Leaving
+                # it there blocks the single-active-run guard until the reaper times it
+                # out — half an hour in which every retry is refused because of a job
+                # nobody is doing.
+                await RunCoordinator().finish(
+                    db, run, "failed", error="enqueue failed", failure_kind="transient"
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Could not queue the indexing job. Please try again.",
+                ) from None
             return {"status": "queued", "run_id": run.id, "workflow_id": wf_id, "resumed": resumed}
 
         body = IndexRequest(force_full=force_full)
