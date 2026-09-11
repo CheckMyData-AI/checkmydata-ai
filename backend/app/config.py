@@ -957,6 +957,13 @@ class Settings(BaseSettings):
     #: reconnects by itself, so the client sees a reconnect rather than an end.
     #: Non-positive raises at boot: 0 would read as configured and behave as absent.
     sse_max_stream_seconds: int = 3600
+    #: How often each process re-checks that its local BM25 snapshot still matches the
+    #: documents in Postgres, in seconds (RET-06). `web` and `worker` have separate
+    #: filesystems, every snapshot writer runs in the worker, and the boot reconcile
+    #: rebuilds missing snapshots only — so without this the web dyno's lexical leg was
+    #: frozen at its first read for the life of the process. Two aggregates per project
+    #: per pass; no document body is read. Clamped to a 60 s floor.
+    bm25_refresh_interval_seconds: int = 900
     # Idle timeout (seconds) for a chat WebSocket waiting on the next client
     # message; the connection is closed when exceeded so abandoned sockets don't
     # hold server resources. 0 disables the idle timeout.

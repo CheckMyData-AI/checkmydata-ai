@@ -82,6 +82,7 @@ _backup_task: asyncio.Task[None] | None = None
 _scheduler_task: asyncio.Task[None] | None = None
 _health_check_task: asyncio.Task[None] | None = None
 _maintenance_task: asyncio.Task[None] | None = None
+_bm25_refresh_task: asyncio.Task[None] | None = None
 _git_poll_task: asyncio.Task[None] | None = None
 _daily_knowledge_sync_task: asyncio.Task[None] | None = None
 _analytics_collect_task: asyncio.Task[None] | None = None
@@ -92,7 +93,7 @@ _reaper_task: asyncio.Task[None] | None = None
 async def lifespan(app: FastAPI):
     global _backup_task, _scheduler_task, _health_check_task, _maintenance_task  # noqa: PLW0603
     global _git_poll_task, _daily_knowledge_sync_task, _reaper_task  # noqa: PLW0603
-    global _analytics_collect_task  # noqa: PLW0603
+    global _analytics_collect_task, _bm25_refresh_task  # noqa: PLW0603
 
     for _attempt in range(1, 4):
         try:
@@ -245,6 +246,7 @@ async def lifespan(app: FastAPI):
     _scheduler_task = asyncio.create_task(_scheduler_loop())
     _health_check_task = asyncio.create_task(_health_check_loop())
     _maintenance_task = asyncio.create_task(_maintenance_loop())
+    _bm25_refresh_task = asyncio.create_task(_bm25_refresh_loop())
     _git_poll_task = asyncio.create_task(_git_poll_loop())
     _daily_knowledge_sync_task = asyncio.create_task(_daily_knowledge_sync_cron_loop())
     _analytics_collect_task = asyncio.create_task(_analytics_collect_cron_loop())
@@ -290,6 +292,7 @@ async def lifespan(app: FastAPI):
         _scheduler_task,
         _health_check_task,
         _maintenance_task,
+        _bm25_refresh_task,
         _git_poll_task,
         _daily_knowledge_sync_task,
         _analytics_collect_task,
@@ -1499,6 +1502,50 @@ async def _backup_cron_loop() -> None:
             except Exception:
                 logger.warning("Failed to record backup failure", exc_info=True)
             await asyncio.sleep(60)
+
+
+async def _bm25_refresh_loop() -> None:
+    """Keep this process's lexical corpus in step with the documents (RET-06).
+
+    `web` and `worker` are separate Heroku process types with separate filesystems,
+    every writer of a BM25 snapshot runs in the worker, and the boot reconcile
+    rebuilds *missing* snapshots only — so nothing on the web dyno ever rewrote the
+    file after boot. Its lexical leg served the corpus as it stood at the first read
+    for the life of the process, while the dense leg (pgvector, shared Postgres)
+    stayed current: after a nightly re-index the two disagreed about what the
+    repository contains, which is the failure the `doc_id` fusion contract exists to
+    prevent.
+
+    Two aggregates per project per pass, no document body read. It runs on the worker
+    too, harmlessly — there it usually finds the snapshot its own pipeline just wrote.
+    """
+    interval = max(60, settings.bm25_refresh_interval_seconds)
+    from app.core.metrics import get_metrics_collector
+    from app.knowledge.bm25_index import MISS_STALE_CORPUS
+    from app.ops.bm25_local_reconcile import reconcile_local_bm25
+
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            out = await reconcile_local_bm25(refresh_stale=True)
+            if out.rebuilt:
+                # The condition has a name now, and this is where it is counted: a
+                # per-question check would cost a database round trip on the chat
+                # path to learn something that changes once a night.
+                for _ in range(out.rebuilt):
+                    get_metrics_collector().record_retrieval_degraded(
+                        leg="bm25", reason=MISS_STALE_CORPUS
+                    )
+                logger.info(
+                    "BM25 refresh: %d stale snapshot(s) rebuilt (present=%d failed=%d)",
+                    out.rebuilt,
+                    out.skipped_present,
+                    out.failed,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("BM25 refresh pass failed", exc_info=True)
 
 
 async def _maintenance_loop() -> None:

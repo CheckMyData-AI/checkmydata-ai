@@ -57,6 +57,24 @@ class Bm25ReconcileResult:
     failed: int = 0
 
 
+async def corpus_fingerprint(session: AsyncSession, project_id: str) -> str:
+    """What this project's stored corpus looks like right now.
+
+    Two aggregates over `knowledge_docs`: how many rows, and the newest
+    `updated_at`. Cheap — no document body is read — and it moves for every change
+    the snapshot would need to see: a document added, removed, or regenerated.
+    """
+    row = (
+        await session.execute(
+            select(func.count(KnowledgeDoc.id), func.max(KnowledgeDoc.updated_at)).where(
+                KnowledgeDoc.project_id == project_id
+            )
+        )
+    ).one()
+    count, newest = int(row[0] or 0), row[1]
+    return f"{count}@{newest.isoformat() if newest else '-'}"
+
+
 async def _build_one(session: AsyncSession, project_id: str, bm25: BM25Index) -> int:
     """Build one project's snapshot from its stored docs. Returns chunk count."""
     docs = list(
@@ -83,7 +101,10 @@ async def _build_one(session: AsyncSession, project_id: str, bm25: BM25Index) ->
         .where(ProjectRepository.last_indexed_commit.is_not(None))
         .limit(1)
     )
-    await asyncio.to_thread(bm25.build, project_id, sha or "unknown", entries)
+    fingerprint = await corpus_fingerprint(session, project_id)
+    await asyncio.to_thread(
+        bm25.build, project_id, sha or "unknown", entries, corpus_fingerprint=fingerprint
+    )
     return len(entries)
 
 
@@ -146,12 +167,25 @@ async def _reconcile_schema_snapshots(
 
 async def reconcile_local_bm25(
     session_factory: async_sessionmaker | None = None,
+    *,
+    refresh_stale: bool = False,
 ) -> Bm25ReconcileResult:
     """Rebuild any project's missing BM25 snapshot on THIS process's disk.
 
     Best-effort per project: one failure is counted and named, never abandons the
     rest, and never raises. Safe to call on every boot — a present snapshot is
     skipped without reading a single document.
+
+    With *refresh_stale*, a present snapshot is also rebuilt when the corpus it was
+    built from no longer matches the one in Postgres (RET-06). The module docstring
+    above explains why the boot pass is missing-only, and that reasoning still
+    holds — it is about the *commit SHA*, which this process cannot verify without a
+    clone. A corpus fingerprint is a different claim and one this process can make
+    for itself: it is two aggregates over the rows this snapshot is derived from.
+
+    Called periodically on the web dyno, which otherwise never rewrites the file at
+    all: every writer of a snapshot runs in the worker, and the two are separate
+    Heroku process types with separate filesystems.
     """
     if not settings.hybrid_retrieval_enabled:
         return Bm25ReconcileResult(status="disabled")
@@ -179,8 +213,24 @@ async def reconcile_local_bm25(
 
         for pid in project_ids:
             if await asyncio.to_thread(bm25.indexed_sha, pid) is not None:
-                result.skipped_present += 1
-                continue
+                if not refresh_stale:
+                    result.skipped_present += 1
+                    continue
+                async with factory() as session:
+                    current = await corpus_fingerprint(session, pid)
+                stored = await asyncio.to_thread(bm25.corpus_fingerprint, pid)
+                if stored == current:
+                    result.skipped_present += 1
+                    continue
+                # An empty `stored` is a snapshot written by a builder that computes
+                # no fingerprint — unknown, not unchanged. Rebuilding once is the
+                # honest reading, and the run after it is a skip.
+                logger.info(
+                    "bm25_local_reconcile: corpus for project %s moved (%s -> %s); rebuilding",
+                    pid[:8],
+                    stored or "unstamped",
+                    current,
+                )
             try:
                 async with factory() as session:
                     chunks = await _build_one(session, pid, bm25)
