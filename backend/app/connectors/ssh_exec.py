@@ -14,6 +14,7 @@ import asyncssh
 
 from app.config import settings
 from app.connectors.base import (
+    MAX_RESULT_ROWS,
     BaseConnector,
     ColumnInfo,
     ConnectionConfig,
@@ -22,11 +23,15 @@ from app.connectors.base import (
     QueryResult,
     SchemaInfo,
     TableInfo,
+    cap_rows_by_bytes,
 )
 from app.connectors.cli_output_parser import MAX_OUTPUT_BYTES, CLIOutputParser
 from app.connectors.exec_templates import (
     EXEC_TEMPLATES,
+    QUERY_ARG_FLAG,
+    apply_read_only,
     format_template,
+    validate_command_template,
 )
 from app.connectors.ssh_known_hosts import connect_with_policy
 from app.connectors.ssh_pre_commands import validate_pre_commands
@@ -37,6 +42,26 @@ logger = logging.getLogger(__name__)
 
 SSH_CONNECT_TIMEOUT = settings.ssh_connect_timeout
 SSH_COMMAND_TIMEOUT = settings.ssh_command_timeout
+
+
+def _truncate_output(text: str, limit: int | None = None) -> tuple[str, bool]:
+    """Cut *text* to *limit* bytes **on a line boundary**, and say whether it was cut.
+
+    Two defects in one line before this (SQL-04). The cut landed mid-line, and the CLI
+    parser downstream reads lines — so the last row of a truncated result was a fragment
+    presented as a row, which is a wrong value rather than a missing one. And the flag was
+    never returned at all: `execute_query` built a `QueryResult` without `truncated=`, whose
+    default is `False`, so an answer over a cut result carried no caveat anywhere.
+    """
+    cap = MAX_OUTPUT_BYTES if limit is None else limit
+    if len(text) <= cap:
+        return text, False
+    cut = text[:cap]
+    boundary = cut.rfind("\n")
+    if boundary > 0:
+        cut = cut[:boundary]
+    logger.warning("SSH exec output truncated to %d bytes (at a line boundary)", cap)
+    return cut, True
 
 
 class SSHExecConnector(BaseConnector):
@@ -67,7 +92,8 @@ class SSHExecConnector(BaseConnector):
     def _get_template(self, kind: str) -> str:
         """Get the command template for a given kind (query, test, introspect_*)."""
         if kind == "query" and self._config and self._config.ssh_command_template:
-            return self._config.ssh_command_template
+            # SQL-06: validated here as well as at save, because a row can predate the check.
+            return validate_command_template(self._config.ssh_command_template)
 
         db_type = self._config.db_type if self._config else ""
         templates = EXEC_TEMPLATES.get(db_type, {})
@@ -136,10 +162,39 @@ class SSHExecConnector(BaseConnector):
                 "over SSH exec. Remove the newline or use port forwarding."
             )
 
+        db_type = self._config.db_type if self._config else ""
+        custom = bool(kind == "query" and self._config and self._config.ssh_command_template)
+
+        if self._config and self._config.is_read_only:
+            decorated = None if custom else apply_read_only(template, db_type)
+            if decorated is None:
+                # SQL-02: say it rather than imply it. A read-only connection whose client
+                # we cannot configure is protected by `SafetyGuard` alone, and the whole
+                # point of the layering is that the guard is not alone.
+                logger.warning(
+                    "ssh-exec: this connection is marked read-only but its command "
+                    "template cannot be given an engine-enforced read-only session "
+                    "(db_type=%r, custom_template=%s). The statement guard is the only "
+                    "layer in force.",
+                    db_type,
+                    custom,
+                )
+            else:
+                template = decorated
+
         cmd = format_template(template, variables)
 
         if query is not None and kind == "query":
-            cmd = f"echo {shlex.quote(query)} | {cmd}"
+            flag = None if custom else QUERY_ARG_FLAG.get(db_type)
+            if flag:
+                # SQL-01: an ARGUMENT, where the client runs one statement and processes no
+                # meta-commands. Piping to stdin put the text where `\!` is a shell command.
+                cmd = f"{cmd} {flag} {shlex.quote(query)}"
+            else:
+                # A custom template names a client whose single-statement flag we do not
+                # know. The pipe is the only thing that can work; `SafetyGuard` refuses a
+                # backslash introducer on every path, which is what covers this one.
+                cmd = f"echo {shlex.quote(query)} | {cmd}"
 
         if not interpolates:
             cmd = f"IFS= read -r DBPASS; {cmd}"
@@ -198,7 +253,7 @@ class SSHExecConnector(BaseConnector):
         stdin: str | None = None,
         *,
         idempotent: bool = False,
-    ) -> tuple[str, str, int]:
+    ) -> tuple[str, str, int, bool]:
         """Run a command over SSH and return (stdout, stderr, exit_code).
 
         Reconnects once if the SSH connection is lost — but re-sends the command
@@ -252,11 +307,14 @@ class SSHExecConnector(BaseConnector):
         stdout = str(result.stdout or "")
         stderr = str(result.stderr or "")
 
-        if len(stdout) > MAX_OUTPUT_BYTES:
-            stdout = stdout[:MAX_OUTPUT_BYTES]
-            logger.warning("SSH exec output truncated to %d bytes", MAX_OUTPUT_BYTES)
+        stdout, truncated = _truncate_output(stdout)
 
-        return stdout, stderr, result.exit_status if result.exit_status is not None else -1
+        return (
+            stdout,
+            stderr,
+            result.exit_status if result.exit_status is not None else -1,
+            truncated,
+        )
 
     async def execute_query(
         self,
@@ -280,7 +338,7 @@ class SSHExecConnector(BaseConnector):
             repeatable = bool(self._config and self._config.is_read_only) or is_read_only_statement(
                 query, self.db_type
             )
-            stdout, stderr, exit_code = await self._run_command(
+            stdout, stderr, exit_code, output_truncated = await self._run_command(
                 command, timeout=command_timeout, stdin=stdin, idempotent=repeatable
             )
             elapsed = (time.monotonic() - start) * 1000
@@ -293,11 +351,19 @@ class SSHExecConnector(BaseConnector):
                 return QueryResult(row_count=0, execution_time_ms=elapsed)
 
             columns, rows = CLIOutputParser.detect_and_parse(stdout, self.db_type)
+            # SQL-04: the same two bounds every other connector applies — a row cap and a
+            # byte cap — and, unlike before, the flag that says one of them fired. The byte
+            # truncation upstream is part of the same answer: a cut at 10 MB is still a
+            # partial result whether the parser saw 9 000 rows or 40.
+            truncated = output_truncated or len(rows) > MAX_RESULT_ROWS
+            rows = rows[:MAX_RESULT_ROWS]
+            rows, byte_truncated = cap_rows_by_bytes(rows)
             return QueryResult(
                 columns=columns,
                 rows=rows,
                 row_count=len(rows),
                 execution_time_ms=elapsed,
+                truncated=truncated or byte_truncated,
             )
         except asyncssh.TimeoutError:
             elapsed = (time.monotonic() - start) * 1000
@@ -343,21 +409,21 @@ class SSHExecConnector(BaseConnector):
 
     async def _introspect_mysql(self, db_name: str) -> SchemaInfo:
         tables_cmd, tables_cmd_stdin = self._build_command("introspect_tables")
-        stdout, stderr, exit_code = await self._run_command(
+        stdout, stderr, exit_code, _out_truncated = await self._run_command(
             tables_cmd, stdin=tables_cmd_stdin, idempotent=True
         )
         self._check_introspection_result("mysql:tables", stdout, stderr, exit_code)
         _, table_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
         cols_cmd, cols_cmd_stdin = self._build_command("introspect_columns")
-        stdout, stderr, exit_code = await self._run_command(
+        stdout, stderr, exit_code, _out_truncated = await self._run_command(
             cols_cmd, stdin=cols_cmd_stdin, idempotent=True
         )
         self._check_introspection_result("mysql:columns", stdout, stderr, exit_code)
         _, col_rows = CLIOutputParser.parse_tsv_with_headers(stdout)
 
         fks_cmd, fks_cmd_stdin = self._build_command("introspect_fks")
-        stdout, stderr, exit_code = await self._run_command(
+        stdout, stderr, exit_code, _out_truncated = await self._run_command(
             fks_cmd, stdin=fks_cmd_stdin, idempotent=True
         )
         self._check_introspection_result("mysql:fks", stdout, stderr, exit_code)
@@ -409,7 +475,7 @@ class SSHExecConnector(BaseConnector):
 
         # Tables (now includes approx row counts)
         tables_cmd, tables_cmd_stdin = self._build_command("introspect_tables")
-        stdout, stderr, exit_code = await self._run_command(
+        stdout, stderr, exit_code, _out_truncated = await self._run_command(
             tables_cmd, stdin=tables_cmd_stdin, idempotent=True
         )
         self._check_introspection_result("postgres:tables", stdout, stderr, exit_code)
@@ -430,7 +496,7 @@ class SSHExecConnector(BaseConnector):
 
         # Columns
         cols_cmd, cols_cmd_stdin = self._build_command("introspect_columns")
-        stdout, stderr, exit_code = await self._run_command(
+        stdout, stderr, exit_code, _out_truncated = await self._run_command(
             cols_cmd, stdin=cols_cmd_stdin, idempotent=True
         )
         self._check_introspection_result("postgres:columns", stdout, stderr, exit_code)
@@ -452,7 +518,7 @@ class SSHExecConnector(BaseConnector):
         fk_map: dict[str, list[ForeignKeyInfo]] = {}
         try:
             fks_cmd, fks_cmd_stdin = self._build_command("introspect_fks")
-            stdout, stderr, exit_code = await self._run_command(
+            stdout, stderr, exit_code, _out_truncated = await self._run_command(
                 fks_cmd, stdin=fks_cmd_stdin, idempotent=True
             )
             self._check_introspection_result("postgres:fks", stdout, stderr, exit_code)
@@ -473,7 +539,7 @@ class SSHExecConnector(BaseConnector):
         idx_map: dict[str, list[IndexInfo]] = {}
         try:
             idx_cmd, idx_cmd_stdin = self._build_command("introspect_indexes")
-            stdout, stderr, exit_code = await self._run_command(
+            stdout, stderr, exit_code, _out_truncated = await self._run_command(
                 idx_cmd, stdin=idx_cmd_stdin, idempotent=True
             )
             self._check_introspection_result("postgres:indexes", stdout, stderr, exit_code)
@@ -504,7 +570,7 @@ class SSHExecConnector(BaseConnector):
 
     async def _introspect_clickhouse(self, db_name: str) -> SchemaInfo:
         tables_cmd, tables_cmd_stdin = self._build_command("introspect_tables")
-        stdout, stderr, exit_code = await self._run_command(
+        stdout, stderr, exit_code, _out_truncated = await self._run_command(
             tables_cmd, stdin=tables_cmd_stdin, idempotent=True
         )
         self._check_introspection_result("clickhouse:tables", stdout, stderr, exit_code)
@@ -512,7 +578,7 @@ class SSHExecConnector(BaseConnector):
         table_names = [r[0] for r in table_rows if r]
 
         cols_cmd, cols_cmd_stdin = self._build_command("introspect_columns")
-        stdout, stderr, exit_code = await self._run_command(
+        stdout, stderr, exit_code, _out_truncated = await self._run_command(
             cols_cmd, stdin=cols_cmd_stdin, idempotent=True
         )
         self._check_introspection_result("clickhouse:columns", stdout, stderr, exit_code)
@@ -542,7 +608,7 @@ class SSHExecConnector(BaseConnector):
     async def test_connection(self) -> bool:
         try:
             command, stdin = self._build_command("test")
-            _, stderr, exit_code = await self._run_command(
+            _, stderr, exit_code, _ = await self._run_command(
                 command, timeout=15, stdin=stdin, idempotent=True
             )
             if exit_code != 0:
@@ -562,7 +628,7 @@ class SSHExecConnector(BaseConnector):
             return {"success": False, "error": "Not connected"}
         _marker = "__SSH_EXEC_TEST__"
         try:
-            stdout, _, _ = await self._run_command(
+            stdout, _, _, _ = await self._run_command(
                 f"echo {_marker} && hostname",
                 timeout=10,
                 # An echo and a hostname read: repeating them changes nothing.

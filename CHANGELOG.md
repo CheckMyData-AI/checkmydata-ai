@@ -6,6 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — SSH-exec was the weakest surface in the product, and the guard above it was written against the wrong executor
+
+Seven audit findings, one seam (P0-2; SQL-01/02/04/06/11/12/13).
+
+**A project viewer could run a shell command on the customer's bastion.** In SSH-exec mode
+the query was piped to `psql` on stdin, and psql reads client meta-commands from stdin
+exactly as it does interactively: `\!` runs a shell command, `\copy … TO PROGRAM` runs one,
+`\i`/`\o` read and write files. `SafetyGuard` checks a leading token and SQL keywords —
+neither knows that `\` introduces a command for the client the connector actually feeds.
+The route in needed no privilege: `notes.py:97,111` lets a **viewer** create and execute a
+note. Closed on both sides. The guard refuses any backslash outside a string literal; and
+the built-in templates pass the SQL as an **argument** (`psql -c`, `mysql -e`,
+`clickhouse-client -q`), which removes the capability instead of denying it. A custom
+template still pipes, because the client is unknown — the guard covers that path.
+
+**A read-only SELECT could read the server's filesystem or make requests.**
+`pg_read_file('/etc/passwd')`, `pg_ls_dir('/')`, `lo_import`, MySQL `LOAD_FILE`, ClickHouse
+`file()` and `url()` — SSRF needing no file privilege — all returned `is_safe=True`: they
+are SELECTs, so the allow-list passes them and the DML denylist never looks, and a
+DB-enforced read-only session does not block a read. Denylisted per dialect, matched on the
+call rather than the word, so `SELECT file, url FROM downloads` still works.
+
+**The DML denylist could not see past a space.** `WITH t AS (UPDATE "my table" SET x=1
+RETURNING id) SELECT * FROM t` passed, because the UPDATE pattern spans the table name and
+a quoted identifier contains a space. DML is now caught by POSITION — start of text, or
+after `(` or `;` — which needs to know nothing about table names.
+
+**`is_read_only` reached the CLI nowhere.** It appeared once in the connector, deciding
+retry idempotency. Every native connector opens a DB-enforced read-only session; on
+ssh-exec the documented layering was the regex alone — the regex SQL-11 and SQL-12 had
+just walked through. The client is now asked for one, per dialect. A custom template
+cannot be decorated and says so instead of implying enforcement.
+
+**Output was cut mid-line at 10 MB and reported as complete.** `QueryResult` omitted
+`truncated=`, whose default is `False`, so an answer over a fragment carried no caveat —
+and the parser read the trailing half-line as a row, which is a wrong value rather than a
+missing one. The cut now lands on a line boundary, is reported, and the row and byte caps
+every other connector applies are applied here too.
+
+**`ssh_command_template` was never validated**, while `ssh_pre_commands` were screened for
+`;`, `&`, `|`, redirects, backticks and `$(` — and the two are joined onto one shell line
+with `&&`. Screening one half of a shell line screens neither. Validated now at save and at
+build, because a stored row can predate the check. **`format_template` escaped for the
+wrong context**: a placeholder inside `'…'` inside `-e "…"` got bare-shell quoting, so a
+database called `my db` produced `''my db''` — broken SQL for any ordinary multi-word name —
+and a quote in the name reached the parser unescaped.
+
+Two existing tests asserted the defect as the requirement and were inverted with what they
+used to claim: `test_build_query_command_pipes_via_stdin` and
+`test_the_query_is_still_piped_to_the_client`. That makes eight occurrences of the shape in
+this remediation programme.
+
 ### Fixed — nothing bounded LLM spend, because each of the two layers was disarmed by the other
 
 Six audit findings, one seam (P0-1; BILL-01/02, BIZ-01/02, DATA-01, API-08, BILL-10).

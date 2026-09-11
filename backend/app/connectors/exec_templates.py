@@ -1,8 +1,15 @@
-"""Predefined command templates for SSH exec mode.
+r"""Predefined command templates for SSH exec mode.
 
 Templates use placeholders: {db_host}, {db_port}, {db_user}, {db_name}.
 Password is passed via environment variable to avoid process-list exposure.
-Query is piped via stdin to avoid shell metacharacter issues.
+
+**The query is passed as an ARGUMENT, not on stdin** (SQL-01, 2026-09-11). It used to be
+piped — `echo <sql> | psql …` — on the reasoning that a pipe avoids shell metacharacter
+problems. It does, and it hands the text to a place where a different language applies:
+`psql` reads client meta-commands from stdin in non-interactive mode exactly as it does
+interactively, so `\!` runs a shell command on the bastion, `\copy … TO PROGRAM` runs one,
+and `\i`/`\o` read and write files. `QUERY_ARG_FLAG` below carries each client's
+"run this one statement" flag, where none of that is processed.
 """
 
 import re
@@ -156,6 +163,85 @@ EXEC_TEMPLATES: dict[str, dict[str, str]] = {
 }
 
 
+#: The flag each client takes a single statement on. This is the difference between the
+#: query being DATA for the client and being INPUT to it.
+QUERY_ARG_FLAG: dict[str, str] = {"postgres": "-c", "mysql": "-e", "clickhouse": "-q"}
+
+#: How to ask each client for a session the ENGINE refuses writes in (SQL-02). Native
+#: connectors have done this since they were written — `postgres.py:119`, `mysql.py:66`,
+#: `clickhouse.py:119` — and ssh-exec never did, so on that connector `is_read_only` meant
+#: only "this query may be retried after a reconnect" and the guard's regex was the whole
+#: defence.
+#:
+#: Applied by substring surgery on the client invocation, which is why it works only for the
+#: templates in this file: a custom template names a client this module has never heard of,
+#: and guessing its flags would produce a command that either fails or silently does nothing.
+#: `SSHExecConnector._build_command` warns in that case rather than implying enforcement.
+READ_ONLY_DECORATION: dict[str, tuple[str, str]] = {
+    # (what to find, what to replace it with)
+    "postgres": (
+        'PGPASSWORD="$DBPASS" psql',
+        "PGOPTIONS='-c default_transaction_read_only=on' PGPASSWORD=\"$DBPASS\" psql",
+    ),
+    "mysql": ("mysql", 'mysql --init-command="SET SESSION TRANSACTION READ ONLY"'),
+    "clickhouse": ("clickhouse-client", "clickhouse-client --readonly=1"),
+}
+
+
+def apply_read_only(template: str, db_type: str) -> str | None:
+    """Return *template* asking for an engine-enforced read-only session, or ``None``.
+
+    ``None`` means this module cannot decorate that template — an unknown ``db_type``, or a
+    client whose invocation is not in it. The caller must treat that as "not enforced" and
+    say so, never as "nothing to do".
+    """
+    decoration = READ_ONLY_DECORATION.get(db_type)
+    if not decoration:
+        return None
+    needle, replacement = decoration
+    if needle not in template:
+        return None
+    return template.replace(needle, replacement, 1)
+
+
+#: Shell metacharacters a command template may not contain. Deliberately the SAME pattern
+#: `ssh_pre_commands` is screened with — the two halves end up on one shell line joined by
+#: `&&`, and screening one of them was the whole defect (SQL-06). `"$DBPASS"` and `$'\t'`
+#: survive it: a bare `$VAR` expansion is not command substitution, `$(` is.
+_TEMPLATE_DANGEROUS = re.compile(r"[;&|<>\n\r`]|\$\(")
+
+#: Long enough for every template in this file with room to spare; short enough that the
+#: field cannot become a shell script.
+MAX_TEMPLATE_LENGTH = 2000
+
+
+class CommandTemplateValidationError(ValueError):
+    """Raised when ``ssh_command_template`` carries something a template must not (SQL-06)."""
+
+
+def validate_command_template(template: str) -> str:
+    """Validate a custom ``ssh_command_template``; return it unchanged.
+
+    Checked at save **and** at build time. Saving alone is not enough: a row written before
+    this function existed would otherwise keep running, and the reason to validate a field
+    is so that everything downstream may stop assuming it is hostile.
+    """
+    if not isinstance(template, str) or not template.strip():
+        raise CommandTemplateValidationError("ssh_command_template must be a non-empty string")
+    if len(template) > MAX_TEMPLATE_LENGTH:
+        raise CommandTemplateValidationError(
+            f"ssh_command_template exceeds {MAX_TEMPLATE_LENGTH} characters"
+        )
+    match = _TEMPLATE_DANGEROUS.search(template)
+    if match:
+        raise CommandTemplateValidationError(
+            "ssh_command_template contains forbidden shell metacharacters "
+            f"({match.group(0)!r}): it is joined onto one shell line with ssh_pre_commands, "
+            "which are screened for exactly these"
+        )
+    return template
+
+
 def get_default_template(db_type: str) -> str | None:
     """Return the default query template for a db type, or None if unsupported."""
     templates = EXEC_TEMPLATES.get(db_type)
@@ -187,6 +273,20 @@ def _dquote_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
 
 
+def _sql_literal_escape(value: str) -> str:
+    """Escape a value that sits inside a SQL single-quoted literal, inside shell double quotes.
+
+    Two languages, in this order: the SQL literal is closed by a single quote, which SQL
+    escapes by doubling; then the surrounding double-quoted shell word is escaped as usual.
+
+    SQL-13: this context had no branch at all, so `_shell_escape` — which quotes for a BARE
+    shell word — ran on it. A database called `my db` became `\'\'my db\'\'`, malformed SQL for
+    any ordinary multi-word name, and a name containing a quote reached the database's parser
+    with no SQL escaping whatsoever.
+    """
+    return _dquote_escape(value.replace("'", "''"))
+
+
 def format_template(template: str, config_vars: dict[str, str]) -> str:
     """Substitute placeholders in a template string.
 
@@ -206,7 +306,12 @@ def format_template(template: str, config_vars: dict[str, str]) -> str:
     result = template
     for key, value in config_vars.items():
         placeholder = f"{{{key}}}"
+        sq_placeholder = f"'{placeholder}'"
         dq_placeholder = f'"{placeholder}"'
+        # Order matters: the SQL-literal form is the most specific and sits INSIDE the
+        # double-quoted form in every introspection template.
+        if sq_placeholder in result:
+            result = result.replace(sq_placeholder, "'" + _sql_literal_escape(value) + "'")
         if dq_placeholder in result:
             result = result.replace(dq_placeholder, '"' + _dquote_escape(value) + '"')
         if placeholder in result:
