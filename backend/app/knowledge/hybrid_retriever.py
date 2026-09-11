@@ -108,6 +108,14 @@ class HybridRetriever:
         # ride into the fused result on rank alone (parity with the legacy
         # Chroma-only path's rag_relevance_threshold filter).
         self._chroma_max_distance = chroma_max_distance
+        # RET-01: a non-positive floor means OFF, the way `0` means unlimited everywhere
+        # else in this codebase. Without this, setting the knob to 0 to disable it would
+        # drop every hit instead — the opposite of what the operator asked for.
+        self._distance_filter_active = bool(
+            chroma_max_distance is not None and chroma_max_distance > 0
+        )
+        #: Set by `_run_chroma` when the floor emptied a non-empty result (RET-04).
+        self._dense_emptied_by_filter = False
         # Phase 3: optional second-stage cross-encoder reranker. When None,
         # fusion order is returned as-is (zero added latency).
         self._reranker = reranker
@@ -178,14 +186,20 @@ class HybridRetriever:
                 reason=bm25_reason,
             )
         elif chroma_empty and not bm25_empty:
-            # The dense leg has no cause channel yet (a missing collection and a
-            # query that matched nothing both surface as `[]`), so the label says
-            # what is known rather than borrowing the precision BM25 now has.
+            # The dense leg used to have no cause channel at all — a missing collection and
+            # a query that matched nothing both surfaced as `[]`. There is now a third
+            # cause, created inside `_run_chroma` itself, and it is the one that fired:
+            # a configured distance floor that emptied a non-empty result (RET-04). The
+            # remaining ambiguity is real and the label still says so.
             await emit_retrieval_degraded(
                 emit_tracker,
                 emit_wf,
                 leg="dense",
-                reason="empty_cause_unknown",
+                reason=(
+                    "filtered_by_distance"
+                    if self._dense_emptied_by_filter
+                    else "empty_cause_unknown"
+                ),
             )
 
         fused = self._fuse(bm25_results, chroma_results)
@@ -254,7 +268,8 @@ class HybridRetriever:
             logger.warning("hybrid: Chroma failed for %s", project_id[:8], exc_info=True)
             return []
 
-        if self._chroma_max_distance is None:
+        self._dense_emptied_by_filter = False
+        if not self._distance_filter_active:
             return hits
         filtered: list[dict[str, Any]] = []
         for hit in hits:
@@ -267,6 +282,17 @@ class HybridRetriever:
             # should fail the quality gate rather than silently pass it).
             if dist is not None and dist <= self._chroma_max_distance:
                 filtered.append(hit)
+        # RET-04: the store returning 40 neighbours and this floor dropping all 40 is not
+        # the same event as a project with no vectors, and the two need opposite fixes —
+        # retune the threshold, or re-index. `_run_chroma` is the only place that knows.
+        self._dense_emptied_by_filter = bool(hits) and not filtered
+        if self._dense_emptied_by_filter:
+            logger.info(
+                "hybrid: distance floor %.2f dropped all %d dense hits for %s",
+                self._chroma_max_distance,
+                len(hits),
+                project_id[:8],
+            )
         return filtered
 
     # ------------------------------------------------------------------

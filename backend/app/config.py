@@ -512,7 +512,22 @@ class Settings(BaseSettings):
     max_knowledge_iterations: int = 2
     max_investigation_iterations: int = 12
     # cosine distance ≤ 0.45 ⟺ cosine similarity ≥ 0.55 (RET-R5)
-    rag_relevance_threshold: float = 0.45
+    #: Pre-fusion cosine-distance floor on the dense leg. **0 = off, and that is the
+    #: default** (RET-01, 2026-09-11). It was 0.45, and `all-MiniLM-L6-v2` is a symmetric
+    #: similarity model: measured against this repository's own chunks with the production
+    #: chunker and embedder, correct nearest neighbours land at **0.402–0.702**, so the
+    #: floor sat inside the answer band and deleted three of five correct hits before RRF
+    #: saw them — the "hybrid" retriever ran as BM25-only.
+    #:
+    #: Raising it to 0.75 was the obvious repair and is the wrong one: it replaces a number
+    #: measured against one corpus with another number measured against one corpus. This
+    #: codebase already settled that argument when `hybrid_min_score` became
+    #: `hybrid_max_rank` — a rank means the same thing at any `rrf_k`, a distance constant
+    #: does not survive a new embedder or a new document type. RRF ranks, and
+    #: `hybrid_max_rank` bounds the noise the floor was meant to bound.
+    #:
+    #: The knob stays for an operator who has measured their own corpus and wants it.
+    rag_relevance_threshold: float = 0.0
     schema_cache_ttl_seconds: int = 300
     max_pie_categories: int = 20
     viz_timeout_seconds: int = 15

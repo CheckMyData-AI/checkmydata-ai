@@ -360,11 +360,13 @@ class KnowledgeAgent(BaseAgent):
             attach_raw_count.append(len(results))
         if not results:
             return []
-        return [
-            r
-            for r in results
-            if r.get("distance") is None or r["distance"] <= settings.rag_relevance_threshold
-        ]
+        # The dense-only path's copy of the same floor. `0` means OFF here too (RET-01):
+        # one setting with two readers, and teaching only one of them the new meaning is how
+        # a default change turns into "no relevant documents found" on a path nobody edited.
+        floor = settings.rag_relevance_threshold
+        if floor <= 0:
+            return results
+        return [r for r in results if r.get("distance") is None or r["distance"] <= floor]
 
     async def _hybrid_search(
         self,
