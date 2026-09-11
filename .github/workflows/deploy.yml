@@ -8,7 +8,12 @@ on:
 
 concurrency:
   group: heroku-deploy
-  cancel-in-progress: true
+  # TEST-17: QUEUE, never cancel. A cancellation can land between the backend release and
+  # the frontend release, leaving the two on different commits until the next run's
+  # ten-minute build finishes — or between a release and its verification, marking an
+  # unverified production release merely "cancelled". Waiting costs one build; the other
+  # costs an incoherent production nobody was told about.
+  cancel-in-progress: false
 
 env:
   HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
@@ -57,6 +62,16 @@ jobs:
             -t registry.heroku.com/${{ env.BACKEND_APP }}/worker \
             -f Dockerfile.worker .
 
+      - name: Build release-phase image
+        # Same image, one different CMD — the shape Dockerfile.worker already uses. This is
+        # what runs `alembic upgrade head` BEFORE the new release goes live (TEST-15).
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            --build-arg BASE_IMAGE=registry.heroku.com/${{ env.BACKEND_APP }}/web \
+            -t registry.heroku.com/${{ env.BACKEND_APP }}/release \
+            -f Dockerfile.release .
+
       - name: Build frontend image
         run: |
           docker build \
@@ -75,23 +90,101 @@ jobs:
       - name: Push worker image
         run: docker push registry.heroku.com/${{ env.BACKEND_APP }}/worker
 
+      - name: Push release-phase image
+        run: docker push registry.heroku.com/${{ env.BACKEND_APP }}/release
+
       - name: Push frontend image
         run: docker push registry.heroku.com/${{ env.FRONTEND_APP }}/web
 
+      - name: Note the release version before deploying
+        # The whole verification rests on this: "a release exists and is healthy" is not the
+        # same statement as "MY release happened", and only a before/after comparison can
+        # tell them apart (TEST-01).
+        run: |
+          set -euo pipefail
+          BEFORE_VERSION=$(curl --fail-with-body -sS \
+            -H "Accept: application/vnd.heroku+json; version=3" \
+            -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
+            https://api.heroku.com/apps/${{ env.BACKEND_APP }}/releases | jq '[.[].version] | max')
+          echo "BEFORE_VERSION=$BEFORE_VERSION" >> "$GITHUB_ENV"
+          echo "Backend is at release v$BEFORE_VERSION before this deploy"
+
       - name: Release backend
         run: |
+          set -euo pipefail
           WEB_IMAGE_ID=$(docker inspect --format='{{.Id}}' registry.heroku.com/${{ env.BACKEND_APP }}/web)
           WORKER_IMAGE_ID=$(docker inspect --format='{{.Id}}' registry.heroku.com/${{ env.BACKEND_APP }}/worker)
-          curl -s -X PATCH https://api.heroku.com/apps/${{ env.BACKEND_APP }}/formation \
+          RELEASE_IMAGE_ID=$(docker inspect --format='{{.Id}}' registry.heroku.com/${{ env.BACKEND_APP }}/release)
+          # `--fail-with-body`: without it curl exits 0 on 401/403/404/422, so a rotated
+          # API key or a refused image id was a PASSING step and production silently
+          # stopped receiving deploys (TEST-01). `-w`/`-o` are not enough on their own —
+          # the exit code is what the runner reads.
+          curl --fail-with-body -sS -X PATCH https://api.heroku.com/apps/${{ env.BACKEND_APP }}/formation \
             -H "Content-Type: application/json" \
             -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
             -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
-            -d '{"updates":[{"type":"web","docker_image":"'"$WEB_IMAGE_ID"'"},{"type":"worker","docker_image":"'"$WORKER_IMAGE_ID"'"}]}'
+            -d '{"updates":[{"type":"web","docker_image":"'"$WEB_IMAGE_ID"'"},{"type":"worker","docker_image":"'"$WORKER_IMAGE_ID"'"},{"type":"release","docker_image":"'"$RELEASE_IMAGE_ID"'"}]}'
+
+      - name: Verify the backend release actually happened
+        # Reads the platform, not a public URL. The health endpoint answers from whatever is
+        # live, so when the release fails it is the OLD release that returns 200 — which is
+        # how a broken deploy reported itself healthy. A `failed` status here also covers
+        # the release phase: a migration that does not apply aborts the release.
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do
+            LATEST=$(curl --fail-with-body -sS \
+              -H "Accept: application/vnd.heroku+json; version=3" \
+              -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
+              https://api.heroku.com/apps/${{ env.BACKEND_APP }}/releases)
+            VERSION=$(jq '[.[].version] | max' <<<"$LATEST")
+            STATUS=$(jq -r --argjson v "$VERSION" '.[] | select(.version == $v) | .status' <<<"$LATEST")
+            if [ "$VERSION" -le "$BEFORE_VERSION" ]; then
+              echo "Attempt $i: still at v$VERSION, waiting for a new release..."
+            elif [ "$STATUS" = "succeeded" ]; then
+              echo "Backend released: v$BEFORE_VERSION -> v$VERSION (status $STATUS)"
+              echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+              exit 0
+            elif [ "$STATUS" = "failed" ]; then
+              echo "Release v$VERSION FAILED — the release phase (alembic upgrade head) did not succeed"
+              exit 1
+            else
+              echo "Attempt $i: v$VERSION is $STATUS..."
+            fi
+            sleep 15
+          done
+          echo "No successful release appeared after this deploy (still at v$BEFORE_VERSION)"
+          exit 1
+
+      - name: Verify the worker is running the new release
+        # TEST-16: both health checks speak HTTP and the worker serves none, so a worker
+        # image that dies on import deployed green — on the process type this repo's own
+        # incident history names as the recurring failure surface.
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do
+            DYNOS=$(curl --fail-with-body -sS \
+              -H "Accept: application/vnd.heroku+json; version=3" \
+              -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
+              https://api.heroku.com/apps/${{ env.BACKEND_APP }}/dynos)
+            UP=$(jq -r --argjson v "$RELEASE_VERSION" \
+              '[.[] | select(.type == "worker" and .state == "up" and .release.version == $v)] | length' \
+              <<<"$DYNOS")
+            if [ "$UP" -ge 1 ]; then
+              echo "Worker is up on release v$RELEASE_VERSION"
+              exit 0
+            fi
+            echo "Attempt $i: no worker dyno up on v$RELEASE_VERSION yet..."
+            sleep 15
+          done
+          echo "The worker never came up on release v$RELEASE_VERSION"
+          exit 1
 
       - name: Release frontend
         run: |
+          set -euo pipefail
           IMAGE_ID=$(docker inspect --format='{{.Id}}' registry.heroku.com/${{ env.FRONTEND_APP }}/web)
-          curl -s -X PATCH https://api.heroku.com/apps/${{ env.FRONTEND_APP }}/formation \
+          curl --fail-with-body -sS -X PATCH https://api.heroku.com/apps/${{ env.FRONTEND_APP }}/formation \
             -H "Content-Type: application/json" \
             -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
             -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \

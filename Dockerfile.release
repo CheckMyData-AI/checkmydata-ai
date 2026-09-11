@@ -1,0 +1,21 @@
+# Release-phase image: the fully-built backend image with one different CMD.
+#
+# Heroku container releases run the IMAGE's CMD per process type, and the `release` type is
+# the one the platform runs ONCE, before the new release goes live — a failure there aborts
+# the release instead of booting new code on an old schema.
+#
+# Why this file exists at all: `deploy.yml` PATCHes the formation with images whose CMD is
+# uvicorn-only, `Dockerfile.worker` already records that "the repo Procfile is not honored"
+# for Container Registry releases, and `heroku.yml`'s `run.web` belongs to a channel this
+# pipeline does not use. So nothing in the deploying channel ran a migration. Measured on
+# production 2026-09-11: `heroku ps` showed `sh -c uvicorn app.main:app …` and no alembic,
+# while `alembic_version` happened to match the repository head — correct by an accident of
+# history rather than by anything the pipeline does (TEST-15).
+#
+# Built FROM the deployed backend image, exactly as Dockerfile.worker is: a separately built
+# release image could carry different migrations from the code it is migrating for.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+# WORKDIR is inherited from the backend image (/app), which is where `backend/` was
+# copied to — so alembic.ini and alembic/ are already in the working directory.
+CMD ["sh", "-c", "PYTHONPATH=. alembic upgrade head"]
