@@ -285,7 +285,25 @@ class CodeGraphBuilder:
         self._max_symbols = max_symbols
         self._min_call_confidence = min_call_confidence
 
-    def build(self, parsed_files: dict[str, ParsedFile]) -> CodeGraph:
+    def build(
+        self,
+        parsed_files: dict[str, ParsedFile],
+        *,
+        resolution_symbols: list[Symbol] | None = None,
+    ) -> CodeGraph:
+        """Build the graph for *parsed_files*.
+
+        ``resolution_symbols`` are symbols from files this run did **not** parse, used only
+        to resolve callees (KNOW-04). On an incremental run `parsed_files` holds the changed
+        files alone, so `global_index` knew nothing about the rest of the repository: a call
+        from a changed file into an unchanged one resolved to nothing and its edge was never
+        emitted — while `save_incremental` had already deleted the edges that file owned. The
+        graph lost edges on every incremental run and recovered them only at a full rebuild.
+
+        They are **not** added to `all_symbols`: those rows belong to files the merge is
+        about to preserve untouched, and emitting them again would duplicate what
+        `save_incremental` keeps.
+        """
         # Pass A: collect all symbols. Apply size cap (prune private/_underscore).
         all_symbols: list[Symbol] = []
         for pf in parsed_files.values():
@@ -325,6 +343,14 @@ class CodeGraphBuilder:
         global_index: dict[str, list[Symbol]] = defaultdict(list)
         for s in all_symbols:
             per_file_index[s.file_path][s.name].append(s)
+            global_index[s.name].append(s)
+        # Resolution-only: reachable as a callee, never emitted as one of this graph's own
+        # symbols (KNOW-04). `symbols_by_uid` gets them too, because `_resolve_call` reads
+        # it to score a candidate.
+        for s in resolution_symbols or ():
+            if s.uid in symbols_by_uid:
+                continue
+            symbols_by_uid[s.uid] = s
             global_index[s.name].append(s)
 
         edges: list[GraphEdge] = []
