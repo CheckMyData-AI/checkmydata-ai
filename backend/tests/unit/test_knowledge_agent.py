@@ -264,12 +264,18 @@ class TestKnowledgeAgent:
         # The "No sufficiently relevant" wording is specific to the dense-only
         # path; force it since hybrid retrieval is now on by default.
         monkeypatch.setattr("app.agents.knowledge_agent.settings.hybrid_retrieval_enabled", False)
+        # The floor is OFF by default since RET-01 — measured, it sat inside the band of
+        # correct answers and deleted them. What this test is for is that it still WORKS
+        # when an operator who has measured their own corpus configures one, so it
+        # configures one.
+        floor = 0.45
+        monkeypatch.setattr("app.agents.knowledge_agent.settings.rag_relevance_threshold", floor)
         mock_vector_store.query = MagicMock(
             return_value=[
                 {
                     "document": "Barely related content",
                     "metadata": {"source_path": "noise.txt"},
-                    "distance": RAG_RELEVANCE_THRESHOLD + 0.5,
+                    "distance": floor + 0.5,
                 },
             ]
         )

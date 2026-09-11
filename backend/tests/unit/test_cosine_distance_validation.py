@@ -21,24 +21,28 @@ below tests that instead of the value that could not deliver it.
 
 from __future__ import annotations
 
-import pytest
-
 from app.config import settings
 
 
-def test_distance_threshold_is_a_meaningful_floor_ret_r5() -> None:
-    # ChromaDB cosine: distance = 1 - cosine_similarity.
-    # The tightened max-distance of 0.45 admits only chunks with similarity >= 0.55
-    # — a real semantic relevance bar (fixes RET-R5).
-    max_distance = settings.rag_relevance_threshold  # 0.45 after tightening
-    implied_min_similarity = 1.0 - max_distance
-    assert max_distance == pytest.approx(0.45), (
-        f"rag_relevance_threshold regressed to {max_distance}; expected 0.45 (RET-R5 fix)"
-    )
-    # Implied similarity floor must be meaningfully above zero (≥ 0.55).
-    assert implied_min_similarity >= 0.55, (
-        f"Implied similarity floor {implied_min_similarity:.3f} < 0.55; "
-        "threshold is too permissive — RET-R5 regression"
+def test_the_distance_floor_is_off_or_outside_the_answer_band() -> None:
+    """Was `test_distance_threshold_is_a_meaningful_floor_ret_r5`, asserting **0.45**.
+
+    It reasoned that distance ≤ 0.45 means similarity ≥ 0.55 and called that "a real
+    semantic relevance bar". The arithmetic is right and the premise is not: `all-MiniLM-L6-v2`
+    is a *symmetric* similarity model, so a natural-language question against a code chunk
+    lands at 0.4–0.75 **when the chunk is the correct answer**. Measured 2026-09-11 against
+    367 chunks of this repository's own `app/knowledge/*.py`, with the production chunker
+    and the production embedder: correct nearest neighbours at 0.402, 0.429, 0.474, 0.524
+    and 0.702 — three of five deleted by this "bar" before RRF ever saw them.
+
+    Neither this test nor its neighbour could have caught that: both assert the constant
+    against itself, and nothing in either embeds a single document (RET-02).
+    """
+    max_distance = settings.rag_relevance_threshold
+    assert max_distance <= 0 or max_distance >= 0.75, (
+        f"rag_relevance_threshold is {max_distance}, inside the 0.402–0.702 band where "
+        "correct answers actually land — it deletes the dense leg before fusion and the "
+        "hybrid retriever runs as BM25-only"
     )
 
 

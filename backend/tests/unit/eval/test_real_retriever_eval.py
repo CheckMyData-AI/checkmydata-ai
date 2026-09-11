@@ -140,6 +140,11 @@ def _retriever(bm25: BM25Index, dense: _StubDenseStore, **kwargs: Any) -> Hybrid
         "rrf_k": settings.hybrid_rrf_k,
         "min_score": settings.hybrid_min_score,
         "max_rank": settings.hybrid_max_rank,
+        # RET-02: the one parameter that can DELETE the dense leg was the one this helper
+        # omitted, while its docstring called the result "the production HybridRetriever".
+        # With it absent, `RAG_RELEVANCE_THRESHOLD=0.05` — a value that returns nothing for
+        # every query in the product — left this entire gate green.
+        "chroma_max_distance": settings.rag_relevance_threshold,
     }
     params.update(kwargs)
     return HybridRetriever(bm25=bm25, vector_store=dense, **params)

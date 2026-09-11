@@ -83,9 +83,14 @@ def test_config_floor_values() -> None:
     """Tightened floors are present in config (RET-R5 fix)."""
     from app.config import settings
 
-    assert settings.rag_relevance_threshold == pytest.approx(0.45), (
-        f"rag_relevance_threshold should be 0.45 (distance ≤ 0.45 ⟺ sim ≥ 0.55), "
-        f"got {settings.rag_relevance_threshold}"
+    # Was `== 0.45`. That value sits inside the 0.402–0.702 band where correct nearest
+    # neighbours actually land, measured with the production embedder — so it deleted the
+    # dense leg rather than filtering noise out of it (RET-01). The rank cut-off below is
+    # the floor that survived, and it is the one this file's own RET-R5 reasoning should
+    # have relied on: a rank means the same thing at any `rrf_k`.
+    assert settings.rag_relevance_threshold <= 0 or settings.rag_relevance_threshold >= 0.75, (
+        f"rag_relevance_threshold is {settings.rag_relevance_threshold}, inside the band "
+        "where correct answers land"
     )
     assert settings.hybrid_max_rank == 30, (
         f"hybrid_max_rank should be 30 (the rank-30 tail cut-off RET-R5 asked for), "

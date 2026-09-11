@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the "hybrid" retriever was running as BM25-only
+
+P1 row 8; RET-01, RET-02, RET-04.
+
+`_run_chroma` dropped every dense hit whose cosine distance exceeded
+`rag_relevance_threshold` (0.45) **before** RRF saw it. `all-MiniLM-L6-v2` is a symmetric
+similarity model: a natural-language question against a code chunk lands at 0.4–0.75 **when
+the chunk is the correct answer**, so the floor sat inside the answer band rather than above
+it.
+
+**Measured here rather than inherited** — 367 chunks of this repository's own
+`app/knowledge/*.py`, production chunker, production ONNX embedder, five real questions.
+Correct nearest neighbours at **0.402, 0.429, 0.474, 0.524, 0.702**; the 0.45 floor kept two
+of five and deleted the rest before fusion. The audit's headline example reproduced exactly:
+*"how does the BM25 snapshot get rebuilt when it is missing?"* → `bm25_index.py#16` at
+**0.474**, correct and discarded.
+
+Raising the number to 0.75 was the obvious repair and is the wrong one: it swaps a constant
+measured against one corpus for another constant measured against one corpus. This codebase
+settled that argument once already, when `hybrid_min_score` became `hybrid_max_rank` —
+a rank means the same thing at any `rrf_k`. So the floor now defaults to **0 = off**, RRF
+and the rank cut-off do the work, and the knob stays for an operator who has measured their
+own corpus.
+
+**One setting, two readers.** `knowledge_agent.py` keeps its own copy of the filter for the
+dense-only path, and teaching only the retriever the new meaning turned the default change
+into "no relevant documents found" on a path nobody edited. Both honour `0 = off` now.
+
+**The gate could not have caught any of this.** The eval helper the retrieval gate calls
+"the production `HybridRetriever`" omitted the one parameter that can empty the dense leg,
+so `RAG_RELEVANCE_THRESHOLD=0.05` — a value returning nothing for every query in the product
+— left the whole suite green. It passes the configured filter now.
+
+And the dense leg's degradation label stops saying the cause is unknown when the retriever
+itself is the cause: a floor that emptied a non-empty result reports `filtered_by_distance`,
+which needs the opposite fix from an empty collection.
+
+Two tests asserted the 0.45 constant against itself and are inverted with what they claimed
+— the eleventh and twelfth occurrences of that shape in this programme.
+
+### Fixed — five public claims the code contradicts
 ### Security — the sweep the audit could not finish, run and made repeatable
 
 P0-7. The 2026-09-09 audit's cross-cutting gap hunter was killed by an account spend limit
