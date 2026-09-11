@@ -11,7 +11,7 @@ Design:
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -60,6 +60,12 @@ _HANDLED_EVENTS = {
 #: account get a key that can spend money", and the day those two stop being the same
 #: question the import would silently pick the wrong answer.
 _LIVE_SUBSCRIPTION_STATUSES = frozenset({"active", "trialing"})
+
+#: How long an opened Checkout session blocks a second one (BILL-05). Stripe's own sessions
+#: expire after 24 hours, but a customer who abandons one must not be locked out for a day —
+#: the window only has to cover the gap between Checkout and the webhook that fills in
+#: `stripe_subscription_id`, which is seconds to minutes.
+CHECKOUT_PENDING_WINDOW = timedelta(minutes=15)
 
 
 class BillingError(Exception):
@@ -233,6 +239,22 @@ class BillingService:
                 "Change the plan from the billing portal instead of buying a second one."
             )
 
+        # BILL-05: and a checkout already IN FLIGHT is the case the id above cannot see.
+        # `stripe_subscription_id` is NULL until `_sync_subscription` runs on a webhook that
+        # lands minutes after Checkout is created, so two clicks inside that window both
+        # passed the guard and the account ended up with two Stripe subscriptions — which
+        # is the refund conversation the guard exists to prevent.
+        row = await self._get_or_create_subscription_row(db, user.id)
+        pending_since = row.checkout_pending_at
+        if pending_since is not None:
+            if pending_since.tzinfo is None:
+                pending_since = pending_since.replace(tzinfo=UTC)
+            if datetime.now(UTC) - pending_since < CHECKOUT_PENDING_WINDOW:
+                raise BillingError(
+                    "A checkout for this account is already open. Finish or cancel it, or "
+                    "wait a few minutes and try again."
+                )
+
         price_id = _price_id_for(plan)
         customer_id = await self._ensure_customer(db, user)
         stripe = _stripe()
@@ -271,6 +293,10 @@ class BillingService:
             metadata=metadata,
             allow_promotion_codes=True,
         )
+        # Marked only once Stripe has actually created the session: a failure above leaves
+        # no window closed against a customer who never got a checkout page.
+        row.checkout_pending_at = datetime.now(UTC)
+        await db.commit()
         return session["url"]
 
     async def _active_subscription_id(self, db: AsyncSession, user_id: str) -> str | None:
@@ -494,7 +520,7 @@ class BillingService:
         if event_type in _HANDLED_EVENTS:
             obj = event.get("data", {}).get("object", {})
             try:
-                await self._apply_event(db, event_type, obj)
+                await self._apply_event(db, event_type, obj, int(event.get("created") or 0))
             except Exception:
                 await db.rollback()
                 raise
@@ -573,7 +599,14 @@ class BillingService:
         logger.info("billing: reconcile %s", result)
         return result
 
-    async def _apply_event(self, db: AsyncSession, event_type: str, obj: dict) -> None:
+    async def _apply_event(
+        self, db: AsyncSession, event_type: str, obj: dict, event_created: int = 0
+    ) -> None:
+        """Apply one verified event. ``event_created`` is Stripe's own timestamp for it.
+
+        BILL-04: it is carried down to `_sync_subscription` because Stripe does not promise
+        delivery order and that method's `deleted` branch is a full teardown.
+        """
         if event_type == "checkout.session.completed":
             # Subscription state arrives via customer.subscription.* events;
             # here we only make sure the customer id is linked to the user.
@@ -592,7 +625,9 @@ class BillingService:
             return
 
         if event_type.startswith("customer.subscription."):
-            await self._sync_subscription(db, obj, deleted=event_type.endswith(".deleted"))
+            await self._sync_subscription(
+                db, obj, deleted=event_type.endswith(".deleted"), event_created=event_created
+            )
             return
 
         if event_type == "invoice.payment_failed":
@@ -666,15 +701,15 @@ class BillingService:
         if not charge_id:
             logger.warning("billing: reversal event carries no charge id")
             return None
-        try:
-            charge = _stripe().Charge.retrieve(charge_id)
-        except Exception:
-            # Never raise: the money has already moved, and a failed webhook makes Stripe
-            # retry something that cannot be un-done. A human has to finish it.
-            logger.error(
-                "billing: REVERSAL NOT APPLIED — could not read charge %s", charge_id, exc_info=True
-            )
-            return None
+        # BILL-07: `to_thread`, per this module's own stated invariant — the Stripe SDK is
+        # synchronous and this ran on the event loop.
+        #
+        # BILL-03: and it no longer swallows. The comment here used to say "never raise:
+        # the money has already moved, and a failed webhook makes Stripe retry something
+        # that cannot be un-done" — but retrying the WEBHOOK does not retry the refund. It
+        # retries taking the credit back, which is the thing that did not happen. What the
+        # old comment was right about is double-application, and `_claim_once` answers that.
+        charge = await asyncio.to_thread(_stripe().Charge.retrieve, charge_id)
         if charge.get("invoice"):
             logger.info(
                 "billing: charge %s is a subscription invoice, not a top-up — "
@@ -707,6 +742,12 @@ class BillingService:
         user_id = await self._charge_owner(db, charge_id)
         if user_id is None:
             return
+        # BILL-03. Claimed on the REVERSAL, not on the delivery: a redelivery under a new
+        # event id would otherwise debit a second time, which is what the old swallow was
+        # protecting against by never retrying at all.
+        if not await self._claim_once(db, f"reversal:{reason}:{ref}", "credit_reversal"):
+            logger.info("billing: %s %s already reversed", reason, ref)
+            return
         try:
             from app.services.openrouter_credit_service import OpenRouterCreditService
 
@@ -714,14 +755,19 @@ class BillingService:
                 db, user_id, amount_usd=amount_cents / 100, reason=reason
             )
         except Exception:
+            # Loud, and then RE-RAISED: `handle_event` rolls back — taking this claim with
+            # it — and answers Stripe non-2xx so the reversal is tried again. Swallowing
+            # committed the ledger row, and Stripe never redelivers a 2xx.
             logger.error(
-                "billing: MONEY RETURNED BUT CREDIT NOT REVERSED — user=%s amount=%.2f %s=%s",
+                "billing: MONEY RETURNED BUT CREDIT NOT REVERSED — user=%s amount=%.2f %s=%s; "
+                "rolling back so Stripe redelivers",
                 user_id[:8],
                 amount_cents / 100,
                 reason,
                 ref,
                 exc_info=True,
             )
+            raise
 
     async def _restore_purchased_credit(
         self, db: AsyncSession, *, charge_id: str | None, amount_cents: int, ref: str | None
@@ -732,6 +778,9 @@ class BillingService:
         user_id = await self._charge_owner(db, charge_id)
         if user_id is None:
             return
+        if not await self._claim_once(db, f"restore:{ref}", "credit_restore"):
+            logger.info("billing: dispute %s already re-credited", ref)
+            return
         try:
             from app.services.openrouter_credit_service import OpenRouterCreditService
 
@@ -740,12 +789,35 @@ class BillingService:
             )
         except Exception:
             logger.error(
-                "billing: WON DISPUTE NOT RE-CREDITED — user=%s amount=%.2f dispute=%s",
+                "billing: WON DISPUTE NOT RE-CREDITED — user=%s amount=%.2f dispute=%s; "
+                "rolling back so Stripe redelivers",
                 user_id[:8],
                 amount_cents / 100,
                 ref,
                 exc_info=True,
             )
+            raise
+
+    async def _claim_once(self, db: AsyncSession, key: str, kind: str) -> bool:
+        """Win the right to perform *key* exactly once, across redeliveries.
+
+        The event-id ledger cannot see two deliveries of the same MONEY under different
+        event ids — a redelivery with a fresh id, the success page racing the webhook, or a
+        refund event Stripe re-sends after our endpoint answered non-2xx. This claim is
+        keyed on the thing that must happen once (the session, the refund, the invoice)
+        rather than on the delivery that asked for it.
+
+        Taken inside a SAVEPOINT so a lost race does not poison the surrounding
+        transaction — `handle_event` has already claimed its own row and still has to
+        commit it. A claim taken and then rolled back by `handle_event` disappears with it,
+        which is exactly what makes raising on failure safe: the retry re-claims.
+        """
+        try:
+            async with db.begin_nested():
+                db.add(StripeEvent(stripe_event_id=key, event_type=kind, payload=None))
+        except IntegrityError:
+            return False
+        return True
 
     async def _claim_top_up(self, db: AsyncSession, session_id: str) -> bool:
         """Win the right to credit this checkout session exactly once.
@@ -759,18 +831,7 @@ class BillingService:
         transaction — `handle_event` has already claimed its own row and still has to
         commit it.
         """
-        try:
-            async with db.begin_nested():
-                db.add(
-                    StripeEvent(
-                        stripe_event_id=f"topup:{session_id}",
-                        event_type="credit_topup",
-                        payload=None,
-                    )
-                )
-        except IntegrityError:
-            return False
-        return True
+        return await self._claim_once(db, f"topup:{session_id}", "credit_topup")
 
     async def _credit_top_up(self, db: AsyncSession, user_id: str, session: dict) -> None:
         """Add purchased credit for a completed one-time Checkout.
@@ -839,20 +900,61 @@ class BillingService:
             # A tier sold without a cap holds no key (D-SPEND-2b), so there is no period to
             # roll: no included pocket expires and no ceiling needs re-pushing.
             return
+        # BILL-08. Claimed on the INVOICE so a redelivery cannot roll the period twice,
+        # then allowed to raise. A swallowed failure was not a skipped grant: `renew()`
+        # bills `spent − included_grant_usd` to the purchased pocket, so a period that
+        # never rolled leaves `usage_at_period_start` behind and the NEXT renewal charges
+        # purchased credit for spend the missed allowance already covered.
+        invoice_id = invoice.get("id") or ""
+        if invoice_id and not await self._claim_once(db, f"renew:{invoice_id}", "credit_renew"):
+            logger.info("billing: renewal for invoice %s already applied", invoice_id)
+            return
         try:
             from app.services.openrouter_credit_service import OpenRouterCreditService
 
             await OpenRouterCreditService().renew(db, sub.user_id, included_usd=included)
         except Exception:
-            logger.warning(
-                "billing: could not roll the credit period for user=%s",
+            logger.error(
+                "billing: COULD NOT ROLL THE CREDIT PERIOD — user=%s invoice=%s; rolling "
+                "back so Stripe redelivers",
                 sub.user_id[:8],
+                invoice_id,
                 exc_info=True,
             )
+            raise
 
-    async def _sync_subscription(self, db: AsyncSession, obj: dict, *, deleted: bool) -> None:
+    async def _sync_subscription(
+        self, db: AsyncSession, obj: dict, *, deleted: bool, event_created: int = 0
+    ) -> None:
+        """Write the subscription state this event describes — unless it is stale.
+
+        BILL-04. Stripe does not guarantee delivery order, and this method used to write
+        whatever the payload said, unconditionally. The `deleted` branch is a full teardown
+        (status `canceled`, key revoked); an `updated` delivered after it resurrected a
+        cancelled account and minted it a fresh spending key.
+
+        The watermark is Stripe's own `created` for the event, stored on the row. An event
+        older than the one already applied is dropped with a log line. `event_created=0`
+        means "no timestamp available" — the internal callers that pass nothing — and is
+        never treated as stale, because refusing to write on a missing timestamp would turn
+        an unknown into an outage.
+        """
         customer_id = obj.get("customer")
         sub = await self._find_by_customer(db, customer_id)
+        if sub is not None and event_created:
+            seen = getattr(sub, "last_event_created", None) or 0
+            if event_created < seen:
+                logger.info(
+                    "billing: dropping out-of-order subscription event (created=%s < seen=%s) "
+                    "for customer %s",
+                    event_created,
+                    seen,
+                    str(customer_id)[:12],
+                )
+                return
+            sub.last_event_created = event_created
+            # The checkout this account was waiting on has resolved.
+            sub.checkout_pending_at = None
         if sub is None:
             # Try metadata fallback (subscription created straight from Checkout).
             user_id = obj.get("metadata", {}).get("user_id")
@@ -971,6 +1073,18 @@ class BillingService:
                 db_price = plan.stripe_price_id or getattr(settings, f"stripe_price_{plan.id}", "")
                 if db_price == price_id:
                     return plan.id
+            if meta_plan and not any(plan.id == meta_plan for plan in plans):
+                # BILL-06: the fallback wrote this straight into a foreign-key column. A
+                # plan id Stripe knows and the catalogue does not is exactly the state this
+                # branch exists for, and writing it makes every redelivery of the event 500
+                # on the constraint — forever, because a 5xx is what Stripe retries.
+                logger.error(
+                    "billing: metadata plan_id=%s is not in the catalogue either; leaving "
+                    "the subscription's plan untouched rather than writing a foreign key "
+                    "that does not resolve",
+                    meta_plan,
+                )
+                return None
             if meta_plan:
                 logger.warning(
                     "billing: no catalog plan matches stripe price %s; falling back to "
