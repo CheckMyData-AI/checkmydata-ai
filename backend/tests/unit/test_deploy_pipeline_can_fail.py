@@ -58,6 +58,19 @@ def _run_steps(workflow: dict) -> list[dict]:
     ]
 
 
+def _code(step: dict) -> str:
+    """A run block with its shell comments removed.
+
+    Every guard in this file that reads a step's body reads THIS, because three separate
+    drafts went red against their own explanatory comments — the TEST-04 shape the audit
+    names, met four times in one day. A guard that cannot tell code from prose about code
+    is a guard the next reader deletes.
+    """
+    return "\n".join(
+        line for line in step["run"].splitlines() if not line.lstrip().startswith("#")
+    )
+
+
 def _step(workflow: dict, needle: str) -> dict | None:
     for step in _run_steps(workflow):
         if needle in step["run"]:
@@ -98,6 +111,31 @@ class TestTheReleaseStepCanFail:
         assert any("failed" in s["run"] for s in reading), (
             "a release stuck in `failed` is never distinguished from one still `pending`"
         )
+
+    def test_the_releases_query_asks_for_the_newest_not_the_first_page(
+        self, workflow: dict
+    ) -> None:
+        """The collection is paginated and ASCENDING — found by this pipeline failing its
+        own first deploy (2026-09-11).
+
+        A plain `GET /releases` returns releases 1..200 on an app that is at 375, so
+        `[.[].version] | max` reads 200. The version then never appears to move, the
+        verification waits out its attempts, and the job fails on a release that had
+        already succeeded — a false red, which is the same class of defect as the false
+        green it replaced: the check was reading something other than what it claimed.
+        """
+        for step in _run_steps(workflow):
+            code = _code(step)
+            if "/releases" not in code:
+                continue
+            assert "Range: version" in code, (
+                f"{step.get('name', '<unnamed>')!r} reads the releases collection with no "
+                "Range header, so it sees the first page — the OLDEST 200 releases"
+            )
+            assert "| max" not in code, (
+                "taking max() over a page is what made the first page look like the whole "
+                "collection; ask the API for the newest release instead"
+            )
 
     def test_the_new_release_version_is_compared_with_the_old_one(self, workflow: dict) -> None:
         joined = "\n".join(s["run"] for s in _run_steps(workflow))
