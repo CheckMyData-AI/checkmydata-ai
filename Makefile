@@ -104,6 +104,7 @@ test-frontend:
 	cd $(FRONTEND_DIR) && npm test
 
 lint:
+	cd $(BACKEND_DIR) && $(VENV)/ruff format --check app/ tests/
 	cd $(BACKEND_DIR) && $(VENV)/ruff check app/ tests/
 
 check: lint test-all

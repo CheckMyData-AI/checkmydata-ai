@@ -22,7 +22,10 @@ and the R3 cross-tenant isolation release. See
   `DataGate` blocks impossible numbers on both the single-query and
   pipeline paths.
 - **Hybrid retrieval + ContextPack** — BM25 ⊕ dense RRF with per-chunk
-  provenance and a cross-encoder reranker (benchmark-gated, default-on).
+  provenance, benchmark-gated and default-on. A cross-encoder reranker sits
+  behind the optional `ml` extra and is **off by default**: it needs
+  `sentence-transformers`, which is not in the production image, so it has
+  been a no-op in every deployment that has ever run.
 - **Orchestrator hardening** — live step-budget termination and
   single-loop/pipeline path unification (same validation gates on both).
 - **Self-completing embedding reconcile** — post-deploy reindex is

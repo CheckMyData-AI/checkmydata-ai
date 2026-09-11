@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Pricing | CheckMyData.ai",
     description:
-      "Start free, upgrade when your team needs more connections, projects, and LLM capacity.",
+      "Four tiers priced on how much of your data we index. Every one starts with a 14-day trial.",
     url: "https://checkmydata.ai/pricing",
     siteName: "CheckMyData.ai",
     type: "website",
@@ -24,8 +24,8 @@ export const metadata: Metadata = {
 
 const FAQ = [
   {
-    q: "Can I use CheckMyData for free?",
-    a: "Yes — the Free plan includes one project and one database connection, forever. You can also self-host the open-source version with no plan limits.",
+    q: "Can I try it before paying?",
+    a: "Yes — every paid tier starts with a 14-day trial, and you are not charged until it ends. You can also self-host the open-source version, which has no plan limits and no subscription.",
   },
   {
     q: "What counts against the token limit?",
@@ -36,8 +36,8 @@ const FAQ = [
     a: "Yes. Manage or cancel your subscription from the billing portal — you keep paid features until the end of the billing period.",
   },
   {
-    q: "Do paid plans have a trial?",
-    a: "Pro and Team include a 14-day free trial. You won't be charged until the trial ends, and you can cancel before that.",
+    q: "What happens when the trial ends?",
+    a: "Billing starts on the tier you chose, and you keep every project and connection you set up during the trial. Cancel before it ends and nothing is charged.",
   },
 ] as const;
 

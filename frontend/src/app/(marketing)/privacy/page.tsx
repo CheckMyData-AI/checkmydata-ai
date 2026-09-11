@@ -218,21 +218,26 @@ export default function PrivacyPage() {
       {/* 5. Data Storage & Security */}
       <Section id="storage-security" title="5. Data Storage and Security">
         <p>
-          CheckMyData.ai follows a <strong>local-first architecture</strong>:
+          Where your data lives depends on how you run CheckMyData.ai:
         </p>
         <ul>
           <li>
-            Internal application data is stored in SQLite (for structured
-            data) and ChromaDB (for vector embeddings), both running
-            alongside the application;
+            <strong>The hosted service</strong> stores internal application
+            data in managed <strong>PostgreSQL</strong>, with vector
+            embeddings in the same database (pgvector);
+          </li>
+          <li>
+            <strong>Self-hosted and development</strong> installs store the
+            same data in SQLite, with embeddings in ChromaDB alongside the
+            application;
           </li>
           <li>
             All sensitive credentials (database passwords, SSH private keys)
             are encrypted at rest using a per-deployment encryption key;
           </li>
           <li>
-            Authentication tokens are transmitted over HTTPS and stored
-            securely;
+            Your session is carried by an httpOnly cookie over HTTPS, so no
+            script on the page can read it;
           </li>
           <li>
             Password hashes use bcrypt with appropriate cost factors.
@@ -248,9 +253,11 @@ export default function PrivacyPage() {
       {/* 6. Third-Party Services */}
       <Section id="third-party" title="6. Third-Party Services">
         <p>
-          To power its AI capabilities, CheckMyData.ai communicates with
-          external Large Language Model (LLM) providers. Here is exactly what
-          data is shared:
+          CheckMyData.ai shares data with three kinds of external service: the
+          Large Language Model providers that answer your questions, the
+          payment processor that bills the hosted service, and the error
+          monitor that tells us when something breaks. Here is exactly what
+          each one receives:
         </p>
 
         <h3 className="text-sm font-semibold text-text-primary pt-2">
@@ -271,13 +278,22 @@ export default function PrivacyPage() {
             <tbody className="text-text-secondary">
               <tr className="border-b border-border-subtle/50">
                 <td className="py-2 pr-4">Your natural-language question</td>
-                <td className="py-2">Raw database rows/values</td>
+                <td className="py-2">Database credentials or passwords</td>
+              </tr>
+              <tr className="border-b border-border-subtle/50">
+                <td className="py-2 pr-4">
+                  Up to 20 result rows per query, plus sample values taken
+                  from your columns when the schema is indexed
+                </td>
+                <td className="py-2">
+                  Anything from a connection your question did not touch
+                </td>
               </tr>
               <tr className="border-b border-border-subtle/50">
                 <td className="py-2 pr-4">
                   Database schema metadata (table names, column names, types)
                 </td>
-                <td className="py-2">Database credentials or passwords</td>
+                <td className="py-2">Whole tables or unbounded exports</td>
               </tr>
               <tr className="border-b border-border-subtle/50">
                 <td className="py-2 pr-4">
@@ -310,6 +326,31 @@ export default function PrivacyPage() {
           and display name from Google. We do not access your Google Drive,
           Gmail, Calendar, or any other Google services.
         </p>
+      
+        <h3 className="text-sm font-semibold text-text-primary pt-2">
+          6.3 Stripe (payments, hosted service only)
+        </h3>
+        <p>
+          When you start a subscription we create a customer record with
+          Stripe and send your <strong>email address</strong> and{" "}
+          <strong>display name</strong>. Card details go to Stripe directly
+          and never reach our servers. Self-hosted installs with billing
+          disabled contact Stripe at no point.
+        </p>
+
+        <h3 className="text-sm font-semibold text-text-primary pt-2">
+          6.4 Sentry (error monitoring)
+        </h3>
+        <p>
+          When something fails, the backend and the browser send the error and
+          its stack trace to Sentry so we can fix it. Two layers of scrubbing
+          run before anything leaves: one removes values that look like
+          secrets, the other removes fields whose names suggest them. We do
+          not send your query results or your database contents to Sentry, and
+          it is off entirely when no Sentry address is configured — which is
+          the default for self-hosted installs.
+        </p>
+
       </Section>
 
       {/* 7. Open Source Transparency */}
@@ -385,9 +426,10 @@ export default function PrivacyPage() {
         </p>
         <ul>
           <li>
-            <strong>Authentication token</strong> — stored in your
-            browser&apos;s local storage to keep you signed in across
-            sessions;
+            <strong>Session cookie</strong> — an httpOnly cookie that keeps
+            you signed in across sessions. httpOnly means no JavaScript on the
+            page can read it, including any script that should not be there;
+            a second, readable cookie carries a CSRF token and nothing else;
           </li>
           <li>
             <strong>UI preferences</strong> — sidebar collapse state and
