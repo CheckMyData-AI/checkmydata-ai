@@ -181,13 +181,30 @@ S (< 1 day), M (1–3 days), L (workstream).
 
 | # | Task | Refs | Effort |
 |---|---|---|---|
-| 1 | **Spend containment, one layer that actually binds**: fix the two-writer ceiling erasure; decide per-account-key vs token ceilings and wire the chosen one; fix `_limit_for` watermark arithmetic; add team/enterprise to included credit; bind `DbUsageSink` + budget gate on the four bare routers and the learning analyzer | BILL-01/02, BIZ-01/02, DATA-01, API-08, BILL-10 | L |
+| 1 | ✅ **DONE 2026-09-11** (#334, prod v370) — **Spend containment, one layer that actually binds**: fix the two-writer ceiling erasure; decide per-account-key vs token ceilings and wire the chosen one; fix `_limit_for` watermark arithmetic; add team/enterprise to included credit; bind `DbUsageSink` + budget gate on the four bare routers and the learning analyzer | BILL-01/02, BIZ-01/02, DATA-01, API-08, BILL-10 | L |
 | 2 | **SSH-exec hardening**: SQL via argument not stdin; engine-level read-only in templates; deny file-read/SSRF functions in read-only; fix CTE-write bypass; context-correct escaping; validate custom templates; truncation honesty | SQL-01/02/04/06/11/12/13 | L |
 | 3 | **Chat-session tenancy**: membership check in `validate_session_access`; NULL owner = orphaned, not public; account deletion deletes/anonymises foreign-project sessions; backfill existing NULLs | AUTH-02/03, BIZ-04 | M |
 | 4 | **Deploy pipeline that can fail**: `curl -f` + release verification against `head_sha`; a migration step in the channel that actually deploys; worker-release check; un-split cancel scope; advisory lock around migrations | TEST-01/15/16/17, DATA-10 | M |
 | 5 | **Legal/marketing truth pass**: Privacy Policy (rows→LLM, Stripe/Sentry, architecture), pricing FAQ retired tiers, README reranker | BIZ-03/09/11/13/15 | S–M |
 | 6 | **Stripe webhook robustness**: roll ledger claim back on side-effect failure; ordering guard; checkout-time duplicate guard; plan-id from price; `to_thread` the blocking call | BILL-03/04/05/06/07/08 | M |
 | 7 | **Run the security gap sweep** the spend limit killed: headers/CSP/HSTS, cookie flags, secrets hygiene, webhook replay, WS ticket lifecycle, demo path, key-rotation edges | (open audit item) | M |
+
+**P0-1 closed 2026-09-11** — PR #334, live on production as v370. The token ceiling binds
+(`ADR-0003`); `PAID_TIERS` derives the ceilings from each tier's promised dollars and is the
+only writer; `_limit_for` anchors on the watermark; all four tiers have an explicit credit
+answer and `enterprise` is provisioned no key; six unmetered routers now carry a
+`DbUsageSink`, guarded by an AST test. Verified on production: `plans` moved from `0/0` on
+every row to `base` 40M/120M, `scale` 120M/360M, `team` 200M/600M, `enterprise` unlimited;
+boot logged `Plan catalogue reconciled: 0 inserted, 3 updated, 0 retired`; both
+`enterprise` grants unchanged, so no account's behaviour moved.
+
+Two rows leave it, and neither is a leftover of the fix — both are things the work
+measured:
+
+| # | Task | Why it is here | Effort |
+|---|---|---|---|
+| 1b | **Meter dollars, not tokens.** The promise is dollars, and `agent_llm_model` is customer-settable (`projects.py:52,97`) — so the customer picks the price per token and no token figure can bound dollars exactly. `BLENDED_USD_PER_MILLION_TOKENS` is the margin that gap costs. `token_usage.estimated_cost_usd` is **100% populated since 2026-09-04** (#285), which is what makes this newly possible; the 44% NULL rate that looked disqualifying is entirely older rows. Needs two columns on `plans`, a unit change in `check_budget`, and a decision about what a row with an unresolvable price costs | the margin exists only because the unit is wrong | M |
+| 1c | **The per-account OpenRouter key on the inference path.** Deliberately not done: it cannot bind on the OpenAI/Anthropic fallbacks and needs per-request account context inside an adapter built once per process. Now an *additive* change against a product that is already bounded, rather than the only thing between an account and an unbounded bill. Its remaining value is provider-side attribution per customer | recorded so "the key is unused" is a decision, not a gap | L |
 
 ## P1 — product trust and correctness
 
