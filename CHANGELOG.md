@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the vector store kept losing chunks nobody asked it to lose
+
+P1 row 9, second seam; KNOW-01, KNOW-02, KNOW-03. Each is invisible from outside, because a
+collection missing half its chunks answers queries exactly like a complete one, only worse.
+
+**`generate_docs` deleted the symbol chunks `code_symbol_embed` had written earlier in the
+same run.** Symbol chunks are stored under `source_path = symbol.file_path`;
+`delete_by_source_path` then removed **every** chunk with that path before the file's prose
+was written. Any file with both a document and symbols lost its symbols on every run that
+regenerated its document. `delete_by_source_path` now takes a `kind`, on **both** stores —
+pgvector is what production runs, so a filter reaching only Chroma would reach only
+development.
+
+**Nothing ever swept a *changed* file's symbol chunks.** The id is
+`sym:{path}:{uid}@{start_line}:{idx}` and `start_line` moves whenever anything above the
+symbol changes, while `embed_symbols` only upserts — so a function that moved down ten lines
+left its previous body in the store, retrievable, under the same symbol's name. The embed
+step sweeps the file's symbol chunks before writing, kind-filtered so it cannot take the
+prose with it.
+
+**The document cache and the embedding reindex cancelled each other out.**
+`queue_embedding_reindex` drops the whole collection and enqueues a `force_full` run; inside
+it the cache reuses every document whose inputs are unchanged and skips the branch that
+writes chunks. The documents survived, their vectors did not, and nothing re-created them —
+the next run reused them again. The cache stays (it is worth 71% of a rebuild) and reused
+documents are re-chunked from their **cached content**: no LLM call, because the document is
+already right. The store is asked once per run, not once per document.
+
 ### Fixed — three indexing steps reported success for work they did not do
 
 P1 row 9, first seam; KNOW-05, KNOW-07, KNOW-08.

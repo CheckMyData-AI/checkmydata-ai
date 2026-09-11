@@ -7,6 +7,7 @@ so that interrupted runs can be resumed from the last completed step.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import logging
 from collections.abc import Iterable
@@ -58,6 +59,12 @@ if TYPE_CHECKING:
     from app.services.ssh_key_service import SshKeyService
 
 logger = logging.getLogger(__name__)
+
+#: Chunk kinds for `VectorStore.delete_by_source_path`. Named rather than inlined because
+#: the difference between them is a defect class: `generate_docs` deleting `_ALL` is how
+#: every file with both a document and symbols lost its symbols on each run (KNOW-02).
+_PROSE = "prose"
+_SYMBOL = "symbol"
 
 
 def next_regeneration_queue(
@@ -1093,6 +1100,21 @@ class IndexingPipelineRunner:
             llm_tasks: list[tuple[int, EnrichedDoc, str | None, str | None]] = []
             docs_generated = 0
             docs_reused = 0
+            rechunked = 0
+            # KNOW-01: one question, once. `queue_embedding_reindex` drops the collection and
+            # then enqueues this run, so "the documents are cached AND the store is empty" is
+            # exactly the state that produced 575 vector-less documents.
+            try:
+                store_was_empty = (
+                    await asyncio.to_thread(self._vector_store.count, project_id)
+                ) == 0
+            except Exception:
+                logger.warning(
+                    "generate_docs: could not read the vector store's size; re-chunking reused "
+                    "documents anyway, which costs embeddings and no LLM",
+                    exc_info=True,
+                )
+                store_was_empty = True
             reused_by_type: dict[str, int] = {}
             reused_paths: list[str] = []
             doc_hashes: dict[str, str] = {}
@@ -1157,6 +1179,13 @@ class IndexingPipelineRunner:
                     docs_reused += 1
                     reused_by_type[edoc.doc_type] = reused_by_type.get(edoc.doc_type, 0) + 1
                     reused_paths.append(edoc.file_path)
+                    # KNOW-01: reuse the PROSE, not the absence of vectors. Asked once per
+                    # run, not per document: a per-document existence check would add a
+                    # round trip for each of ~763 documents to every rebuild.
+                    if store_was_empty and existing_doc_content:
+                        rechunked += await self._rechunk_reused(
+                            project_id, edoc, existing_doc_content, state.head_sha
+                        )
                     pending_paths.append(edoc.file_path)
                     if len(pending_paths) >= batch_flush_size:
                         await self._cp_svc.mark_docs_batch_processed(db, cp_id, pending_paths)
@@ -1268,9 +1297,12 @@ class IndexingPipelineRunner:
                     )
 
                     await asyncio.to_thread(
-                        self._vector_store.delete_by_source_path,
-                        project_id,
-                        edoc.file_path,
+                        functools.partial(
+                            self._vector_store.delete_by_source_path,
+                            project_id,
+                            edoc.file_path,
+                            kind=_PROSE,
+                        )
                     )
 
                     # Phase 2 (temporal chunk metadata): stamp each chunk with
@@ -1369,9 +1401,12 @@ class IndexingPipelineRunner:
                                 content_hash=doc_hashes.get(edoc.file_path),
                             )
                             await asyncio.to_thread(
-                                self._vector_store.delete_by_source_path,
-                                project_id,
-                                edoc.file_path,
+                                functools.partial(
+                                    self._vector_store.delete_by_source_path,
+                                    project_id,
+                                    edoc.file_path,
+                                    kind=_PROSE,
+                                )
                             )
                             chunks = chunk_document(
                                 content=retry_out,
@@ -1615,6 +1650,52 @@ class IndexingPipelineRunner:
 
         return await asyncio.to_thread(_walk)
 
+    async def _rechunk_reused(
+        self,
+        project_id: str,
+        edoc,
+        content: str,
+        head_sha: str,
+    ) -> int:
+        """Write vectors for a document that was REUSED rather than regenerated.
+
+        KNOW-01. `queue_embedding_reindex` drops the whole collection and then enqueues a
+        `force_full` run — and inside it the document cache reuses every document whose
+        inputs are unchanged and skips the branch that writes chunks. The documents survive
+        and their vectors do not, and nothing re-creates them: the next run reuses them
+        again. On this repository's own numbers that is 575 of 763 documents whose prose is
+        in Postgres and absent from the store.
+
+        No LLM call. The document is already correct — only its vectors are missing, and
+        the content to chunk is the content already stored.
+        """
+        chunks = chunk_document(
+            content=content,
+            file_path=edoc.file_path,
+            doc_type=edoc.doc_type,
+            extra_metadata={
+                "source_path": edoc.file_path,
+                "doc_type": edoc.doc_type,
+                "commit_sha": head_sha,
+                "indexed_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        if not chunks:
+            return 0
+        doc_id = f"{project_id}:{edoc.file_path}"
+        await asyncio.to_thread(
+            functools.partial(
+                self._vector_store.add_documents,
+                project_id=project_id,
+                doc_ids=[
+                    f"{doc_id}:{c.metadata.get('chunk_index', i)}" for i, c in enumerate(chunks)
+                ],
+                documents=[c.content for c in chunks],
+                metadatas=[c.metadata for c in chunks],
+            )
+        )
+        return len(chunks)
+
     async def _run_code_symbol_embed(
         self,
         state: _PipelineState,
@@ -1639,6 +1720,19 @@ class IndexingPipelineRunner:
             repo_dir = state.repo_dir
             parsed_files = state.parsed_files
             vs = self._vector_store
+
+            # KNOW-03: sweep this file's OLD symbol chunks before writing the new ones.
+            # `embed_symbols` only ever upserts, and the id is
+            # `sym:{path}:{uid}@{start_line}:{idx}` — `start_line` moves whenever anything
+            # above the symbol changes, so an edit near the top of a file re-homes every
+            # symbol below it and leaves the previous bodies in the store under the old
+            # ids. Nothing else sweeps them: `cleanup_deleted` covers deleted paths, and
+            # `generate_docs` now covers prose only. Kind-filtered, so the sweep cannot
+            # take the file's prose with it — which is the defect one step away (KNOW-02).
+            for _path in parsed_files:
+                await asyncio.to_thread(
+                    functools.partial(vs.delete_by_source_path, project_id, _path, kind=_SYMBOL)
+                )
             written, attempted = await asyncio.to_thread(
                 chunker.embed_symbols,
                 project_id,
