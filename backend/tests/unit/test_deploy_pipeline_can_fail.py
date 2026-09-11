@@ -66,9 +66,7 @@ def _code(step: dict) -> str:
     names, met four times in one day. A guard that cannot tell code from prose about code
     is a guard the next reader deletes.
     """
-    return "\n".join(
-        line for line in step["run"].splitlines() if not line.lstrip().startswith("#")
-    )
+    return "\n".join(line for line in step["run"].splitlines() if not line.lstrip().startswith("#"))
 
 
 def _step(workflow: dict, needle: str) -> dict | None:
