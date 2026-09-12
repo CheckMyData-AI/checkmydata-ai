@@ -6,6 +6,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the four the ops row carried, and they share a subject
+
+Board row 11b; OPS-03, OPS-10, OPS-15, OPS-16. PR #347 closed five of nine and named
+these four as carried. They belong together: each is a claim the system makes with
+nothing behind it, about the process nobody watches.
+
+**Every counter the worker emitted died with it (OPS-03).** `MetricsCollector` is a
+process-wide singleton, the `Procfile`'s `worker` line runs `arq` rather than uvicorn,
+and `/api/metrics/prometheus` renders the `web` process's collector. So
+`indexing_runs_total`, `indexing_run_duration_seconds`,
+`daily_sync_budget_near_ceiling_total` and `db_index_sample_budget_exhausted_total`
+accumulated in the worker's heap and were **absent** from that page — not zero,
+absent, because the name was never emitted in that process. A nightly sync that took
+6 300 s of its 7 200 s ceiling fired `budget_warning()`, and the operator who went
+looking found nothing at all.
+
+`app/ops/metrics_store.py` gives them a shared home, and each decision is load-bearing:
+
+- *Nothing on the hot path.* The collector is untouched; a process publishes by
+  flushing on a 60 s loop, and `web` flushes on the read path so a reader is never
+  shown a page missing what their own process just counted.
+- *Deltas, not totals.* Two `web` dynos share a namespace, so a flush writing the
+  cumulative total would have the second clobber the first. `HINCRBYFLOAT` of the
+  delta sums across dynos and makes a repeated flush idempotent rather than doubling.
+- *Namespaced by process type, not by boot.* Per-boot keys grow without bound;
+  per-type keys are two, and a restart resetting that namespace is exactly what a
+  Prometheus counter reset already looks like.
+- *Optional.* With no Redis the endpoint renders the local collector — dev's
+  behaviour, and the previous behaviour. An unreadable store falls back to the same
+  rather than turning a Redis problem into "the product has no metrics".
+
+**The reaper's requeue budget was half what it says (OPS-10).** `reap_once` runs the
+`UPDATE … status='failed', error=REAP_ERROR, finished_at=now()`, flushes, and only
+then calls `_requeue` — so `_requeue_attempts` counted the reap it was deciding about.
+With `reaper_requeue_max_attempts = 2` the first reap saw 1 and requeued, the second
+saw 2 and refused with *"the run is failing for its own reasons, not a restart"*. That
+halving runs in the same direction as the 2026-09-09 incident, where an exhausted
+budget was what refused a third rebuild. The log compounded it by printing
+`attempts + 1`, announcing the first requeue as "attempt 2"; it now reads
+"attempt 1 of 2".
+
+**A Redis failure at boot demoted the process for its whole life (OPS-15).**
+`init_task_queue` caught the connect exception, logged one WARNING, left
+`_arq_pool = None`, and nothing retried — so `is_arq_active()` returned `False`
+forever. On `web` that means `repos.py` takes the deliberate in-process branch and the
+full repo index, measured above 1 GiB, runs inside the dyno serving user requests:
+exactly what `allow_in_process=False` exists to forbid, and that guard covers only
+enqueue-time failure with a **live** pool. In the worker the same failure silently
+restored the state where the orphan sweep and the reaper's requeue return `None` —
+the defect fixed on 2026-09-09, re-created by another door. `enqueue` now reconnects,
+at most once per 30 s so a dead Redis is not a connect storm, and a deployment with no
+`REDIS_URL` attempts nothing: fallback is a configuration, not a fault.
+
+**An orphaned run was terminal without being finished (OPS-16).** The sweep set
+`status` and `error` only, leaving a run whose duration `/sync-history` cannot compute
+and whose failure has no kind. And unlike a reaped run it never reached `error_log` —
+including the one whose re-enqueue returned `None`, which is the very failure the
+sweep exists to surface, so `/api/logs` showed nothing. It now stamps `finished_at`
+and `failure_kind` and catalogs with the step in the message, as the reaper does: the
+marker alone collapses every orphaned run onto one line, and it was the step that made
+the 2026-09-08 cause findable. A failed re-enqueue is catalogued `fatal`. `error` stays
+exactly `ORPHAN_ERROR`, which `run_coordinator` and the reaper's budget compare
+verbatim.
+
+Fifteen planted defects, fifteen caught — after the guard for OPS-15 was rewritten,
+because the first version cleared the backoff flag between attempts and a defect that
+never retries passes that just as well. Time is advanced now instead.
+
 ### Security — a project `viewer` could write to the customer's database
 
 P3 row 24; COR-06. Filed as UX polish; it is not.

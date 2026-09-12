@@ -497,9 +497,20 @@ reconciles it if the pipeline turns out to still be alive.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/metrics` | App metrics: active workflows, per-path request stats, uptime |
-| GET | `/api/metrics/prometheus` | Prometheus text-format exposition of the same metrics |
+| GET | `/api/metrics/prometheus` | Prometheus text-format exposition, summed across **every** process |
 
 Both metrics endpoints require an **admin** user (`ADMIN_EMAILS`).
+
+**`/api/metrics/prometheus` reads a shared store; `/api/metrics` does not (OPS-03).**
+The worker runs `arq` rather than uvicorn and has no scrape endpoint at all, so every
+counter an ARQ job emits — `indexing_runs_total`, `daily_sync_budget_near_ceiling_total`,
+`db_index_sample_budget_exhausted_total` — used to be **absent** from this page rather
+than zero. Each process now publishes its counter deltas into Redis on a 60-second loop
+(`app/ops/metrics_store.py`), and the Prometheus endpoint flushes its own first so a
+reader never sees a page missing what the process serving them just counted. With no
+`REDIS_URL` it renders the local collector, which is what a self-hosted single-process
+install has. The JSON endpoint's `code_graph` / `runs` / `diagnostics` blocks remain
+this process's view.
 
 ### Prometheus counters (W1 intelligence-remediation)
 

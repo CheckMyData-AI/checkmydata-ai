@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +49,40 @@ ORPHAN_ERROR = "orphaned by a process restart"
 #: so an interrupted `index_repo` leaves a marker asserting a rebuild that never ran, and
 #: the nightly cron is `force_full=False` and cannot redo it. The short kinds are covered
 #: by that cron.
+
+
+async def _catalog(
+    session: AsyncSession,
+    project_id: str,
+    run_id: str,
+    current_step: str | None,
+    *,
+    message: str | None = None,
+    failure_kind: str = "transient",
+) -> None:
+    """Record an orphaned run in the product's error catalog (OPS-16).
+
+    Mirrors `StaleRunReaper._catalog`, including the step in the message: the marker
+    alone collapses every orphaned run onto one line, and it was the step that made
+    the 2026-09-08 cause findable. Never raises — see the caller's comment.
+    """
+    from app.services.error_log_service import ErrorLogService
+
+    try:
+        await ErrorLogService().upsert(
+            session,
+            project_id=project_id,
+            source="run",
+            kind=_KIND,
+            message=message or f"{ORPHAN_ERROR} (step: {current_step or 'unknown'})",
+            failure_kind=failure_kind,
+            sample_ref=run_id,
+            meta={"current_step": current_step, "boot_id": BOOT_ID},
+        )
+    except Exception:
+        logger.warning("orphan sweep: failed to catalog orphaned run %s", run_id[:8], exc_info=True)
+
+
 _KIND = "index_repo"
 
 
@@ -99,12 +134,28 @@ async def requeue_orphaned_runs(session: AsyncSession) -> int:
         # that made three enqueued rebuilds bounce with "already has an active index run".
         row.status = "failed"
         row.error = ORPHAN_ERROR
+        # OPS-16: a terminal run needs the columns that make it terminal. Without
+        # `finished_at` the duration is incomputable in `/sync-history`, and without
+        # `failure_kind` the row is a failure of no kind — the two fields every other
+        # terminal path in this codebase sets. `error` stays exactly ORPHAN_ERROR,
+        # which `run_coordinator` and the reaper's budget both compare verbatim.
+        row.finished_at = datetime.now(UTC)
+        row.failure_kind = "transient"
+        orphaned_step = row.current_step
         try:
             await session.commit()
         except Exception:
             await session.rollback()
             logger.warning("orphan sweep: could not close run %s", row.id[:8], exc_info=True)
             continue
+
+        # OPS-16: and it reaches the product's own error catalog, as a reaped run does
+        # (N3). Until now an orphaned run — including one whose re-enqueue returned
+        # `None`, the very failure this sweep exists to surface — never produced an
+        # `error_log` row, so `/api/logs` showed nothing at all. Best-effort by
+        # construction: a diagnostic that can abort the recovery it describes is worse
+        # than one that is occasionally incomplete.
+        await _catalog(session, row.project_id, row.id, orphaned_step)
 
         try:
             job_id = await enqueue(
@@ -128,6 +179,14 @@ async def requeue_orphaned_runs(session: AsyncSession) -> int:
                 "NOT be put back — nothing is rebuilding it.",
                 _KIND,
                 row.project_id[:8],
+            )
+            await _catalog(
+                session,
+                row.project_id,
+                row.id,
+                orphaned_step,
+                message=f"{ORPHAN_ERROR} (re-enqueue failed — nothing is rebuilding it)",
+                failure_kind="fatal",
             )
             continue
 

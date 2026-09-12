@@ -193,12 +193,48 @@ class MetricsCollector:
             out[name] = out.get(name, 0) + int(value)
         return out
 
+    def snapshot_labelled(self) -> dict[tuple[str, tuple[tuple[str, str], ...]], float]:
+        """Every counter and sum this process holds, LABELS INTACT (OPS-03).
+
+        Distinct from `snapshot_counters` above, which flattens labels by summing
+        across them for the JSON endpoint: a counter stripped of its labels answers a
+        different question, and the shared store has to republish what it was given.
+
+        The store publishes from this rather than reaching into the two dicts, so the
+        lock stays inside the class and a new backing store changes one method.
+        Counters and sums are merged because Prometheus does not distinguish them here
+        — `render_prometheus` emits both as `counter` — and a name collides in neither.
+        """
+        with self._lock:
+            merged: dict[tuple[str, tuple[tuple[str, str], ...]], float] = {
+                key: float(value) for key, value in self._counters.items()
+            }
+            for key, value in self._sums.items():
+                merged[key] = merged.get(key, 0.0) + float(value)
+        return merged
+
+    def render_prometheus_from(
+        self, published: list[tuple[str, tuple[tuple[str, str], ...], float]]
+    ) -> str:
+        """Render values gathered elsewhere — the shared store's sum across processes.
+
+        Same formatting as `render_prometheus`, which is the point: the page must not
+        change shape depending on whether a Redis is configured.
+        """
+        return self._render(
+            {(name, labels): value for name, labels, value in published},
+            {},
+        )
+
     def render_prometheus(self) -> str:
         """Format current counters as Prometheus text exposition."""
-        lines: list[str] = []
         with self._lock:
             counters = dict(self._counters)
             sums = dict(self._sums)
+        return self._render(counters, sums)
+
+    def _render(self, counters: dict, sums: dict) -> str:
+        lines: list[str] = []
         seen_metrics: set[str] = set()
 
         def _emit(name: str, value: float, labels: tuple[tuple[str, str], ...]) -> None:

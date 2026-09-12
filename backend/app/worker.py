@@ -349,6 +349,12 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
 
     await run_reaper_sweep()
     ctx["reaper_task"] = asyncio.create_task(reaper_loop())
+
+    # OPS-03: this process runs `arq`, not uvicorn, so it has no scrape endpoint —
+    # everything it counts accumulates in its own heap and dies with it, and
+    # `/api/metrics/prometheus` on `web` renders a page where those names are ABSENT
+    # rather than zero. The flush loop is the only thing that carries them out.
+    ctx["metrics_task"] = asyncio.create_task(_metrics_flush_loop())
     logger.info("ARQ worker started")
 
     # F-KNOW-12: this process has its own ephemeral disk. The repo index writes the
@@ -383,15 +389,46 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
         logger.warning("BM25 local reconcile could not be scheduled", exc_info=True)
 
 
+#: How often the worker publishes its counters. A counter read on a dashboard is not
+#: worth a round trip per increment, and a minute is well inside any scrape interval.
+METRICS_FLUSH_INTERVAL_SECONDS = 60
+
+
+async def _metrics_flush_loop() -> None:
+    """Publish this process's counter deltas until cancelled. Never raises (OPS-03)."""
+    from app.core.metrics import get_metrics_collector
+    from app.ops.metrics_store import get_metrics_store
+
+    while True:
+        try:
+            await asyncio.sleep(METRICS_FLUSH_INTERVAL_SECONDS)
+            store = get_metrics_store()
+            if store is not None:
+                await store.flush(get_metrics_collector())
+        except asyncio.CancelledError:
+            # One last flush, so a clean shutdown does not drop the minute that has
+            # accumulated since the previous one.
+            store = get_metrics_store()
+            if store is not None:
+                try:
+                    await store.flush(get_metrics_collector())
+                except Exception:
+                    logger.debug("final metrics flush failed", exc_info=True)
+            raise
+        except Exception:
+            logger.warning("metrics flush failed; will retry", exc_info=True)
+
+
 async def shutdown(ctx: dict) -> None:  # noqa: ARG001
     """Called once when the worker stops."""
-    task = ctx.get("reaper_task")
-    if task:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    for key in ("reaper_task", "metrics_task"):
+        task = ctx.get(key)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     from app.core import redis_client
     from app.models.base import engine

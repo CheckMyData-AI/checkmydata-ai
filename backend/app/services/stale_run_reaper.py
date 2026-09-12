@@ -144,13 +144,29 @@ class StaleRunReaper:
             logger.warning("Reaper: could not read meta for run %s", run_id[:8], exc_info=True)
             return {}
 
-    async def _requeue_attempts(self, session: AsyncSession, project_id: str, kind: str) -> int:
+    async def _requeue_attempts(
+        self,
+        session: AsyncSession,
+        project_id: str,
+        kind: str,
+        *,
+        exclude_run_id: str | None = None,
+    ) -> int:
         """How many of this project's runs of this kind the reaper has killed recently.
 
         Counted from the rows themselves rather than held in a counter on one row: the
         row a counter would live on is the one just destroyed, and each replacement
         starts a fresh row. `REAP_ERROR` narrows it to reaps — a run that failed on its
         own merits is a different fact and must not spend this budget.
+
+        **`exclude_run_id` is the reap in flight (OPS-10).** `reap_once` runs the
+        `UPDATE … status='failed', error=REAP_ERROR, finished_at=now()`, flushes, and
+        only then calls `_requeue` — so without this the run being reaped right now
+        was inside its own attempt count. With `reaper_requeue_max_attempts = 2` the
+        first reap saw 1 and requeued, the second saw 2 and refused: a bound the
+        operator is told allows two retries, spent after one. That halving ran in the
+        same direction as the 2026-09-09 incident, where an exhausted budget was what
+        refused a third rebuild.
         """
         import json
 
@@ -163,6 +179,7 @@ class StaleRunReaper:
                         IndexingRun.kind == kind,
                         IndexingRun.error == REAP_ERROR,
                         IndexingRun.finished_at >= window,
+                        *([IndexingRun.id != exclude_run_id] if exclude_run_id is not None else []),
                     )
                 )
             ).all()
@@ -217,7 +234,9 @@ class StaleRunReaper:
             if not task:
                 continue
             try:
-                attempts = await self._requeue_attempts(session, project_id, kind)
+                attempts = await self._requeue_attempts(
+                    session, project_id, kind, exclude_run_id=run_id
+                )
                 if attempts >= settings.reaper_requeue_max_attempts:
                     logger.warning(
                         "Reaper: not re-enqueueing %s for project %s — %d reaps in the "
@@ -250,13 +269,17 @@ class StaleRunReaper:
                 requeued += 1
                 logger.info(
                     "Reaper: re-enqueued %s for project %s after a reap at step %s "
-                    "(force_full=%s, job=%s, attempt %d)",
+                    "(force_full=%s, job=%s, attempt %d of %d)",
                     kind,
                     project_id[:8],
                     current_step or "unknown",
                     bool(meta.get("force_full", False)),
                     job_id,
+                    # `attempts` no longer contains this reap, so the count of THIS
+                    # attempt is one more — and the first requeue now prints "1 of 2"
+                    # rather than announcing itself as attempt 2 (OPS-10).
                     attempts + 1,
+                    settings.reaper_requeue_max_attempts,
                 )
             except Exception:
                 logger.warning(
