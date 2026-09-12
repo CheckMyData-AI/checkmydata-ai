@@ -107,12 +107,28 @@ _DEFAULT_CONTEXT_WINDOW = 16_000
 class LLMRouter:
     """Selects LLM provider with automatic retry + fallback on failure."""
 
-    def __init__(self, *, usage_sink: UsageSink | None = None):
+    def __init__(
+        self,
+        *,
+        usage_sink: UsageSink | None = None,
+        account_openrouter_key: str | None = None,
+    ):
         self._instances: dict[str, BaseLLMProvider] = {}
         self._fallback_order = ["openai", "anthropic", "openrouter"]
         self._unhealthy: dict[str, float] = {}
         self._health_task: asyncio.Task | None = None
         self._sink: UsageSink = usage_sink or NullUsageSink()
+        #: P0-1c. The account's own OpenRouter key, resolved ONCE by the caller that
+        #: has the session and the user id — never here, because a database round trip
+        #: per LLM call is not what provider-side attribution is worth. `None` for
+        #: every deployment without per-account keys, which is the unchanged path.
+        #:
+        #: **It binds on OpenRouter alone**, and deliberately says nothing about the
+        #: other providers: an OpenRouter key presented to OpenAI is a 401, not a
+        #: fallback. Containment lives in the plan's dollar ceiling (ADR-0004), which
+        #: holds whichever provider served the call; this key is attribution, plus a
+        #: second belt on the OpenRouter path.
+        self._account_openrouter_key = account_openrouter_key
 
     def _get_provider(self, name: str) -> BaseLLMProvider:
         if name not in self._instances:
@@ -121,6 +137,22 @@ class LLMRouter:
                 raise ValueError(f"Unknown LLM provider: {name}")
             self._instances[name] = cls()
         return self._instances[name]
+
+    def _key_for(self, provider_name: str) -> str | None:
+        """The account key, but only for the provider it can authenticate against.
+
+        Constructor first, request context second. A router built per request with an
+        explicit key — the background indexing routers — keeps working exactly as
+        written; the module-level one `chat.py` shares across every request picks up
+        whoever is asking right now (P0-1c).
+        """
+        if provider_name != "openrouter":
+            return None
+        if self._account_openrouter_key:
+            return self._account_openrouter_key
+        from app.llm.account_key import current_account_openrouter_key
+
+        return current_account_openrouter_key.get()
 
     def _disclose_fallback(self, chosen: str | None, target: str) -> bool:
         """Announce — or refuse — sending this request's content to a second vendor.
@@ -156,6 +188,19 @@ class LLMRouter:
             target,
             target,
         )
+        # P0-1c: the account's key does not travel. There is no other key to carry — an
+        # OpenRouter key is a 401 at OpenAI — so this call is attributed to the operator
+        # account and the key's own ceiling stops applying to it. The plan's dollar
+        # ceiling (ADR-0004) still does, which is why this is a disclosure rather than a
+        # refusal: `llm_allow_provider_fallback` above is where a deployment makes that
+        # trade, and it should not be made twice in the same function.
+        if self._account_openrouter_key and chosen == "openrouter":
+            logger.warning(
+                "…and it left this account's own OpenRouter key behind: %s is billed to "
+                "the operator account, so per-customer attribution is short by this "
+                "call. The plan's spend ceiling still bounds it.",
+                target,
+            )
         return True
 
     def _get_fallback_chain(self, preferred: str | None) -> list[str]:
@@ -261,10 +306,15 @@ class LLMRouter:
         model: str | None,
         temperature: float,
         max_tokens: int,
+        api_key: str | None = None,
     ) -> LLMResponse:
         """Call a single provider with per-provider retry + exponential backoff."""
         delay = _BASE_BACKOFF_SECONDS
         last_exc: Exception | None = None
+        # Passed only when there IS one, so every adapter that does not take the
+        # argument — and every deployment without account keys — is called exactly as
+        # before rather than with an explicit `None`.
+        extra = {"api_key": api_key} if api_key else {}
 
         for attempt in range(1, _MAX_RETRIES_PER_PROVIDER + 1):
             try:
@@ -274,6 +324,7 @@ class LLMRouter:
                     model=model,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    **extra,
                 )
                 if not resp.provider:
                     resp.provider = provider_name
@@ -351,6 +402,7 @@ class LLMRouter:
                     model,
                     temperature,
                     max_tokens,
+                    api_key=self._key_for(provider_name),
                 )
                 try:
                     usage = response.usage or {}

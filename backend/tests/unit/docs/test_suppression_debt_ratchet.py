@@ -237,6 +237,21 @@ CEILINGS: dict[str, int] = {
     # withholding direction would be a rail line reading "your index is over quota" that
     # the reader cannot verify and cannot act on, produced by an outage they never saw.
     # It logs at WARNING and returns 0, which means unlimited everywhere else in `plans`.
+    # 655 -> 657 on 2026-09-12. Two, both in `resolve_account_key` (P0-1c), and both
+    # the same sentence: an ATTRIBUTION key that cannot be read must not fail the
+    # request. One wraps the row lookup, one the Fernet decrypt — a ciphertext written
+    # under a retired `MASTER_ENCRYPTION_KEY` raises, and the rotation runbook exists
+    # precisely because that state occurs. Both log at WARNING naming the consequence
+    # (the operator key serves this call, so per-customer attribution is short by it)
+    # and return `None`, which is what every call did before this feature existed.
+    # Containment is the plan's dollar ceiling (ADR-0004), which holds whichever
+    # provider served the call — so refusing here would trade a bounded product for an
+    # outage caused by a reporting feature.
+    #
+    # A THIRD was written and then deleted: `bind_account_key` wrapped a call to a
+    # function documented and tested never to raise, so its handler could only have
+    # caught an ImportError — a suppression that suppresses nothing, which is the
+    # answer this ratchet exists to provoke.
     # 647 -> 655 on 2026-09-12. Eight, all in row 11b, and all in the layer that
     # MEASURES the process rather than runs it — which is the whole argument: a
     # metrics publish that can fail the job it is measuring, or the request it
@@ -289,7 +304,7 @@ CEILINGS: dict[str, int] = {
     # The json parse in `stale_run_reaper._requeue_attempts` added in the same change is
     # NOT here: `json.loads` raises `ValueError` or `TypeError` and nothing else can, so
     # it is caught narrowly rather than spending this budget.
-    "except Exception": 655,
+    "except Exception": 657,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

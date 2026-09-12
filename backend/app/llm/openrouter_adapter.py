@@ -152,6 +152,18 @@ class OpenRouterAdapter(BaseLLMProvider):
             result.append(msg)
         return result
 
+    @staticmethod
+    def _auth_override(api_key: str | None) -> dict[str, str] | None:
+        """Per-request headers presenting *api_key*, or ``None`` to use the client's.
+
+        P0-1c. The client binds `settings.openrouter_api_key` at construction, which is
+        correct for every deployment that has no per-account keys — and was the reason a
+        minted per-account key had never been presented on an inference call (BILL-01).
+        An override per request rather than a client per request, because a client per
+        request throws away connection pooling for a header.
+        """
+        return {"Authorization": f"Bearer {api_key}"} if api_key else None
+
     async def complete(
         self,
         messages: list[Message],
@@ -159,6 +171,7 @@ class OpenRouterAdapter(BaseLLMProvider):
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        api_key: str | None = None,
     ) -> LLMResponse:
         payload: dict = {
             "model": model or DEFAULT_MODEL,
@@ -170,7 +183,9 @@ class OpenRouterAdapter(BaseLLMProvider):
             payload["tools"] = self._tools_to_schema(tools)
 
         try:
-            resp = await self._client.post("/chat/completions", json=payload)
+            resp = await self._client.post(
+                "/chat/completions", json=payload, headers=self._auth_override(api_key)
+            )
             resp.raise_for_status()
         except Exception as exc:
             raise _classify_openrouter_error(exc) from exc
@@ -225,6 +240,7 @@ class OpenRouterAdapter(BaseLLMProvider):
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        api_key: str | None = None,
     ) -> AsyncIterator[str]:
         payload: dict = {
             "model": model or DEFAULT_MODEL,
@@ -237,7 +253,12 @@ class OpenRouterAdapter(BaseLLMProvider):
             payload["tools"] = self._tools_to_schema(tools)
 
         try:
-            async with self._client.stream("POST", "/chat/completions", json=payload) as resp:
+            async with self._client.stream(
+                "POST",
+                "/chat/completions",
+                json=payload,
+                headers=self._auth_override(api_key),
+            ) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):

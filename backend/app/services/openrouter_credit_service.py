@@ -328,3 +328,44 @@ class OpenRouterCreditService:
         await db.commit()
         logger.info("credit: revoked key for user=%s", user_id[:8])
         return True
+
+
+async def resolve_account_key(db: AsyncSession, user_id: str) -> str | None:
+    """The account's own OpenRouter key for this request, or ``None`` (P0-1c).
+
+    `provision()` mints the key, encrypts it, and is the only place that has ever
+    decrypted it — inside the same function, whose one caller discards the return
+    value. So the key was minted, metered, renewed and revoked while **no inference
+    call ever presented it** (BILL-01). This is the reader that changes that.
+
+    **Every failure answers ``None``**, and that direction is the decision rather than
+    an oversight. Containment moved to the plan's dollar ceiling (ADR-0004), which
+    holds whichever provider served the call, so this key is provider-side attribution
+    plus a second belt on the OpenRouter path. Refusing a request because an
+    attribution key could not be read would turn a reporting feature into an outage —
+    an account with no key provisioned, a ciphertext written under a retired
+    `MASTER_ENCRYPTION_KEY`, or a database that is simply down all fall back to the
+    operator key, which is exactly what every call used before this existed.
+    """
+    try:
+        row = await OpenRouterCreditService()._row(db, user_id)
+    except Exception:
+        logger.warning(
+            "credit: could not read the account key for user=%s; the operator key "
+            "serves this request and the plan's dollar ceiling still bounds it",
+            user_id[:8],
+            exc_info=True,
+        )
+        return None
+    if not row or not row.key_encrypted or not row.key_hash:
+        return None
+    try:
+        return decrypt(row.key_encrypted)
+    except Exception:
+        logger.warning(
+            "credit: the stored OpenRouter key for user=%s could not be decrypted "
+            "(a retired MASTER_ENCRYPTION_KEY?); the operator key serves this request",
+            user_id[:8],
+            exc_info=True,
+        )
+        return None
