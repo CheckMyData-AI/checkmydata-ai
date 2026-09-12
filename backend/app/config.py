@@ -964,6 +964,12 @@ class Settings(BaseSettings):
     #: frozen at its first read for the life of the process. Two aggregates per project
     #: per pass; no document body is read. Clamped to a 60 s floor.
     bm25_refresh_interval_seconds: int = 900
+    #: How long alert notifications and scheduled-run history are kept, in days
+    #: (COR-07). Neither table had a TTL, a prune, or a delete endpoint, while the
+    #: same maintenance pass already pruned three other journals. `0` disables the
+    #: prune — unbounded growth, which is what this setting exists to end, so it is
+    #: a deliberate choice rather than the default.
+    unattended_history_retention_days: int = 90
     # Idle timeout (seconds) for a chat WebSocket waiting on the next client
     # message; the connection is closed when exceeded so abandoned sockets don't
     # hold server resources. 0 disables the idle timeout.

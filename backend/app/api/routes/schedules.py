@@ -8,9 +8,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.core.alert_evaluator import AlertEvaluator
+from app.core.alert_evaluator import (
+    MAX_RESULT_BYTES,
+    MAX_STORED_ROWS,
+    MAX_STORED_ROWS_WHEN_OVERSIZE,
+    AlertEvaluator,
+)
 from app.core.audit import audit_log
 from app.core.rate_limit import limiter
+from app.services.alert_delivery import deliver_for_schedule, validate_channels
 from app.services.batch_service import require_database_connection
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
@@ -118,6 +124,13 @@ async def create_schedule(
     if conn.project_id != body.project_id:
         raise HTTPException(status_code=400, detail="Connection does not belong to this project")
 
+    # COR-02: refuse a channel nothing can deliver to, rather than accepting it and
+    # being silent at 03:00. The field used to be validated for LENGTH only.
+    try:
+        validate_channels(body.notification_channels)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     schedule = await _svc.create_schedule(
         db,
         user_id=user["user_id"],
@@ -182,6 +195,11 @@ async def update_schedule(
     cron = updates.get("cron_expression")
     if cron and not SchedulerService.validate_cron(cron):
         raise HTTPException(status_code=400, detail="Invalid cron expression")
+    if "notification_channels" in updates:
+        try:
+            validate_channels(updates["notification_channels"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     updated = await _svc.update_schedule(db, schedule_id, **updates)
     if not updated:
@@ -276,9 +294,13 @@ async def run_now(
     duration_ms = int((time.monotonic() - start) * 1000)
     cols = list(getattr(result, "columns", []))
     rows = getattr(result, "rows", []) or []
-    serialized_rows = [[serialize_value(v) for v in row] for row in rows[:500]]
+    # COR-03: the alert sees every row the query returned; only STORAGE is bounded.
+    # `serialized_rows` below is the storage head, and handing THAT to the evaluator
+    # meant the same query alerted differently depending on how wide its rows were.
+    evaluation_rows = [[serialize_value(v) for v in row] for row in rows]
+    serialized_rows = evaluation_rows[:MAX_STORED_ROWS]
 
-    max_result_bytes = 1_000_000
+    max_result_bytes = MAX_RESULT_BYTES
     result_summary = json.dumps(
         {
             "columns": cols,
@@ -288,7 +310,7 @@ async def run_now(
         default=str,
     )
     if len(result_summary) > max_result_bytes:
-        serialized_rows = serialized_rows[:50]
+        serialized_rows = serialized_rows[:MAX_STORED_ROWS_WHEN_OVERSIZE]
         result_summary = json.dumps(
             {
                 "columns": cols,
@@ -299,7 +321,7 @@ async def run_now(
             default=str,
         )
 
-    alerts = AlertEvaluator.evaluate(serialized_rows, cols, schedule.alert_conditions)
+    alerts = AlertEvaluator.evaluate(evaluation_rows, cols, schedule.alert_conditions)
     status = "alert_triggered" if alerts else "success"
     alerts_json = json.dumps(alerts) if alerts else None
 
@@ -315,6 +337,7 @@ async def run_now(
                 type="alert",
             )
             db.add(notif)
+        await deliver_for_schedule(db, schedule, alerts)
 
     run = await _svc.record_run(
         db,

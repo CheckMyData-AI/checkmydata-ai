@@ -281,6 +281,50 @@ class EmailService:
             tags=[{"name": "category", "value": "invite"}],
         )
 
+    async def send_alert_email(
+        self,
+        *,
+        to_email: str,
+        schedule_title: str,
+        project_name: str,
+        messages: list[str],
+    ) -> bool:
+        """Mail one scheduled alert (COR-02).
+
+        The recipient is already checked against project membership by
+        `alert_delivery.resolve_email_recipients`; this method does not re-derive
+        it, and must not be called with an address that has not passed that gate.
+
+        Deliberately **no idempotency key**: an alert that fires twice is twice the
+        news, and a key derived from the schedule would suppress the second night's
+        alert as a duplicate of the first.
+        """
+        safe_title = escape(schedule_title)
+        safe_project = escape(project_name)
+        items = "".join(f'<li style="margin:0 0 8px">{escape(m)}</li>' for m in messages[:20])
+        body = f"""\
+<h2 style="margin:0 0 16px;color:#1e293b;font-size:22px">{safe_title}</h2>
+<p style="color:#475569;font-size:15px;line-height:1.6;margin:0 0 16px">
+  A scheduled check on <strong>{safe_project}</strong> matched its alert conditions.
+</p>
+<ul style="color:#475569;font-size:15px;line-height:1.6;margin:0 0 24px;padding-left:20px">
+  {items}
+</ul>
+<p style="margin:0 0 24px">
+  <a href="{settings.app_url}" style="display:inline-block;background:{_BRAND_COLOR};
+     color:#fff;padding:10px 24px;border-radius:6px;text-decoration:none;
+     font-weight:600;font-size:14px">
+    Open CheckMyData.ai
+  </a>
+</p>"""
+
+        return await self._send(
+            to=to_email,
+            subject=f"Alert: {safe_title} — {safe_project}",
+            html=_base_html("Scheduled alert", body),
+            tags=[{"name": "category", "value": "alert"}],
+        )
+
     async def send_access_request_email(
         self,
         *,
