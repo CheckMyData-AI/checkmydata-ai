@@ -334,6 +334,27 @@ class ChatService:
             chat.status = status
             await session.commit()
 
+    async def history_contents(
+        self,
+        session: AsyncSession,
+        session_id: str,
+        project_id: str,
+        user_id: str,
+    ) -> list[str] | None:
+        """Every message body in the session, for measuring how full it is (COR-04).
+
+        Returns ``None`` when the caller may not see the session, so a meter cannot
+        become a way to size somebody else's conversation. No trimming and no DB
+        limit: the rotation trigger reads the whole stored history, and a meter that
+        measured a truncated prefix would under-report exactly as the conversation
+        approached the threshold.
+        """
+        if not await self.validate_session_access(session, session_id, project_id, user_id):
+            return None
+        stmt = select(ChatMessage.content).where(ChatMessage.session_id == session_id)
+        rows = await session.execute(stmt)
+        return [c for c in rows.scalars().all() if c]
+
     async def validate_session_access(
         self,
         session: AsyncSession,

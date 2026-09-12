@@ -6,6 +6,121 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — a project `viewer` could write to the customer's database
+
+P3 row 24; COR-06. Filed as UX polish; it is not.
+
+The role ladder gates workspace mutations — a dashboard needs `editor`, a schedule
+needs `owner` — and **no execution path distinguished a viewer from an owner for SQL
+against the connected database**. On a connection with `is_read_only=False` a viewer
+could save a note whose `sql_query` is `DELETE FROM orders WHERE 1=1` and execute it:
+the guard there is `SafetyLevel.ALLOW_DML`, which blocks DDL and nothing else. Same
+shape one route over, in `POST /api/batch/execute`. An owner who adds a contractor as
+`viewer` to keep them read-only got neither, and the deletion was audited as an
+ordinary `note.execute`.
+
+`MembershipService.require_write_role` is the gate, asked once per execution route
+after the connection is resolved — the role that is needed cannot be known before
+then. **On a read-only connection `viewer` still suffices**: running a SELECT is what
+the role is for, and the engine already refuses a write there, so the role is not the
+layer that has to. Bounded in practice by connections being read-only by default
+(vision §7), which is why this is a fix rather than an advisory.
+
+The guards are behavioural — a real viewer, a real writable connection, a real
+`DELETE` over HTTP — because the first draft asserted the string `"viewer"` was absent
+from the route body, which any rename satisfies without moving the gate. A discovery
+sweep over `app/api/routes/` fails on any route that builds a `SafetyGuard` or
+enqueues `run_batch` without asking for a role above viewer, so a new execution route
+joins the check by existing.
+
+### Fixed — six surfaces that stated something they did not know
+
+FE-04, FE-06, FE-07, FE-09, FE-10, FE-11, COR-04, COR-05, COR-08.
+
+**One shape runs through four of them**: a fetch fails, the catch clears the data and
+raises a toast, and the render reaches the branch written for *there is nothing here*
+— so a failure is published as a positive claim about the account. The toast carrying
+the real reason dismisses itself after ten seconds; the false sentence does not.
+
+- **A dashboard that failed to load said it did not exist** (FE-04). A network
+  failure, a 500, a 504 and a genuine 404 all produced the same permanent screen,
+  with no Retry on it. `classifyLoadFailure` now separates 404 — a fact about the
+  account — from everything else, which is a fact about this moment, and the
+  unavailable state keeps the reason and offers Try again.
+- **A saved-queries panel whose fetch failed said "No saved queries yet"** (FE-07),
+  complete with the hint explaining how to save a first one, over forty queries that
+  still existed. `notes-store` carries `loadError`; the panel has a third state.
+- **A background task whose completion event was missed spun forever** (FE-06). The
+  only transition to terminal was an SSE `pipeline_end`, so a reconnect landing after
+  the run finished left a pill spinning with an elapsed counter climbing past the real
+  run and a Cancel button for a run that had ended — only a reload cleared it.
+  `reconcileFromActive` now reads an *absence* from the authoritative list as an
+  ending, after a 30-second grace window that lets an optimistic insert be legitimately
+  missing. It records `failed` with "outcome unknown" rather than `completed`, because
+  the outcome arrived on a channel nobody was listening to. Separately, a task one
+  click old read **"✓ 1 done"**: the pill counted `running` and `failed` and let
+  `queued` fall into the final `else`. The arithmetic now lives in `summarizeTasks`,
+  so the test measures the shipped decision instead of a copy of it.
+- **The chat scrolled itself once per streamed token** (FE-09), with
+  `behavior: "smooth"` named in JavaScript, where the `prefers-reduced-motion` block in
+  `globals.css` cannot reach it — that block zeroes the `--dur-*` properties and
+  declares no `scroll-behavior` at all. A reader scrolling up to re-read the previous
+  answer's SQL was yanked back on every chunk. The scroll is now instant while
+  streaming, instant under reduced motion, and skipped entirely when the reader is not
+  already following the output.
+- **The MCP token list painted two states in raw Tailwind palette hexes** (FE-10).
+  They compiled — `globals.css` uses `@theme inline` and never resets `--color-*` —
+  so nothing failed; they were simply the same mid-emerald and mid-rose in both twins
+  the pack ships. Now `text-success` and `text-error`; no raw palette class remains in
+  `components/`.
+- **The readiness cache recorded when it was checked and nothing read it** (FE-11).
+  Once `ready: true` was recorded, the gate never re-appeared for the life of the
+  document, and invalidation was entirely event-driven — so a connection deleted in
+  another tab arrived by no event and the chat presented itself as ready to query a
+  source that no longer existed. `checkedAt` now bounds the cache at five minutes. The
+  TTL does not replace the events; it bounds how long a missed one can lie.
+
+**The context meter could not move with the conversation** (COR-04).
+`/api/chat/estimate` took no session, reported `max_history_tokens` unconditionally as
+"History remaining", and computed utilization from the size of the schema, rules and
+learnings — none of which change while a conversation runs. So a bar the UI paints red
+above 80% read the same number on a user's thousandth message as on their first, and
+`rotation_imminent` shared no variable with the trigger: `chat.py` compares stored
+history against `max_context_tokens * session_rotation_threshold_pct / 100`, while the
+meter used `max_history_tokens` — 2 500 against 32 000, not even the same constant. The
+arithmetic now lives in `app/core/session_rotation.py` and **both** the trigger and the
+meter call it, because a meter that merely matches the trigger is one refactor from
+lying again. Without a `session_id` the response says `history_measured: false` rather
+than reporting a constant as a reading.
+
+**Degraded answers arrived in English** (COR-05). `README.md` promises the
+multilingual rule at "step-limit/emergency synthesis", and the rule is a prompt
+instruction — so it holds wherever an LLM writes the text. The step-limit and
+wall-clock fallbacks, the pipeline stage-failure answer and the context-overflow note
+bypass synthesis entirely and were hardcoded English joined in Python. A Russian
+question that hit the 20-step budget was answered *"I reached the maximum number of
+analysis steps."* — the moment comprehension matters most, in a product whose
+degradation honesty is a §7 invariant. `app/agents/localize.py` translates the static
+text with one short call, and **can only ever return the original**: no router, a
+refused budget, a timeout or an implausible answer all yield the English text
+unchanged, because a localiser that can raise would turn a degraded answer into no
+answer. A catalogue was rejected deliberately — it needs a language detector, and
+"Cyrillic means Russian" is wrong for Ukrainian, Bulgarian and Serbian; an answer
+confidently written in the wrong language is worse than one in English. *Not covered:*
+`staleness_warning`, which is a separate banner and would cost a second call on a path
+that has already exhausted its budget.
+
+**The workflow tracker's bounds were dead code on the process that serves users**
+(COR-08). `broadcast_external` — the path every worker workflow takes to reach the web
+dyno — wrote `_workflow_owners` and `_ended_workflows` with no cap, and those caps are
+applied only in `begin()`/`end()`, which the web dyno never calls for a worker
+workflow. Each map now has exactly one writer. Separately, an `_active_workflows` entry
+was removed only by a matching `pipeline_end`: drop that one Redis message — a worker
+SIGKILL mid-publish, a Redis blip — and `/api/tasks/active` reported the workflow
+running for ever, to every member of the project. Entries older than the longest job
+budget are now expired, and the ceiling is **derived from the job budgets** rather than
+hardcoded, so raising one moves it instead of leaving a stale constant behind.
+
 ### Fixed — six documents that described a product other than the one that ships
 
 P3 row 23; BIZ-08, BIZ-10, API-13, ANA-08, ANA-09 and OPS-12.

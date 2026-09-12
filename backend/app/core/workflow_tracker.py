@@ -95,6 +95,14 @@ class WorkflowTracker:
     _ENDED_SET_MAX = 2000
     _OWNERS_MAX = 2000
 
+    #: Margin over the longest job this product can run, for the active-workflow map.
+    #: An entry is removed by a matching `pipeline_end`; drop that one message — a
+    #: worker SIGKILL mid-publish, a Redis blip — and nothing else ever removes it,
+    #: so `/api/tasks/active` reports the workflow running for ever, to every member
+    #: of the project (COR-08). The ceiling is derived from the job budgets rather
+    #: than guessed, because a constant here would go stale the moment one moves.
+    _ACTIVE_AGE_MARGIN_SECONDS = 3600
+
     def __init__(self) -> None:
         self._subscribers: list[_Subscriber] = []
         self._lock = asyncio.Lock()
@@ -135,22 +143,9 @@ class WorkflowTracker:
         extra = context or {}
         uid = str(extra.get("user_id") or "")
         pid = str(extra.get("project_id") or "")
-        if uid or pid:
-            self._workflow_owners[wf_id] = {"user_id": uid, "project_id": pid}
-            # L2: bound the owners map independently of end(). The end()-time
-            # eviction only drops owners of ENDED workflows; a workflow that
-            # never reaches end() (crash, abandoned) would otherwise leak its
-            # entry forever. FIFO-evict the oldest half when over the cap.
-            if len(self._workflow_owners) > self._OWNERS_MAX:
-                for old in list(self._workflow_owners)[: self._OWNERS_MAX // 2]:
-                    self._workflow_owners.pop(old, None)
+        self._remember_owner(wf_id, uid, pid)
         if pipeline in BACKGROUND_PIPELINES:
-            self._active_workflows[wf_id] = {
-                "workflow_id": wf_id,
-                "pipeline": pipeline,
-                "started_at": time.time(),
-                "extra": extra,
-            }
+            self._remember_active(wf_id, pipeline, time.time(), extra)
 
         if broadcast:
             event = WorkflowEvent(
@@ -167,13 +162,7 @@ class WorkflowTracker:
     async def end(
         self, workflow_id: str, pipeline: str, status: str = "completed", detail: str = ""
     ) -> None:
-        self._active_workflows.pop(workflow_id, None)
-        self._ended_workflows.add(workflow_id)
-        if len(self._ended_workflows) > self._ENDED_SET_MAX:
-            to_remove = list(self._ended_workflows)[: self._ENDED_SET_MAX // 2]
-            self._ended_workflows -= set(to_remove)
-            for old in to_remove:
-                self._workflow_owners.pop(old, None)
+        self._mark_ended(workflow_id)
 
         event = WorkflowEvent(
             workflow_id=workflow_id,
@@ -192,6 +181,88 @@ class WorkflowTracker:
             )
         finally:
             workflow_id_var.set(None)
+
+    # ------------------------------------------------------------------
+    # The three maps have ONE writer each (COR-08).
+    #
+    # Before this, `begin()` and `end()` applied the caps and `broadcast_external`
+    # — the path every worker workflow takes to reach the web dyno — applied
+    # neither. So on the process that serves users, where no workflow is ever begun
+    # or ended locally, the bounds guarding these maps were dead code.
+    # ------------------------------------------------------------------
+
+    def _remember_owner(self, workflow_id: str, user_id: str, project_id: str) -> None:
+        if not user_id and not project_id:
+            return
+        self._workflow_owners[workflow_id] = {"user_id": user_id, "project_id": project_id}
+        # L2: bound the owners map independently of end(). The end()-time eviction
+        # only drops owners of ENDED workflows; a workflow that never reaches end()
+        # (crash, abandoned) would otherwise leak its entry forever. FIFO-evict the
+        # oldest half when over the cap.
+        if len(self._workflow_owners) > self._OWNERS_MAX:
+            for old in list(self._workflow_owners)[: self._OWNERS_MAX // 2]:
+                self._workflow_owners.pop(old, None)
+
+    def _mark_ended(self, workflow_id: str) -> None:
+        self._active_workflows.pop(workflow_id, None)
+        self._ended_workflows.add(workflow_id)
+        if len(self._ended_workflows) > self._ENDED_SET_MAX:
+            to_remove = list(self._ended_workflows)[: self._ENDED_SET_MAX // 2]
+            self._ended_workflows -= set(to_remove)
+            for old in to_remove:
+                self._workflow_owners.pop(old, None)
+
+    def _remember_active(
+        self, workflow_id: str, pipeline: str, started_at: float, extra: dict[str, Any]
+    ) -> None:
+        self._active_workflows[workflow_id] = {
+            "workflow_id": workflow_id,
+            "pipeline": pipeline,
+            "started_at": started_at,
+            "extra": extra,
+        }
+        self._expire_active()
+
+    def _active_max_age_seconds(self) -> float:
+        """The longest a workflow could still honestly be running.
+
+        Derived from the job budgets rather than hardcoded: ARQ cancels at these,
+        so an entry older than the largest of them plus a margin describes a job
+        that cannot still exist. Reading them here means raising a budget moves
+        this ceiling with it instead of leaving a stale constant behind.
+        """
+        from app.config import settings
+
+        budgets = [
+            getattr(settings, name, 0) or 0
+            for name in (
+                "repo_index_job_timeout_seconds",
+                "daily_knowledge_sync_job_timeout_seconds",
+                "db_index_job_timeout_seconds",
+                "analytics_collect_job_timeout_seconds",
+            )
+        ]
+        return float(max(budgets) or 0) + self._ACTIVE_AGE_MARGIN_SECONDS
+
+    def _expire_active(self, now: float | None = None) -> None:
+        """Drop active entries no job could still be inside (COR-08)."""
+        moment = now if now is not None else time.time()
+        cutoff = moment - self._active_max_age_seconds()
+        stale = [
+            (wf_id, float(entry.get("started_at") or 0))
+            for wf_id, entry in self._active_workflows.items()
+            if float(entry.get("started_at") or 0) < cutoff
+        ]
+        for wf_id, started_at in stale:
+            self._active_workflows.pop(wf_id, None)
+            # Read the age BEFORE the pop, or the line reports the epoch.
+            logger.info(
+                "workflow[%s] dropped from the active map after %.0fs — longer than "
+                "any job budget, so its pipeline_end never arrived (project=%s)",
+                wf_id[:8],
+                moment - started_at,
+                self._workflow_owners.get(wf_id, {}).get("project_id", "?"),
+            )
 
     def has_ended(self, workflow_id: str) -> bool:
         """Check whether ``end()`` was already called for *workflow_id*."""
@@ -214,6 +285,7 @@ class WorkflowTracker:
         of the project). Pass ``user_id=None`` for unfiltered access (admins,
         tests, internal use).
         """
+        self._expire_active()
         snapshot = list(self._active_workflows.values())
         if user_id is None:
             return snapshot
@@ -401,19 +473,16 @@ class WorkflowTracker:
         self._external_rebroadcast = True
         try:
             if event.step == "pipeline_start" and event.pipeline in BACKGROUND_PIPELINES:
-                self._active_workflows[event.workflow_id] = {
-                    "workflow_id": event.workflow_id,
-                    "pipeline": event.pipeline,
-                    "started_at": event.timestamp,
-                    "extra": event.extra or {},
-                }
-                uid = str((event.extra or {}).get("user_id") or "")
-                pid = str((event.extra or {}).get("project_id") or "")
-                if uid or pid:
-                    self._workflow_owners[event.workflow_id] = {"user_id": uid, "project_id": pid}
+                self._remember_active(
+                    event.workflow_id, event.pipeline, event.timestamp, event.extra or {}
+                )
+                self._remember_owner(
+                    event.workflow_id,
+                    str((event.extra or {}).get("user_id") or ""),
+                    str((event.extra or {}).get("project_id") or ""),
+                )
             elif event.step == "pipeline_end":
-                self._active_workflows.pop(event.workflow_id, None)
-                self._ended_workflows.add(event.workflow_id)
+                self._mark_ended(event.workflow_id)
             await self._deliver_local(event)
         finally:
             self._external_rebroadcast = False

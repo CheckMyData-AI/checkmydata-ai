@@ -254,6 +254,19 @@ async def execute_note(
     from app.connectors.registry import get_connector
     from app.viz.utils import serialize_value
 
+    # COR-06: the role gate the execution paths never had. `_require_note_access`
+    # admits a viewer, and the guard below is ALLOW_DML whenever the connection is
+    # writable — which blocks DDL and nothing else. So a contractor added as `viewer`
+    # to keep them read-only could save `DELETE FROM orders WHERE 1=1` and run it,
+    # audited as an ordinary `note.execute`.
+    await _membership_svc.require_write_role(
+        db,
+        note.project_id,
+        user["user_id"],
+        connection_is_read_only=bool(conn_model.is_read_only),
+        subject="Executing a saved note",
+    )
+
     if conn_model.is_read_only:
         guard = SafetyGuard(SafetyLevel.READ_ONLY)
     else:

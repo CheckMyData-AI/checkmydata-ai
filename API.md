@@ -217,7 +217,7 @@ name `_connect`, which currently appears as an entry in `reports[]` with
 | GET | `/api/chat/sessions/{project_id}` | List chat sessions for a project |
 | GET | `/api/chat/sessions/{id}/messages` | Get session messages |
 | DELETE | `/api/chat/sessions/{id}` | Delete session |
-| GET | `/api/chat/estimate` | Estimate token cost |
+| GET | `/api/chat/estimate?project_id=&connection_id=&session_id=` | Estimate token cost and how full the conversation is. **`session_id` is what makes the second half a measurement**: without it the response carries `history_measured: false` and reports the static context only. `context_utilization_pct` is the session's stored history against the rotation threshold — the same quantity `/ask/stream` rotates on |
 | GET | `/api/chat/suggestions` | Get query suggestions |
 | WS | `/api/chat/ws/{project_id}/{connection_id}` | WebSocket chat (single-use ticket via `Sec-WebSocket-Protocol`; mint with `POST /api/chat/ws-ticket`) |
 | POST | `/api/chat/feedback` | Rate a message (body: `{message_id, rating}`) |

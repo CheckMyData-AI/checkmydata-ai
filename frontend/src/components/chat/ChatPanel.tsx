@@ -3,6 +3,8 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useAppStore } from "@/stores/app-store";
+import { scrollBehaviorFor, shouldFollowOutput } from "@/lib/scroll-behavior";
+import { isReadinessFresh } from "@/lib/readiness-cache";
 import { SPRING, DUR } from "@/lib/motion/tokens";
 import { api, type ChatResponse, type StreamError, type QuerySuggestion, type CostEstimate } from "@/lib/api";
 import type { WorkflowEvent } from "@/lib/sse";
@@ -59,6 +61,7 @@ export function ChatPanel() {
   const streamingMsgIdRef = useRef<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [streamSteps, setStreamSteps] = useState<WorkflowEvent[]>([]);
   const [pipelineStages, setPipelineStages] = useState<PipelineStage[]>([]);
   const [pipelineRunId, setPipelineRunId] = useState<string | undefined>();
@@ -73,9 +76,15 @@ export function ChatPanel() {
   const suggestionsRequested = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const handleEstimate = useCallback((e: CostEstimate | null) => setCostEstimate(e), []);
-  const cachedReady = useAppStore((s) =>
-    activeProject ? s.readinessCache[activeProject.id]?.ready : false
-  );
+  // FE-11: `checkedAt` was written twice and read nowhere, so a cached `ready: true`
+  // survived for the life of the document. Invalidation was entirely event-driven,
+  // and a connection deleted in another tab arrives by no event — the chat then
+  // presented itself as ready to query a source that no longer existed.
+  const cachedReady = useAppStore((s) => {
+    if (!activeProject) return false;
+    const entry = s.readinessCache[activeProject.id];
+    return Boolean(entry?.ready) && isReadinessFresh(entry);
+  });
   const [readinessBypassed, setReadinessBypassed] = useState(false);
   const [connHealthStatus, setConnHealthStatus] = useState<string>("unknown");
   const [reconnecting, setReconnecting] = useState(false);
@@ -320,8 +329,23 @@ export function ChatPanel() {
     [activeProject, activeConnection, activeSession, addMessage, setThinking, setLoading, clearToolCalls, addToolCall, handlePipelineEvent, handleThinkingEvent, handleToken],
   );
 
+  // FE-09: this effect lists `streamingText`, and `handleToken` appends every SSE
+  // chunk to it — so it used to fire a fresh `scrollIntoView({behavior:"smooth"})`
+  // per token, unconditionally. A reader who scrolled up to re-read the previous
+  // answer's SQL was yanked back on every chunk, and the behaviour was named in
+  // JavaScript, where the `prefers-reduced-motion` block in globals.css cannot
+  // reach it: that block zeroes the `--dur-*` properties and declares no
+  // `scroll-behavior` at all.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = scrollContainerRef.current;
+    if (container && !shouldFollowOutput(container)) return;
+    const reducedMotion =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    messagesEndRef.current?.scrollIntoView({
+      behavior: scrollBehaviorFor({ streaming: Boolean(streamingText), reducedMotion }),
+    });
   }, [messages, pipelineStages, streamingText, isThinking]);
 
   useEffect(() => {
@@ -832,7 +856,7 @@ export function ChatPanel() {
           </button>
         </div>
       )}
-      <div className="flex-1 overflow-x-hidden overflow-y-auto p-6 space-y-4 chat-scroll" aria-live="polite" aria-relevant="additions" aria-atomic="false">
+      <div ref={scrollContainerRef} className="flex-1 overflow-x-hidden overflow-y-auto p-6 space-y-4 chat-scroll" aria-live="polite" aria-relevant="additions" aria-atomic="false">
         {messages.length === 0 ? (
           <motion.div
             initial={{ opacity: 0, y: 14 }}
@@ -1002,7 +1026,7 @@ export function ChatPanel() {
       {activeConnection && (
         <div className="px-6 pb-2 flex flex-col gap-1 max-w-2xl mx-auto w-full">
           <div className="flex items-center gap-3">
-            <CostEstimator projectId={activeProject.id} connectionId={activeConnection.id} onEstimate={handleEstimate} />
+            <CostEstimator projectId={activeProject.id} connectionId={activeConnection.id} sessionId={activeSession?.id} messageCount={messages.length} onEstimate={handleEstimate} />
             {sessionTokens > 0 && (
               <span className="text-meta text-text-muted ml-auto">
                 Session: {sessionTokens >= 1000 ? `${(sessionTokens / 1000).toFixed(1)}k` : sessionTokens} tokens

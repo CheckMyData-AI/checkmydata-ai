@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { summarizeTasks } from "@/lib/task-summary";
 import { useBackgroundTasks, type BgTask } from "@/stores/background-tasks-store";
 import { useAppStore } from "@/stores/app-store";
 import { api } from "@/lib/api";
@@ -224,16 +225,13 @@ export function ActiveTasksWidget() {
   const pillBg = hasFailed ? "bg-error-muted border-error/30" : "bg-surface-2 border-border-subtle";
   const pillText = hasFailed ? "text-error" : "text-text-secondary";
 
-  let pillLabel: string;
-  if (runningCount > 0 && failedCount > 0) {
-    pillLabel = `${runningCount} running, ${failedCount} failed`;
-  } else if (runningCount > 0) {
-    pillLabel = runningCount === 1 ? "1 task" : `${runningCount} tasks`;
-  } else if (failedCount > 0) {
-    pillLabel = failedCount === 1 ? "1 failed" : `${failedCount} failed`;
-  } else {
-    pillLabel = taskList.length === 1 ? "1 done" : `${taskList.length} done`;
-  }
+  // FE-06: the pill's arithmetic lives in `summarizeTasks` so a test can measure
+  // the shipped decision rather than a copy of it. The counts here covered `running`
+  // and `failed` only, so a task created by `insertOptimistic` with status `queued`
+  // fell into the final `else` — "1 done", beside a check icon, for an index that
+  // had not started.
+  const summary = summarizeTasks(taskList);
+  const pillLabel = summary.label;
 
   const sorted = [...taskList].sort((a, b) => {
     const statusOrder: Record<string, number> = { running: 0, queued: 0, failed: 1, completed: 2 };
@@ -255,9 +253,9 @@ export function ActiveTasksWidget() {
         aria-haspopup="true"
         aria-label={`Background tasks: ${pillLabel}`}
       >
-        {runningCount > 0 ? (
+        {summary.icon === "loader" ? (
           <span className="w-3 h-3 rounded-full border-[1.5px] border-current border-t-transparent animate-spin inline-block" />
-        ) : hasFailed ? (
+        ) : summary.icon === "alert" ? (
           <Icon name="x" size={12} />
         ) : (
           <Icon name="check" size={12} />

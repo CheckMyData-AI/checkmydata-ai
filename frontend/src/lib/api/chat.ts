@@ -149,9 +149,15 @@ export const chat = {
     request<QuerySuggestion[]>(
       `/chat/suggestions?project_id=${projectId}&connection_id=${connectionId}&limit=${limit || 5}`,
     ),
-  estimate: (projectId: string, connectionId?: string) =>
+  // COR-04: the session is what makes this a measurement. Without it the endpoint
+  // reported `max_history_tokens` as "History remaining" — the constant, on every
+  // message of every conversation — and computed utilization from the static
+  // context, which cannot move while a conversation runs.
+  estimate: (projectId: string, connectionId?: string, sessionId?: string) =>
     request<CostEstimate>(
-      `/chat/estimate?project_id=${projectId}${connectionId ? `&connection_id=${connectionId}` : ""}`,
+      `/chat/estimate?project_id=${projectId}` +
+        (connectionId ? `&connection_id=${connectionId}` : "") +
+        (sessionId ? `&session_id=${sessionId}` : ""),
     ),
   ask: (data: {
     project_id: string;

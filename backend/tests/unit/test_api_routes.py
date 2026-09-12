@@ -1,3 +1,4 @@
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -726,10 +727,15 @@ class TestActiveTasksEndpoint:
     def test_active_tasks_returns_running_workflows(self, client):
         from app.core.workflow_tracker import tracker
 
+        # COR-08: `started_at` used to be the fixed 1710000000.0 — March 2024 — and
+        # the endpoint reported it as running, which is the defect: an entry is
+        # removed only by a matching `pipeline_end`, so one lost Redis message pinned
+        # a workflow to this list for ever. An entry older than every job budget is
+        # expired now, so the fixture has to describe a run that could still exist.
         tracker._active_workflows["wf-1"] = {
             "workflow_id": "wf-1",
             "pipeline": "index_repo",
-            "started_at": 1710000000.0,
+            "started_at": time.time(),
             "extra": {"project_id": "p1", "user_id": "test-user-1"},
         }
         try:

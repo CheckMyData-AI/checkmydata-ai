@@ -19,8 +19,10 @@ from app.api.deps import get_current_user, get_db
 from app.core import failure_kind as fk
 from app.core.context_budget import CHARS_PER_TOKEN
 from app.core.rate_limit import limiter
+from app.core.session_rotation import measure as measure_history_pressure
 from app.core.trace_meta import TraceMeta
 from app.core.workflow_tracker import tracker
+from app.services.chat_service import ChatService
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
 from app.services.suggestion_engine import SuggestionEngine
@@ -30,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _project_svc = ProjectService()
+_chat_svc = ChatService()
 _membership_svc = MembershipService()
 _usage_svc = UsageService()
 _suggestion_engine = SuggestionEngine()
@@ -74,7 +77,13 @@ class CostEstimateBreakdown(BaseModel):
     rules: int = 0
     learnings: int = 0
     overview: int = 0
-    history_budget_remaining: int = 0
+    #: COR-04: this was assigned `max_history_tokens` unconditionally and labelled
+    #: "History remaining" in the UI, so it reported 2 500 on a user's thousandth
+    #: message as on their first. It is now what the session's history actually
+    #: measures, and `history_budget` beside it is what it is measured against — the
+    #: SAME threshold `chat.py` rotates on, not the unrelated constant it used to be.
+    history_tokens: int = 0
+    history_budget: int = 0
 
 
 class CostEstimateResponse(BaseModel):
@@ -84,6 +93,9 @@ class CostEstimateResponse(BaseModel):
     estimated_cost_usd: float | None = None
     context_utilization_pct: float = 0.0
     rotation_imminent: bool = False
+    #: False when no `session_id` was given: the meter then has no history to measure
+    #: and says so, rather than painting a constant as a measurement.
+    history_measured: bool = False
     breakdown: CostEstimateBreakdown = CostEstimateBreakdown()
 
 
@@ -93,6 +105,13 @@ async def estimate_cost(
     request: Request,
     project_id: str = Query(...),
     connection_id: str = Query(None),
+    session_id: str = Query(
+        None,
+        description=(
+            "The chat session being measured. Without it the meter reports the "
+            "static context only and sets history_measured=false (COR-04)."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -168,10 +187,26 @@ async def estimate_cost(
         logger.debug("Cost estimate: overview lookup failed", exc_info=True)
 
     static_context = schema_tokens + rules_tokens + learnings_tokens + overview_tokens
-    history_budget = app_settings.max_history_tokens
-    history_remaining = history_budget
 
-    total_prompt = static_context + history_remaining
+    # COR-04: measure the session the caller names, in the terms the rotation trigger
+    # uses. Without a session there is nothing to measure — say so, rather than
+    # reporting a constant as a reading.
+    history_contents: list[str] = []
+    history_measured = False
+    if session_id:
+        try:
+            found = await _chat_svc.history_contents(db, session_id, project_id, user["user_id"])
+            if found is not None:
+                history_contents = found
+                history_measured = True
+        except Exception:
+            logger.debug("Cost estimate: history lookup failed", exc_info=True)
+
+    pressure = measure_history_pressure(history_contents)
+
+    # The prompt carries what will actually be sent: the history as it stands, capped
+    # at the per-request history budget, not the budget itself.
+    total_prompt = static_context + min(pressure.history_tokens, app_settings.max_history_tokens)
 
     avg_completion = 500
     try:
@@ -190,17 +225,16 @@ async def estimate_cost(
         logger.debug("Cost estimate: avg completion lookup failed", exc_info=True)
 
     total_tokens = total_prompt + avg_completion
-    combined_budget = static_context + history_budget
-    utilization = round((static_context / combined_budget * 100) if combined_budget > 0 else 0, 1)
+    # How full the CONVERSATION is, against the threshold that rotates it. The old
+    # figure was `static_context / (static_context + 2500)` — schema and rules over
+    # themselves plus a constant, which cannot move while a conversation runs.
+    utilization = pressure.utilization_pct if history_measured else 0.0
 
     project = await _project_svc.get(db, project_id)
     model = (project.agent_llm_model if project else None) or None
     cost = await _estimate_cost(model, total_prompt, avg_completion)
 
-    rotation_threshold = app_settings.session_rotation_threshold_pct
-    rotation_imminent = (
-        app_settings.session_rotation_enabled and utilization >= rotation_threshold - 5
-    )
+    rotation_imminent = history_measured and pressure.imminent
 
     return CostEstimateResponse(
         estimated_prompt_tokens=total_prompt,
@@ -209,12 +243,14 @@ async def estimate_cost(
         estimated_cost_usd=cost,
         context_utilization_pct=utilization,
         rotation_imminent=rotation_imminent,
+        history_measured=history_measured,
         breakdown=CostEstimateBreakdown(
             schema_context=schema_tokens,
             rules=rules_tokens,
             learnings=learnings_tokens,
             overview=overview_tokens,
-            history_budget_remaining=history_remaining,
+            history_tokens=pressure.history_tokens,
+            history_budget=pressure.threshold_tokens,
         ),
     )
 

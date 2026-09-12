@@ -744,7 +744,10 @@ export interface CostEstimateBreakdown {
   rules: number;
   learnings: number;
   overview: number;
-  history_budget_remaining: number;
+  /** What this session's stored history measures, in the rotation trigger's terms. */
+  history_tokens: number;
+  /** The threshold it is measured against — `max_context_tokens * pct / 100`. */
+  history_budget: number;
 }
 
 export interface CostEstimate {
@@ -753,6 +756,9 @@ export interface CostEstimate {
   estimated_total_tokens: number;
   estimated_cost_usd: number | null;
   context_utilization_pct: number;
+  rotation_imminent: boolean;
+  /** False when no session was named: there was nothing to measure, and it says so. */
+  history_measured: boolean;
   breakdown: CostEstimateBreakdown;
 }
 

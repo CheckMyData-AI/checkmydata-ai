@@ -237,6 +237,17 @@ CEILINGS: dict[str, int] = {
     # withholding direction would be a rail line reading "your index is over quota" that
     # the reader cannot verify and cannot act on, produced by an outage they never saw.
     # It logs at WARNING and returns 0, which means unlimited everywhere else in `plans`.
+    # 645 -> 647 on 2026-09-12. Two, and they are the same argument twice: a path
+    # that runs BECAUSE something already failed must not add a second failure.
+    # `localize.localize` translates a hardcoded degradation answer with one short
+    # LLM call, and every failure mode there — a refused token budget, a provider
+    # error, a malformed response — must yield the English text rather than an
+    # exception, or a degraded answer becomes no answer at all. The narrower clause
+    # is impossible for the same reason as the entitlements handlers below: the
+    # provider is an adapter chosen at runtime. `chat_utility`'s history lookup is
+    # the fourth best-effort block in that one function — schema, rules, overview and
+    # now history — and a meter that can 500 the endpoint it decorates is worse than
+    # a meter that admits it could not read one of its inputs.
     # 644 -> 645 on 2026-09-12. One: `entitlements.seat_limit`, which is a verbatim
     # copy of `index_quota_bytes` beside it and catches broadly for the same reason —
     # the provider is an arbitrary object from a private package, and the whole design
@@ -257,7 +268,7 @@ CEILINGS: dict[str, int] = {
     # The json parse in `stale_run_reaper._requeue_attempts` added in the same change is
     # NOT here: `json.loads` raises `ValueError` or `TypeError` and nothing else can, so
     # it is caught narrowly rather than spending this budget.
-    "except Exception": 645,
+    "except Exception": 647,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

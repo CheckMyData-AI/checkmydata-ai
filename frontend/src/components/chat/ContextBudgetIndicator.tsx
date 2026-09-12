@@ -12,7 +12,10 @@ const SEGMENTS: { key: keyof CostEstimateBreakdown; label: string; color: string
   { key: "rules", label: "Rules", color: "bg-accent" },
   { key: "learnings", label: "Learnings", color: "bg-warning" },
   { key: "overview", label: "Overview", color: "bg-info" },
-  { key: "history_budget_remaining", label: "History remaining", color: "bg-surface-3" },
+  // COR-04: this segment was the constant `max_history_tokens`, labelled "History
+  // remaining" — a fixed slice of the bar on every message of every conversation.
+  // It is the session's own history now, so the bar fills as the session does.
+  { key: "history_tokens", label: "History", color: "bg-surface-3" },
 ];
 
 export function ContextBudgetIndicator({ breakdown }: ContextBudgetIndicatorProps) {

@@ -17,6 +17,8 @@ export function NotesPanel() {
   const notes = useNotesStore((s) => s.notes);
   const isOpen = useNotesStore((s) => s.isOpen);
   const isLoading = useNotesStore((s) => s.isLoading);
+  const loadError = useNotesStore((s) => s.loadError);
+  const loadedProjectId = useNotesStore((s) => s.loadedProjectId);
   const scope = useNotesStore((s) => s.scope);
   const setOpen = useNotesStore((s) => s.setOpen);
   const setScope = useNotesStore((s) => s.setScope);
@@ -106,6 +108,23 @@ export function NotesPanel() {
                 <div className="h-2.5 bg-surface-3 rounded w-3/4" />
               </div>
             ))}
+          </div>
+        ) : loadError ? (
+          // FE-07: a failed fetch is not an empty account. Saying "No saved queries
+          // yet" over 40 queries that still exist — with the hint explaining how to
+          // save a first one — is the panel stating something it does not know.
+          <div className="text-center py-8 px-4">
+            <div className="w-10 h-10 rounded-full bg-surface-2 flex items-center justify-center mx-auto mb-3">
+              <Icon name="alert-triangle" size={18} className="text-error" />
+            </div>
+            <p className="text-xs text-text-secondary mb-1">Could not load saved queries</p>
+            <p className="text-meta text-text-muted leading-relaxed mb-3">{loadError}</p>
+            <button
+              onClick={() => { if (loadedProjectId) void loadNotes(loadedProjectId); }}
+              className="text-meta text-accent hover:text-accent-hover transition-colors"
+            >
+              Try again
+            </button>
           </div>
         ) : notes.length === 0 ? (
           <div className="text-center py-8 px-4">

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ReadinessCacheEntry } from "@/lib/readiness-cache";
 import type { ChatSession, Connection, PipelineStatusResponse, Project, SshKey } from "@/lib/api";
 
 type ChatMode = "full" | "knowledge_only";
@@ -97,10 +98,6 @@ function persistLastViews(map: Record<string, string>) {
   }
 }
 
-interface ReadinessCacheEntry {
-  ready: boolean;
-  checkedAt: number;
-}
 
 interface AppState {
   sshKeys: SshKey[];

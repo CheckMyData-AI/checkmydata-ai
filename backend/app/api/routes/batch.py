@@ -70,13 +70,26 @@ async def execute_batch(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    await _membership_svc.require_role(db, body.project_id, user["user_id"], "viewer")
+    # Membership first, so a non-member cannot probe which connection ids exist.
+    await _membership_svc.require_role(db, body.project_id, user["user_id"])
 
     conn = await _conn_svc.get(db, body.connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     if conn.project_id != body.project_id:
         raise HTTPException(status_code=400, detail="Connection does not belong to this project")
+
+    # COR-06: and now the role the STATEMENTS need, which is knowable only once the
+    # connection is resolved. A batch is a list of arbitrary SQL run against the
+    # customer's database; it was gated at the lowest role the ladder has, while a
+    # dashboard needed `editor` and a schedule needed `owner`.
+    await _membership_svc.require_write_role(
+        db,
+        body.project_id,
+        user["user_id"],
+        connection_is_read_only=bool(conn.is_read_only),
+        subject="Running a batch",
+    )
 
     if not body.queries and not body.note_ids:
         raise HTTPException(status_code=400, detail="Provide at least one query or note_id")

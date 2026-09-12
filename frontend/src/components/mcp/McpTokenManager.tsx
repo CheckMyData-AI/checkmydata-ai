@@ -27,7 +27,7 @@ function statusOf(token: McpToken): { label: string; tone: string } {
   if (token.expires_at && new Date(token.expires_at) <= new Date()) {
     return { label: "expired", tone: "text-text-muted" };
   }
-  return { label: "active", tone: "text-emerald-400" };
+  return { label: "active", tone: "text-success" };
 }
 
 function CopyInline({ text, ariaLabel }: { text: string; ariaLabel: string }) {
@@ -191,7 +191,7 @@ export function McpTokenManager() {
                     type="button"
                     aria-label={`Revoke ${t.name}`}
                     onClick={() => handleRevoke(t)}
-                    className="text-meta text-text-tertiary hover:text-rose-400 transition-colors"
+                    className="text-meta text-text-tertiary hover:text-error transition-colors"
                   >
                     Revoke
                   </button>
