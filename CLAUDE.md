@@ -11,8 +11,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Task tracking**: [Linear — CheckMyData.ai](https://linear.app/sshlg/project/checkmydataai-b7670b0dd990).
 - **Tests**: **9,487 total** — 8,716 backend collected (8,719 minus 3 deselected) + 771 frontend Vitest across 100 files (measured 2026-09-12: `pytest tests/ --collect-only -q`, `npx vitest run`). The 8,965 previously recorded here was measured 2026-09-09 and was stale by 522 after the remediation board closed — **this is the figure most likely to rot, so re-run both commands rather than editing the number.** Backend coverage **82%** (combined unit+integration, CI on #228); the CI gate `fail_under` is **80%**, and `test_coverage_gate_is_stated_once.py` fails when `pyproject.toml`, the workflow and this sentence disagree. The 78% recorded before 2026-08-26 was measured without `concurrency = ["greenlet", "thread"]` in `[tool.coverage.run]` — coverage stopped tracing at the first `await` into SQLAlchemy, so ~1,065 statements ran and were counted as untested.
 - **Remediation board: closed.** The 2026-09-09 audit produced 164 findings and
-`docs/audits/2026-09-09-product-review-and-backlog.md` routed them into 30 rows. All 30
-are ticked (2026-09-12, PRs #343–#367). **The board's own completeness is an exit code,
+`docs/audits/2026-09-09-product-review-and-backlog.md` routed them into 31 rows (the last
+added by reviewing the programme's own PRs). All 31 are ticked (2026-09-12, #343–#368). **The board's own completeness is an exit code,
 not a reading**: `test_every_finding_has_a_row.py` compares the audit's finding ids
 against every id the rows reference, and it exists because a set-comparison found **15
 findings with no row at all** while the board showed 27/27 — among them `AUTH-01` (an
