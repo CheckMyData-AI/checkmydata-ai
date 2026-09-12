@@ -76,9 +76,17 @@ async def get_subscription(
     _require_billing_enabled()
     ent = await _entitlements.get_entitlements(db, user["user_id"])
     daily_limit, monthly_limit = await _entitlements.effective_token_limits(db, user["user_id"])
+    daily_cost_limit, monthly_cost_limit = await _entitlements.effective_cost_limits(
+        db, user["user_id"]
+    )
     try:
         budget = await _usage.check_budget(
-            db, user["user_id"], daily_limit=daily_limit, monthly_limit=monthly_limit
+            db,
+            user["user_id"],
+            daily_limit=daily_limit,
+            monthly_limit=monthly_limit,
+            daily_cost_limit=daily_cost_limit,
+            monthly_cost_limit=monthly_cost_limit,
         )
     except Exception:
         budget = {"daily_used": None, "monthly_used": None}
@@ -89,6 +97,15 @@ async def get_subscription(
             "monthly_used": budget.get("monthly_used"),
             "daily_limit": daily_limit or None,
             "monthly_limit": monthly_limit or None,
+            # Row 1b: the unit the plan is actually sold in. `*_estimated` says how
+            # much of the spend was priced by fallback rather than measured, so a
+            # reader can tell a figure from a guess.
+            "daily_cost_used": budget.get("daily_cost_used"),
+            "monthly_cost_used": budget.get("monthly_cost_used"),
+            "daily_cost_limit": daily_cost_limit or None,
+            "monthly_cost_limit": monthly_cost_limit or None,
+            "daily_cost_estimated": budget.get("daily_cost_estimated"),
+            "monthly_cost_estimated": budget.get("monthly_cost_estimated"),
         },
     }
 

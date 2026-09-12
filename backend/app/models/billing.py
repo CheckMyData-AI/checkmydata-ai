@@ -7,14 +7,15 @@ duplicated events can never double-grant.
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
-    Float,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
     func,
@@ -39,8 +40,26 @@ class Plan(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # Stripe price for the monthly recurring charge; empty for the free plan.
     stripe_price_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    price_usd_month: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    #: Money, so `Numeric` — the rule `llm_credit.py` states and the analytics fact
+    #: tables follow (DATA-06). This is the published price of the tier: `199` survives
+    #: a float round trip, but `199.99` was stored as an approximation of itself.
+    price_usd_month: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4), nullable=False, server_default="0"
+    )
     # Entitlement limits. 0 = unlimited.
+    #: **The ceiling the tier actually promises (row 1b).** Each tier sells dollars of
+    #: LLM credit, and that promise used to reach the gate only after being divided by
+    #: a blended $/M rate carrying a 2.2x margin — a margin that exists because the
+    #: unit was wrong: `agent_llm_model` is a field the customer sets, so the customer
+    #: picks the price per token and no token figure can bound dollars.
+    daily_cost_limit_usd: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4), nullable=False, server_default="0"
+    )
+    monthly_cost_limit_usd: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4), nullable=False, server_default="0"
+    )
+    #: The coarse backstop behind the dollar ceilings, for the case where cost
+    #: accounting itself breaks. No longer the instrument.
     daily_token_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     monthly_token_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_connections: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

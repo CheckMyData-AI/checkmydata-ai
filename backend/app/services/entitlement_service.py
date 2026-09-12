@@ -55,6 +55,10 @@ class Entitlements:
     #: Bytes of index this plan allows per project; 0 = unlimited. The tier copy has
     #: promised "1 GB index" since 2026-08-31 with no column to hold it.
     max_index_bytes: int = 0
+    #: **The ceiling in the unit the tier is sold in** (row 1b); 0 = unlimited. The
+    #: token limits above are the backstop behind these.
+    daily_cost_limit_usd: float = 0.0
+    monthly_cost_limit_usd: float = 0.0
     cancel_at_period_end: bool = False
     current_period_end: str | None = None
 
@@ -63,6 +67,8 @@ class Entitlements:
             "plan_id": self.plan_id,
             "plan_name": self.plan_name,
             "status": self.status,
+            "daily_cost_limit_usd": self.daily_cost_limit_usd or None,
+            "monthly_cost_limit_usd": self.monthly_cost_limit_usd or None,
             "daily_token_limit": self.daily_token_limit or None,
             "monthly_token_limit": self.monthly_token_limit or None,
             "max_connections": self.max_connections or None,
@@ -130,6 +136,8 @@ class EntitlementService:
             plan_id=plan.id,
             plan_name=plan.name,
             status=status,
+            daily_cost_limit_usd=float(plan.daily_cost_limit_usd or 0),
+            monthly_cost_limit_usd=float(plan.monthly_cost_limit_usd or 0),
             daily_token_limit=plan.daily_token_limit,
             monthly_token_limit=plan.monthly_token_limit,
             max_connections=plan.max_connections,
@@ -150,6 +158,18 @@ class EntitlementService:
         daily = _strictest(ent.daily_token_limit, settings.user_daily_token_limit)
         monthly = _strictest(ent.monthly_token_limit, settings.user_monthly_token_limit)
         return daily, monthly
+
+    async def effective_cost_limits(self, db: AsyncSession, user_id: str) -> tuple[float, float]:
+        """(daily, monthly) DOLLAR limits from the plan; 0 means unlimited (row 1b).
+
+        No config counterpart, deliberately. `USER_*_TOKEN_LIMIT` exist because a
+        self-hosted operator paying their own provider bill wants a coarse global
+        brake; a dollar ceiling is a statement about what a *subscription* includes,
+        and inventing an env var for it would give a self-hosted install a spend cap
+        nobody sold them.
+        """
+        ent = await self.get_entitlements(db, user_id)
+        return ent.daily_cost_limit_usd, ent.monthly_cost_limit_usd
 
     async def may_run_scheduled_work(self, db: AsyncSession, user_id: str) -> bool:
         """Unattended work needs a plan behind it (SCN-146, decided 2026-09-07).

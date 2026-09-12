@@ -6,6 +6,75 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the ceiling is denominated in what the tier actually sells
+
+Board row 1b; `docs/adr/0004-cost-denominated-spend-ceiling.md`, which amends ADR-0003.
+Ships with DATA-06, which is its precondition rather than a rider.
+
+Every tier sells dollars — `base` includes $30 of LLM credit a month, `scale` $90, `team`
+$150 — and that promise reached the gate only after a division:
+`promised_usd / BLENDED_USD_PER_MILLION_TOKENS`, with the constant at **$0.25/M against
+the $0.1145/M actually measured on production**. The 2.2× is not caution; it is the cost
+of the wrong unit, and ADR-0003 said so plainly: `agent_llm_model` is a per-project field
+the customer sets, so the customer picks the price per token and no token figure can bound
+dollars. Both calibrations are wrong in their own direction — on the priciest stream
+`base` caps at 16.2M tokens against a real account's **16 464 277 tokens in 30 days**, a
+bound below observed use for the workload `base` is sold for; on the blend the worst case
+is ~$221 against a $199 subscription.
+
+What changed is the input: `token_usage.estimated_cost_usd` has carried a value on **every
+row since 2026-09-04** (#285). The 44% NULL rate that disqualified it is entirely older
+rows.
+
+**Dollars are the gate now; tokens are the backstop behind them.** `plans` gains
+`daily_cost_limit_usd` and `monthly_cost_limit_usd`, set straight from
+`PROMISED_CREDIT_USD` — no blend, no division, no margin — so `base` refuses at $30
+because $30 is what it sells. `check_budget` refuses on the dollar ceiling first, since
+that is the one the customer was sold. The token ceilings stay for the case where cost
+accounting itself breaks: deleting them would turn an unreachable price table into *no*
+gate rather than a looser one, which is why `BLENDED_USD_PER_MILLION_TOKENS` survives —
+its margin is the backstop's slack now, not the enforcement.
+
+**A row nobody could price is charged, not forgiven.** `_estimate_cost` returns `None`
+when the model is absent from the live OpenRouter catalogue — a native OpenAI/Anthropic
+model, or one withdrawn since. Charging zero would be DATA-01's shape on a new column: a
+figure computed from an absence, on the number that decides whether to refuse. Those
+tokens are priced at `UNPRICED_USD_PER_MILLION_TOKENS = 1.85`, and
+`/api/billing/subscription` reports how much of the spend was estimated rather than
+measured, so "the gate is guessing" is visible.
+
+**The two constants point in opposite directions on purpose.** For a *ceiling* the blend
+was right and the worst case wrong, because the ceiling applies to every token and cheap
+indexing tokens dominate the count. For a *fallback on one unpriceable row* the reverse
+holds: under-counting is a door — an account routing everything through an unpriced model
+would escape entirely — and an unpriced model is usually the expensive native kind.
+
+### Fixed — money stopped being a float, and a reconcile that would have written for ever
+
+DATA-06. `plans.price_usd_month`, `token_usage.estimated_cost_usd` and
+`request_traces.estimated_cost_usd` are `Numeric`. This ships with row 1b because that
+change turns `sum(estimated_cost_usd)` from a report into a **gate**, and summing
+thousands of IEEE-754 doubles is order-dependent: the same month's spend can differ in the
+last digits between two calls that see the rows in a different plan order.
+`app/models/llm_credit.py` has stated the rule for the codebase since it was written.
+
+The non-obvious consequence, closed in the same change: a `Numeric` column returns
+`Decimal`, and `plan_catalogue_reconcile` compares every declared field against the stored
+one. `Decimal("10.0000") == 10.0` is True, so every price the ladder holds today happens to
+survive a plain `!=` — but `Decimal("199.9900") == 199.99` is **False**, and the first tier
+priced with real cents would make the reconcile rewrite the whole catalogue on every boot
+of every dyno, silently and for ever. A reconcile that always writes is not idempotent. The
+comparison is `Decimal` on both sides now, and a test exercises the $199.99 case rather
+than reasoning about it.
+
+Migration `c5d6e7f8a2b3` adds the columns and changes the types; it seeds **no values**,
+because `plan_catalogue_reconcile` owns the ladder and a migration that writes prices is
+the two-writer shape DATA-01 already cost us. Verified by running every migration from an
+empty schema against PostgreSQL 17: five money columns land as `numeric`, the model↔schema
+comparison reports **0 divergences**, and downgrade→upgrade round-trips clean.
+
+Nine planted defects, nine caught.
+
 ### Fixed — the four the ops row carried, and they share a subject
 
 Board row 11b; OPS-03, OPS-10, OPS-15, OPS-16. PR #347 closed five of nine and named

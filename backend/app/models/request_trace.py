@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -46,7 +47,10 @@ class RequestTrace(Base):
     total_llm_calls: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     total_db_queries: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    estimated_cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Money, so `Numeric` rather than float (DATA-06). Summing thousands of
+    #: IEEE-754 doubles is order-dependent, and since row 1b this column is
+    #: summed as a spend GATE rather than shown as a report.
+    estimated_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
     llm_provider: Mapped[str] = mapped_column(String(50), nullable=False, server_default="unknown")
     llm_model: Mapped[str] = mapped_column(String(100), nullable=False, server_default="unknown")
     steps_used: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
