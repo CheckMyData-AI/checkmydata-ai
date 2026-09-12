@@ -295,7 +295,13 @@ CEILINGS: dict[str, int] = {
     # It was three. Two came from `global _provider` in the entitlement registry and
     # this ratchet is why they are gone: asked whether they were worth recording, the
     # answer was to hold the provider in a one-slot dict and need no suppression at all.
-    "# noqa": 130,
+    # 130 -> 131 on 2026-09-12. One: `from app.models.audit_log import AuditLog`
+    # in `app/models/__init__.py`, which is a side-effect import like the other
+    # forty-eight lines in that file and carries the identical `# noqa: F401`. Its
+    # absence was DATA-05 — `alembic/env.py` compares against `Base.metadata`, which
+    # this file populates, so the table was invisible to autogenerate and the next
+    # generated revision would have emitted `drop_table("audit_logs")`.
+    "# noqa": 131,
 }
 
 PATTERNS: dict[str, re.Pattern[str]] = {

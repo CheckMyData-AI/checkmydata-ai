@@ -1,7 +1,17 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -27,7 +37,11 @@ class DbIndex(Base):
     table_name: Mapped[str] = mapped_column(String(255), nullable=False)
     table_schema: Mapped[str] = mapped_column(String(255), default="public")
     column_count: Mapped[int] = mapped_column(Integer, default=0)
-    row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # DATA-03: BigInteger, because the connectors deliberately widen the vendor's
+    # estimate to 64 bits when they read it (`reltuples::bigint`, ClickHouse
+    # UInt64) and nothing clamps in between. A signed 32-bit column tops out at
+    # 2 147 483 647.
+    row_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     sample_data_json: Mapped[str] = mapped_column(Text, default="[]")
     ordering_column: Mapped[str | None] = mapped_column(String(255), nullable=True)
     latest_record_at: Mapped[str | None] = mapped_column(String(100), nullable=True)

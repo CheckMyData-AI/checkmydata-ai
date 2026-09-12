@@ -13,6 +13,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -26,6 +27,16 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+#: Every value `status` may hold. Three of them — queued, running, cancelling — are
+#: also the scope of the partial unique index below, which is what makes this a
+#: constraint the database has to know rather than a comment: a status outside the
+#: vocabulary reads as an active run to every Python caller while escaping the
+#: single-active-run guard entirely (DATA-04).
+ACTIVE_STATUSES = ("queued", "running", "cancelling")
+TERMINAL_STATUSES = ("completed", "failed", "cancelled")
+STATUS_VOCABULARY = ACTIVE_STATUSES + TERMINAL_STATUSES
+_STATUS_TUPLE_SQL = "(" + ", ".join(f"'{s}'" for s in STATUS_VOCABULARY) + ")"
 
 
 class IndexingRun(Base):
@@ -89,6 +100,15 @@ class IndexingRun(Base):
             unique=True,
             sqlite_where=text("status IN ('queued','running','cancelling')"),
             postgresql_where=text("status IN ('queued','running','cancelling')"),
+        ),
+        # DATA-04: the schema carried zero CHECK constraints, and this column's
+        # vocabulary is load-bearing rather than merely tidy — the partial index
+        # above is scoped by a literal list of three of these strings, so a status
+        # outside the vocabulary would escape the single-active-run guard entirely
+        # while still reading as an active run to every Python caller.
+        CheckConstraint(
+            "status IN " + _STATUS_TUPLE_SQL,
+            name="ck_indexing_runs_status",
         ),
     )
 

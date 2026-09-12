@@ -76,15 +76,22 @@ class DocEmbedding(Base):
     )
 
     __table_args__ = (
-        # `source_path` is the only metadata key ever queried on its own — it is how
-        # a changed file's chunks are removed before re-embedding
-        # (`delete_by_source_path`). An expression btree on that one key answers the
-        # equality directly; a GIN index over the whole `metadata` document would be
-        # larger, slower to maintain, and would still need a recheck.
+        # Two expression btrees, because `delete_by_source_path` filters on TWO keys
+        # with OR: `metadata ->> 'source_path' = %s OR metadata ->> 'path' = %s`. The
+        # comment here used to call `source_path` "the only metadata key ever queried
+        # on its own", and it was wrong about the query it was built for — with only
+        # one side indexed PostgreSQL cannot build a BitmapOr and scans every row for
+        # the project (DATA-09). A GIN index over the whole `metadata` document would
+        # be larger, slower to maintain, and would still need a recheck.
         Index(
             "ix_doc_embeddings_source_path",
             "project_id",
             text("(metadata ->> 'source_path')"),
+        ),
+        Index(
+            "ix_doc_embeddings_path",
+            "project_id",
+            text("(metadata ->> 'path')"),
         ),
         # The similarity index. HNSW rather than IVFFlat: it needs no training pass,
         # so it works from an empty table and does not degrade as rows arrive.

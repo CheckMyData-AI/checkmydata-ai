@@ -35,7 +35,17 @@ class ErrorLog(Base):
     meta_json: Mapped[str] = mapped_column(Text, nullable=False, server_default="{}")
 
     __table_args__ = (
-        Index("uq_error_log_project_sig", "project_id", "signature", unique=True),
+        # DATA-08: over `coalesce(project_id, '')`, not the bare column. Both engines
+        # treat NULLs as distinct in a unique index, and system/span events carry no
+        # project — so the dedup rule this index exists to enforce imposed nothing at
+        # all on exactly those rows. The project solved the same problem one table
+        # over: `uq_indexing_runs_active_one` coalesces `connection_id`.
+        Index(
+            "uq_error_log_project_sig",
+            func.coalesce(project_id, ""),
+            "signature",
+            unique=True,
+        ),
         Index("ix_error_log_project_lastseen", "project_id", "last_seen_at"),
         Index("ix_error_log_status", "status"),
     )
