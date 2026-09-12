@@ -12,7 +12,7 @@ human review moves them to `validated`.
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-09-09 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-09-12 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -25,9 +25,9 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 | Status | draft × 12, implemented × 141 |
 | Last verdict | PARTIAL × 2, PASS × 139, no verdict × 12 |
 | Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, undated × 12 |
-| **Verified >30 days ago** | **95 of 153** (oldest 52 days) |
+| **Verified >30 days ago** | **95 of 153** (oldest 55 days) |
 | Never verified (no date) | 12 |
-| Referenced from code or tests | **33 of 153** |
+| Referenced from code or tests | **37 of 153** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which

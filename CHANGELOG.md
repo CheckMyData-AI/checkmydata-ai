@@ -35,6 +35,10 @@ two functions below still ran `git grep -oE "SCN-[0-9]+"`, which captures `SCN-1
 one reported none, and `audit_backlog` never listed it at all. The id shape is written
 once now and used in all five places, in both regex dialects the script needs.
 
+The suffix fix is visible as a measurement: the generated block's *Referenced from code
+or tests* figure moved from **33 of 153 to 37** — four anchors that were being credited
+to the wrong scenario, now credited to the right one.
+
 **And SCN-052 contradicted itself while stamped `implemented / PASS`.** Its Expected
 result promised the `WrongDataModal` investigation flow; its own `Errors & recovery`
 note said thumbs-down sends a canned prompt instead. A reader taking the Expected result
