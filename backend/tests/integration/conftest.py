@@ -157,16 +157,45 @@ async def _grant_project_creation(db_session: AsyncSession, user_id: str) -> Non
     await db_session.flush()
 
 
+async def mark_email_verified(user_id: str) -> None:
+    """Confirm a registered test user's address, as `/api/auth/verify-email` would.
+
+    AUTH-01 made a verified address a precondition for accepting an invitation, and
+    `/api/auth/register` deliberately leaves `email_verified=False` — that is the whole
+    point of the gate. Most tests here reach an invite only to arrange a *membership*,
+    so they need the flag set the way a real user would have set it by clicking the
+    link in their inbox, not a hole in the gate.
+
+    Uses the app's own session factory rather than the `db_session` fixture, because
+    `register_user` is called from tests that take no session and would otherwise have
+    to thread one through purely to satisfy this.
+    """
+    from sqlalchemy import update
+
+    from app.models.base import async_session_factory
+    from app.models.user import User
+
+    async with async_session_factory() as session:
+        await session.execute(update(User).where(User.id == user_id).values(email_verified=True))
+        await session.commit()
+
+
 async def register_user(
     client: AsyncClient,
     email: str | None = None,
     *,
     db_session: AsyncSession | None = None,
+    email_verified: bool = True,
 ) -> dict:
     """Helper: register a user and return {token, user_id, email}.
 
     When ``db_session`` is passed the user is automatically granted
     ``can_create_projects`` so it can own projects in tests.
+
+    ``email_verified`` defaults to True (AUTH-01). Registration itself leaves it False —
+    that is the gate — and nearly every test here reaches an invite only to arrange a
+    membership, so they want a user who has clicked the link. Pass ``False`` to test the
+    gate itself.
     """
     email = email or f"user-{uuid.uuid4().hex[:8]}@test.com"
     resp = await client.post(
@@ -182,6 +211,8 @@ async def register_user(
 
     if db_session is not None:
         await _grant_project_creation(db_session, user_id)
+    if email_verified:
+        await mark_email_verified(user_id)
 
     return {"token": data["token"], "user_id": user_id, "email": email}
 

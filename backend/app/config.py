@@ -302,6 +302,14 @@ class Settings(BaseSettings):
     # (169.254.169.254 and friends) are refused either way — no database lives there and
     # what does hands out credentials for the whole account. Set this False when running
     # multi-tenant, where a tenant reaching 127.0.0.1 reaches *your* infrastructure.
+    #
+    # SQL-07 (2026-09-12): the check now runs in `ConnectionService.to_config` as well
+    # as at save. `host_guard`'s own docstring argues it must see every address the name
+    # resolves to "because `db.attacker.test` may resolve to a public address in the
+    # operator's check and a private one a second later" — and that reasoning only holds
+    # if it runs when the socket opens. Running it at write time alone let a tenant save
+    # a public record and repoint it at 169.254.169.254 with a short TTL before calling
+    # `/connections/{id}/test`.
     connection_allow_private_hosts: bool = True
 
     # Live Git access (GitInspector / GitAgent). All operations are read-only.

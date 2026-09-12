@@ -4,12 +4,17 @@ import logging
 import uuid
 
 import pytest
+from httpx import AsyncClient
 from sqlalchemy import select
 
 import app.api.routes.auth as auth_routes
 from app.models.audit_log import AuditLog
 from app.models.project_member import ProjectMember
-from tests.integration.conftest import auth_headers, register_user
+from tests.integration.conftest import (
+    auth_headers,
+    mark_email_verified,
+    register_user,
+)
 
 
 async def _is_member(db_session, project_id: str, user_id: str) -> bool:
@@ -199,3 +204,89 @@ async def test_audit_log_persists_row(client, db_session, caplog):
         .all()
     )
     assert rows, "auth.register should be persisted to audit_logs"
+
+
+@pytest.mark.asyncio
+class TestAnUnverifiedAccountCannotTakeAnInvitation:
+    """AUTH-01, over HTTP: the attack as the audit described it.
+
+    An owner invites `newhire@corp.com`, who has no account yet. An attacker registers
+    that address first — 200, session cookie, `email_verified=false` — reads the invite
+    id from `GET /api/invites/pending`, which filters on the email string alone, and
+    accepts it. The email check proved only that the caller's *stored* address matches,
+    and the caller chose that string at registration.
+    """
+
+    async def test_the_attacker_is_refused(self, client: AsyncClient, db_session) -> None:
+        owner = await register_user(client, db_session=db_session)
+        project = (
+            await client.post(
+                "/api/projects",
+                json={"name": "auth01"},
+                headers=auth_headers(owner["token"]),
+            )
+        ).json()
+
+        invite = await client.post(
+            f"/api/invites/{project['id']}/invites",
+            json={"email": "newhire@corp.com", "role": "editor"},
+            headers=auth_headers(owner["token"]),
+        )
+        assert invite.status_code == 200, invite.text
+
+        attacker = await register_user(client, "newhire@corp.com", email_verified=False)
+        pending = await client.get("/api/invites/pending", headers=auth_headers(attacker["token"]))
+        assert pending.status_code == 200
+        assert pending.json(), (
+            "the invite is visible to anyone holding the address — which is why the "
+            "gate has to be on ACCEPT, not on listing"
+        )
+
+        accepted = await client.post(
+            f"/api/invites/accept/{invite.json()['id']}",
+            headers=auth_headers(attacker["token"]),
+        )
+        assert accepted.status_code == 403, (
+            f"an unverified account joined the project: {accepted.status_code} "
+            f"{accepted.text[:200]} (AUTH-01)"
+        )
+        assert "verify" in accepted.text.lower()
+
+        members = await client.get(
+            f"/api/invites/{project['id']}/members", headers=auth_headers(owner["token"])
+        )
+        emails = [m.get("email") for m in members.json()]
+        assert "newhire@corp.com" not in emails, "the refusal must leave no membership behind"
+
+    async def test_the_real_invitee_gets_in_once_verified(
+        self, client: AsyncClient, db_session
+    ) -> None:
+        """The gate is a delay, not a dead end."""
+        owner = await register_user(client, db_session=db_session)
+        project = (
+            await client.post(
+                "/api/projects",
+                json={"name": "auth01b"},
+                headers=auth_headers(owner["token"]),
+            )
+        ).json()
+        invite = await client.post(
+            f"/api/invites/{project['id']}/invites",
+            json={"email": "realhire@corp.com", "role": "editor"},
+            headers=auth_headers(owner["token"]),
+        )
+        invitee = await register_user(client, "realhire@corp.com", email_verified=False)
+
+        refused = await client.post(
+            f"/api/invites/accept/{invite.json()['id']}",
+            headers=auth_headers(invitee["token"]),
+        )
+        assert refused.status_code == 403
+
+        await mark_email_verified(invitee["user_id"])
+        accepted = await client.post(
+            f"/api/invites/accept/{invite.json()['id']}",
+            headers=auth_headers(invitee["token"]),
+        )
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["role"] == "editor"

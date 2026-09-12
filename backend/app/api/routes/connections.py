@@ -6,7 +6,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 if TYPE_CHECKING:
     from app.connectors.base import ConnectionConfig
@@ -14,9 +14,18 @@ if TYPE_CHECKING:
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.source_types import clamp_backfill_days
 from app.api.deps import get_current_user, get_db
 from app.config import settings as app_config
 from app.connectors.exec_templates import validate_command_template
@@ -382,6 +391,29 @@ class _ConnectionFieldRules(BaseModel):
         return v.strip() if isinstance(v, str) else v
 
 
+def _validate_source_config(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Bound the free-form analytics config before it is stored (ANA-06).
+
+    `source_config` is an unvalidated dict on both create and update, and the only
+    clamp on `backfill_days` lived in the React form — which a direct API call
+    bypasses. `{"backfill_days": 100000}` was accepted and enumerated 500 000 vendor
+    calls per run, beginning in 1752, with `GET /collection-status` rebuilding the same
+    500 000 period strings on a read-only endpoint.
+
+    Clamped rather than refused: the value is an operator's preference, not a
+    credential, and a 422 on a number the browser would silently have corrected is a
+    worse answer than the nearest legal window. A key that is not a window is left
+    alone — this bounds what it understands and does not police the rest.
+    """
+    if not value:
+        return value
+    if "backfill_days" in value:
+        clamped = clamp_backfill_days(value["backfill_days"])
+        if clamped is not None:
+            value = {**value, "backfill_days": clamped}
+    return value
+
+
 class ConnectionCreate(_ConnectionFieldRules):
     project_id: str = Field(max_length=255)
     name: str = Field(max_length=255)
@@ -415,7 +447,7 @@ class ConnectionCreate(_ConnectionFieldRules):
     # Analytics-source fields (spec §1.2). The credential itself is never sent
     # here — only the id of an already-stored, owner-scoped VendorCredential.
     vendor_credential_id: str | None = Field(None, max_length=36)
-    source_config: dict[str, Any] | None = None
+    source_config: Annotated[dict[str, Any] | None, AfterValidator(_validate_source_config)] = None
     collection_enabled: bool = True
     collection_hour: int = Field(default=3, ge=0, le=23)
     # What this source is for, in the owner's words (SCN-134). Capped here as well as
@@ -495,7 +527,7 @@ class ConnectionUpdate(_ConnectionFieldRules):
     mcp_env: dict[str, str] | None = None
     # Analytics-source fields (spec §1.2).
     vendor_credential_id: str | None = Field(None, max_length=36)
-    source_config: dict[str, Any] | None = None
+    source_config: Annotated[dict[str, Any] | None, AfterValidator(_validate_source_config)] = None
     collection_enabled: bool | None = None
     collection_hour: int | None = Field(None, ge=0, le=23)
     # H6: opt-out of sending DB sample data to the LLM

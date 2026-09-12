@@ -226,6 +226,26 @@ class InviteService:
                     status_code=403,
                     detail="This invite is for a different email address",
                 )
+            # AUTH-01. The check above proves the caller's STORED email equals the
+            # invite's — and the caller chose that string at registration.
+            # `/api/auth/register` returns a live session immediately with
+            # `email_verified=False`, and until now the only gate on that column
+            # anywhere in the API was project creation. So an owner invites
+            # `newhire@corp.com`, an attacker registers that address before the real
+            # person does, reads the invite id from `GET /api/invites/pending` — which
+            # filters on the email string alone — and accepts it.
+            #
+            # `_skip_email_check` callers are exempt because they have just proven it:
+            # one runs immediately after `verify_email`, the other after a Google login,
+            # which is pre-verified. This is the interactive path, and it is the attack.
+            if not user_obj.email_verified:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Verify your email address before accepting this invitation. "
+                        "Check your inbox, or request a new link from the sign-in page."
+                    ),
+                )
 
         # F-PROJ-03. This block used to sit inside `async with db.begin_nested()`, and
         # the board recorded it as "500 on idempotent re-accept". Measured on SQLAlchemy
