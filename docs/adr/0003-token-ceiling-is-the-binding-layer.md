@@ -1,6 +1,10 @@
 # ADR-0003 — The token ceiling is the layer that binds LLM spend
 
-- **Status:** Accepted, 2026-09-11
+- **Status:** Accepted 2026-09-11; **amended by `ADR-0004` on 2026-09-12**, which moves the
+  ceiling to dollars and demotes the token ceiling to a backstop. The decision below stands
+  as taken — `estimated_cost_usd` was NULL on 44% of the window's rows at the time, and a
+  gate cannot rest on a column missing for half its inputs. This document named its own
+  successor and the three things it needed; all three now exist.
 - **Deciders:** implementing agent, autonomously, under the operator's standing
   instruction to work the 2026-09-09 backlog without stopping for decisions the code and
   the measurements can settle

@@ -86,6 +86,40 @@ PROMISED_CREDIT_USD: dict[str, float] = {"base": 30.0, "scale": 90.0, "team": 15
 #:     from token_usage where estimated_cost_usd is not null group by model;
 BLENDED_USD_PER_MILLION_TOKENS = 0.25
 
+#: What a row nobody could price costs (row 1b). `_estimate_cost` returns ``None`` when
+#: the model is absent from the live OpenRouter catalogue — a native OpenAI/Anthropic
+#: model, or one withdrawn since. Charging zero is DATA-01's shape all over again: a
+#: figure computed from an absence, on the column that now decides whether to refuse.
+#:
+#: **Deliberately the priciest measured stream, not the blend.** The two constants point
+#: in opposite directions and for the same reason. For a CEILING the blend was wrong
+#: because it applied to every token, including the cheap indexing tokens that dominate
+#: the count. For a FALLBACK on one unpriceable row, under-counting is the hole: an
+#: account routing everything through an unpriced model would escape the gate entirely,
+#: and an unpriced model is usually a *native* provider model, which is the expensive
+#: kind. Over-pricing a row we cannot price is conservative; under-pricing it is a door.
+#:
+#: 1.85 is the chat stream measured 2026-09-11 (`z-ai/glm-5.2`, catalogue 0.966/3.036 at
+#: the observed 58/42 prompt/completion mix).
+UNPRICED_USD_PER_MILLION_TOKENS = 1.85
+
+
+def price_unpriced_tokens(total_tokens: int) -> float:
+    """Dollars to charge for tokens whose model carried no price."""
+    if total_tokens <= 0:
+        return 0.0
+    return total_tokens / 1_000_000 * UNPRICED_USD_PER_MILLION_TOKENS
+
+
+def _cost_ceilings(promised_usd: float) -> tuple[float, float]:
+    """(daily, monthly) DOLLAR ceilings for a tier promising *promised_usd* of credit.
+
+    No division, no blend, no margin: the promise is dollars and so is the ceiling.
+    Daily is a third of monthly for the same reason it is on the token ceilings — a
+    runaway is bounded within one day rather than one month.
+    """
+    return round(promised_usd / 3, 2), float(promised_usd)
+
 
 def _ceilings(promised_usd: float) -> tuple[int, int]:
     """(daily, monthly) token ceilings for a tier promising *promised_usd* of credit.
@@ -133,6 +167,8 @@ PAID_TIERS: list[dict[str, Any]] = [
             "1 project, 5 data sources, 1 GB index, $30/month of LLM credit at cost."
         ),
         "price_usd_month": 199,
+        "daily_cost_limit_usd": _cost_ceilings(PROMISED_CREDIT_USD["base"])[0],
+        "monthly_cost_limit_usd": _cost_ceilings(PROMISED_CREDIT_USD["base"])[1],
         "daily_token_limit": _ceilings(PROMISED_CREDIT_USD["base"])[0],
         "monthly_token_limit": _ceilings(PROMISED_CREDIT_USD["base"])[1],
         "max_connections": 5,
@@ -150,6 +186,8 @@ PAID_TIERS: list[dict[str, Any]] = [
             "3 projects, 15 data sources, 2 GB index per project, $90/month of LLM credit at cost."
         ),
         "price_usd_month": 599,
+        "daily_cost_limit_usd": _cost_ceilings(PROMISED_CREDIT_USD["scale"])[0],
+        "monthly_cost_limit_usd": _cost_ceilings(PROMISED_CREDIT_USD["scale"])[1],
         "daily_token_limit": _ceilings(PROMISED_CREDIT_USD["scale"])[0],
         "monthly_token_limit": _ceilings(PROMISED_CREDIT_USD["scale"])[1],
         "max_connections": 15,
@@ -168,6 +206,8 @@ PAID_TIERS: list[dict[str, Any]] = [
             "$150/month of LLM credit at cost."
         ),
         "price_usd_month": 900,
+        "daily_cost_limit_usd": _cost_ceilings(PROMISED_CREDIT_USD["team"])[0],
+        "monthly_cost_limit_usd": _cost_ceilings(PROMISED_CREDIT_USD["team"])[1],
         "daily_token_limit": _ceilings(PROMISED_CREDIT_USD["team"])[0],
         "monthly_token_limit": _ceilings(PROMISED_CREDIT_USD["team"])[1],
         "max_connections": 50,
@@ -185,6 +225,9 @@ PAID_TIERS: list[dict[str, Any]] = [
             "Unlimited projects, data sources and index. LLM credit at cost with no monthly cap."
         ),
         "price_usd_month": 1500,
+        # "no monthly cap" has no ceiling to carry, in either unit.
+        "daily_cost_limit_usd": 0.0,
+        "monthly_cost_limit_usd": 0.0,
         "daily_token_limit": 0,
         "monthly_token_limit": 0,
         "max_connections": 0,

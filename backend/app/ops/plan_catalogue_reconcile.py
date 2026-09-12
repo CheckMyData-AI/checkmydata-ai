@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -39,6 +41,29 @@ class CatalogueResult:
     inserted: int = 0
     updated: int = 0
     retired: int = 0
+
+
+def _differs(stored: Any, declared: Any) -> bool:
+    """Whether the stored column value disagrees with what the catalogue declares.
+
+    Money is `Numeric` since row 1b, so these columns come back as `Decimal` while the
+    tier declares a `float`, and `Decimal != float` is exact rather than approximate:
+    `Decimal("10.0000") == 10.0` is True, but `Decimal("199.9900") == 199.99` is
+    **False**, because 199.99 has no exact binary representation. Every price the
+    ladder holds today is float-exact, so a plain `!=` happens to work — and the first
+    tier priced at $199.99 would make this reconcile rewrite the whole catalogue on
+    every boot, silently, for ever. A reconcile that always writes is not idempotent,
+    and this one runs in the lifespan of every dyno.
+
+    Compared as `Decimal` on both sides, via `str`, so the comparison is between the
+    decimal figures a human wrote rather than their binary approximations.
+    """
+    if isinstance(stored, Decimal) or isinstance(declared, Decimal):
+        try:
+            return Decimal(str(stored)) != Decimal(str(declared))
+        except (InvalidOperation, ValueError):
+            return True
+    return bool(stored != declared)
 
 
 async def reconcile_plan_catalogue(
@@ -70,7 +95,7 @@ async def reconcile_plan_catalogue(
                 for field, value in tier.items():
                     if field == "id":
                         continue
-                    if getattr(row, field) != value:
+                    if _differs(getattr(row, field), value):
                         setattr(row, field, value)
                         changed = True
                 if changed:

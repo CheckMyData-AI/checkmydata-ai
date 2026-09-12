@@ -537,7 +537,7 @@ Present only when `billing_enabled` is on; every route below returns **404** whe
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/billing/plans` | Public plan catalogue for the pricing page |
-| GET | `/api/billing/subscription` | The caller's plan, subscription state, and usage against its limits |
+| GET | `/api/billing/subscription` | The caller's plan, subscription state, and usage against its limits — **in both units** (row 1b). `usage.monthly_cost_used` / `monthly_cost_limit` are the ceiling the tier is actually sold in; the token figures beside them are the backstop for when cost accounting itself breaks. `*_cost_estimated` says how much of the spend was priced by fallback rather than measured, because a row whose model is absent from the live price catalogue is charged conservatively rather than forgiven |
 | POST | `/api/billing/checkout` | Start a Stripe Checkout session for a plan |
 | POST | `/api/billing/portal` | Open the Stripe Customer Portal — invoices, cancellation, card update |
 | POST | `/api/billing/topup` | Start a one-time Checkout for LLM credit. `mode=payment`, and **no amount is sent** — the price carries `custom_unit_amount`, so Stripe's page asks the customer for the figure. Refuses with 400 until the account has a provisioned key, because crediting a balance with nothing to spend from takes the money and grants nothing |

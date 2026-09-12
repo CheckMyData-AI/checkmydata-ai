@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.token_usage import TokenUsage
+from app.services.plan_catalogue import price_unpriced_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,31 @@ class UsageService:
         await db.commit()
         return row
 
+    async def _spend_since(self, db: AsyncSession, user_id: str, since: datetime) -> tuple:
+        """(dollars spent, dollars that were ESTIMATED) since *since* — row 1b.
+
+        Two sums over the same window, because a row whose model carried no price is
+        charged rather than forgiven and the reader is entitled to know how much of
+        the total that was. `_estimate_cost` returns ``None`` for a model absent from
+        the live OpenRouter catalogue, which is usually a NATIVE provider model — the
+        expensive kind — so charging zero would let an account escape by picking one.
+        """
+        priced_stmt = select(func.coalesce(func.sum(TokenUsage.estimated_cost_usd), 0)).where(
+            TokenUsage.user_id == user_id,
+            TokenUsage.created_at >= since,
+            TokenUsage.estimated_cost_usd.is_not(None),
+        )
+        priced = float((await db.execute(priced_stmt)).scalar_one() or 0)
+
+        unpriced_stmt = select(func.coalesce(func.sum(TokenUsage.total_tokens), 0)).where(
+            TokenUsage.user_id == user_id,
+            TokenUsage.created_at >= since,
+            TokenUsage.estimated_cost_usd.is_(None),
+        )
+        unpriced_tokens = int((await db.execute(unpriced_stmt)).scalar_one() or 0)
+        estimated = price_unpriced_tokens(unpriced_tokens)
+        return priced + estimated, estimated
+
     async def check_budget(
         self,
         db: AsyncSession,
@@ -79,12 +105,28 @@ class UsageService:
         *,
         daily_limit: int = DEFAULT_DAILY_TOKEN_LIMIT,
         monthly_limit: int = DEFAULT_MONTHLY_TOKEN_LIMIT,
+        daily_cost_limit: float = 0.0,
+        monthly_cost_limit: float = 0.0,
     ) -> dict:
         """Check if user is within budget.  Limits of 0 mean unlimited.
 
-        Returns a dict with ``allowed``, ``daily_used``, ``monthly_used``,
-        ``daily_limit``, ``monthly_limit``, and ``daily_remaining`` /
-        ``monthly_remaining`` (``None`` when unlimited).
+        **Dollars are the gate; tokens are the backstop (row 1b).** Every tier sells
+        dollars of LLM credit, and that promise used to reach this function only after
+        being divided by a blended $/M rate carrying a 2.2x margin — a margin that is
+        the cost of the wrong unit, not caution: `agent_llm_model` is a per-project
+        field the customer sets, so the customer picks the price per token and no token
+        figure can bound dollars. `estimated_cost_usd` has been 100% populated since
+        2026-09-04, which is what made the right unit available.
+
+        The token ceilings stay behind the dollar ones, for the case where cost
+        accounting itself breaks — an unreachable price table over a long window would
+        otherwise remove the gate rather than loosen it. The stricter breach raises
+        first, and the dollar one is checked first because it is the one the customer
+        was sold.
+
+        Returns ``allowed``, the used/limit/remaining triple in BOTH units, and
+        ``*_cost_estimated`` — how much of the spend was priced by fallback rather than
+        measured, so "the gate is guessing" is visible rather than implicit.
         Raises ``BudgetExceededError`` when a non-zero limit is breached.
         """
         now = datetime.now(UTC)
@@ -103,6 +145,9 @@ class UsageService:
         )
         monthly_used = int((await db.execute(monthly_stmt)).scalar_one())
 
+        daily_cost, daily_estimated = await self._spend_since(db, user_id, today_start)
+        monthly_cost, monthly_estimated = await self._spend_since(db, user_id, month_start)
+
         result = {
             "allowed": True,
             "daily_used": daily_used,
@@ -111,7 +156,35 @@ class UsageService:
             "monthly_limit": monthly_limit or None,
             "daily_remaining": (daily_limit - daily_used) if daily_limit else None,
             "monthly_remaining": (monthly_limit - monthly_used) if monthly_limit else None,
+            "daily_cost_used": round(daily_cost, 6),
+            "monthly_cost_used": round(monthly_cost, 6),
+            "daily_cost_limit": daily_cost_limit or None,
+            "monthly_cost_limit": monthly_cost_limit or None,
+            "daily_cost_remaining": (
+                round(daily_cost_limit - daily_cost, 6) if daily_cost_limit else None
+            ),
+            "monthly_cost_remaining": (
+                round(monthly_cost_limit - monthly_cost, 6) if monthly_cost_limit else None
+            ),
+            "daily_cost_estimated": round(daily_estimated, 6),
+            "monthly_cost_estimated": round(monthly_estimated, 6),
         }
+
+        if daily_cost_limit and daily_cost >= daily_cost_limit:
+            result["allowed"] = False
+            raise BudgetExceededError(
+                f"Daily spend limit exceeded (${daily_cost:,.2f}/${daily_cost_limit:,.2f})",
+                used=int(daily_used),
+                limit=int(daily_limit or 0),
+            )
+
+        if monthly_cost_limit and monthly_cost >= monthly_cost_limit:
+            result["allowed"] = False
+            raise BudgetExceededError(
+                f"Monthly spend limit exceeded (${monthly_cost:,.2f}/${monthly_cost_limit:,.2f})",
+                used=int(monthly_used),
+                limit=int(monthly_limit or 0),
+            )
 
         if daily_limit and daily_used >= daily_limit:
             result["allowed"] = False
@@ -140,17 +213,32 @@ class UsageService:
         try:
             from app.services.entitlement_service import EntitlementService
 
-            daily, monthly = await EntitlementService().effective_token_limits(db, user_id)
+            svc = EntitlementService()
+            daily, monthly = await svc.effective_token_limits(db, user_id)
+            daily_cost, monthly_cost = await svc.effective_cost_limits(db, user_id)
         except Exception:
             logger.warning("Entitlement lookup failed; using config limits", exc_info=True)
             from app.config import settings
 
             daily = settings.user_daily_token_limit
             monthly = settings.user_monthly_token_limit
-        if not daily and not monthly:
+            # No config counterpart for the dollar ceilings (row 1b): a spend cap is a
+            # statement about a subscription, and this branch is the one where we could
+            # not read which subscription it is. Falling back to the token brake alone
+            # loosens the gate; inventing a dollar figure here would enforce one nobody
+            # was sold.
+            daily_cost = monthly_cost = 0.0
+        if not daily and not monthly and not daily_cost and not monthly_cost:
             return None
         try:
-            await self.check_budget(db, user_id, daily_limit=daily, monthly_limit=monthly)
+            await self.check_budget(
+                db,
+                user_id,
+                daily_limit=daily,
+                monthly_limit=monthly,
+                daily_cost_limit=daily_cost,
+                monthly_cost_limit=monthly_cost,
+            )
         except BudgetExceededError as exc:
             logger.warning("Token budget exceeded for user=%s: %s", user_id[:8], exc)
             return str(exc) + " — upgrade your plan at /pricing to continue."
