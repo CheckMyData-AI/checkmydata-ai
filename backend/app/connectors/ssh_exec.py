@@ -651,6 +651,8 @@ class SSHExecConnector(BaseConnector):
             return f"`{name.replace('`', '``')}`"
         return f'"{name.replace(chr(34), chr(34) + chr(34))}"'
 
-    async def sample_data(self, table_name: str, limit: int = 3) -> QueryResult:
+    async def sample_data(
+        self, table_name: str, limit: int = 3, schema: str | None = None
+    ) -> QueryResult:
         quoted = self._quote_identifier(table_name)
         return await self.execute_query(f"SELECT * FROM {quoted} LIMIT {limit}")

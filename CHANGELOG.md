@@ -6,6 +6,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — five connector defects, each a place the data path went round a guard
+
+Board row 26; `SQL-03`, `SQL-05`, `SQL-08`, `SQL-09`, `SQL-10`.
+
+**Two regexes read the same string and disagreed** (`SQL-10`). `SafetyGuard`'s
+leading-token pattern allows a leading `(` on purpose — `(SELECT 1)` and
+`((SELECT 1) UNION (SELECT 2))` are ordinary SQL — and Postgres's `_ROW_RETURNING_RE`
+did not. So the guard admitted the query and the cursor decision refused it, dropping it
+into the non-cursor branch, which materialises the whole result set in the dyno's memory.
+The row cap is applied after that, so it bounds what is *returned* and not what is held.
+
+**`$` matches before a trailing newline** (`SQL-05`). `_SHELL_SAFE_RE` ended in `$`, so
+`"10.0.0.5\n"` was classified shell-safe and returned unquoted, ending the command line
+early. `\Z` matches only at the end of the string. Separately, the substitution loop
+wrote each value into `result` and then looked for the next placeholder **in `result`**,
+so a value that *is* a placeholder string got expanded on a later iteration —
+`{"db_host": "{db_name}", "db_name": "secrets"}` put the database name in the host
+position, ordered by whatever the caller happened to build. One pass now, with the
+quoting context still taken from the characters adjacent to each placeholder.
+
+**MongoDB columns came from document #1** (`SQL-09`). Heterogeneous documents are the
+whole point of the model, and `_infer_fields` exists in that same connector because it
+knows so. A field absent from the first document was invisible in every row, and
+`d.get(c)` filled the gap with `None` — leaving a reader unable to tell "this document
+has no such field" from "the field is null". Columns now cover every document, in
+first-seen order so they do not shuffle between runs.
+
+**Tables were sampled by bare name** (`SQL-08`). Postgres introspection deliberately
+returns every non-system schema and fills `TableInfo.schema`; the index pipeline passed
+`table.name` alone, so `SELECT * FROM "events"` resolved against the session
+`search_path` and read a table of that name in `public`, or none. The same for distinct
+values and column statistics. The three helpers take a schema now, and
+`_qualified_identifier` quotes the two parts separately — quoting `"analytics.events"`
+as one identifier names a table nobody has.
+
+**MySQL's row cap bounded memory and not the wire** (`SQL-03`). `SSDictCursor` is
+unbuffered, and closing it calls `_finish_unbuffered_query()`, which the driver documents
+as reading to EOF because the MySQL protocol has no way to say "stop sending". A
+`SELECT *` over a hundred-million-row table transferred every row before the call
+returned. The fix is to stop the server producing them: `SQL_SELECT_LIMIT`, per session,
+set to one more than the cap so the `+1` truncation sentinel still works, and best-effort
+because failing a query over a performance safeguard trades a slow answer for no answer.
+And a timed-out connection is closed rather than released — `asyncio.wait_for` cancels
+mid-cursor, and an unbuffered connection interrupted that way still has unread rows on
+the wire, so the next caller's first read is somebody else's result set. `postgres.py`
+has terminated its connection for exactly this reason since it was written.
+
+**Two things this taught, both from doing it rather than reading it:**
+
+Widening the three introspection signatures broke five fake connectors, and the failures
+did **not** read as `TypeError`. The pipeline wraps each call in a broad
+`except Exception`, so a signature mismatch produced no samples, no distinct values and
+no statistics, with no error anywhere — indistinguishable from a table nobody could read.
+Narrowing that handler is the wrong fix, since it exists so one unreadable table does not
+fail a whole index; a test over `ADAPTER_REGISTRY` catches the mismatch where it is loud.
+
+Twelve planted defects, and **two of the guards failed against their own**. One asserted
+`"schema=table.schema" in source` — there are four call sites, so removing it from one
+left the substring in three and the guard passed while that table went back to
+`search_path`; it walks the AST per call site now, and refuses to believe itself if it
+finds fewer sites than exist. The other exercised `_apply_row_limit` directly, so deleting
+its call from `execute_query` left every test green and the wire unbounded; it drives the
+real `execute_query` and reads what was sent.
+
 ### Security — an unverified account could accept somebody else's invitation
 
 Board row 25; `AUTH-01`.

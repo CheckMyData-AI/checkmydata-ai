@@ -494,6 +494,11 @@ class _FakeConnector:
     def __init__(self) -> None:
         self.sampled: list[tuple[str, int]] = []
         self.distincted: list[tuple[str, str]] = []
+        #: SQL-08: what schema each call named. A pipeline that stops passing it
+        #: records `None` here rather than silently sampling whatever `search_path`
+        #: resolves the bare name to.
+        self.sampled_schemas: list[str | None] = []
+        self.distinct_schemas: list[str | None] = []
 
     async def connect(self, cfg) -> None:  # noqa: ANN001
         pass
@@ -516,20 +521,28 @@ class _FakeConnector:
             ],
         )
 
-    async def sample_data(self, table_name: str, limit: int = 3) -> QueryResult:
+    async def sample_data(
+        self, table_name: str, limit: int = 3, schema: str | None = None
+    ) -> QueryResult:
+        # SQL-08: the schema is recorded, so a pipeline that stops passing it fails
+        # here rather than silently sampling `public`.
         self.sampled.append((table_name, limit))
+        self.sampled_schemas.append(schema)
         return QueryResult(
             columns=["status", "_id"],
             rows=[["paid", "x1"], ["new", "x2"]],
             row_count=2,
         )
 
-    async def distinct_values(self, table: str, column: str, limit: int = 50) -> list[str]:
+    async def distinct_values(
+        self, table: str, column: str, limit: int = 50, schema: str | None = None
+    ) -> list[str]:
         self.distincted.append((table, column))
+        self.distinct_schemas.append(schema)
         # NON-empty — the D2 regression was empty because SQL was sent to Mongo
         return ["paid", "new", "refunded"]
 
-    async def approx_stats(self, table: str, column: str):  # noqa: ANN201
+    async def approx_stats(self, table: str, column: str, schema: str | None = None):  # noqa: ANN201
         from app.connectors.base import ColumnStats
 
         return ColumnStats(distinct_count=3, null_rate=0.0)
@@ -869,10 +882,14 @@ class _BigSchemaConnector(_FakeConnector):
         ]
         return SchemaInfo(db_type="mongodb", tables=tables)
 
-    async def sample_data(self, table_name: str, limit: int = 3) -> QueryResult:
+    async def sample_data(
+        self, table_name: str, limit: int = 3, schema: str | None = None
+    ) -> QueryResult:
         return QueryResult(columns=["_id"], rows=[["x1"]], row_count=1)
 
-    async def distinct_values(self, table: str, column: str, limit: int = 50) -> list[str]:
+    async def distinct_values(
+        self, table: str, column: str, limit: int = 50, schema: str | None = None
+    ) -> list[str]:
         return []
 
 
@@ -991,11 +1008,15 @@ class TestD17DetectLatestRecordApproxFallback:
         from app.connectors.base import ColumnStats, ConnectionConfig
 
         class _D17Connector(_FakeConnector):
-            async def sample_data(self, table_name: str, limit: int = 3) -> QueryResult:
+            async def sample_data(
+                self, table_name: str, limit: int = 3, schema: str | None = None
+            ) -> QueryResult:
                 # Return no rows — as if Mongo has no ordered sample
                 return QueryResult(columns=["status", "_id"], rows=[], row_count=0)
 
-            async def approx_stats(self, table: str, column: str) -> ColumnStats:
+            async def approx_stats(
+                self, table: str, column: str, schema: str | None = None
+            ) -> ColumnStats:
                 # ordering col (_id for orders) gets a max_value
                 if column == "_id":
                     return ColumnStats(max_value="2026-05-01T00:00:00")
@@ -1038,7 +1059,9 @@ class TestD18DistinctTruncationSentinel:
         full_vals = [str(i) for i in range(MAX_DISTINCT_CARDINALITY)]  # exactly at cap
 
         class _D18Connector(_FakeConnector):
-            async def distinct_values(self, table: str, column: str, limit: int = 50) -> list[str]:
+            async def distinct_values(
+                self, table: str, column: str, limit: int = 50, schema: str | None = None
+            ) -> list[str]:
                 if column == "status":
                     return full_vals
                 return []
@@ -1067,7 +1090,9 @@ class TestD18DistinctTruncationSentinel:
         from app.connectors.base import ConnectionConfig
 
         class _D18SmallConnector(_FakeConnector):
-            async def distinct_values(self, table: str, column: str, limit: int = 50) -> list[str]:
+            async def distinct_values(
+                self, table: str, column: str, limit: int = 50, schema: str | None = None
+            ) -> list[str]:
                 if column == "status":
                     return ["paid", "new", "refunded"]  # only 3 — no truncation
                 return []

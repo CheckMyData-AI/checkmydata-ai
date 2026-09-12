@@ -468,7 +468,14 @@ class TestMySQLConnector:
         await connector.execute_query("SELECT * FROM users")
 
         # Streaming cursor requested, and we never call fetchall().
-        mock_conn.cursor.assert_called_once_with(aiomysql.SSDictCursor)
+        #
+        # `assert_any_call` rather than `assert_called_once_with`: SQL-03 added a second,
+        # plain cursor that sets `SQL_SELECT_LIMIT` for the session before the query
+        # runs, because the row cap bounds MEMORY and not the WIRE — closing an
+        # unbuffered cursor reads to EOF, since the MySQL protocol has no way to say
+        # "stop sending". What this test is about is that the QUERY streams, which is
+        # the call below; "exactly one cursor was opened" was never the property.
+        mock_conn.cursor.assert_any_call(aiomysql.SSDictCursor)
         mock_cur.fetchmany.assert_awaited_once_with(MAX_RESULT_ROWS + 1)
         assert not mock_cur.fetchall.called
 
