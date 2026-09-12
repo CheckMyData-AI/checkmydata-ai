@@ -9,6 +9,7 @@ from app.api.deps import get_current_user, get_db
 from app.connectors.registry import get_connector
 from app.core.health_monitor import health_monitor
 from app.core.rate_limit import limiter
+from app.core.redaction import safe_error
 from app.services.batch_service import require_database_connection
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
@@ -99,8 +100,11 @@ async def reconnect_connection(
             return {"success": False, "health": result}
         return {"success": True, "health": result}
     except Exception as exc:
+        # API-07: the client was handed the unredacted driver exception — which on a
+        # failed connect is exactly the message most likely to contain a DSN. The log
+        # keeps the full text; the response gets the scrubbed one.
         logger.warning("Reconnect failed for %s: %s", connection_id, exc)
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": safe_error(exc)}
     finally:
         try:
             await connector.disconnect()
