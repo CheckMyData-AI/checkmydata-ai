@@ -38,6 +38,10 @@ class CodeGraphSymbol(Base):
             "file_path",
         ),
         Index("ix_code_graph_symbols_uid", "uid"),
+        # DATA-11: added by the clustering migration and by no model, so it was
+        # absent from every `create_all` schema — and this class is the only
+        # description of the table the test suite ever reads.
+        Index("ix_code_graph_symbols_cluster", "project_id", "cluster_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

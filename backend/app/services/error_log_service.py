@@ -8,7 +8,8 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.error_log import ErrorLog
@@ -46,20 +47,20 @@ class ErrorLogService:
         meta: dict[str, Any] | None = None,
     ) -> ErrorLog:
         sig = _signature(source, kind, message)
-        existing = (
-            await db.execute(
-                select(ErrorLog).where(ErrorLog.project_id == project_id, ErrorLog.signature == sig)
-            )
-        ).scalar_one_or_none()
         now = datetime.now(UTC)
-        if existing is not None:
-            existing.occurrences += 1
-            existing.last_seen_at = now
-            existing.message = message or existing.message
-            existing.sample_ref = sample_ref or existing.sample_ref
-            existing.failure_kind = failure_kind or existing.failure_kind
+
+        async def _merge(into: ErrorLog) -> ErrorLog:
+            into.occurrences += 1
+            into.last_seen_at = now
+            into.message = message or into.message
+            into.sample_ref = sample_ref or into.sample_ref
+            into.failure_kind = failure_kind or into.failure_kind
             await db.commit()
-            return existing
+            return into
+
+        existing = await self._find(db, project_id, sig)
+        if existing is not None:
+            return await _merge(existing)
         row = ErrorLog(
             project_id=project_id,
             signature=sig,
@@ -73,8 +74,38 @@ class ErrorLogService:
             meta_json=json.dumps(meta or {}),
         )
         db.add(row)
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            # DATA-08: read-then-write races the unique index. The loser used to
+            # surface a 500 — an error while recording an error — where the outcome
+            # the caller asked for is available by re-reading the winner's row. The
+            # rollback is mandatory: the session is poisoned otherwise, the same
+            # shape `RunCoordinator.start` already uses for this table's sibling.
+            await db.rollback()
+            winner = await self._find(db, project_id, sig)
+            if winner is None:
+                raise
+            return await _merge(winner)
         return row
+
+    @staticmethod
+    async def _find(db: AsyncSession, project_id: str | None, sig: str) -> ErrorLog | None:
+        """The row this signature already occupies, if any.
+
+        Matched on `coalesce(project_id, '')` so it finds the same row the unique
+        index does. A bare `project_id == None` in SQL is `NULL = NULL`, which is
+        never true — the exact asymmetry that made the dedup rule a no-op for
+        system-scoped errors in the first place.
+        """
+        return (
+            await db.execute(
+                select(ErrorLog).where(
+                    func.coalesce(ErrorLog.project_id, "") == (project_id or ""),
+                    ErrorLog.signature == sig,
+                )
+            )
+        ).scalar_one_or_none()
 
     async def upsert_from_run(self, db: AsyncSession, run: IndexingRun) -> ErrorLog:
         return await self.upsert(

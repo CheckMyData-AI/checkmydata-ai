@@ -226,8 +226,8 @@ measured:
 | 14 | ✅ **DONE 2026-09-12** (#350) — Event-loop hygiene: xlsx in threadpool (+63× per-row fix), SQL pagination pushdown, batch bounds + worker routing | API-04/09/11 | M |
 | 15 | ✅ **DONE 2026-09-12** (#351) — BM25 lifecycle: shared catalog instance; snapshot staleness by indexed sha | RET-05/06 | M |
 | 16 | ✅ **DONE 2026-09-12** (#352) — Schedules & alerts done right: timezone; evaluate-before-truncate; email delivery for `notification_channels`; retention for notifications/runs; seat enforcement | COR-01/02/03/07, BILL-09 | M |
-| 17 | 🔶 **IN PROGRESS 2026-09-12** — Rate limiting per actual client: proxy IPs, per-user keys, one 429 shape | API-05/06 | S |
-| 18 | Schema alignment migration: 81 nullables, BigInteger row_count, audit_log import, error_log dedup index, doc_embeddings path index, mcp index parity, CHECK on status vocabularies | DATA-02/03/04/05/07/08/09/11 | M |
+| 17 | ✅ **DONE 2026-09-12** (#353) — Rate limiting per actual client: proxy IPs, per-user keys, one 429 shape | API-05/06 | S |
+| 18 | 🔶 **IN PROGRESS 2026-09-12** — Schema alignment migration: 81 nullables, BigInteger row_count, audit_log import, error_log dedup index, doc_embeddings path index, mcp index parity, CHECK on status vocabularies | DATA-02/03/04/05/07/08/09/11 | M |
 | 19 | Orchestrator cache sweep keyed on all maps; replan seed excludes rejected results; idempotency check before transient re-run; `query_analytics_source` into `_VALID_TOOLS`; router verdict preserved; resumed-stage sample labelling | ORCH-01/03/05/07/10/11 | M |
 | 20 | MCP surface: single slot acquire; `safe_error` on raw exceptions; audit trail for `execute_raw_query`; per-project webhook secrets; role validation on member update; `get_accessible_projects` through the shared filter | AUTH-04/05/06/07/08, BIZ-07 | M |
 
