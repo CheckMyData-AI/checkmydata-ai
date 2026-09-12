@@ -970,6 +970,14 @@ class Settings(BaseSettings):
     #: prune — unbounded growth, which is what this setting exists to end, so it is
     #: a deliberate choice rather than the default.
     unattended_history_retention_days: int = 90
+    #: How many proxies sit in front of this app (API-05). `1` on Heroku, which is
+    #: the router. Used to pick the caller's address out of `X-Forwarded-For` by
+    #: counting in from the RIGHT — each proxy appends what it saw, so the entries a
+    #: caller can forge are the left-hand ones. `0` ignores the header entirely and
+    #: uses the peer address, which is correct for a direct-to-internet deployment
+    #: and is the safe default: it can over-count a shared address, never under-count
+    #: a forged one.
+    trusted_proxy_hops: int = 1
     # Idle timeout (seconds) for a chat WebSocket waiting on the next client
     # message; the connection is closed when exceeded so abandoned sockets don't
     # hold server resources. 0 disables the idle timeout.

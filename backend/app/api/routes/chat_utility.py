@@ -371,7 +371,17 @@ async def explain_sql(
     # no tokens, and refusing one would ration something that costs nothing (API-08).
     budget_error = await _usage_svc.check_token_budget(db, user["user_id"])
     if budget_error:
-        raise HTTPException(status_code=429, detail=budget_error)
+        raise HTTPException(
+            status_code=429,
+            # API-06: this 429 resets tomorrow, not in a moment. Without the
+            # marker the client cannot tell it from the rate limiter's, and
+            # told a user whose budget was spent to wait.
+            detail={
+                "message": budget_error,
+                "error_type": "token_budget",
+                "is_retryable": False,
+            },
+        )
 
     llm_router = LLMRouter(
         usage_sink=DbUsageSink(user_id=user["user_id"], project_id=body.project_id)
@@ -518,7 +528,17 @@ async def summarize_message(
 
     budget_error = await _usage_svc.check_token_budget(db, user["user_id"])
     if budget_error:
-        raise HTTPException(status_code=429, detail=budget_error)
+        raise HTTPException(
+            status_code=429,
+            # API-06: this 429 resets tomorrow, not in a moment. Without the
+            # marker the client cannot tell it from the rate limiter's, and
+            # told a user whose budget was spent to wait.
+            detail={
+                "message": budget_error,
+                "error_type": "token_budget",
+                "is_retryable": False,
+            },
+        )
 
     llm_router = LLMRouter(
         usage_sink=DbUsageSink(user_id=user["user_id"], project_id=body.project_id)

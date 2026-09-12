@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — every rate limit in the product was one counter shared by everybody
+
+P2 row 17; API-05 and API-06.
+
+**The key was the router's address, not the caller's.** `Limiter` was built with
+slowapi's `get_remote_address`, which returns `request.client.host` verbatim; uvicorn
+only rewrites that from `X-Forwarded-For` when the peer is in `forwarded_allow_ips`,
+which defaults to `127.0.0.1`, and the container CMD passes neither `--proxy-headers`
+nor a trusted list. Behind a platform router every request therefore presented the same
+host — so `POST /api/auth/register` at `5/minute` meant the sixth registration attempt
+*anywhere in the world* in a given minute was refused, and `/api/chat/ask` at
+`20/minute` was a global twenty across the whole tenant base. The documented contract
+("per IP") was true of neither the IP nor the user.
+
+A limit now counts against the **authenticated user** where the request carries a
+readable token — two colleagues behind one office NAT are two callers, and one person on
+two networks is one — and otherwise against the caller's address, read from
+`X-Forwarded-For` by counting `TRUSTED_PROXY_HOPS` entries in **from the right**.
+
+Trusting the header outright is the other wrong answer, and the counted hop is the whole
+difference: each proxy *appends* what it saw, so every entry to the left of the trusted
+one is whatever the caller sent, and taking the right-most is what stops a client
+minting an unlimited number of buckets by prepending addresses. `0` ignores the header
+entirely and uses the peer address — correct for a direct-to-internet deployment, and
+the safe direction: it can over-count a shared address, never under-count a forged one.
+
+An unreadable token falls back to the address rather than to a constant, because
+collapsing every anonymous caller onto one key is the defect this is removing and must
+not return through the error path.
+
+**And one status carried two incompatible bodies.** `API.md` states every error is
+`{"detail": …}`; slowapi's handler emits `{"error": "Rate limit exceeded: 20 per 1
+minute"}` with no `detail` key at all. Worse, the same 429 also carries token-budget
+exhaustion — which resets with the billing period, not in a moment — and nothing on the
+wire distinguished them, so the frontend discarded the body and told a user whose
+monthly budget was spent to wait a moment. The limiter's 429 now speaks the documented
+envelope with `error_type: "rate_limit"` and `is_retryable: true`; the budget 429s carry
+`error_type: "token_budget"` and `is_retryable: false`; and the client shows the
+backend's own prose — the one that names `/pricing` — for the kind that waiting cannot
+fix.
+
 ### Fixed — five promises the product makes on a schedule and did not keep
 
 P2 row 16; COR-01, COR-02, COR-03, COR-07 and BILL-09. Each is a feature that exists,

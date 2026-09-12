@@ -274,7 +274,17 @@ async def ask(
     # F-FIN-1: block before any LLM work when the user's token budget is spent.
     budget_error = await _check_token_budget(db, user["user_id"])
     if budget_error:
-        raise HTTPException(status_code=429, detail=budget_error)
+        raise HTTPException(
+            status_code=429,
+            # API-06: this 429 resets tomorrow, not in a moment. Without the
+            # marker the client cannot tell it from the rate limiter's, and
+            # told a user whose budget was spent to wait.
+            detail={
+                "message": budget_error,
+                "error_type": "token_budget",
+                "is_retryable": False,
+            },
+        )
 
     config = None
     if body.connection_id:
@@ -645,7 +655,17 @@ async def ask_stream(
     # F-FIN-1: block before any LLM work when the user's token budget is spent.
     budget_error = await _check_token_budget(db, user["user_id"])
     if budget_error:
-        raise HTTPException(status_code=429, detail=budget_error)
+        raise HTTPException(
+            status_code=429,
+            # API-06: this 429 resets tomorrow, not in a moment. Without the
+            # marker the client cannot tell it from the rate limiter's, and
+            # told a user whose budget was spent to wait.
+            detail={
+                "message": budget_error,
+                "error_type": "token_budget",
+                "is_retryable": False,
+            },
+        )
 
     config = None
     if body.connection_id:

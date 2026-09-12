@@ -1,8 +1,6 @@
 """Unit tests for app.core.rate_limit Limiter configuration."""
 
-from slowapi.util import get_remote_address
-
-from app.core.rate_limit import _storage_options, limiter
+from app.core.rate_limit import _storage_options, client_identifier, limiter
 
 
 def test_limiter_instance_exists() -> None:
@@ -19,8 +17,15 @@ def test_default_limit_is_60_per_minute() -> None:
     assert "minute" in limit_str
 
 
-def test_key_func_is_get_remote_address() -> None:
-    assert limiter._key_func is get_remote_address
+def test_key_func_identifies_the_caller() -> None:
+    """It used to assert `get_remote_address`, and that WAS the defect (API-05).
+
+    slowapi's helper returns `request.client.host` verbatim. Behind a platform
+    router that is the router's address for every caller, so each limit in the
+    product was one counter shared by the whole tenant base — the sixth
+    registration attempt anywhere in the world in a minute was refused.
+    """
+    assert limiter._key_func is client_identifier
 
 
 def test_storage_options_rediss_disables_cert_verify(monkeypatch) -> None:

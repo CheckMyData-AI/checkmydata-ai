@@ -41,8 +41,14 @@ class TestSyncNowBudgetGate:
             resp = await auth_client.post(f"/api/projects/{project_id}/sync-now")
 
         assert resp.status_code == 429
+        # API-06: the payload is structured now. A spent budget and a rate limit
+        # share this status and do not share a remedy — waiting fixes one and not
+        # the other — so the body says which kind it is, and the client shows the
+        # backend's own prose for the kind waiting cannot fix.
         detail = resp.json()["detail"]
-        assert "budget" in detail.lower()
+        assert detail["error_type"] == "token_budget"
+        assert detail["is_retryable"] is False
+        assert "budget" in detail["message"].lower()
 
     async def test_sync_now_not_blocked_when_budget_ok(
         self, auth_client: AsyncClient, sync_test_project
