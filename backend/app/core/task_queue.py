@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
+import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -17,27 +18,89 @@ logger = logging.getLogger(__name__)
 _arq_pool: Any | None = None
 _fallback_tasks: dict[str, asyncio.Task] = {}
 
+#: The URL a successful or failed connect was made against, so a later `enqueue` can
+#: retry without being told it again (OPS-15).
+_arq_url: str | None = None
+_next_pool_attempt: float = 0.0
+_pool_lock: asyncio.Lock | None = None
+
+#: How long a failed connect suppresses the next attempt. A retry with no backoff
+#: turns one Redis outage into a connect storm on every enqueue; 30 s is short enough
+#: that a dyno recovers within a request or two of Redis coming back.
+POOL_RETRY_BACKOFF_SECONDS = 30.0
+
+
+def _reset_pool_backoff() -> None:
+    """Forget the last attempt's timestamp. For tests and for an explicit re-init."""
+    global _next_pool_attempt  # noqa: PLW0603
+    _next_pool_attempt = 0.0
+
+
+async def _ensure_pool(
+    redis_url: str | None = None,
+    *,
+    create: Callable[[Any], Coroutine[Any, Any, Any]] | None = None,
+) -> Any | None:
+    """Return the ARQ pool, connecting or re-connecting if it is time to try (OPS-15).
+
+    `init_task_queue` used to catch the connect exception, log one WARNING, leave
+    `_arq_pool` at `None` and let nothing retry — so `is_arq_active()` returned False
+    for the process's whole life. On `web` that means `repos.py` takes the deliberate
+    in-process branch and the full repo index, measured above 1 GiB, runs inside the
+    dyno serving user requests: exactly what `allow_in_process=False` exists to
+    forbid, and that guard covers only enqueue-time failure with a LIVE pool. In the
+    worker the same boot failure silently restores the state where the orphan sweep
+    and the reaper's requeue return `None`.
+
+    Backed off rather than retried per call: a dead Redis must not become a connect
+    attempt on every enqueue.
+    """
+    global _arq_pool, _arq_url, _next_pool_attempt, _pool_lock  # noqa: PLW0603
+
+    if _arq_pool is not None:
+        return _arq_pool
+    url = redis_url or _arq_url
+    if not url:
+        # Fallback mode is a configuration, not a fault. Nothing to retry.
+        return None
+    _arq_url = url
+
+    now = time.monotonic()
+    if now < _next_pool_attempt:
+        return None
+    _next_pool_attempt = now + POOL_RETRY_BACKOFF_SECONDS
+
+    if _pool_lock is None:
+        _pool_lock = asyncio.Lock()
+    async with _pool_lock:
+        if _arq_pool is not None:
+            return _arq_pool
+        try:
+            factory = create or importlib.import_module("arq.connections").create_pool
+            from app.core.redis_tls import arq_redis_settings
+
+            _arq_pool = await factory(arq_redis_settings(url))
+            _next_pool_attempt = 0.0
+            logger.info("Task queue: ARQ connected to Redis")
+        except Exception:
+            logger.warning(
+                "Task queue: could not connect to Redis; this process will run tasks "
+                "in-process until the next attempt in %.0fs. Heavy jobs "
+                "(allow_in_process=False) are refused rather than run here.",
+                POOL_RETRY_BACKOFF_SECONDS,
+                exc_info=True,
+            )
+            _arq_pool = None
+    return _arq_pool
+
 
 async def init_task_queue(redis_url: str | None = None) -> None:
     """Initialise the task queue backend.  Call once during app startup."""
-    global _arq_pool  # noqa: PLW0603
-
     if not redis_url:
         logger.info("Task queue: using in-process asyncio fallback (no REDIS_URL)")
         return
-
-    try:
-        arq_create_pool = importlib.import_module("arq.connections").create_pool
-        from app.core.redis_tls import arq_redis_settings
-
-        _arq_pool = await arq_create_pool(arq_redis_settings(redis_url))
-        logger.info("Task queue: ARQ connected to Redis")
-    except Exception:
-        logger.warning(
-            "Task queue: failed to connect to Redis, falling back to asyncio",
-            exc_info=True,
-        )
-        _arq_pool = None
+    _reset_pool_backoff()
+    await _ensure_pool(redis_url)
 
 
 async def close_task_queue() -> None:
@@ -98,7 +161,10 @@ async def enqueue(
     -------
     The ARQ job id or the asyncio task name, or ``None`` on failure.
     """
-    if _arq_pool is not None:
+    # OPS-15: a boot-time connect failure is not a permanent verdict. This retries at
+    # most once per `POOL_RETRY_BACKOFF_SECONDS`, and returns the live pool otherwise.
+    pool = await _ensure_pool()
+    if pool is not None:
         try:
             # NOTE: arq's ``enqueue_job`` forwards unknown kwargs to the task
             # coroutine — there is no per-job timeout parameter at enqueue
@@ -116,7 +182,7 @@ async def enqueue(
                     task_name,
                     _job_timeout,
                 )
-            job = await _arq_pool.enqueue_job(
+            job = await pool.enqueue_job(
                 task_name,
                 **kwargs,
                 **arq_kwargs,
@@ -190,6 +256,10 @@ def is_arq_active() -> bool:
     exist locally (fallback mode) or whether the work runs out-of-process in
     the worker (ARQ mode). In ARQ mode the persisted DB status — not an
     in-memory task handle — is the authoritative signal of progress.
+
+    Reads the pool rather than reconnecting: this is called from synchronous code and
+    from hot paths. The reconnection happens in `enqueue`, which is where a stale
+    `False` actually costs something (OPS-15).
     """
     return _arq_pool is not None
 

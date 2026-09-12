@@ -95,6 +95,14 @@ async def get_metrics(_user: dict = Depends(require_admin)):
 
 @router.get("/metrics/prometheus", response_class=Response)
 async def get_prometheus(_user: dict = Depends(require_admin)) -> Response:
-    """Render orchestrator counters in Prometheus text-exposition format. Admin-only."""
-    body = get_metrics_collector().render_prometheus()
+    """Render counters in Prometheus text-exposition format. Admin-only.
+
+    OPS-03: renders every process's counters, not this one's. The worker runs `arq`
+    rather than uvicorn and has no scrape endpoint at all, so everything it counted —
+    every indexing run, every near-ceiling nightly sync, every exhausted sampling
+    budget — used to be ABSENT from this page rather than zero.
+    """
+    from app.ops.metrics_store import get_metrics_store, render_with_store
+
+    body = await render_with_store(get_metrics_collector(), get_metrics_store())
     return Response(content=body, media_type="text/plain; version=0.0.4")
