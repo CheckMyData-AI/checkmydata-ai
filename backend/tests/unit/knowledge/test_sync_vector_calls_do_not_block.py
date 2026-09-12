@@ -44,7 +44,19 @@ _ASYNC_SITES = [
 ]
 
 #: Vector-store methods that block: they reach chromadb or psycopg directly.
-_BLOCKING = {"query", "get_or_create_collection", "count", "add_documents", "delete_by_source_path"}
+#: Synchronous store/index methods that must not be called from a coroutine.
+#: `query_with_reason` joined the set when `TestTheHybridRetrieverStaysTheReference`
+#: stopped counting the string "to_thread" and started walking the AST (TEST-09): the
+#: BM25 leg calls THAT, not `query`, so the new check would have looked at the
+#: retriever and reported nothing.
+_BLOCKING = {
+    "query",
+    "query_with_reason",
+    "get_or_create_collection",
+    "count",
+    "add_documents",
+    "delete_by_source_path",
+}
 
 
 def _function(tree: ast.AST, name: str) -> ast.AsyncFunctionDef:
@@ -187,5 +199,49 @@ class TestTheHybridRetrieverStaysTheReference:
     oversights rather than a house style."""
 
     def test_it_wraps_both_legs(self):
-        src = Path("app/knowledge/hybrid_retriever.py").read_text(encoding="utf-8")
-        assert src.count("to_thread") >= 2
+        """Both blocking calls off the loop — checked the way this file checks
+        everything else, with `_bare_blocking_calls`.
+
+        It used to be `src.count("to_thread") >= 2` over the raw file (TEST-09).
+        Replacing both wrappers with direct synchronous calls, leaving the two
+        explanatory comments that already name `to_thread`, kept it green while the
+        retriever blocked the event loop on both legs. The AST walker was already in
+        this file, twenty lines up.
+        """
+        import ast
+
+        tree = ast.parse(Path("app/knowledge/hybrid_retriever.py").read_text(encoding="utf-8"))
+
+        # Every leg call is an ARGUMENT to `to_thread`, never a call of its own.
+        # `_bare_blocking_calls` above is scoped to a different receiver shape
+        # (`vector_store`/`vs`/`col`) and cannot see `self._bm25` / `self._vector`,
+        # so reusing it here would have looked at the retriever and reported nothing —
+        # which is the same failure as the string count it replaces, one layer along.
+        handed_off: set[int] = set()
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "to_thread"
+            ):
+                for arg in node.args:
+                    if isinstance(arg, ast.Attribute):
+                        handed_off.add(id(arg))
+
+        on_the_loop = [
+            (node.lineno, ast.unparse(node.func))
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _BLOCKING
+            and ast.unparse(node.func.value) in ("self._bm25", "self._vector")
+            and id(node.func) not in handed_off
+        ]
+        assert len(handed_off) >= 2, (
+            f"only {len(handed_off)} leg(s) are handed to a worker thread; both are "
+            "synchronous underneath — BM25 scoring in Python and a vector-store query"
+        )
+        assert not on_the_loop, (
+            f"these run on the event loop: {on_the_loop}. Either one blocking starves "
+            "every other coroutine in the process"
+        )

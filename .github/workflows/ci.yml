@@ -73,16 +73,33 @@ jobs:
         run: echo "MASTER_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
 
       - name: Unit tests (with coverage)
-        # --cov-fail-under=0 disables per-step enforcement: the 72% floor is a
-        # property of the COMBINED unit+integration run, not of unit-only
-        # (~71%). The single authoritative gate is the "Coverage gate" step
-        # below; this step only collects coverage.
+        # --cov-fail-under=0 disables per-step enforcement: the floor is a property
+        # of the COMBINED run, not of unit-only. The single authoritative gate is the
+        # "Coverage gate" step below; this step only collects coverage. (The comment
+        # said 72% until 2026-09-12, three weeks after the gate moved to 80 —
+        # TEST-05's defect, in the file the gate lives in.)
         run: |
           pytest tests/unit/ \
             --cov=app \
             --cov-report=term-missing \
             --cov-report=xml:coverage-unit.xml \
             --cov-context=test \
+            --cov-fail-under=0
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          MASTER_ENCRYPTION_KEY: ${{ env.MASTER_ENCRYPTION_KEY }}
+
+      - name: Startup smoke (with coverage append)
+        # TEST-06: six tests exercising the real SafetyGuard, DataGate, plan validator
+        # and router against a seeded database. Their own docstring said they run "at
+        # server boot / in CI" and neither was true — CI ran three explicit path lists
+        # and none included them, and the Procfile runs alembic and uvicorn. Only
+        # `make smoke` reached them, i.e. only when somebody remembered.
+        run: |
+          pytest tests/smoke/ \
+            --cov=app \
+            --cov-append \
+            --cov-report=term-missing \
             --cov-fail-under=0
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"

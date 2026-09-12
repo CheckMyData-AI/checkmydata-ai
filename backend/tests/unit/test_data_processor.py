@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.connectors import base as _base
 from app.connectors.base import QueryResult
 from app.services.data_processor import DataProcessor, get_data_processor
 from app.services.geoip_service import GeoIPResult, GeoIPService
@@ -1173,17 +1172,16 @@ class TestGetDataProcessor:
 # ---------------------------------------------------------------------------
 # DATA-01a: aggregate_data truncated propagation + additive partial flagging
 # ---------------------------------------------------------------------------
-pytestmark_data01a = pytest.mark.skipif(
-    not hasattr(_base, "derive_result"),
-    reason="W0 C-A derive_result not merged yet — this task depends on W0.",
-)
+# The `skipif` that used to live here is gone (TEST-11). Its reason read "W0 C-A
+# derive_result not merged yet", and W0 shipped — so from that day it only converted
+# "the thing these tests test was deleted or renamed" into a silent skip, which CI
+# prints as a dot because it passes neither -rs nor --strict-markers.
 
 
 def _proc() -> DataProcessor:
     return DataProcessor(geoip=None, phone_svc=None)
 
 
-@pytestmark_data01a
 def test_aggregate_data_carries_truncated_forward():
     """A truncated input must yield a truncated aggregate (DATA-01)."""
     qr = QueryResult(
@@ -1200,7 +1198,6 @@ def test_aggregate_data_carries_truncated_forward():
     assert out.query_result.truncated is True
 
 
-@pytestmark_data01a
 def test_aggregate_sum_over_truncated_is_flagged_partial_not_complete():
     """Additive aggregation over a truncated set must NOT present a full-population total."""
     qr = QueryResult(
@@ -1220,7 +1217,6 @@ def test_aggregate_sum_over_truncated_is_flagged_partial_not_complete():
     assert "30" in str(out.query_result.rows[0][1])
 
 
-@pytestmark_data01a
 def test_aggregate_data_untruncated_input_stays_complete():
     qr = QueryResult(
         columns=["region", "amount"],
@@ -1237,7 +1233,6 @@ def test_aggregate_data_untruncated_input_stays_complete():
     assert "PARTIAL DATA" not in out.summary
 
 
-@pytestmark_data01a
 def test_filter_data_carries_truncated_forward():
     qr = QueryResult(
         columns=["status", "n"],
@@ -1255,7 +1250,6 @@ def test_filter_data_carries_truncated_forward():
 # ---------------------------------------------------------------------------
 
 
-@pytestmark_data01a
 def test_cohort_window_carries_truncated_and_flags_partial():
     qr = QueryResult(
         columns=["event_date", "revenue"],
@@ -1278,7 +1272,6 @@ def test_cohort_window_carries_truncated_and_flags_partial():
     assert "PARTIAL DATA" in out.summary
 
 
-@pytestmark_data01a
 def test_cohort_window_untruncated_no_partial_flag():
     qr = QueryResult(
         columns=["event_date", "revenue"],

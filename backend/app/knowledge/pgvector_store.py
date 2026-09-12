@@ -75,6 +75,20 @@ class _ProjectHandle:
         return self._store.count(self.project_id)
 
 
+def _pool_max_size() -> int:
+    """How many connections this store's own psycopg pool may open.
+
+    A named function so a test can compare the VALUE against
+    `config._pgvector_pool_size`, which spells the same arithmetic. The duplication
+    there is deliberate — importing this module into `config` would pull psycopg into
+    every config load — and the contract its comment states is that "a test pins the
+    two expressions against each other so they cannot drift". That test used to assert
+    the literal source text `"max(2, settings.db_pool_size // 2)"` (TEST-09), which a
+    comment satisfied and an identical `>> 1` broke. Now there is something to read.
+    """
+    return max(2, settings.db_pool_size // 2)
+
+
 class PgVectorStore:
     """Postgres-backed vector store. Thread-safe; one connection pool per process."""
 
@@ -86,7 +100,7 @@ class PgVectorStore:
         self._pool = ConnectionPool(
             conninfo=_sync_dsn(settings.database_url),
             min_size=1,
-            max_size=max(2, settings.db_pool_size // 2),
+            max_size=_pool_max_size(),
             open=True,
             # A pooled connection that outlives a Supavisor session is a connection
             # that fails on first use rather than on checkout.

@@ -361,13 +361,51 @@ class TestNoConstructionSiteHidesAFailure:
 # --------------------------------------------------------------------------- #
 
 
+#: How far below the measured value a floor may sit and still be a gate. A floor is
+#: not a target — headroom is the point, and a fixture corpus is not production — but
+#: unbounded headroom is indistinguishable from no gate. Half is the line: a retrieval
+#: change that halves any of these four metrics is a regression by any reading.
+_MAX_FLOOR_SLACK = 0.5
+
+
 class TestTheFloorsAreFloors:
-    def test_they_are_below_what_the_real_retriever_measures(self, bm25):
+    async def test_they_are_below_what_the_real_retriever_measures(self, bm25):
         """The harness docstring: "conservative regression floors, not
         aspirational targets". A floor above current performance is a red build
-        nobody can fix, and one far below it catches nothing."""
+        nobody can fix, and one far below it catches nothing.
+
+        This test used to take the `bm25` fixture — building a full index — and
+        never use it, asserting only that four thresholds were numbers in (0, 1]
+        (TEST-07). Every one of those assertions is true of `0.0001`, which is the
+        "far below it catches nothing" half of its own docstring.
+
+        It measures now, and checks BOTH sides: no floor above what the shipped
+        retriever achieves, and no floor so far below that a real regression would
+        slip under it. The upper bound is deliberately generous — these are floors,
+        not targets — but it is finite, which is the whole difference.
+        """
+        dense = _StubDenseStore(_dense_ranking_from_golden())
+        retriever = _retriever(bm25, dense)
+
+        async def retrieve(question: str) -> list[str]:
+            results = await retriever.query(_PROJECT, question, k=10)
+            return [r.doc_id for r in results]
+
+        report = await run_eval(retrieve, k=10)
         t = EvalThresholds()
-        assert 0.0 < t.hit_at_k <= 1.0
-        assert 0.0 < t.mrr <= 1.0
-        assert 0.0 < t.context_recall <= 1.0
-        assert 0.0 < t.ndcg_at_k <= 1.0
+
+        for name in ("hit_at_k", "mrr", "context_recall", "ndcg_at_k"):
+            floor = getattr(t, name)
+            measured = report.metrics[name]
+            assert 0.0 < floor <= 1.0, f"{name} floor {floor} is not a proportion"
+            assert floor <= measured, (
+                f"the {name} floor is {floor} and the shipped retriever measures "
+                f"{measured:.3f} — a floor above current performance is a red build "
+                "nobody can fix"
+            )
+            assert floor >= measured * _MAX_FLOOR_SLACK, (
+                f"the {name} floor is {floor} against a measured {measured:.3f}: a "
+                "regression would have to lose "
+                f"{(1 - floor / measured) * 100:.0f}% before this gate noticed, which "
+                "is the 'one far below it catches nothing' half of the contract"
+            )

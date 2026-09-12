@@ -397,7 +397,23 @@ app.state.limiter = limiter
 # incompatible bodies.
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
-if settings.mcp_enabled and settings.mcp_mount_enabled:
+
+def should_mount_mcp() -> bool:
+    """Whether the HTTP MCP transport is mounted into this app.
+
+    A function rather than an inline condition so a test can ask the question
+    without reloading the module (TEST-13). `importlib.reload(app.main)` rebinds
+    `app.main.app` to a NEW FastAPI instance while every module that did
+    `from app.main import app` at collection keeps the original — and
+    `tests/integration/conftest.py` imports it lazily, so
+    `dependency_overrides[get_db]` could land on a different object than the one a
+    test was driving. `make check` runs unit and integration in one process and CI
+    runs two, so CI never exercised the shape that `make check` did.
+    """
+    return bool(settings.mcp_enabled and settings.mcp_mount_enabled)
+
+
+if should_mount_mcp():
     from app.mcp_server.asgi import build_mounted_mcp_app
 
     app.mount(settings.mcp_mount_path, build_mounted_mcp_app())
