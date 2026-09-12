@@ -40,9 +40,23 @@ async def db():
     await engine.dispose()
 
 
-async def _make_user(db: AsyncSession, email: str | None = None) -> User:
+async def _make_user(
+    db: AsyncSession, email: str | None = None, *, email_verified: bool = True
+) -> User:
+    """A user who has proven their address, unless a test says otherwise.
+
+    `email_verified` defaults to True because every test in this file is about
+    something else — transactions, relationships, expiry — and AUTH-01 added a gate
+    that an unverified caller cannot pass. The gate itself is measured in
+    `test_row_25_unbounded_input_and_two_gaps.py` and by
+    `test_an_unverified_user_cannot_accept` below; leaving the default False would make
+    twenty-one tests fail for a reason none of them is about.
+    """
     u = User(
-        email=email or f"u-{uuid.uuid4().hex[:8]}@test.com", password_hash="x", display_name="T"
+        email=email or f"u-{uuid.uuid4().hex[:8]}@test.com",
+        password_hash="x",
+        display_name="T",
+        email_verified=email_verified,
     )
     db.add(u)
     await db.commit()
@@ -193,6 +207,47 @@ class TestDeclineInvite:
 
 
 class TestAcceptInvite:
+    @pytest.mark.asyncio
+    async def test_an_unverified_user_cannot_accept(self, db):
+        """AUTH-01, end to end against a real row rather than a fake session.
+
+        The email check proves the caller's STORED address equals the invite's — and
+        the caller chose that string at registration, which returns a live session with
+        `email_verified=False`. So an attacker registering the invitee's address read
+        the invite id from `/api/invites/pending` and accepted it.
+        """
+        owner = await _make_user(db)
+        project = await _make_project(db)
+        invite = await inv_svc.create_invite(db, project.id, "newhire@corp.com", "editor", owner.id)
+        attacker = await _make_user(db, "newhire@corp.com", email_verified=False)
+
+        with pytest.raises(HTTPException) as exc:
+            await inv_svc.accept_invite(db, invite.id, attacker.id)
+        assert exc.value.status_code == 403
+        assert "verify" in str(exc.value.detail).lower()
+
+        members = (
+            (await db.execute(select(ProjectMember).where(ProjectMember.project_id == project.id)))
+            .scalars()
+            .all()
+        )
+        assert [m.user_id for m in members] == [], "the refusal must leave no membership behind"
+
+    @pytest.mark.asyncio
+    async def test_verifying_the_address_then_lets_them_in(self, db):
+        """The gate must be a delay, not a dead end."""
+        owner = await _make_user(db)
+        project = await _make_project(db)
+        invite = await inv_svc.create_invite(db, project.id, "newhire@corp.com", "editor", owner.id)
+        user = await _make_user(db, "newhire@corp.com", email_verified=False)
+        with pytest.raises(HTTPException):
+            await inv_svc.accept_invite(db, invite.id, user.id)
+
+        user.email_verified = True
+        await db.commit()
+        member, _inv = await inv_svc.accept_invite(db, invite.id, user.id)
+        assert member.user_id == user.id
+
     @pytest.mark.asyncio
     async def test_creates_membership_and_marks_accepted(self, db):
         owner = await _make_user(db)

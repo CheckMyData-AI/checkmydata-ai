@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.connectors.base import ConnectionConfig
+from app.connectors.host_guard import check_connection_targets
 from app.connectors.registry import get_connector
 from app.connectors.ssh_known_hosts import connect_with_policy
 from app.core.redaction import safe_error
@@ -806,6 +807,31 @@ class ConnectionService:
         # rebuilt before anything tries to open it. Scoped by directory containment
         # (`is_demo_db`) — a user's own SQLite file is never written to.
         repair_demo_db_if_missing(db_name)
+
+        # SQL-07. `host_guard`'s own docstring argues that both checks resolve DNS and
+        # inspect every address returned, "because `db.attacker.test` may resolve to a
+        # public address in the operator's check and a private one a second later". That
+        # reasoning only holds if the check runs when the socket is opened — and it ran
+        # once, at write time, after which the stored value was reused by every
+        # connector's `connect()`, by `SSHTunnel.start` and by this function. So a
+        # tenant on a deployment with `CONNECTION_ALLOW_PRIVATE_HOSTS=false` saved a host
+        # whose A record was public at that instant, repointed it at `169.254.169.254`
+        # with a short TTL, and called `POST /connections/{id}/test`.
+        #
+        # Here rather than inside each connector: this is the one funnel every query,
+        # index and health check passes through, and a check per connector is four
+        # places to forget it. The resolution is `getaddrinfo` on a thread, which the
+        # OS resolver caches — the cost is a cache hit on the hot path and a real
+        # lookup exactly when the record has expired, which is the moment that matters.
+        await check_connection_targets(
+            db_host=conn.db_host,
+            ssh_host=conn.ssh_host,
+            # The DECRYPTED dsn, resolved above — the model stores only the ciphertext,
+            # and passing `conn.connection_string` would have been an AttributeError on
+            # every config build. mypy caught it; nothing else would have until a
+            # request did.
+            connection_string=connection_string,
+        )
 
         return ConnectionConfig(
             # R1-7: carry the connection id so ``connector_key`` (R1-1) can use

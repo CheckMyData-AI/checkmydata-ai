@@ -96,7 +96,10 @@ class TestAcceptance:
         from fastapi import HTTPException
 
         _p, inv = await _seed(session, created_days_ago=settings.invite_expiry_days + 5)
-        user = User(id=str(uuid.uuid4()), email="invitee@example.com")
+        # AUTH-01 added a verification gate on the interactive accept path. These two
+        # tests are about EXPIRY, so the caller has proven their address — leaving the
+        # default would fail them for a reason neither is about.
+        user = User(id=str(uuid.uuid4()), email="invitee@example.com", email_verified=True)
         session.add(user)
         await session.commit()
 
@@ -107,7 +110,7 @@ class TestAcceptance:
 
     async def test_a_live_invite_is_still_accepted(self, session: AsyncSession):
         _p, inv = await _seed(session, created_days_ago=1)
-        user = User(id=str(uuid.uuid4()), email="invitee@example.com")
+        user = User(id=str(uuid.uuid4()), email="invitee@example.com", email_verified=True)
         session.add(user)
         await session.commit()
         member, _ = await InviteService().accept_invite(session, inv.id, user.id)

@@ -403,7 +403,7 @@ Status codes:
 | GET | `/api/invites/{project_id}/invites` | List project invites (owner) |
 | DELETE | `/api/invites/{project_id}/invites/{invite_id}` | Revoke invite (owner) |
 | POST | `/api/invites/{project_id}/invites/{invite_id}/resend` | Resend pending invite email (owner) |
-| POST | `/api/invites/accept/{invite_id}` | Accept invite for current user |
+| POST | `/api/invites/accept/{invite_id}` | Accept invite for current user. **Requires a verified email address** (AUTH-01): the email match proves only the caller's *stored* string, which they chose at registration — and registration returns a live session with `email_verified=false`. Refused with 403 until the address is confirmed; a Google login is pre-verified, and verifying an address auto-accepts what was pending |
 | GET | `/api/invites/pending` | List pending invites for current user |
 | GET | `/api/invites/{project_id}/members` | List project members |
 | DELETE | `/api/invites/{project_id}/members/{member_user_id}` | Remove member (owner) |

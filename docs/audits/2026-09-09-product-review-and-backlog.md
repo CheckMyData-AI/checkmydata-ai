@@ -241,6 +241,24 @@ measured:
 | 24 | ✅ **DONE 2026-09-12** (#360) — UX polish, and a security finding filed inside it: a project `viewer` could run arbitrary DML against a writable customer connection through notes and batch (COR-06). Plus: failure told apart from absence on three surfaces, a task whose end was missed reconciled terminal, the context meter measures the conversation, degradation answers speak the user's language, the tracker's bounds hold on the web dyno | FE-04/06/07/09/10/11, COR-04/05/06/08 | M |
 | 11b | ✅ **DONE 2026-09-12** (#361) — The four #347 carried: worker counters reach the endpoint through a shared store; the reap in flight stops spending its own budget; a boot-time Redis failure is retried with backoff instead of permanently demoting the process; an orphaned run is stamped terminal and catalogued | OPS-03/10/15/16 | M |
 
+## Rows 25–27 — the findings no row ever named (added 2026-09-12)
+
+**Discovered by checking the board against the audit rather than by reading it.** With
+all 24 rows ticked, a set-comparison of the 164 finding ids in the audit against every id
+the rows reference found **15 with no row at all**. One of them (`TEST-13`) had been
+fixed anyway, as a rider on row 21. Fourteen had not.
+
+That is the board's own failure mode, and it is the one this whole programme keeps
+meeting: a completeness claim nobody could compute. The rows below carry the remainder,
+grouped by seam. The comparison is now a test — `test_every_finding_has_a_row.py` — so
+"the board covers the audit" is an exit code rather than an impression.
+
+| # | Task | Refs | Effort |
+|---|---|---|---|
+| 25 | ✅ **DONE 2026-09-12** — **Unbounded input and two security gaps**: an unverified account can accept another person's invitation; the DNS-rebinding guard runs at save and never at connect; the worker will start eight repo indexes at once on a dyno one of them already exhausts; `backfill_days` is bounded only in the React form | AUTH-01, SQL-07, OPS-08, ANA-06 | M |
+| 26 | **Connector correctness**: MySQL's row cap does not stop the transfer and leaves a desynced connection; `format_template` passes a trailing newline through unquoted; schema objects fetched by bare name miss a non-`public` schema; MongoDB columns come from the first document only; a parenthesised SELECT skips the server-side cursor | SQL-03, SQL-05, SQL-08, SQL-09, SQL-10 | M |
+| 27 | **Ops and honesty**: `record_run` discards the slot `claim_due` reserved; `TracePersistenceService` buffers every worker workflow in the web process; three routes answer 200 with an error inside, two echoing the raw exception; four steps record a completion nothing reads; the real-retriever gate passes with the dense leg returning nothing | OPS-11, OPS-14, API-07, KNOW-09, TEST-02 | M |
+
 ## Product backlog — new work, not fixes
 
 | # | Item | Notes |

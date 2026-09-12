@@ -6,6 +6,89 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — an unverified account could accept somebody else's invitation
+
+Board row 25; `AUTH-01`.
+
+`accept_invite` proves the caller's **stored** email equals the invite's — and the caller
+chose that string at registration. `POST /api/auth/register` returns a live session
+immediately with `email_verified=False`, and until now the only gate on that column
+anywhere in the API was project *creation*. So an owner invites `newhire@corp.com`; an
+attacker registers that address before the real person does, calls
+`GET /api/invites/pending` — which filters on the email string alone and returns the
+invite id, role and project name — and accepts it.
+
+The check now sits **inside** the `_skip_email_check` branch, which is the interactive
+path and the attack. Both callers that skip it have just proven the address: one runs
+immediately after `verify_email`, the other after a Google login, which is pre-verified.
+A test pins the placement, because moving the check one level out would stop Google
+sign-ins accepting invitations at all.
+
+### Security — the DNS-rebinding guard ran at save and never at connect
+
+`SQL-07`. `host_guard`'s own module docstring argues that both checks resolve DNS and
+inspect every address returned, *"because `db.attacker.test` may resolve to a public
+address in the operator's check and a private one a second later"*. That reasoning holds
+only if the check runs when the socket opens — and it ran once, at write time, after
+which the stored host was reused by every connector's `connect()`, by `SSHTunnel.start`
+and by `to_config`.
+
+On a deployment with `CONNECTION_ALLOW_PRIVATE_HOSTS=false` — the multi-tenant posture
+the guard exists for — a tenant saved a host whose A record was public at that instant,
+repointed it at `169.254.169.254` with a short TTL, and called
+`POST /api/connections/{id}/test`.
+
+`to_config` re-checks, because it is the one funnel every query, index and health check
+passes through and a check per connector is four places to forget it. The cost is a
+resolver cache hit on the hot path and a real lookup exactly when the record has expired,
+which is the moment that matters — and the metadata-endpoint refusal is unconditional, so
+the check earns its place even where private hosts are allowed.
+
+### Fixed — two unbounded inputs
+
+`OPS-08`: the worker's `max_jobs = 8` is right for the short jobs it was chosen for, and
+a repo index is not one — measured at 967 MiB peak, and still over quota at batch 32 on a
+1 GiB dyno. **One of them already exhausts the dyno**, so eight at once is seven more than
+fit. Bounded by a semaphore rather than `max_jobs = 1`, which would serialise the
+analytics collection, the batch runner and the db-index behind an index that runs for
+hours. Latent on a one-project deployment, which is why it went unnoticed; real for any
+self-hosted install whose nightly wave enqueues one per project in the same second.
+
+`ANA-06`: `source_config` is an unvalidated free-form dict on both create and update, and
+the clamp the runbook promises (`safeInt(..., 1, 3650)`) lives in the React form, which a
+direct API call bypasses. `{"backfill_days": 100000}` was accepted, and every run then
+enumerated 100 000 daily periods per report — 500 000 vendor calls — **beginning in
+1752**, while `GET /collection-status` rebuilt the same 500 000 period strings on a
+read-only endpoint. Clamped on the server to the form's own bounds, because a server bound
+that disagrees with the control the user is looking at produces a refusal they cannot act
+on.
+
+### Fixed — the board claimed to cover the audit and nothing could check it
+
+With all 24 rows ticked and every one carrying evidence, a set-comparison of the 164
+finding ids in the audit against every id the rows reference found **15 with no row at
+all** — `AUTH-01` and `SQL-07` among them. One (`TEST-13`) had been fixed anyway as a
+rider on row 21; fourteen had not.
+
+Nothing was wrong with any individual row. The failure is the one this remediation
+programme keeps meeting: **a completeness claim nobody could compute.** A board is a list,
+an audit is a list, and until something compared them, "the board covers the audit" was an
+impression formed by reading down the page. `test_every_finding_has_a_row.py` makes it an
+exit code, and carries a second test proving the comparison can actually go red. Rows
+25–27 carry the remainder, grouped by seam.
+
+Eight planted defects. Two of the guards failed that test in draft, both with the same
+mistake — matching a **name** rather than a behaviour. One asserted that
+`MAX_CONCURRENT_REPO_INDEXES` and `Semaphore` both appear in `worker.py`; deleting the
+`async with` while keeping both passed it. It runs four indexes and measures the peak now.
+The other searched `connections.py` for `clamp_backfill_days` or `_validate_source_config`;
+emptying the validator's body, leaving the function defined, passed it. It builds a real
+`ConnectionCreate` and a real `ConnectionUpdate` now.
+
+And mypy caught a defect the tests could not: the re-check passed `conn.connection_string`,
+which the model does not have — an `AttributeError` on every config build, i.e. on every
+request that touches a database.
+
 ### Fixed — a model deleted from a file that still exists was asserted forever
 
 `KNOW-06`, the last item the 2026-09-09 audit left open, and the board's row 9 recorded
