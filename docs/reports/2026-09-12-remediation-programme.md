@@ -115,16 +115,31 @@
 Проверено против живой базы, а не предположено:
 
 ```
-release           v403 · web.1 up · worker.1 up
+release           v404 (8bf9e8aa) · web.1 up · worker.1 up
 /api/health       200
 alembic_version   c5d6e7f8a2b3
 plans             daily_cost_limit_usd / monthly_cost_limit_usd → numeric
 ceilings          base $10/$30 · scale $30/$90 · team $50/$150 · enterprise unlimited
 config-drift      exit 0
+capability check  web: 4 claims verified, all satisfied · worker: то же
 ```
 
 Потолки совпадают с тем, что объявляет `PROMISED_CREDIT_USD`, — реконсайл каталога
-отработал.
+отработал. Он же сказал `unchanged (inserted=0 updated=0 retired=0)`: это доказательство,
+что сравнение `Decimal` с `float` больше не заставляет его переписывать каталог на каждой
+загрузке каждого дино.
+
+**Три фикса ревизии проверены в развёрнутом образе, а не по зелёному пайплайну:**
+обработчик `HostNotAllowedError` зарегистрирован, `_safe_to_config` его пробрасывает,
+`check_budget` собран в один запрос, кэш соединений MySQL на месте.
+
+**`OPS-03` подтверждён на живом Redis.** Ключ `metrics:v1:worker` держит **20 полей**
+счётчиков с сохранёнными метками — например
+`indexing_run_time_to_first_progress_seconds{kind="index_repo"}`. До этой сессии всё, что
+считал воркер, копилось в его куче и **отсутствовало** на `/api/metrics/prometheus` — не
+было нулями, а отсутствовало, потому что имя ни разу не эмитилось в том процессе.
+Ключа `metrics:v1:web` пока нет, и это по замыслу: веб флашит на пути чтения, а страницу
+после деплоя ещё никто не открывал.
 
 **Операторский шаг, который остаётся человеку:** `PLAN_GRANTS`. `BILLING_ENABLED=true` при
 отсутствии ключей Stripe означает, что купить тариф не может никто, а без подписки
