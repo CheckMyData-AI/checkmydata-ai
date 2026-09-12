@@ -99,12 +99,26 @@ class TestEveryAdapterSuppliesWhatTheRouterNeeds:
 class TestTheBudgetGateReadsSomethingRealNow:
     def test_it_sums_total_tokens(self) -> None:
         """Named explicitly because it is the column the whole chain exists to fill.
+
         If the gate is ever changed to sum something else, this file's premise moves
-        with it and should fail rather than quietly stop mattering."""
+        with it and should fail rather than quietly stop mattering — and on 2026-09-12
+        it did exactly that. `check_budget` was collapsed from six queries to one and
+        the summing moved into `_window_totals`; this test went red because it read
+        `check_budget`'s own text. The premise did not change, so the test follows the
+        sum to where it lives rather than pinning its address.
+        """
         from app.services import usage_service
 
-        source = inspect.getsource(usage_service.UsageService.check_budget)
-        assert "TokenUsage.total_tokens" in source
+        gate = inspect.getsource(usage_service.UsageService.check_budget)
+        totals = inspect.getsource(usage_service.UsageService._window_totals)
+        assert "_window_totals" in gate, (
+            "the gate no longer reads the window totals at all — whatever it reads "
+            "instead is what this file should be measuring"
+        )
+        assert "TokenUsage.total_tokens" in totals, (
+            "the budget gate stopped summing `total_tokens`, the column the whole "
+            "usage chain exists to fill"
+        )
 
     def test_record_usage_derives_whenever_it_was_not_told_a_total(self) -> None:
         """Belt to the router's braces — and the belt was buckled against the wrong

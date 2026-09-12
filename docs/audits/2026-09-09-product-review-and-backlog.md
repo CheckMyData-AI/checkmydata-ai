@@ -259,6 +259,17 @@ grouped by seam. The comparison is now a test — `test_every_finding_has_a_row.
 | 26 | ✅ **DONE 2026-09-12** — **Connector correctness**: MySQL's row cap does not stop the transfer and leaves a desynced connection; `format_template` passes a trailing newline through unquoted; schema objects fetched by bare name miss a non-`public` schema; MongoDB columns come from the first document only; a parenthesised SELECT skips the server-side cursor | SQL-03, SQL-05, SQL-08, SQL-09, SQL-10 | M |
 | 27 | ✅ **DONE 2026-09-12** — **Ops and honesty**: `record_run` discards the slot `claim_due` reserved; `TracePersistenceService` buffers every worker workflow in the web process; three routes answer 200 with an error inside, two echoing the raw exception; four steps record a completion nothing reads; the real-retriever gate passes with the dense leg returning nothing. **Plus one found while shipping row 26:** `test_analytics_connections_api._expected_days` reads the clock independently of the endpoint it is checking, so the two disagree across a local-midnight boundary — the same "computed twice, guessed twice" shape as the hourly cron. Seen failing once in a full-suite run on 2026-09-12 and **not reproduced** in four subsequent runs; the mechanism is demonstrable, the attribution is not, and both halves are recorded rather than one | OPS-11, OPS-14, API-07, KNOW-09, TEST-02 | M | `record_run` discards the slot `claim_due` reserved; `TracePersistenceService` buffers every worker workflow in the web process; three routes answer 200 with an error inside, two echoing the raw exception; four steps record a completion nothing reads; the real-retriever gate passes with the dense leg returning nothing | OPS-11, OPS-14, API-07, KNOW-09, TEST-02 | M |
 
+## Row 28 — what reviewing my own 25 PRs found (added 2026-09-12)
+
+**Every gate was green when this started**: lint, format, mypy over 413 files, 8 698 tests
+across three suites, and 25 merged PRs each with its own planted-defect pass. The review
+was asked for anyway, and it found three defects the gates could not see — two of them
+introduced by fixes in this same programme.
+
+| # | Task | Refs | Effort |
+|---|---|---|---|
+| 28 | ✅ **DONE 2026-09-12** — **What the gates could not see.** (a) `HostNotAllowedError` subclasses `ValueError`, and `to_config`'s callers catch `ValueError` to mean one thing — so `SQL-07`'s re-check reported a DNS-rebinding refusal as *"cannot decrypt credentials, re-enter the password"*: advice about a password that was never the problem, and a 500 on the other 34 call sites. (b) Row 1b's dollar gate ran **six queries per LLM call** where two had run; `check_budget` fires after every completion, so a twenty-step run went from 40 queries to 120. (c) `SQL-03`'s row cap was applied per query, though `SET SESSION` lives as long as the connection — and the first attempt to fix that joined two statements with `;` in `init_command`, which aiomysql accepts and then reads one result packet for, re-introducing the very protocol desync `SQL-03(b)` exists to prevent | review of #343–#367 | S |
+
 ## Product backlog — new work, not fixes
 
 | # | Item | Notes |

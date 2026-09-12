@@ -58,6 +58,7 @@ from app.api.routes import (
     workflows,
 )
 from app.config import settings
+from app.connectors.host_guard import HostNotAllowedError
 from app.core.distributed_lock import redis_lock
 from app.core.logging_config import configure_logging
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
@@ -418,6 +419,25 @@ if should_mount_mcp():
 
     app.mount(settings.mcp_mount_path, build_mounted_mcp_app())
     logger.info("MCP server mounted at %s", settings.mcp_mount_path)
+
+
+@app.exception_handler(HostNotAllowedError)
+async def _host_not_allowed_handler(request: Request, exc: HostNotAllowedError):
+    """A connection whose host is no longer allowed, answered in the guard's own words.
+
+    Registered separately from — and consulted before — the generic `ValueError`
+    handler below, because `HostNotAllowedError` subclasses `ValueError` and that
+    handler re-raises everything it does not recognise. `to_config` re-checks the host
+    on every config build (SQL-07), so without this every one of its 35 call sites
+    answered a rebinding refusal with a 500 carrying no message.
+
+    422 rather than 5xx: the stored configuration is what is wrong, the caller owns it,
+    and the message says which host and which address so they can act.
+    """
+    from fastapi.responses import JSONResponse
+
+    logger.warning("Connection host refused at use time: %s", exc)
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
 @app.exception_handler(ValueError)

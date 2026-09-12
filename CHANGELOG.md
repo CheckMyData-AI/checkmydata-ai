@@ -6,6 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — three defects every gate was green on
+
+Board row 28. A review of the 25 PRs this programme merged (#343–#367), run with lint,
+format, `mypy` over 413 files and 8 698 tests already passing. Two of the three were
+introduced by fixes in this same programme, which is the point of asking.
+
+**A rebinding refusal told the user to re-enter their password.** `SQL-07` moved the
+DNS-rebinding guard into `ConnectionService.to_config` — the right funnel, since every
+query, index and health check passes through it. What that missed is that
+`HostNotAllowedError` **subclasses `ValueError`**, and `to_config`'s callers already
+catch `ValueError` to mean one specific thing. So the chat path answered a host refusal
+with *"Cannot decrypt credentials for connection 'prod'. Please re-enter the password in
+Settings → Connections."* They would re-enter it, it would fail again, and nothing
+anywhere would say the host now resolves to an address connections may not reach. On the
+other 34 call sites it was a 500 with no message at all, because the generic `ValueError`
+handler re-raises what it does not recognise. `_safe_to_config` re-raises the host error
+rather than translating it, and `main.py` registers a handler for it **before** the
+generic one: 422, with the guard's own sentence naming the host and the address.
+
+**The dollar gate cost six queries per LLM call.** The unit was right (ADR-0004); the
+implementation was not. `check_budget` ran two token sums and then `_spend_since` twice,
+each of which ran a priced sum and an unpriced-token sum — and the gating `DbUsageSink`
+calls it after **every** completion, so a twenty-step orchestrator run issued 120 queries
+where it had issued 40. The six figures come from one table, one user and one outer
+window, so they are now one query with conditional aggregates: fewer round trips than
+before the ceiling existed. The result is a frozen dataclass rather than a
+`dict[str, float]`, because token counts are integers and money is not — mypy caught that
+lie at the first caller that needed an `int`.
+
+**The MySQL row cap was applied per query, and the obvious fix was worse.** `SET SESSION
+SQL_SELECT_LIMIT` lives as long as the connection, and aiomysql pools connections, so
+setting it before every query was a round trip for a value already set. The first attempt
+appended it to `init_command` beside the read-only statement, joined with `;`. aiomysql
+sets `CLIENT_MULTI_STATEMENTS`, so the server accepts that — and `Connection.query` reads
+exactly **one** result packet, leaving the second OK packet on the wire. That is the
+protocol desync `SQL-03(b)` exists to prevent, re-introduced by the fix for `SQL-03(a)`.
+The cap is applied once per pooled connection through a `WeakSet` instead, so a
+connection the pool discards drops out on its own.
+
+Six planted defects; one of the guards failed against its own — the window test checked
+only the dollar figures, so a defect that dropped the day condition from the **token**
+total passed. It checks all four daily figures now.
+
+And one pre-existing test went red and was right to: `test_it_sums_total_tokens` asserted
+`"TokenUsage.total_tokens" in check_budget`'s own source, and the collapse moved the sum
+into a helper. Its docstring had said that if the gate ever sums something else the test
+should fail rather than quietly stop mattering — so it follows the sum to where it lives
+now, rather than pinning its address.
+
 ### Fixed — five places the system said something it had not checked
 
 Board row 27, the last on the board; `OPS-11`, `OPS-14`, `API-07`, `KNOW-09`, `TEST-02`.

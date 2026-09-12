@@ -298,6 +298,75 @@ class TestMySQLStopsTheServerRatherThanTheReader:
             "`execute_query` never asked the server to stop producing rows, so the cap "
             f"bounds memory and not the wire again: {sent} (SQL-03)"
         )
+        # And exactly once for this connection: the mock returns the same `_Cur` every
+        # time, so a per-query application would show up as a second statement.
+        assert sum("SQL_SELECT_LIMIT" in s for s in sent) == 1, sent
+
+    async def test_the_cap_is_applied_once_per_connection_not_once_per_query(self) -> None:
+        """`SET SESSION` outlives the query; applying it per query is a wasted trip.
+
+        Found while reviewing the change that introduced it. The first attempt moved
+        the statement into `init_command` — where it would have joined the read-only
+        statement with `;`, and aiomysql's `query()` reads exactly ONE result packet,
+        leaving the second OK packet on the wire. That is the protocol desync SQL-03(b)
+        exists to prevent, re-introduced by the fix for SQL-03(a).
+        """
+        from app.connectors.mysql import _CAPPED_CONNECTIONS, _ensure_row_limit
+
+        sent: list[str] = []
+
+        class _Conn:
+            def cursor(self):
+                class _Cur:
+                    async def __aenter__(self):
+                        return self
+
+                    async def __aexit__(self, *_exc):
+                        return False
+
+                    async def execute(self, sql, *_a, **_k):
+                        sent.append(sql)
+
+                return _Cur()
+
+        conn = _Conn()
+        _CAPPED_CONNECTIONS.discard(conn)
+        for _ in range(5):
+            await _ensure_row_limit(conn)
+
+        assert len(sent) == 1, (
+            f"the cap was sent {len(sent)} times to one pooled connection; `SET "
+            "SESSION` lives as long as the connection does"
+        )
+
+    async def test_a_second_connection_is_capped_too(self) -> None:
+        """Per connection, not once per process — a new pooled connection is uncapped."""
+        from app.connectors.mysql import _ensure_row_limit
+
+        sent: list[str] = []
+
+        class _Conn:
+            def __init__(self, sink):
+                self._sink = sink
+
+            def cursor(self):
+                sink = self._sink
+
+                class _Cur:
+                    async def __aenter__(self):
+                        return self
+
+                    async def __aexit__(self, *_exc):
+                        return False
+
+                    async def execute(self, sql, *_a, **_k):
+                        sink.append(sql)
+
+                return _Cur()
+
+        await _ensure_row_limit(_Conn(sent))
+        await _ensure_row_limit(_Conn(sent))
+        assert len(sent) == 2
 
     def test_a_timed_out_connection_is_not_returned_to_the_pool(self) -> None:
         import inspect

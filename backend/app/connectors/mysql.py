@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+import weakref
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -38,6 +39,42 @@ def _map_mysql_object_kind(table_type: str) -> Literal["table", "view", "matview
     return "table"
 
 
+def _row_limit_statement() -> str:
+    """`SET SESSION SQL_SELECT_LIMIT = …` for this deployment's cap (SQL-03).
+
+    Bounds what the SERVER sends for a SELECT that carries no LIMIT of its own, which
+    is the half the client-side cap cannot reach: closing an unbuffered cursor reads to
+    EOF, because the MySQL protocol has no "stop sending".
+
+    **One more than the cap**, so the `+1` truncation sentinel still works: the client
+    asks for `MAX_RESULT_ROWS + 1` and the server is willing to supply exactly that.
+    """
+    from app.connectors.base import MAX_RESULT_ROWS
+
+    return f"SET SESSION SQL_SELECT_LIMIT = {int(MAX_RESULT_ROWS) + 1}"
+
+
+#: Pooled connections this process has already capped (SQL-03). `SET SESSION` lives as
+#: long as the connection does, and aiomysql reuses connections — so applying the cap on
+#: every query was an extra round trip for a value that was already set, measured while
+#: reviewing the change that introduced it. Weak, so a connection the pool discards
+#: drops out on its own and this cannot become a leak.
+_CAPPED_CONNECTIONS: "weakref.WeakSet[Any]" = weakref.WeakSet()
+
+
+async def _ensure_row_limit(conn: Any) -> None:
+    """Apply the server-side row cap to *conn*, once per connection (SQL-03)."""
+    if conn in _CAPPED_CONNECTIONS:
+        return
+    await _apply_row_limit(conn)
+    try:
+        _CAPPED_CONNECTIONS.add(conn)
+    except TypeError:
+        # Not weak-referenceable (a test double, a future driver): apply every time
+        # rather than not at all. Correctness first, the round trip second.
+        logger.debug("MySQL: connection is not weak-referenceable; capping per query")
+
+
 async def _apply_row_limit(conn: Any) -> None:
     """Ask this session to stop producing rows past the cap. Best-effort (SQL-03).
 
@@ -55,11 +92,9 @@ async def _apply_row_limit(conn: Any) -> None:
     memory, unbounded transfer. Failing a query over a performance safeguard would
     trade a slow answer for no answer.
     """
-    from app.connectors.base import MAX_RESULT_ROWS
-
     try:
         async with conn.cursor() as cur:
-            await cur.execute(f"SET SESSION SQL_SELECT_LIMIT = {int(MAX_RESULT_ROWS) + 1}")
+            await cur.execute(_row_limit_statement())
     except Exception:
         logger.debug("MySQL: could not set SQL_SELECT_LIMIT for this session", exc_info=True)
 
@@ -89,6 +124,12 @@ class MySQLConnector(BaseConnector):
         # each statement is its own transaction, any write/DDL then raises
         # ``ER_TRANSACTION_READ_ONLY`` at the database, not just the app-layer
         # regex. ``None`` for writable connections leaves behaviour unchanged.
+        # The row cap is NOT appended here, and the reason is worth the line:
+        # aiomysql sets `CLIENT_MULTI_STATEMENTS`, so `"A; B"` is accepted — but
+        # `Connection.query` reads exactly one result packet, leaving the second SET's
+        # OK packet on the wire. That is the same protocol desync SQL-03(b) exists to
+        # prevent, introduced by the fix for SQL-03(a). The cap is applied once per
+        # pooled connection instead; see `_ensure_row_limit`.
         init_command = "SET SESSION TRANSACTION READ ONLY" if config.is_read_only else None
 
         if config.connection_string:
@@ -190,7 +231,7 @@ class MySQLConnector(BaseConnector):
                     # a time. The fix is to stop the server producing them, not to stop
                     # reading — `SQL_SELECT_LIMIT` does exactly that for a SELECT, and
                     # is per-session so it cannot leak into another caller's work.
-                    await _apply_row_limit(conn)
+                    await _ensure_row_limit(conn)
                     async with conn.cursor(aiomysql.SSDictCursor) as cur:
                         await cur.execute(exec_query, exec_params)
                         fetched = await cur.fetchmany(MAX_RESULT_ROWS + 1)
