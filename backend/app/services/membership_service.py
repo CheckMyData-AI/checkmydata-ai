@@ -85,6 +85,48 @@ class MembershipService:
             return "owner"
         return role
 
+    async def require_write_role(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        user_id: str,
+        *,
+        connection_is_read_only: bool,
+        subject: str,
+    ) -> str:
+        """The role a caller needs to run SQL against the CUSTOMER's database (COR-06).
+
+        The ladder gates workspace mutations — a dashboard needs `editor`, a schedule
+        needs `owner` — and no execution path distinguished a viewer from an owner for
+        SQL against the connected database. On a writable connection a viewer could
+        save `DELETE FROM orders WHERE 1=1` as a note and execute it: the guard there
+        is `SafetyLevel.ALLOW_DML`, which blocks DDL and nothing else. The product's
+        own scenarios treat viewer as read-only for far less consequential surfaces.
+
+        **Read-only connection: `viewer` still suffices.** Running a SELECT is what a
+        viewer is for, and raising the bar there would take away the product's actual
+        function from the role most likely to be using it. The question is whether the
+        statement can change the customer's data, and on a read-only connection the
+        engine answers no on its own — so the role is not the layer that has to.
+
+        One helper rather than a literal per route, because spelling the role inline
+        at each site is how these two came to disagree with `dashboards.py` in the
+        first place.
+        """
+        needed = "viewer" if connection_is_read_only else "editor"
+        try:
+            return await self.require_role(db, project_id, user_id, needed)
+        except HTTPException as exc:
+            if exc.status_code != 403 or connection_is_read_only:
+                raise
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"{subject} requires the editor role: this connection is writable, "
+                    "so the statement could change the data it reaches."
+                ),
+            ) from exc
+
     async def require_role(
         self,
         db: AsyncSession,

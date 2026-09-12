@@ -36,8 +36,8 @@ from app.api.routes.chat_feedback import (
 from app.core import failure_kind as fk
 from app.core.agent import ConversationalAgent
 from app.core.agent_limiter import agent_limiter
-from app.core.context_budget import CHARS_PER_TOKEN
 from app.core.rate_limit import limiter
+from app.core.session_rotation import measure as measure_history_pressure
 from app.core.trace_meta import TraceMeta
 from app.core.workflow_tracker import WorkflowEvent, tracker
 from app.core.ws_tickets import ws_ticket_store
@@ -749,12 +749,13 @@ async def ask_stream(
             and body.session_id  # only rotate existing sessions
             and len(history) >= 4
         ):
-            history_chars = sum(len(m.content) for m in history)
-            history_tokens_est = history_chars // CHARS_PER_TOKEN
-            threshold = int(
-                app_settings.max_context_tokens * app_settings.session_rotation_threshold_pct / 100
-            )
-            if history_tokens_est >= threshold:
+            # COR-04: the arithmetic is shared with `/api/chat/estimate`, which used
+            # to compute a different quantity from a different constant and label it
+            # a prediction of this moment.
+            pressure = measure_history_pressure([m.content for m in history])
+            history_tokens_est = pressure.history_tokens
+            threshold = pressure.threshold_tokens
+            if pressure.should_rotate:
                 logger.info(
                     "Session rotation triggered: session=%s tokens_est=%d threshold=%d",
                     session_id[:8],

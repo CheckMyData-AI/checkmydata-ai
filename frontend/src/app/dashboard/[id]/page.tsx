@@ -10,6 +10,7 @@ import { toast } from "@/stores/toast-store";
 import { DashboardBuilder } from "@/components/dashboards/DashboardBuilder";
 import { SectionErrorBoundary } from "@/components/ui/SectionErrorBoundary";
 import { AuthGate } from "@/components/auth/AuthGate";
+import { classifyLoadFailure, describeLoadFailure, type LoadFailure } from "@/lib/load-failure";
 
 function parseCards(json: string | null): DashboardCard[] {
   if (!json) return [];
@@ -117,6 +118,9 @@ function DashboardPageContent() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [notes, setNotes] = useState<Map<string, SavedNote>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [loadFailure, setLoadFailure] = useState<{ kind: LoadFailure; error: unknown } | null>(
+    null
+  );
   const [editing, setEditing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [cardErrors, setCardErrors] = useState<Map<string, string>>(new Map());
@@ -196,7 +200,12 @@ function DashboardPageContent() {
       // age immediately, then update as each refresh lands.
       if (due.length > 0) void refreshDue(due, signal);
     } catch (err) {
-      if (!signal.stale) toast(err instanceof Error ? err.message : "Failed to load dashboard", "error");
+      if (!signal.stale) {
+        // FE-04: a 404 is a fact about the account; a 500, a 504 or an unreachable
+        // network is a fact about this moment. They were the same screen.
+        setLoadFailure({ kind: classifyLoadFailure(err), error: err });
+        toast(err instanceof Error ? err.message : "Failed to load dashboard", "error");
+      }
     } finally {
       if (!signal.stale) setLoading(false);
     }
@@ -269,15 +278,35 @@ function DashboardPageContent() {
   }
 
   if (!dashboard) {
+    const kind = loadFailure?.kind ?? "missing";
     return (
-      <div className="min-h-screen bg-surface-0 flex flex-col items-center justify-center gap-3">
-        <p className="text-sm text-text-muted">Dashboard not found</p>
-        <button
-          onClick={() => router.push("/app")}
-          className="text-xs text-accent hover:text-accent-hover transition-colors"
-        >
-          Back to app
-        </button>
+      <div className="min-h-screen bg-surface-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
+        <p className="text-sm text-text-muted">
+          {loadFailure
+            ? describeLoadFailure(loadFailure.kind, loadFailure.error)
+            : "This dashboard no longer exists, or was never shared with you."}
+        </p>
+        <div className="flex items-center gap-3">
+          {kind === "unavailable" && (
+            <button
+              onClick={() => {
+                const signal = { stale: false };
+                setLoading(true);
+                setLoadFailure(null);
+                void loadDashboard(signal);
+              }}
+              className="text-xs text-accent hover:text-accent-hover transition-colors"
+            >
+              Try again
+            </button>
+          )}
+          <button
+            onClick={() => router.push("/app")}
+            className="text-xs text-accent hover:text-accent-hover transition-colors"
+          >
+            Back to app
+          </button>
+        </div>
       </div>
     );
   }

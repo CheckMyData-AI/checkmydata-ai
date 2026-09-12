@@ -1625,7 +1625,7 @@ class OrchestratorAgent(BaseAgent):
                         partial.append(
                             "Consider starting a new conversation for further questions."
                         )
-                        final_text = " ".join(partial)
+                        final_text = await self._localize_static(" ".join(partial), context)
                         break
                 else:
                     raise
@@ -1681,8 +1681,9 @@ class OrchestratorAgent(BaseAgent):
                 )
                 final_text = llm_resp.content or ""
                 if not final_text.strip() and all_sql_results:
-                    final_text = ResponseBuilder.build_partial_text(
-                        last_sql_result, knowledge_sources
+                    final_text = await self._localize_static(
+                        ResponseBuilder.build_partial_text(last_sql_result, knowledge_sources),
+                        context,
                     )
                 final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
                 await self._stream_tokens(wf_id, final_text)
@@ -1697,8 +1698,9 @@ class OrchestratorAgent(BaseAgent):
                     wall_clock_limit * 1.2,
                     wf_id,
                 )
-                final_text = llm_resp.content or ResponseBuilder.build_timeout_text(
-                    last_sql_result, knowledge_sources
+                final_text = llm_resp.content or await self._localize_static(
+                    ResponseBuilder.build_timeout_text(last_sql_result, knowledge_sources),
+                    context,
                 )
                 final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
                 wall_clock_timeout_hit = True
@@ -1996,8 +1998,9 @@ class OrchestratorAgent(BaseAgent):
                     self.accum_usage(total_usage, synth_resp.usage)
                     final_text = synth_resp.content or ""
                     if not final_text.strip() and all_sql_results:
-                        final_text = ResponseBuilder.build_partial_text(
-                            last_sql_result, knowledge_sources
+                        final_text = await self._localize_static(
+                            ResponseBuilder.build_partial_text(last_sql_result, knowledge_sources),
+                            context,
                         )
                     final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
                     await self._stream_tokens(wf_id, final_text)
@@ -2007,13 +2010,17 @@ class OrchestratorAgent(BaseAgent):
                         wf_id,
                         exc_info=True,
                     )
-                    final_text = ResponseBuilder.build_partial_text(
-                        last_sql_result, knowledge_sources
+                    final_text = await self._localize_static(
+                        ResponseBuilder.build_partial_text(last_sql_result, knowledge_sources),
+                        context,
                     )
                     final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
                     await self._stream_tokens(wf_id, final_text)
             else:
-                final_text = ResponseBuilder.build_partial_text(last_sql_result, knowledge_sources)
+                final_text = await self._localize_static(
+                    ResponseBuilder.build_partial_text(last_sql_result, knowledge_sources),
+                    context,
+                )
                 final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
                 await self._stream_tokens(wf_id, final_text)
             step_limit_hit = True
@@ -2655,12 +2662,15 @@ class OrchestratorAgent(BaseAgent):
             context=context,
             wf_id=wf_id,
         )
-        return ResponseBuilder.build_pipeline_response(
-            exec_result,
-            wf_id,
-            staleness_warning,
-            pipeline_run.id,
-            answer_directive=answer_directive,
+        return await self._localize_static_response(
+            ResponseBuilder.build_pipeline_response(
+                exec_result,
+                wf_id,
+                staleness_warning,
+                pipeline_run.id,
+                answer_directive=answer_directive,
+            ),
+            context,
         )
 
     @staticmethod
@@ -3157,12 +3167,15 @@ class OrchestratorAgent(BaseAgent):
         resume_directive = await self._evaluate_pipeline_answer(
             exec_result=exec_result, context=context, wf_id=wf_id
         )
-        return ResponseBuilder.build_pipeline_response(
-            exec_result,
-            wf_id,
-            resume_staleness,
-            run_id,
-            answer_directive=resume_directive,
+        return await self._localize_static_response(
+            ResponseBuilder.build_pipeline_response(
+                exec_result,
+                wf_id,
+                resume_staleness,
+                run_id,
+                answer_directive=resume_directive,
+            ),
+            context,
         )
 
     async def _resume_staleness_warning(self, context: AgentContext, wf_id: str) -> str | None:
@@ -3654,6 +3667,42 @@ class OrchestratorAgent(BaseAgent):
     _dedup_tool_calls = staticmethod(ToolDispatcher.dedup_tool_calls)
     _build_process_data_params = staticmethod(ToolDispatcher.build_process_data_params)
     _format_sql_result_for_llm = staticmethod(ToolDispatcher.format_sql_result_for_llm)
+
+    async def _localize_static_response(
+        self, response: AgentResponse, context: AgentContext
+    ) -> AgentResponse:
+        """The same for an answer built entirely in Python (COR-05).
+
+        `build_pipeline_response`'s stage-failure answer — "Stage 'x' failed: … Would
+        you like me to **retry** … or **modify** the request?" — is joined from
+        literals by a static method with no LLM in reach, so it shipped English to
+        every user in every language.
+        """
+        static_types = {"stage_failed", "step_limit_reached", "timeout"}
+        if response.response_type not in static_types or not response.answer:
+            return response
+        response.answer = await self._localize_static(response.answer, context)
+        return response
+
+    async def _localize_static(self, text: str, context: AgentContext) -> str:
+        """Put a hardcoded fallback answer into the user's language (COR-05).
+
+        The multilingual rule is a prompt instruction, so it holds wherever an LLM
+        writes the answer — and these paths are exactly the ones where none does.
+        A Russian question that hits the step budget used to be answered "I reached
+        the maximum number of analysis steps", in English, with no LLM in the path
+        to apply the rule README says is there.
+
+        Never raises and never blocks for long: see `app/agents/localize.py`.
+        """
+        from app.agents.localize import localize
+
+        return await localize(
+            text,
+            getattr(context, "user_question", None),
+            self._llm,
+            model=getattr(context, "model", None),
+        )
 
     @staticmethod
     def _finalize_tool_loop_answer(

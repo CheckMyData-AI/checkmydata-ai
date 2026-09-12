@@ -24,6 +24,14 @@ interface NotesState {
   notes: SavedNote[];
   isOpen: boolean;
   isLoading: boolean;
+  /**
+   * FE-07: why the list is empty. `loadNotes` set `notes: []` on failure and raised
+   * a toast, and the panel had exactly two states — loading and empty — so a failed
+   * fetch rendered as the affirmative claim that the user has saved nothing,
+   * complete with the onboarding hint explaining how to save their first one. The
+   * toast is gone in ten seconds; the false sentence is not.
+   */
+  loadError: string | null;
   loadedProjectId: string | null;
   scope: NoteScope;
 
@@ -43,6 +51,7 @@ export const useNotesStore = create<NotesState>((set, get) => ({
   notes: [],
   isOpen: getPersistedOpen(),
   isLoading: false,
+  loadError: null,
   loadedProjectId: null,
   scope: "all",
 
@@ -69,15 +78,18 @@ export const useNotesStore = create<NotesState>((set, get) => ({
     })),
   loadNotes: async (projectId, scope?) => {
     const effectiveScope = scope ?? get().scope;
-    set({ isLoading: true, notes: [], loadedProjectId: projectId });
+    set({ isLoading: true, notes: [], loadError: null, loadedProjectId: projectId });
     try {
       const notes = await api.notes.list(projectId, effectiveScope);
       if (get().loadedProjectId === projectId) {
-        set({ notes });
+        set({ notes, loadError: null });
       }
-    } catch {
+    } catch (err) {
       if (get().loadedProjectId === projectId) {
-        set({ notes: [] });
+        set({
+          notes: [],
+          loadError: err instanceof Error ? err.message : "Failed to load saved queries",
+        });
         toast("Failed to load saved queries", "error");
       }
     } finally {
@@ -86,6 +98,6 @@ export const useNotesStore = create<NotesState>((set, get) => ({
       }
     }
   },
-  clear: () => set({ notes: [], loadedProjectId: null }),
+  clear: () => set({ notes: [], loadError: null, loadedProjectId: null }),
   hasSqlQuery: (sql) => get().notes.some((n) => n.sql_query === sql),
 }));

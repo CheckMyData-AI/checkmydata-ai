@@ -1016,7 +1016,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Persona:** new-user
 - **Feature:** chat
 - **Entry point:** chat panel before the first message when the project isn't ready
-- **Preconditions:** `messages.length===0`, not bypassed, not cached-ready
+- **Preconditions:** `messages.length===0`, not bypassed, and no **fresh** cached-ready answer — the cache is trusted for 5 minutes
 - **Steps:**
   1. User sees a readiness checklist (connect repo/db, index, sync)
   2. User runs a step, or clicks "Chat anyway"
@@ -1024,8 +1024,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** per-step "Run" buttons, navigable connect steps, "Re-index" on stale, "Chat anyway", "Start chatting", Retry on fetch error
 - **States covered:** loading, error, success
 - **Errors & recovery:** action fails → toast; poll timeout → toast; readiness-check fails → "Failed to check project readiness" + Retry / Chat anyway (`ReadinessGate.tsx:159-199`)
+- **Why the cache expires (FE-11, 2026-09-12):** `ReadinessCacheEntry` carried `checkedAt` and nothing read it, so once `ready: true` was recorded the gate never re-appeared for the life of the document. Invalidation was entirely event-driven — pipeline completion, the index/sync poll endings — and a connection deleted in another tab arrives by no event: the chat then presented itself as ready to query a source that no longer existed, failing at the agent instead of at the gate that exists to prevent exactly that. The TTL does not replace the events; it bounds how long a missed one can lie
 - **Status:** implemented
-- **Coverage:** components/chat/ReadinessGate.tsx:74-336; components/chat/ChatPanel.tsx:740-787
+- **Coverage:** components/chat/ReadinessGate.tsx:74-336; components/chat/ChatPanel.tsx:740-787; lib/readiness-cache.ts
 
 ### SCN-046: Mid-stream error + retry
 - **Persona:** analyst
@@ -1170,6 +1171,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** the agent resumes from where it stopped
 - **The wall clock is one budget for the whole request (F-SQL-03, 2026-08-21):** on the multi-stage path a failing stage is replanned up to `max_pipeline_replans` times, and every replan spends from the *same* deadline the first attempt started. When it is spent the request returns the failed stage's result rather than starting another plan — so a hard question ends in a bounded time with an honest partial answer plus "Continue analysis", instead of running three full budgets back to back. Before this each replan started a fresh budget, so a request whose documented limit is `agent_wall_clock_timeout_seconds` could occupy roughly three times that with the user watching a spinner.
 - **The answer says what it did not reach (2026-09-02):** the synthesis prompt used for this path carried, verbatim, "Do NOT mention step limits, partial results, or that anything was cut short — present this as a complete answer." That function is reached only when the step budget is spent, so the instruction applied to every answer on this scenario: the badge said partial and the text said finished. The prompt now tells the model the run stopped at its budget and asks it to name, in one short closing sentence, which part of the question it did not reach. Honest in both directions — when the collected data does fully answer the question it is told to add **no** caveat, because a caveat invented for a complete answer teaches the reader to discount every caveat after it.
+- **The fallback answer speaks the reader's language (COR-05, 2026-09-12):** `README.md` promises the multilingual rule at "step-limit/emergency synthesis", and the rule is a prompt instruction — so it held wherever an LLM wrote the answer, and this scenario's fallback is joined from literals in Python when no LLM is in the path. A Russian question that hit the 20-step budget was answered *"I reached the maximum number of analysis steps."*, in English, at the moment comprehension matters most. The static text is now translated by one short, bounded call (`app/agents/localize.py`) that **can only ever return the original**: no router, a refused budget, a timeout or an implausible answer all deliver the English sentence rather than an exception, because a degraded answer must not become no answer. The same covers the wall-clock fallback and the pipeline stage-failure answer. *Not covered:* the freshness banner beside the answer, which would cost a second call on a path that has already exhausted its budget.
 - **The badge is now reached at all (row 1.7, 2026-09-05):** this scenario's entry point is `response_type: step_limit_reached`, and the orchestrator handed it out only when the partial answer already looked bad. With rows on the table and the partial-answer validator approving, the exhausted-budget branch returned the **ordinary** type, so a cut-off run was typed `sql_result` and `sealStateFor` (`components/ui/Seal.tsx:73-91`) sealed it **Verified** — contradicting SCN-122 below, which states that a budget-exhausted run seals Unverified *even when a query is attached*. The branch now types every cut-off run `step_limit_reached`. The validator is still called, for the errors-screen signal it raises, not for the type: it is asked whether the answer addresses the question and can only see the answer and the question, never the data the run did not reach — a partial answer judged against itself cannot say the cut-off did not matter. **Nothing had ever executed this branch**: no test in the suite exhausted the step budget (`tests/unit/test_cutoff_is_visible_to_the_reader.py`, 4 cases, 1 red before).
 - **A crashed quality gate now reaches this scenario too (row 2.9, 2026-09-05):** the flat loop answers a validator exception by consulting `answer_validator_fail_closed` (default on) and downgrading, so an unverifiable answer arrives here labelled. The multi-stage path answered the same exception with a bare `return None`, which `build_pipeline_response` reads as **accept** — so one question got two safety postures depending on which path a router the user cannot see had chosen, and only the crashing case differed, which is why no test compared them. The old behaviour was documented as "fail-open to avoid blocking a successful pipeline", and the fear does not match the mechanism: a non-accept directive maps to `step_limit_reached`, which **preserves the answer text** and adds this scenario's CTA. Nothing was ever blocked, so the fail-open bought nothing and paid an unverified answer for it. `warn`, not `block`: parity here is about labelling honestly, not withholding. `tests/unit/test_pipeline_gate_fails_the_same_way.py` (5 cases, 1 red before).
 - **UI elements:** "Continue analysis" button
@@ -1406,26 +1408,27 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User switches scope (All / Mine / Shared)
   2. User reviews saved queries
-- **Expected result:** notes list for the scope; scope-aware empty copy when none
-- **UI elements:** scope tabs, "Batch" button (≥2 notes), close (X), skeletons
+- **Expected result:** notes list for the scope; scope-aware empty copy when none; **a failed load says so and offers "Try again"** — never the empty copy
+- **UI elements:** scope tabs, "Batch" button (≥2 notes), close (X), skeletons, failure state with "Try again"
 - **States covered:** loading, empty, error, success
-- **Errors & recovery:** load fails → toast "Failed to load saved queries" then empty state (`notes-store.ts:78-82`)
+- **Errors & recovery:** FE-07, closed 2026-09-12 — `loadNotes` set `notes: []` on failure and the panel had only loading and empty, so a 500 over forty saved queries rendered as "No saved queries yet" plus the hint explaining how to save a first one. The toast was gone in 10 s and nothing on screen distinguished the two. `loadError` carries the reason and the panel has a third state (`notes-store.ts:78-95`)
 - **Status:** implemented
-- **Coverage:** components/notes/NotesPanel.tsx:82-126; stores/notes-store.ts:58-82
+- **Coverage:** components/notes/NotesPanel.tsx:82-140; stores/notes-store.ts:58-98
 
 ### SCN-069: Run a saved query
 - **Persona:** analyst
 - **Feature:** notes
 - **Entry point:** NoteCard "Refresh" (run) button
-- **Preconditions:** a saved query with a connection
+- **Preconditions:** a saved query with a connection; **on a WRITABLE connection the caller must be `editor` or `owner`** — on a read-only one `viewer` suffices
 - **Steps:**
   1. User clicks Refresh on a note
 - **Expected result:** query re-executes; toast "Query executed successfully"; refreshed result injected into chat + inline result table (first 20 rows)
 - **UI elements:** Refresh button (spins), inline result table
 - **States covered:** loading, error, success
-- **Errors & recovery:** result error → toast "Query error: …"; execution throws → toast "Execution failed" (`NoteCard.tsx:97-123`). Disabled when no connection
+- **Errors & recovery:** result error → toast "Query error: …"; execution throws → toast "Execution failed" (`NoteCard.tsx:97-123`). Disabled when no connection. A viewer on a writable connection gets **403** naming why: the statement could change the data it reaches
+- **Why the role gate (COR-06, 2026-09-12):** the ladder gates workspace mutations — a dashboard needs `editor`, a schedule needs `owner` — and no execution path distinguished a viewer from an owner for SQL against the *customer's* database. `SafetyLevel.ALLOW_DML` blocks DDL and nothing else, so a contractor added as `viewer` to keep them read-only could save `DELETE FROM orders WHERE 1=1` and run it. On a read-only connection the engine already refuses a write, so the role is not the layer that has to, and a viewer keeps the SELECT the role exists for
 - **Status:** implemented
-- **Coverage:** components/notes/NoteCard.tsx:93-127,210-238
+- **Coverage:** components/notes/NoteCard.tsx:93-127,210-238; backend/app/api/routes/notes.py:256-266; backend/app/services/membership_service.py:88-125
 
 ### SCN-070: Share / unshare a saved query
 - **Persona:** analyst
@@ -1666,12 +1669,12 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Preconditions:** invalid id OR no access OR not logged in
 - **Steps:**
   1. User opens the link
-- **Expected result:** unauthenticated → redirect to `/login`; otherwise "Dashboard not found" + "Back to app" and a toast carrying the error
-- **UI elements:** AuthGate redirect, "Dashboard not found" screen, "Back to app" button, toast
+- **Expected result:** unauthenticated → redirect to `/login`; a **404** → "This dashboard no longer exists, or was never shared with you." + "Back to app"; **any other failure** (network, 500, 504) → the reason it failed + **"Try again"** beside "Back to app"
+- **UI elements:** AuthGate redirect, failure screen, "Try again" (unavailable only), "Back to app" button, toast
 - **States covered:** error
-- **Errors & recovery:** GAP — invalid/expired/forbidden all collapse to one "Dashboard not found" screen (no distinct "expired" or "no access" copy) (`app/dashboard/[id]/page.tsx:104-132,206-218`)
+- **Errors & recovery:** FE-04, closed 2026-09-12 — a network failure, a 500, a 504 and a genuine 404 all produced the same permanent screen saying the dashboard did not exist, with no Retry on it, and the toast carrying the real reason auto-dismissed after 10 s. A missing resource is a fact about the account; everything else is a fact about this moment, so they are different sentences and different affordances. Still a GAP: "expired" and "forbidden" are not told apart from "never existed" — the API answers 404 for all three, deliberately, so telling them apart is a backend decision about what to disclose
 - **Status:** implemented
-- **Coverage:** app/dashboard/[id]/page.tsx:87-132,206-218; components/auth/AuthGate.tsx:16-20
+- **Coverage:** app/dashboard/[id]/page.tsx:87-132,206-218; lib/load-failure.ts; components/auth/AuthGate.tsx:16-20
 
 ### SCN-086: Delete a dashboard
 - **Persona:** editor
@@ -1695,7 +1698,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Persona:** analyst
 - **Feature:** batch
 - **Entry point:** app header "Batch query runner" button → BatchRunner modal
-- **Preconditions:** active project + connection
+- **Preconditions:** active project + connection; **on a WRITABLE connection the caller must be `editor` or `owner`** (COR-06, 2026-09-12 — a batch is a list of arbitrary SQL against the customer's database, and it was gated at the lowest role the ladder has). On a read-only connection `viewer` suffices
 - **Steps:**
   1. User titles the batch, picks a connection
   2. User adds queries (title + SQL), reorders/removes them
@@ -1703,7 +1706,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** progress bar + "Running queries… current/total"; toast on terminal status
 - **UI elements:** title input, connection select, per-query inputs + move/remove, "Add Query", "Run All (N)", progress bar
 - **States covered:** loading, error, success
-- **Errors & recovery:** no connection → toast; no valid queries → toast; start fails → toast; partial/failed terminal → toast; poll lost (≥10) → toast "Lost connection to batch" (`BatchRunner.tsx:106-169`)
+- **Errors & recovery:** no connection → toast; no valid queries → toast; start fails → toast; partial/failed terminal → toast; poll lost (≥10) → toast "Lost connection to batch" (`BatchRunner.tsx:106-169`); a viewer on a writable connection → **403** naming why
 - **Status:** implemented
 - **Coverage:** components/batch/BatchRunner.tsx:194-327
 
@@ -1853,12 +1856,13 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Preconditions:** OS prefers-reduced-motion enabled
 - **Steps:**
   1. User has reduced motion enabled at the OS level
-- **Expected result:** animations/transitions are neutralized app-wide (CSS + Framer MotionConfig + chart animations off)
+- **Expected result:** animations/transitions are neutralized app-wide (CSS + Framer MotionConfig + chart animations off), **the chat's auto-scroll included**
 - **UI elements:** (no control — OS-driven)
 - **States covered:** success
 - **Errors & recovery:** n/a. Note: there is intentionally no in-app reduced-motion toggle
+- **The one the contract could not reach (FE-09, 2026-09-12):** the chat's scroll named `behavior: "smooth"` in JavaScript, and the app's reduced-motion contract is CSS plus `MotionConfig reducedMotion="user"` — the CSS block zeroes the `--dur-*` properties and declares no `scroll-behavior` at all, so neither half could touch it. Worse, the effect depends on `streamingText`, which gains every SSE chunk, so it fired a fresh smooth scroll per token for every reader. It is instant while streaming, instant under reduced motion, and **skipped entirely when the reader is not already near the bottom** — scrolling up to re-read the previous answer's SQL no longer gets undone on the next token
 - **Status:** implemented
-- **Coverage:** app/globals.css:23-31; app/app/page.tsx:384; components/viz/ChartRenderer.tsx:142-145
+- **Coverage:** app/globals.css:23-31; app/app/page.tsx:384; components/viz/ChartRenderer.tsx:142-145; lib/scroll-behavior.ts; components/chat/ChatPanel.tsx:323-343
 
 ## billing
 
@@ -2040,7 +2044,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   2. Global confirm (warning, type `Revoke`) appears
   3. User confirms
 - **Expected result:** toast "Token revoked"; row reflects revoked status
-- **UI elements:** "Revoke" button, ConfirmModal (warning, type-`Revoke`)
+- **UI elements:** "Revoke" button (hover `text-error`), ConfirmModal (warning, type-`Revoke`)
+- **The two colours that ignored the theme (FE-10, 2026-09-12):** the "active" label and the Revoke hover were `text-emerald-400` and `hover:text-rose-400` — raw Tailwind palette classes, which compile because `globals.css` uses `@theme inline` and never resets `--color-*`, so nothing failed. They are fixed hexes: the same mid-emerald and mid-rose in both twins the pack ships, on a screen whose only two status colours they were. Now `text-success` and `text-error`; no raw palette class remains anywhere in `components/`
 - **States covered:** error, success
 - **Errors & recovery:** revoke fails → toast "Failed to revoke token" (`McpTokenManager.tsx:121`)
 - **Status:** implemented
@@ -2056,12 +2061,13 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User expands the widget
   2. User cancels a running task, retries a failed one, or dismisses a finished one
-- **Expected result:** task list with live progress; the chosen action applies
+- **Expected result:** task list with live progress; the chosen action applies. The pill reads **"N queued"** with a spinner while a run is queued, never "✓ N done"
 - **UI elements:** toggle pill (count), per-task Cancel / Retry / Dismiss, progress bars, elapsed timer
 - **States covered:** empty (renders null), loading, error, success
-- **Errors & recovery:** Cancel/Retry failures toast "Failed to cancel task" / "Failed to retry task" (`ActiveTasksWidget.tsx:119-149`). Cancel has no confirm (the run is reversible by re-triggering)
+- **Errors & recovery:** Cancel/Retry failures toast "Failed to cancel task" / "Failed to retry task" (`ActiveTasksWidget.tsx:119-149`). Cancel has no confirm (the run is reversible by re-triggering). **A run missing from the server's active list for more than 30 s is marked ended with "outcome unknown"** — not `completed`, because the outcome arrived on a channel nobody was listening to
+- **Why both (FE-06, closed 2026-09-12):** the only transition to a terminal status was an SSE `pipeline_end`, so a dropped connection whose reconnect landed after the run finished left the pill spinning with an elapsed counter climbing past the real run and a Cancel button for a run that had ended — only a reload cleared it. And the pill counted `running` and `failed` only, letting a task one click old fall into the final `else`: "✓ 1 done" for an index that had not started
 - **Status:** implemented
-- **Coverage:** components/tasks/ActiveTasksWidget.tsx:105-278
+- **Coverage:** components/tasks/ActiveTasksWidget.tsx:105-278; lib/task-summary.ts; stores/background-tasks-store.ts:211-262
 
 ## logs
 

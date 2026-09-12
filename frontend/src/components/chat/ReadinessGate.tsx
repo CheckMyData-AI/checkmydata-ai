@@ -7,6 +7,7 @@ import { useAppStore } from "@/stores/app-store";
 import { useBackgroundTasks } from "@/stores/background-tasks-store";
 import { toast } from "@/stores/toast-store";
 import { POLL_INTERVAL_MS, MAX_POLL_MS } from "@/lib/polling";
+import { isReadinessFresh } from "@/lib/readiness-cache";
 
 interface ReadinessGateProps {
   projectId: string;
@@ -45,7 +46,10 @@ function timeAgo(iso: string): string {
 }
 
 export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGateProps) {
-  const cachedReady = useAppStore((s) => s.readinessCache[projectId]?.ready);
+  const cachedReady = useAppStore((s) => {
+    const entry = s.readinessCache[projectId];
+    return Boolean(entry?.ready) && isReadinessFresh(entry);
+  });
   const [readiness, setReadiness] = useState<ProjectReadiness | null>(null);
   const [loading, setLoading] = useState(!cachedReady);
   const [fetchError, setFetchError] = useState(false);

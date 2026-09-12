@@ -81,6 +81,14 @@ function scheduleDismiss(key: string, ms: number) {
 
 const TERMINAL = (s: BgStatus) => s === "completed" || s === "failed";
 
+/**
+ * How long a task may be missing from the authoritative active list before its
+ * absence is read as "it ended" (FE-06). Long enough to cover an optimistic insert
+ * and the round trip that follows it; short enough that a spinner cannot outlive
+ * its run by more than this.
+ */
+const ORPHAN_GRACE_SECONDS = 30;
+
 /** A poll/optimistic source may refresh only non-terminal, non-SSE-running tasks. */
 function pollMayTouch(existing: BgTask | undefined): boolean {
   if (!existing) return true;
@@ -211,7 +219,9 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
   reconcileFromActive: (apiTasks: ApiActiveTask[]) => {
     set((state) => {
       const updated = { ...state.tasks };
+      const seen = new Set<string>();
       for (const t of apiTasks) {
+        seen.add(keyOf(t.run_id, t.workflow_id));
         const key = keyOf(t.run_id, t.workflow_id);
         const existing = updated[key];
         if (!pollMayTouch(existing)) continue;
@@ -231,6 +241,30 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
           startedAt: existing?.startedAt ?? t.started_at,
           extra: { ...(existing?.extra ?? {}), ...(t.extra || {}) },
           source: existing?.source === "optimistic" ? "poll" : (existing?.source ?? "poll"),
+        };
+      }
+
+      // FE-06: this list is what the server says is RUNNING, so a task missing from
+      // it has ended — and until now nothing said so. The only transition to a
+      // terminal status was an SSE `pipeline_end`, so a dropped connection whose
+      // reconnect landed after the run finished left the pill spinning forever, with
+      // an elapsed counter climbing past the real run and a Cancel button for a run
+      // that had ended. Only a page reload cleared it.
+      //
+      // The grace window is what makes an ABSENCE readable: a task inserted
+      // optimistically, or begun seconds ago, is legitimately not in the list yet.
+      // Below the window an absence means nothing; above it, it means ended.
+      const cutoff = Date.now() / 1000 - ORPHAN_GRACE_SECONDS;
+      for (const [key, task] of Object.entries(updated)) {
+        if (seen.has(key) || TERMINAL(task.status)) continue;
+        if (!pollMayTouch(task) || task.startedAt > cutoff) continue;
+        // "Ended" is all that is known — the outcome arrived on a channel that was
+        // not listening. Claiming `completed` would assert a success nobody saw.
+        updated[key] = {
+          ...task,
+          status: "failed",
+          completedAt: Date.now() / 1000,
+          error: task.error ?? "Ended while this tab was disconnected — outcome unknown",
         };
       }
       return { tasks: updated };

@@ -6,26 +6,36 @@ import { api, type CostEstimate } from "@/lib/api";
 interface CostEstimatorProps {
   projectId: string;
   connectionId?: string;
+  /** COR-04: without this the meter has no conversation to measure. */
+  sessionId?: string;
+  /** Re-fetch when this changes — the history has grown since the last reading. */
+  messageCount?: number;
   onEstimate?: (estimate: CostEstimate | null) => void;
 }
 
-export function CostEstimator({ projectId, connectionId, onEstimate }: CostEstimatorProps) {
+export function CostEstimator({
+  projectId,
+  connectionId,
+  sessionId,
+  messageCount,
+  onEstimate,
+}: CostEstimatorProps) {
   const [estimate, setEstimate] = useState<CostEstimate | null>(null);
   const [showTooltip, setShowTooltip] = useState(false);
   const fetchedKey = useRef("");
 
   useEffect(() => {
-    const key = `${projectId}:${connectionId ?? ""}`;
+    const key = `${projectId}:${connectionId ?? ""}:${sessionId ?? ""}:${messageCount ?? 0}`;
     if (key === fetchedKey.current) return;
     fetchedKey.current = key;
     let cancelled = false;
 
     api.chat
-      .estimate(projectId, connectionId)
+      .estimate(projectId, connectionId, sessionId)
       .then((e) => { if (!cancelled) { setEstimate(e); onEstimate?.(e); } })
       .catch(() => { if (!cancelled) { setEstimate(null); onEstimate?.(null); } });
     return () => { cancelled = true; };
-  }, [projectId, connectionId, onEstimate]);
+  }, [projectId, connectionId, sessionId, messageCount, onEstimate]);
 
   if (!estimate) return null;
 
@@ -57,7 +67,9 @@ export function CostEstimator({ projectId, connectionId, onEstimate }: CostEstim
               <Row label="Rules" value={breakdown.rules} />
               <Row label="Learnings" value={breakdown.learnings} />
               <Row label="Overview" value={breakdown.overview} />
-              <Row label="History budget" value={breakdown.history_budget_remaining} />
+              {estimate.history_measured && (
+                <Row label="History" value={breakdown.history_tokens} />
+              )}
               <div className="border-t border-border-default pt-1 mt-1">
                 <Row label="Est. prompt" value={estimate.estimated_prompt_tokens} />
                 <Row label="Est. completion" value={estimate.estimated_completion_tokens} />
