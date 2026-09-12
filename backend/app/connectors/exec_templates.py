@@ -250,7 +250,11 @@ def get_default_template(db_type: str) -> str | None:
     return None
 
 
-_SHELL_SAFE_RE = re.compile(r"^[a-zA-Z0-9._@/:=-]+$")
+#: SQL-05: `\Z`, not `$`. In Python `$` also matches immediately **before a trailing
+#: newline**, so `"10.0.0.5\n"` matched this pattern, was classified shell-safe and
+#: returned unquoted — ending the command line early and putting whatever followed on a
+#: line of its own. `\Z` matches only at the very end of the string.
+_SHELL_SAFE_RE = re.compile(r"^[a-zA-Z0-9._@/:=-]+\Z")
 
 
 def _shell_escape(value: str) -> str:
@@ -287,6 +291,11 @@ def _sql_literal_escape(value: str) -> str:
     return _dquote_escape(value.replace("'", "''"))
 
 
+#: A placeholder with its quoting context: `'{x}'`, `"{x}"` or a bare `{x}`. The
+#: back-reference makes the quotes match, so a stray `'{x}"` is not read as quoted.
+_PLACEHOLDER_RE = re.compile(r"(?P<q>[\'\"]?)\{(?P<key>\w+)\}(?P=q)")
+
+
 def format_template(template: str, config_vars: dict[str, str]) -> str:
     """Substitute placeholders in a template string.
 
@@ -303,17 +312,27 @@ def format_template(template: str, config_vars: dict[str, str]) -> str:
     list that goes stale when a template gains a placeholder; escaping everything
     cannot.
     """
-    result = template
-    for key, value in config_vars.items():
-        placeholder = f"{{{key}}}"
-        sq_placeholder = f"'{placeholder}'"
-        dq_placeholder = f'"{placeholder}"'
-        # Order matters: the SQL-literal form is the most specific and sits INSIDE the
-        # double-quoted form in every introspection template.
-        if sq_placeholder in result:
-            result = result.replace(sq_placeholder, "'" + _sql_literal_escape(value) + "'")
-        if dq_placeholder in result:
-            result = result.replace(dq_placeholder, '"' + _dquote_escape(value) + '"')
-        if placeholder in result:
-            result = result.replace(placeholder, _shell_escape(value))
-    return result
+
+    # SQL-05: ONE pass over the template, so substituted text is never re-scanned.
+    # The loop this replaces substituted each key into `result` and then looked for the
+    # next key in `result` — so a value that IS a placeholder string got expanded on a
+    # later iteration. `{"db_host": "{db_name}", "db_name": "secrets"}` put the database
+    # name into the host position, and the substitution order was dict order, which is
+    # insertion order, which is whatever the caller happened to build.
+    #
+    # The quoting context still comes from the characters ADJACENT to the placeholder,
+    # exactly as before: `'{x}'` is a SQL literal (the most specific, and it sits inside
+    # the double-quoted form in every introspection template), `"{x}"` is double-quote
+    # context, a bare `{x}` is bare shell.
+    def _substitute(match: re.Match[str]) -> str:
+        quote, key = match.group("q"), match.group("key")
+        if key not in config_vars:
+            return match.group(0)  # not ours to fill; leave it exactly as written
+        value = config_vars[key]
+        if quote == "'":
+            return "'" + _sql_literal_escape(value) + "'"
+        if quote == '"':
+            return '"' + _dquote_escape(value) + '"'
+        return _shell_escape(value)
+
+    return _PLACEHOLDER_RE.sub(_substitute, template)

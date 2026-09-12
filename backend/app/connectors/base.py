@@ -466,18 +466,59 @@ class DatabaseAdapter(DataSourceAdapter):
             return f"`{name.replace('`', '``')}`"
         return f'"{name.replace(chr(34), chr(34) + chr(34))}"'
 
+    @staticmethod
+    def _qualified_identifier(name: str, schema: str | None, db_type: str = "") -> str:
+        """`"schema"."table"` when a schema is known, `"table"` when it is not (SQL-08).
+
+        Postgres introspection deliberately returns **every** non-system schema
+        (`WHERE t.table_schema NOT IN ('pg_catalog','information_schema')`) and fills
+        `TableInfo.schema`. The index pipeline then passed `table.name` alone, so the
+        sample was `SELECT * FROM "events" LIMIT 3` — resolved against the session's
+        `search_path`, which means a table in `analytics` was sampled from `public` if a
+        table of that name happened to live there, and failed outright if none did. The
+        column statistics and distinct values took the same route.
+
+        Two quoted parts, not one: `_quote_identifier("analytics.events")` produces
+        `"analytics.events"`, which is a single identifier containing a dot — a table
+        nobody has.
+
+        A static method so it can be read and tested without a live connection, which
+        is what every other quoting helper here should have been.
+        """
+        quote = (
+            (lambda n: f"`{n.replace('`', '``')}`")
+            if db_type == "mysql"
+            else (lambda n: f'"{n.replace(chr(34), chr(34) + chr(34))}"')
+        )
+        if not schema:
+            return quote(name)
+        return f"{quote(schema)}.{quote(name)}"
+
+    def _table_ref(self, name: str, schema: str | None = None) -> str:
+        """`_qualified_identifier` bound to this adapter's dialect."""
+        return self._qualified_identifier(name, schema, self.db_type)
+
     async def sample_data(
         self,
         table_name: str,
         limit: int = 3,
+        schema: str | None = None,
     ) -> QueryResult:
-        """Fetch a few sample rows from a table for LLM context."""
-        quoted = self._quote_identifier(table_name)
+        """Fetch a few sample rows from a table for LLM context.
+
+        ``schema`` is what the index recorded finding the table in (SQL-08). Optional,
+        because MySQL and ClickHouse address a database rather than a schema and the
+        connection already names it; passing it there is harmless and passing it on
+        Postgres is what makes the sample land on the right table.
+        """
+        quoted = self._table_ref(table_name, schema)
         return await self.execute_query(
             f"SELECT * FROM {quoted} LIMIT {limit}",
         )
 
-    async def distinct_values(self, table: str, column: str, limit: int = 50) -> list[str]:
+    async def distinct_values(
+        self, table: str, column: str, limit: int = 50, schema: str | None = None
+    ) -> list[str]:
         """Distinct non-NULL values of a column, ordered, capped at *limit*.
 
         SQL default implementation — works for PostgreSQL and MySQL.
@@ -485,7 +526,7 @@ class DatabaseAdapter(DataSourceAdapter):
         Non-SQL adapters (e.g. MongoDB) override this method entirely.
         Contract C-D / DBIDX-D2.
         """
-        tq = self._quote_identifier(table)
+        tq = self._table_ref(table, schema)
         cq = self._quote_identifier(column)
         qr = await self.execute_query(
             f"SELECT DISTINCT {cq} FROM {tq} "
@@ -497,7 +538,7 @@ class DatabaseAdapter(DataSourceAdapter):
             return []
         return [str(r[0]) for r in qr.rows if r[0] is not None][:limit]
 
-    async def approx_stats(self, table: str, column: str) -> ColumnStats:
+    async def approx_stats(self, table: str, column: str, schema: str | None = None) -> ColumnStats:
         """Return approximate per-column statistics (distinct count, null rate, min, max).
 
         SQL default — uses standard COUNT(DISTINCT ...) / CASE-based null count.
@@ -505,7 +546,7 @@ class DatabaseAdapter(DataSourceAdapter):
         Non-SQL adapters override entirely.
         Contract C-D / DBIDX-D9.
         """
-        tq = self._quote_identifier(table)
+        tq = self._table_ref(table, schema)
         cq = self._quote_identifier(column)
         qr = await self.execute_query(
             f"SELECT COUNT(DISTINCT {cq}) AS dc, "

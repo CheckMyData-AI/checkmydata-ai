@@ -125,6 +125,26 @@ def _infer_fields(
     return {path: "|".join(sorted(types)) for path, types in type_sets.items()}
 
 
+def columns_across(documents: list[dict]) -> list[str]:
+    """Every field any of *documents* carries, first-seen order (SQL-09).
+
+    The columns used to be `capped[0].keys()`. Heterogeneous documents are the whole
+    point of the document model — `_infer_fields` exists in this same connector because
+    it knows that — so a field absent from document #1 was invisible in every row, and
+    `d.get(c)` then filled the gap with `None`, leaving a reader unable to tell "this
+    document has no such field" from "the field is null".
+
+    First-seen order rather than sorted: a reader's columns must not shuffle between
+    runs, and the first document's shape is the most useful leading order because it is
+    usually the collection's common case.
+    """
+    seen: dict[str, None] = {}
+    for document in documents:
+        for key in document:
+            seen.setdefault(key, None)
+    return list(seen)
+
+
 def _to_jsonable(value: Any) -> Any:
     """Coerce Mongo-specific BSON types in a result cell to serializable forms.
 
@@ -289,7 +309,7 @@ class MongoDBConnector(BaseConnector):
             # The +1 sentinel: more documents existed than our safety cap allows.
             truncated = len(docs) > MAX_RESULT_ROWS
             capped = docs[:MAX_RESULT_ROWS] if truncated else docs
-            columns = list(capped[0].keys()) if capped else []
+            columns = columns_across(capped)
             # Coerce every cell — not just the top-level _id — so nested or
             # reference ObjectIds / Decimal128 values are serializable.
             rows = [[_to_jsonable(d.get(c)) for c in columns] for d in capped]
@@ -386,6 +406,7 @@ class MongoDBConnector(BaseConnector):
         self,
         table_name: str,
         limit: int = 3,
+        schema: str | None = None,  # noqa: ARG002 — MongoDB addresses a database, not a schema
     ) -> QueryResult:
         if self._db is None:
             return QueryResult(error="Not connected")
@@ -406,6 +427,7 @@ class MongoDBConnector(BaseConnector):
         table: str,
         column: str,
         limit: int = 50,
+        schema: str | None = None,  # noqa: ARG002 — see `sample_data`
     ) -> list[str]:
         """Return distinct string values of *column* in *table* via native ``distinct``.
 
@@ -428,7 +450,7 @@ class MongoDBConnector(BaseConnector):
             )
             return []
 
-    async def approx_stats(self, table: str, column: str) -> ColumnStats:
+    async def approx_stats(self, table: str, column: str, schema: str | None = None) -> ColumnStats:
         """Return approximate per-column statistics via a native aggregation pipeline.
 
         The pipeline uses ``$group`` to compute distinct count, null rate, min and max

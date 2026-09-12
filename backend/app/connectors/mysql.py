@@ -38,6 +38,32 @@ def _map_mysql_object_kind(table_type: str) -> Literal["table", "view", "matview
     return "table"
 
 
+async def _apply_row_limit(conn: Any) -> None:
+    """Ask this session to stop producing rows past the cap. Best-effort (SQL-03).
+
+    `SQL_SELECT_LIMIT` bounds what the SERVER sends for a SELECT that carries no LIMIT
+    of its own, which is the half the client-side cap cannot reach: closing an
+    unbuffered cursor reads to EOF because the MySQL protocol has no "stop sending".
+    A session variable, so it cannot leak into another caller's connection, and a query
+    with its own smaller LIMIT is unaffected.
+
+    **One more than the cap**, so the `+1` truncation sentinel still works: the client
+    asks for `MAX_RESULT_ROWS + 1` and the server is willing to supply exactly that.
+
+    Never raises. A server that refuses the variable — an ancient version, a
+    restrictive proxy — leaves the previous behaviour exactly as it was: bounded
+    memory, unbounded transfer. Failing a query over a performance safeguard would
+    trade a slow answer for no answer.
+    """
+    from app.connectors.base import MAX_RESULT_ROWS
+
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute(f"SET SESSION SQL_SELECT_LIMIT = {int(MAX_RESULT_ROWS) + 1}")
+    except Exception:
+        logger.debug("MySQL: could not set SQL_SELECT_LIMIT for this session", exc_info=True)
+
+
 class MySQLConnector(BaseConnector):
     def __init__(self):
         self._pool: aiomysql.Pool | None = None
@@ -143,14 +169,28 @@ class MySQLConnector(BaseConnector):
 
             async def _run() -> tuple[list[dict[str, Any]], list[str]]:
                 async with pool.acquire() as conn:
+                    return await _execute_on(conn, exec_query, exec_params)
+
+            async def _execute_on(
+                conn: Any, exec_query: str, exec_params: Any
+            ) -> tuple[list[dict[str, Any]], list[str]]:
+                try:
                     # R2/F-ARCH-5: stream via a server-side (unbuffered) cursor and
                     # pull at most ``MAX_RESULT_ROWS + 1`` rows. ``fetchall()`` on a
                     # buffered cursor materialises the entire (potentially
                     # millions-of-rows) result set in client memory before we cap it
                     # — the OOM bug. ``SSDictCursor`` keeps rows on the server; the
-                    # ``+1`` sentinel detects truncation. Closing the cursor drains
-                    # any unread rows over the wire one block at a time (bounded
-                    # memory) so the pooled connection stays in sync.
+                    # ``+1`` sentinel detects truncation.
+                    #
+                    # SQL-03(a): closing that cursor calls `_finish_unbuffered_query()`,
+                    # which the driver documents as reading to EOF because the MySQL
+                    # protocol has no way to say "stop sending". So the cap bounds
+                    # MEMORY and not the WIRE: a `SELECT *` over a hundred-million-row
+                    # table still transfers every row before this returns, one block at
+                    # a time. The fix is to stop the server producing them, not to stop
+                    # reading — `SQL_SELECT_LIMIT` does exactly that for a SELECT, and
+                    # is per-session so it cannot leak into another caller's work.
+                    await _apply_row_limit(conn)
                     async with conn.cursor(aiomysql.SSDictCursor) as cur:
                         await cur.execute(exec_query, exec_params)
                         fetched = await cur.fetchmany(MAX_RESULT_ROWS + 1)
@@ -162,6 +202,22 @@ class MySQLConnector(BaseConnector):
                         # "Missing expected columns", naming aliases it had SELECTed.
                         described = [d[0] for d in (cur.description or ())]
                         return fetched, described
+                except (asyncio.CancelledError, TimeoutError):
+                    # SQL-03(b), the same reasoning `postgres.py` already carries:
+                    # `asyncio.wait_for` below cancels this coroutine mid-cursor, and an
+                    # unbuffered MySQL connection interrupted that way still has unread
+                    # rows on the wire. Returning it to the pool hands the next caller a
+                    # connection whose next read is somebody else's result set.
+                    #
+                    # `close()` rather than removing it by hand: aiomysql's `release`
+                    # checks `conn.closed` and drops a closed connection instead of
+                    # returning it to the free list, so the `async with` above does the
+                    # right thing once this has run.
+                    try:
+                        conn.close()
+                    except Exception:
+                        logger.debug("MySQL: close on timed-out connection failed", exc_info=True)
+                    raise
 
             rows, described = await asyncio.wait_for(_run(), timeout=effective_timeout)
             elapsed = (time.monotonic() - start) * 1000

@@ -237,6 +237,15 @@ CEILINGS: dict[str, int] = {
     # withholding direction would be a rail line reading "your index is over quota" that
     # the reader cannot verify and cannot act on, produced by an outage they never saw.
     # It logs at WARNING and returns 0, which means unlimited everywhere else in `plans`.
+    # 657 -> 659 on 2026-09-12. Two, both in the MySQL connector (row 26, SQL-03).
+    # `_apply_row_limit` asks the session to stop producing rows past the cap, and a
+    # server that refuses the variable — an ancient version, a restrictive proxy —
+    # must leave the previous behaviour exactly as it was rather than fail the query:
+    # trading a slow answer for no answer is the wrong direction, and the client-side
+    # cap still bounds memory. The second wraps `conn.close()` on a cancelled query,
+    # where the close is already the recovery and a failure inside it must not replace
+    # the timeout the caller is waiting to hear about. Neither could be narrower: both
+    # wrap a call into aiomysql, whose exception surface is not ours to enumerate.
     # 655 -> 657 on 2026-09-12. Two, both in `resolve_account_key` (P0-1c), and both
     # the same sentence: an ATTRIBUTION key that cannot be read must not fail the
     # request. One wraps the row lookup, one the Fernet decrypt — a ciphertext written
@@ -304,7 +313,7 @@ CEILINGS: dict[str, int] = {
     # The json parse in `stale_run_reaper._requeue_attempts` added in the same change is
     # NOT here: `json.loads` raises `ValueError` or `TypeError` and nothing else can, so
     # it is caught narrowly rather than spending this budget.
-    "except Exception": 657,
+    "except Exception": 659,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:
@@ -348,13 +357,20 @@ CEILINGS: dict[str, int] = {
     # absence was DATA-05 — `alembic/env.py` compares against `Base.metadata`, which
     # this file populates, so the table was invisible to autogenerate and the next
     # generated revision would have emitted `drop_table("audit_logs")`.
+    # 133 -> 135 on 2026-09-12. Two `ARG002` on the MongoDB connector's `sample_data`
+    # and `distinct_values` (row 26, SQL-08): the base signatures gained `schema`, and
+    # MongoDB addresses a *database* rather than a schema, so the parameter is accepted
+    # and unused there by design. The alternative — omitting it — makes the override
+    # incompatible with the base class, which is the silent shape this row exists to
+    # remove: the pipeline swallows the TypeError and the collection simply gets no
+    # samples.
     # 131 -> 133 on 2026-09-12. Net two, all `PLW0603` on module-level globals that
     # hold a process-wide singleton: `task_queue._reset_pool_backoff` and
     # `_ensure_pool` (the ARQ pool and its retry deadline — OPS-15 exists because that
     # pool used to be set once and never again), and `metrics_store.get_metrics_store`,
     # which caches this process's store beside the shared Redis client. Three added,
     # one removed: `init_task_queue` no longer touches the global itself.
-    "# noqa": 133,
+    "# noqa": 135,
 }
 
 PATTERNS: dict[str, re.Pattern[str]] = {

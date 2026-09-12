@@ -561,8 +561,16 @@ _PARAM_RE = re.compile(r":(?P<name>\w+)\b")
 
 # Leading SQL comments to strip before sniffing the first keyword.
 _LEADING_COMMENT_RE = re.compile(r"^\s*(?:--[^\n]*\n|/\*.*?\*/\s*)", re.DOTALL)
+#: SQL-10. `[\s(]*` rather than `\s*`, to read the same string the same way
+#: `SafetyGuard` does: its leading-token regex is `^[\s(]*([A-Za-z]+)`, and the paren
+#: is there on purpose — `(SELECT 1)` and `((SELECT 1) UNION (SELECT 2))` are ordinary
+#: SQL. Two regexes inspecting one string and disagreeing is the defect: the guard
+#: admitted the query, this refused it, and the refusal fell through to the non-cursor
+#: branch, which materialises the whole result set in the dyno's memory instead of
+#: streaming it. The cap on rows is applied after that, so it bounds what is RETURNED
+#: and not what is held.
 _ROW_RETURNING_RE = re.compile(
-    r"^\s*(?:WITH|SELECT|VALUES|TABLE|SHOW|EXPLAIN)\b",
+    r"^[\s(]*(?:WITH|SELECT|VALUES|TABLE|SHOW|EXPLAIN)\b",
     re.IGNORECASE,
 )
 

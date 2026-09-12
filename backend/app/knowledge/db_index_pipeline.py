@@ -589,7 +589,12 @@ class DbIndexPipeline:
                         # the latest_record_at metadata field (best-effort).
                         ordering_col = _find_ordering_column(table)
                         try:
-                            result = await connector.sample_data(table.name, limit=3)
+                            # SQL-08: the schema the introspection recorded, or the
+                            # sample resolves against `search_path` and lands on a
+                            # table of the same name in `public`, or on nothing.
+                            result = await connector.sample_data(
+                                table.name, limit=3, schema=table.schema
+                            )
                             if result.error:
                                 sample_failed = True
                                 logger.debug(
@@ -626,7 +631,10 @@ class DbIndexPipeline:
                             # which tried json.loads(sql) and returned empty.
                             try:
                                 vals = await connector.distinct_values(
-                                    table.name, col_name, MAX_DISTINCT_CARDINALITY
+                                    table.name,
+                                    col_name,
+                                    MAX_DISTINCT_CARDINALITY,
+                                    schema=table.schema,
                                 )
                                 if vals:
                                     displayed = vals[:MAX_DISTINCT_VALUES]
@@ -659,7 +667,9 @@ class DbIndexPipeline:
                             ]
                             for stats_col in stats_cols:
                                 try:
-                                    cs = await connector.approx_stats(table.name, stats_col)
+                                    cs = await connector.approx_stats(
+                                        table.name, stats_col, schema=table.schema
+                                    )
                                     tbl_stats[stats_col] = {
                                         "distinct_count": cs.distinct_count,
                                         "null_rate": cs.null_rate,
@@ -688,7 +698,9 @@ class DbIndexPipeline:
                         _noorder_dialects = {"clickhouse", "mongodb", "mongo"}
                         if ordering_col and connection_config.db_type.lower() in _noorder_dialects:
                             try:
-                                oc_stats = await connector.approx_stats(table.name, ordering_col)
+                                oc_stats = await connector.approx_stats(
+                                    table.name, ordering_col, schema=table.schema
+                                )
                                 approx_max = oc_stats.max_value
                             except Exception:
                                 logger.debug(

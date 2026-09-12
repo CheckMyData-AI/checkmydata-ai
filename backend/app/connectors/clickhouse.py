@@ -366,7 +366,7 @@ class ClickHouseConnector(BaseConnector):
             logger.warning("ClickHouse test_connection failed: %s", exc)
             return False
 
-    async def approx_stats(self, table: str, column: str) -> ColumnStats:
+    async def approx_stats(self, table: str, column: str, schema: str | None = None) -> ColumnStats:
         """ClickHouse override: use ``uniqExact`` / ``countIf`` / ``min`` / ``max``.
 
         ClickHouse supports backtick-quoted identifiers.  Standard
