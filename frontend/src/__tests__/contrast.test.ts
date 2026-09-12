@@ -98,6 +98,48 @@ function token(name: string, theme: "light" | "dark"): RGB {
   return parse(matches[matches.length - 1][1].trim());
 }
 
+/**
+ * The alpha a translucent token is declared with, read from the stylesheet.
+ *
+ * TEST-10: these numbers used to be hardcoded into the assertions below, because
+ * `parse()` throws on `rgba(...)` and `rgb(from … / α)` — which is exactly how
+ * `--ink-2` and `--muted` are declared. So a file whose premise is "contrast,
+ * computed from the token layer rather than asserted about it" was measuring a
+ * composition the stylesheet no longer had to agree with: drop `--muted` to 0.35 and
+ * every assertion here still passed.
+ *
+ * The LAST declaration wins, as it does in CSS — both tokens are declared twice, an
+ * `rgba()` fallback followed by the `rgb(from …)` form.
+ */
+function tokenAlpha(name: string, theme: "light" | "dark"): number {
+  const darkAt = CSS.indexOf('[data-theme="dark"] {', PACK);
+  const block =
+    theme === "light"
+      ? CSS.slice(PACK, darkAt)
+      : CSS.slice(darkAt, CSS.indexOf("Compatibility layer"));
+
+  // The whole declaration up to its `;`, because the value contains a nested `)`:
+  // `rgb(from var(--ink) r g b / 0.55)`. A `[^)]*?` body stops at the `var(--ink)`
+  // paren and silently matches only the `rgba()` fallback above it — so the first
+  // draft of this read the OLD declaration and a change to the one CSS actually
+  // uses moved nothing. Verified by planting `--muted: … / 0.30` and watching it
+  // pass.
+  const find = (source: string) => [
+    ...source.matchAll(new RegExp(`${name}:\\s*([^;]+);`, "g")),
+  ];
+  let matches = find(block);
+  if (matches.length === 0 && theme === "dark") matches = find(CSS.slice(PACK, darkAt));
+  if (matches.length === 0) throw new Error(`${name} not declared in the ${theme} block`);
+
+  // The LAST declaration, as the cascade takes it.
+  const declaration = matches[matches.length - 1][1];
+  const slashed = declaration.match(/\/\s*([\d.]+)\s*\)\s*$/);
+  if (slashed) return Number(slashed[1]);
+  const rgba = declaration.match(/rgba\([^/]*,\s*([\d.]+)\s*\)\s*$/);
+  if (rgba) return Number(rgba[1]);
+  throw new Error(`${name} in ${theme} carries no alpha: ${declaration}`);
+}
+
 const THEMES = ["light", "dark"] as const;
 
 describe("contrast, measured on the surfaces this app actually composes", () => {
@@ -114,7 +156,7 @@ describe("contrast, measured on the surfaces this app actually composes", () => 
   });
 
   it.each(THEMES)("keeps secondary prose above AA in %s", (theme) => {
-    const alpha = theme === "light" ? 0.72 : 0.7;
+    const alpha = tokenAlpha("--ink-2", theme);
     const panel = token("--panel", theme);
     const inkTwo = over(token("--ink", theme), alpha, panel);
     expect(ratio(inkTwo, panel)).toBeGreaterThanOrEqual(4.5);
@@ -126,7 +168,7 @@ describe("contrast, measured on the surfaces this app actually composes", () => 
     // reserved for column heads and axis ticks where position repeats the word.
     // The floor here is the non-text floor, and the test says which one it is so
     // that a later drift downward still fails.
-    const alpha = theme === "light" ? 0.55 : 0.5;
+    const alpha = tokenAlpha("--muted", theme);
     const panel = token("--panel", theme);
     const muted = over(token("--ink", theme), alpha, panel);
     expect(ratio(muted, panel)).toBeGreaterThanOrEqual(3.0);

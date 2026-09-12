@@ -2,17 +2,9 @@
 
 from __future__ import annotations
 
-import importlib.util
 from unittest.mock import MagicMock
 
-import pytest
-
 from app.connectors.base import QueryResult
-
-pytestmark = pytest.mark.skipif(
-    importlib.util.find_spec("app.agents.result_validation") is None,
-    reason="W0 C-B/C-C ResultValidation not merged yet — this task depends on W0.",
-)
 
 
 def _make_rv(fake_evaluate):

@@ -1020,7 +1020,7 @@ Stuck `running` DB-index / sync / repo-index rows self-heal: a crashed worker st
 
 ### Git / PR
 
-Conventional commits: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `security`. Branches: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`. CI must be green; coverage must not drop below 72%. See `CONTRIBUTING.md`.
+Conventional commits: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `security`. Branches: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`. CI must be green; coverage must not drop below 80%. See `CONTRIBUTING.md`.
 
 **A conflicted PR runs no checks at all, and its page looks identical to one whose checks have not started yet (measured 2026-09-11).** GitHub evaluates `pull_request` workflows against `refs/pull/N/merge`, which does not exist while the merge is conflicted — so `gh pr checks` answers *"no checks reported"*, the PR shows no red, and nothing is running. Two PRs sat like that for half an hour before the cause was found; closing and reopening did not help, and neither did an empty commit, because neither addresses the conflict. **Rebase first, then look for the run.**
 

@@ -285,14 +285,34 @@ class TestTheExecutorConsultsIt:
         """A single stage has no siblings to compare, and paying a cross-item gate
         on a one-item layer is the barrier the doctrine says most convergences do
         not need."""
+        import ast
         import inspect
+        import textwrap
 
         from app.agents import stage_executor
 
-        src = inspect.getsource(stage_executor)
-        assert "len(batch) > 1" in src, (
-            "the cross-item gate belongs behind a >1 guard; a one-stage layer has "
-            "nothing to compare"
+        # The CONDITION that guards the checker call, out of the AST. This used to
+        # grep the whole module for the literal `"len(batch) > 1"` (TEST-09), which a
+        # comment satisfies and a behaviour-preserving `>= 2` breaks: deleting the
+        # guard and leaving `# the gate used to run only when len(batch) > 1` above it
+        # passed.
+        tree = ast.parse(
+            textwrap.dedent(inspect.getsource(stage_executor.StageExecutor.execute)).replace(
+                "async def", "def", 1
+            )
+        )
+        guards = [
+            ast.unparse(node.test)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.If) and "_layer_checker" in ast.unparse(node.body)
+        ]
+        assert guards, (
+            "the cross-item gate is not behind any condition, so it runs on a "
+            "one-stage layer — which has nothing to compare, and paying a barrier for "
+            "it is what the doctrine says most convergences do not need"
+        )
+        assert any("len(batch)" in g for g in guards), (
+            f"the gate is guarded on something other than the layer's size: {guards}"
         )
 
     @pytest.mark.asyncio

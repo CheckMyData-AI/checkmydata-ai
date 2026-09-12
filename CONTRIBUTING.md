@@ -136,7 +136,7 @@ Examples:
 - **Frontend**: Add tests for new components and utility functions.
   Tests live alongside components as `*.test.tsx` files.
   Use Vitest with React Testing Library.
-- **Coverage**: Backend CI enforces ≥72% coverage. Don't decrease it.
+- **Coverage**: Backend CI enforces ≥80% coverage. Don't decrease it. The number lives in `backend/pyproject.toml` (`fail_under`); a guard fails when any document quotes a different one, which is how this line sat at 72 for a fortnight after the gate moved.
 
 ## What We Accept
 

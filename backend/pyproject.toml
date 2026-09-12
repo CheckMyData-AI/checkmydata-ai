@@ -175,12 +175,17 @@ skip_empty = true
 # Two points of headroom, deliberately: a gate set at the current number turns red on
 # noise, and a gate that fires without a cause is one people learn to route around.
 fail_under = 80
+# Every entry is an explicit coverage DIRECTIVE. `exclude_lines` is a list of regexes
+# matched against source lines, and a match on a clause header removes the whole block
+# from both the numerator and the denominator — so an ordinary English word here is a
+# pragma a developer cannot see. "DEPRECATED" was one until 2026-09-12 (TEST-03):
+# anybody writing `# DEPRECATED: use foo() instead` above a function deleted it from
+# the gate, with no way to know. A test asserts this list stays narrow.
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
     "if __name__ == .__main__.",
     "raise NotImplementedError",
-    "DEPRECATED",
 ]
 
 [tool.setuptools.packages.find]

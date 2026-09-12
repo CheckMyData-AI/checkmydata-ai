@@ -6,6 +6,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — nine gates that reported a check they were not performing
+
+P3 row 21; TEST-03, TEST-04, TEST-05, TEST-06, TEST-07, TEST-09, TEST-10, TEST-11,
+TEST-13. A green gate nobody has watched fail is not evidence, and every one of these
+was green over the thing it was written to catch.
+
+**`DEPRECATED` was a coverage pragma.** `exclude_lines` entries are regexes matched
+against source lines, and a match on a clause header removes the **whole block** from
+both the numerator and the denominator. The other four entries are explicit coverage
+directives; this one is an ordinary English word a developer writes as documentation —
+so `# DEPRECATED: use foo() instead` above a function deleted it from the gate, with no
+way to know.
+
+**The guard proving "a coverage gate exists in CI" was satisfied by a comment.** It ran
+`re.findall` over the raw workflow text while its sibling parsed the same file with
+`yaml.safe_load`. And **the guard keeping one number consistent** matched exactly two
+phrasings, never opened `CONTRIBUTING.md`, and missed a third statement inside the very
+file it reads — so the defect its own docstring describes was present, there, while it
+was green: `CONTRIBUTING.md` and two lines of `CLAUDE.md` said 72% for a fortnight after
+the gate moved to 80.
+
+**Six smoke tests documented as running "at server boot / in CI" were run by neither.**
+CI ran three explicit path lists and none included them; the `Procfile` runs alembic and
+uvicorn. Only `make smoke` reached them, which is to say only when somebody remembered.
+They are a CI step now, and a test names every suite CI invokes — so deleting the
+integration step would no longer be invisible either.
+
+**A test named `test_they_are_below_what_the_real_retriever_measures`** took the `bm25`
+fixture, built a full index, never used it, and asserted only that four thresholds were
+numbers in `(0, 1]` — which is true of `0.0001`, the "one far below it catches nothing"
+half of its own docstring. It measures now, and bounds the headroom from both sides.
+
+**Three guards grepped a module's source for a literal string**, so the token satisfied
+them from a comment and a behaviour-preserving rename turned them red. Each is now read
+from the AST or from a value: the layer gate's actual condition, both retriever legs
+handed to `to_thread`, and the vector pool's size compared against the config helper
+that duplicates it on purpose.
+
+**The contrast test hardcoded the alphas it exists to measure.** Its `parse()` throws on
+`rgba(...)` and `rgb(from … / α)` — which is how `--ink-2` and `--muted` are declared —
+so a file whose premise is *"contrast, computed from the token layer rather than
+asserted about it"* measured a composition the stylesheet no longer had to agree with.
+It reads the alpha from the last declaration now, the one the cascade takes.
+
+**And two more.** Two module-level `skipif` guards left over from a dependency that
+shipped turned "the thing this file tests was deleted" into a silent skip, which CI
+prints as a dot. And `importlib.reload(app.main)` rebound `app.main.app` to a new
+FastAPI instance while six modules held the original — with the restore reload sitting
+*after* the assertion, so one failure left the module swapped for every later test in
+the session. The mount decision is a function now; nothing reloads anything.
+
 ### Security — one webhook secret authorised every tenant's project, and five more drifts
 
 P2 row 20; AUTH-04, AUTH-05, AUTH-06, AUTH-07, AUTH-08 and BIZ-07.

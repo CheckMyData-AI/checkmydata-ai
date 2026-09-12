@@ -229,13 +229,13 @@ measured:
 | 17 | ✅ **DONE 2026-09-12** (#353) — Rate limiting per actual client: proxy IPs, per-user keys, one 429 shape | API-05/06 | S |
 | 18 | ✅ **DONE 2026-09-12** (#354) — Schema alignment migration: 81 nullables, BigInteger row_count, audit_log import, error_log dedup index, doc_embeddings path index, mcp index parity, CHECK on status vocabularies | DATA-02/03/04/05/07/08/09/11 | M |
 | 19 | ✅ **DONE 2026-09-12** (#355) — Orchestrator cache sweep keyed on all maps; replan seed excludes rejected results; idempotency check before transient re-run; `query_analytics_source` into `_VALID_TOOLS`; router verdict preserved; resumed-stage sample labelling | ORCH-01/03/05/07/10/11 | M |
-| 20 | 🔶 **IN PROGRESS 2026-09-12** — MCP surface: single slot acquire; `safe_error` on raw exceptions; audit trail for `execute_raw_query`; per-project webhook secrets; role validation on member update; `get_accessible_projects` through the shared filter | AUTH-04/05/06/07/08, BIZ-07 | M |
+| 20 | ✅ **DONE 2026-09-12** (#356) — MCP surface: single slot acquire; `safe_error` on raw exceptions; audit trail for `execute_raw_query`; per-project webhook secrets; role validation on member update; `get_accessible_projects` through the shared filter | AUTH-04/05/06/07/08, BIZ-07 | M |
 
 ## P3 — gates, docs, polish
 
 | # | Task | Refs | Effort |
 |---|---|---|---|
-| 21 | Test-gate integrity: drop `DEPRECATED` exclusion; YAML-parse the CI guards; fix stale 72 %; smoke into CI; AST-based source guards; contrast test reads real alphas; delete leftover skipifs; reload finalizer | TEST-03…07/09/10/11/13 | M |
+| 21 | 🔶 **IN PROGRESS 2026-09-12** — Test-gate integrity: drop `DEPRECATED` exclusion; YAML-parse the CI guards; fix stale 72 %; smoke into CI; AST-based source guards; contrast test reads real alphas; delete leftover skipifs; reload finalizer | TEST-03…07/09/10/11/13 | M |
 | 22 | Scenario tooling: suffixed ids everywhere; line-anchor validation; screens/flows under the same guards; SCN-052 + SCR-01 corrections; CLAUDE.md counts point at `make ux-status` | TEST-08/12/14, BIZ-14 | S–M |
 | 23 | Docs truth: vision §8 carve-out for chat rows; API.md rate-limit paragraph regenerated; ANA runbook blockquote; OPS comment/invariant fixes; `query` back-fill on the single-block path | BIZ-08/10, API-13, ANA-08/09, OPS-12 | S |
 | 24 | UX polish: FE state honesty (dashboard error vs not-found, notes error vs empty, task spin TTL), scroll throttle, semantic tokens, readiness TTL, i18n of degradation strings, viewer role contract | FE-04/06/07/09/10/11, COR-04/05/06/08 | M |

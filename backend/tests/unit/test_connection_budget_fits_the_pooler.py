@@ -45,15 +45,24 @@ class TestTheArithmeticHasOneHome:
     def test_it_matches_what_pgvector_actually_opens(self) -> None:
         """Pinned against the store's own expression rather than a copy of it: two
         formulas that must agree are two formulas that will not."""
-        import inspect
+        from app.config import _pgvector_pool_size, settings
+        from app.knowledge.pgvector_store import _pool_max_size
 
-        from app.knowledge import pgvector_store
-
-        src = inspect.getsource(pgvector_store)
-        assert "max(2, settings.db_pool_size // 2)" in src, (
-            "the store's pool size moved; `worst_case_connections_per_process` is now "
-            "computing a different number from the one the process opens"
-        )
+        # The VALUE, from the store's own helper, at several pool sizes. This used to
+        # assert the literal source text `"max(2, settings.db_pool_size // 2)"`
+        # (TEST-09): a comment anywhere in the module satisfied it, and rewriting the
+        # identical arithmetic as `>> 1` broke it. Two formulas that must agree are
+        # two formulas that will not — so there is one now, and this reads it.
+        for pool in (1, 2, 4, 10, 40):
+            original = settings.db_pool_size
+            try:
+                settings.db_pool_size = pool
+                assert _pool_max_size() == _pgvector_pool_size(pool), (
+                    "the store's pool size moved; `worst_case_connections_per_process` "
+                    "is now computing a different number from the one the process opens"
+                )
+            finally:
+                settings.db_pool_size = original
 
     @pytest.mark.parametrize(
         "pool,overflow,expected",
