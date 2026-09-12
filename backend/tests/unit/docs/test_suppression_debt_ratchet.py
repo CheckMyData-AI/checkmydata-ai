@@ -357,6 +357,13 @@ CEILINGS: dict[str, int] = {
     # absence was DATA-05 — `alembic/env.py` compares against `Base.metadata`, which
     # this file populates, so the table was invisible to autogenerate and the next
     # generated revision would have emitted `drop_table("audit_logs")`.
+    # 135 -> 136 on 2026-09-12. One `ANN202` on the `_sum` helper inside
+    # `UsageService._window_totals`: a two-line closure over SQLAlchemy column
+    # expressions, whose return type is `sqlalchemy.sql.elements.ColumnElement[Any]`
+    # through three layers of generics. Spelling that out documents the library rather
+    # than the code. It exists because collapsing the budget gate from six queries to
+    # one needs the same conditional-sum shape six times, and six copies of it is the
+    # thing worth avoiding.
     # 133 -> 135 on 2026-09-12. Two `ARG002` on the MongoDB connector's `sample_data`
     # and `distinct_values` (row 26, SQL-08): the base signatures gained `schema`, and
     # MongoDB addresses a *database* rather than a schema, so the parameter is accepted
@@ -370,7 +377,7 @@ CEILINGS: dict[str, int] = {
     # pool used to be set once and never again), and `metrics_store.get_metrics_store`,
     # which caches this process's store beside the shared Redis client. Three added,
     # one removed: `init_task_queue` no longer touches the global itself.
-    "# noqa": 135,
+    "# noqa": 136,
 }
 
 PATTERNS: dict[str, re.Pattern[str]] = {

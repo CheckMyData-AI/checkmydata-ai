@@ -1,7 +1,8 @@
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.token_usage import TokenUsage
@@ -20,6 +21,25 @@ class BudgetExceededError(Exception):
         super().__init__(message)
         self.used = used
         self.limit = limit
+
+
+@dataclass(frozen=True)
+class _WindowTotals:
+    """What one pass over `token_usage` yields for a budget check.
+
+    A dataclass rather than a `dict[str, float]`: token counts are integers and money
+    is not, and the flat dict typed both as `float` — which mypy caught at the first
+    caller that needed an `int`. A container that lies about its own contents is the
+    shape this codebase keeps removing.
+    """
+
+    daily_tokens: int
+    monthly_tokens: int
+    daily_cost: float
+    monthly_cost: float
+    #: How much of the cost above was priced by fallback rather than measured.
+    daily_estimated: float
+    monthly_estimated: float
 
 
 class UsageService:
@@ -73,30 +93,58 @@ class UsageService:
         await db.commit()
         return row
 
-    async def _spend_since(self, db: AsyncSession, user_id: str, since: datetime) -> tuple:
-        """(dollars spent, dollars that were ESTIMATED) since *since* — row 1b.
+    async def _window_totals(
+        self, db: AsyncSession, user_id: str, *, day_start: datetime, month_start: datetime
+    ) -> "_WindowTotals":
+        """Every figure `check_budget` needs, in ONE round trip (review of row 1b).
 
-        Two sums over the same window, because a row whose model carried no price is
-        charged rather than forgiven and the reader is entitled to know how much of
-        the total that was. `_estimate_cost` returns ``None`` for a model absent from
-        the live OpenRouter catalogue, which is usually a NATIVE provider model — the
-        expensive kind — so charging zero would let an account escape by picking one.
+        Six aggregates over one table, one user and one outer window — so one query
+        with `CASE` expressions, not six queries. The first implementation ran two
+        token sums and then a priced sum plus an unpriced-token sum per window, and
+        `check_budget` is called after **every** LLM completion through the gating
+        sink: a twenty-step orchestrator run issued 120 queries where it had issued 40.
+
+        The month is the outer bound and the day is a `CASE` inside it, which is what
+        makes one scan enough. An unpriced row — no entry in the live price catalogue,
+        usually a native provider model — contributes its TOKENS here and is converted
+        to dollars by the caller, because the conversion rate is a plan-catalogue
+        decision and does not belong in SQL.
         """
-        priced_stmt = select(func.coalesce(func.sum(TokenUsage.estimated_cost_usd), 0)).where(
-            TokenUsage.user_id == user_id,
-            TokenUsage.created_at >= since,
-            TokenUsage.estimated_cost_usd.is_not(None),
-        )
-        priced = float((await db.execute(priced_stmt)).scalar_one() or 0)
+        in_day = TokenUsage.created_at >= day_start
+        priced = TokenUsage.estimated_cost_usd.is_not(None)
 
-        unpriced_stmt = select(func.coalesce(func.sum(TokenUsage.total_tokens), 0)).where(
-            TokenUsage.user_id == user_id,
-            TokenUsage.created_at >= since,
-            TokenUsage.estimated_cost_usd.is_(None),
+        def _sum(column, *conditions):  # noqa: ANN001, ANN202
+            expression = column
+            for condition in conditions:
+                expression = case((condition, expression), else_=0)
+            return func.coalesce(func.sum(expression), 0)
+
+        row = (
+            await db.execute(
+                select(
+                    _sum(TokenUsage.total_tokens, in_day).label("daily_tokens"),
+                    _sum(TokenUsage.total_tokens).label("monthly_tokens"),
+                    _sum(TokenUsage.estimated_cost_usd, priced, in_day).label("daily_priced"),
+                    _sum(TokenUsage.estimated_cost_usd, priced).label("monthly_priced"),
+                    _sum(TokenUsage.total_tokens, ~priced, in_day).label("daily_unpriced"),
+                    _sum(TokenUsage.total_tokens, ~priced).label("monthly_unpriced"),
+                ).where(
+                    TokenUsage.user_id == user_id,
+                    TokenUsage.created_at >= month_start,
+                )
+            )
+        ).one()
+
+        daily_estimated = price_unpriced_tokens(int(row.daily_unpriced or 0))
+        monthly_estimated = price_unpriced_tokens(int(row.monthly_unpriced or 0))
+        return _WindowTotals(
+            daily_tokens=int(row.daily_tokens or 0),
+            monthly_tokens=int(row.monthly_tokens or 0),
+            daily_cost=float(row.daily_priced or 0) + daily_estimated,
+            monthly_cost=float(row.monthly_priced or 0) + monthly_estimated,
+            daily_estimated=daily_estimated,
+            monthly_estimated=monthly_estimated,
         )
-        unpriced_tokens = int((await db.execute(unpriced_stmt)).scalar_one() or 0)
-        estimated = price_unpriced_tokens(unpriced_tokens)
-        return priced + estimated, estimated
 
     async def check_budget(
         self,
@@ -133,20 +181,15 @@ class UsageService:
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-        daily_stmt = select(func.coalesce(func.sum(TokenUsage.total_tokens), 0)).where(
-            TokenUsage.user_id == user_id,
-            TokenUsage.created_at >= today_start,
+        totals = await self._window_totals(
+            db, user_id, day_start=today_start, month_start=month_start
         )
-        daily_used = int((await db.execute(daily_stmt)).scalar_one())
-
-        monthly_stmt = select(func.coalesce(func.sum(TokenUsage.total_tokens), 0)).where(
-            TokenUsage.user_id == user_id,
-            TokenUsage.created_at >= month_start,
-        )
-        monthly_used = int((await db.execute(monthly_stmt)).scalar_one())
-
-        daily_cost, daily_estimated = await self._spend_since(db, user_id, today_start)
-        monthly_cost, monthly_estimated = await self._spend_since(db, user_id, month_start)
+        daily_used = totals.daily_tokens
+        monthly_used = totals.monthly_tokens
+        daily_cost = totals.daily_cost
+        monthly_cost = totals.monthly_cost
+        daily_estimated = totals.daily_estimated
+        monthly_estimated = totals.monthly_estimated
 
         result = {
             "allowed": True,

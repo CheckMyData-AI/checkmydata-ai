@@ -122,9 +122,20 @@ async def _check_token_budget(db: AsyncSession, user_id: str) -> str | None:
 
 
 async def _safe_to_config(db: AsyncSession, conn_model) -> "ConnectionConfig":
-    """Wrap to_config with a user-friendly error on decryption failure."""
+    """Wrap to_config with a user-friendly error on decryption failure.
+
+    **`HostNotAllowedError` is re-raised, not translated.** It subclasses `ValueError`,
+    so before this it was caught below and reported as "cannot decrypt credentials,
+    re-enter the password" — advice about a password that was never the problem, for a
+    host that now resolves somewhere connections may not reach (SQL-07 review). The
+    application-level handler in `main.py` answers it with the guard's own sentence.
+    """
+    from app.connectors.host_guard import HostNotAllowedError
+
     try:
         return await _conn_svc.to_config(db, conn_model)
+    except HostNotAllowedError:
+        raise
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
