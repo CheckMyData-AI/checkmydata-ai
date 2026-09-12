@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.ga4.config import REQUIRED_SA_FIELDS as _ADAPTER_REQUIRED_SA_FIELDS
 from app.models.vendor_credential import VendorCredential
 from app.services.encryption import decrypt, encrypt
 
@@ -30,7 +31,14 @@ logger = logging.getLogger(__name__)
 SUPPORTED_PROVIDERS: tuple[str, ...] = ("ga4", "appstore", "googleplay")
 
 #: Fields a Google service-account key must carry for GA4 auth to be possible.
-_GA4_REQUIRED_FIELDS: tuple[str, ...] = ("client_email", "private_key")
+#:
+#: Imported from the adapter rather than restated (ANA-08). Two lists validated the
+#: same file and disagreed by one field: this one accepted a key missing `token_uri`
+#: while the credential was still open in the user's browser, and the adapter refused
+#: it hours later as a `_connect` sentinel row nobody was watching. The store is the
+#: layer that can answer with a 422 while the file is still to hand, so it must not
+#: be the more permissive of the two.
+_GA4_REQUIRED_FIELDS: tuple[str, ...] = _ADAPTER_REQUIRED_SA_FIELDS
 
 #: Non-secret keys lifted out of a GA4 service-account JSON into ``meta_json``
 #: so the UI can show *which* service account a credential is. Never widen this

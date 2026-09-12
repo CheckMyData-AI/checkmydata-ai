@@ -637,13 +637,19 @@ Common status codes:
 
 ## Rate Limiting
 
-Most mutating endpoints are rate-limited per IP (112 of 120 mutations; the 8
-unthrottled exceptions include `POST /api/checkout`, `POST /api/portal`,
-`PATCH /api/schedules/{id}`, `POST /api/chat/ws-ticket`,
-`POST /api/data-validation/investigate/{id}/confirm-fix`, `POST /api/auth/logout`,
-`POST /api/auth/complete-onboarding`, and the Stripe `POST /api/webhook` — see
-[`docs/qa-audit/full-audit-2026-07-24/02-api-contract.md`](docs/qa-audit/full-audit-2026-07-24/02-api-contract.md)
-§3 N-1). Limits vary by endpoint sensitivity.
+Almost every mutating endpoint is rate-limited. Measured against the route tree on
+2026-09-12: **128 mutating routes, 125 carrying `@limiter.limit`, 3 without** —
+
+| Unthrottled | Why |
+|---|---|
+| `POST /api/billing/webhook` | Stripe's own retry schedule drives it, and throttling a webhook provider makes it retry harder. Guarded by signature verification and an idempotency ledger instead. |
+| `POST /api/auth/logout` | Refusing a logout leaves a session open, which is the wrong direction to fail in. |
+| `POST /api/auth/complete-onboarding` | Idempotent, once per account, and reachable only with a valid session. |
+
+The paragraph that used to stand here said *"112 of 120 mutations; the 8 unthrottled
+exceptions include…"* and named five endpoints that do carry limiters, plus the billing
+paths without the router's `/billing` prefix (API-13). Limits vary by endpoint
+sensitivity.
 
 **What a limit counts against** is the authenticated user where the request carries a
 readable token, and otherwise the caller's address. It used to be

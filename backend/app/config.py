@@ -701,9 +701,19 @@ class Settings(BaseSettings):
     # `EMBEDDING_UPSERT_BATCH_SIZE` from 200 to 8 and bought ~552 MiB with ~17 % more
     # wall clock, spent inside the very step this ceiling was cutting off.
     #
-    # Invariant, asserted in `tests/unit/services/test_repo_index_ceiling.py`: this
-    # stays below `daily_knowledge_sync_job_timeout_seconds`, which contains it plus
-    # a DB index plus a code↔DB sync.
+    # NOT tied to `daily_knowledge_sync_job_timeout_seconds`, and that is the whole
+    # point (OPS-12). This comment used to claim the opposite — "Invariant, asserted
+    # in `tests/unit/services/test_repo_index_ceiling.py`: this stays below
+    # `daily_knowledge_sync_job_timeout_seconds`" — which is arithmetically false
+    # (21 600 is not below 7 200) and names a test that deliberately DELETED that
+    # assertion on 2026-08-27, because tying them capped the manual path below what a
+    # full rebuild needs. A comment asserting a false relation and citing a check that
+    # was consciously removed is the exact "two ceilings tied together" error the test
+    # file exists to stop anybody repeating.
+    #
+    # The two cover different work: this job carries the FULL rebuild
+    # (`force_full=True` plus the chained code↔DB sync); the cron runs the same
+    # pipeline with `force_full=False, chain_sync=False` under its own 7 200 s.
     repo_index_job_timeout_seconds: int = 21600
 
     # F-SCHED-07: how long a `running` batch may sit before another attempt may take

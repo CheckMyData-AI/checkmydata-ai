@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — six documents that described a product other than the one that ships
+
+P3 row 23; BIZ-08, BIZ-10, API-13, ANA-08, ANA-09 and OPS-12.
+
+**An answer could go out with real rows and a null query.** The comment above the
+back-fill says `results`, `explanation` and `query` must stay consistent and back-fills
+two of them; `query` stayed `None`, `chat.py` persisted it that way, and neither the
+response nor the stored message could show the SQL the landing page promises is always
+shown.
+
+**`vision.md` §8 denied storing production data.** The product stores up to
+`CHAT_RAW_RESULT_ROW_CAP` rows (500) of the result behind each answer, in that message's
+metadata, and per-column value samples in the database index — which is how the agent
+knows `status` holds `'shipped'` rather than `3`. The Terms and Privacy pages disclose
+both; §8, the document described as load-bearing, did not, so two of the product's own
+promise documents contradicted each other about the same behaviour. Both carve-outs are
+named now, with what bounds them.
+
+**The rate-limiting paragraph named five throttled endpoints as unthrottled**, stated a
+route count seven low, and gave the billing paths without the router's own `/billing`
+prefix. Measured from the tree: **128 mutating routes, 125 carrying `@limiter.limit`,
+3 without** — and each of the three now says *why*, which is the part a count cannot
+carry. A test compares the stated figures against the tree.
+
+**Two required-field lists validated the same service-account JSON.** The credential
+store accepted a key missing `token_uri`; the adapter that uses it refuses one. The
+store is the layer that can answer 422 while the user still has the file open — so its
+refusal arrived hours later, as a `_connect` sentinel row nobody is watching. One list
+now, imported rather than restated.
+
+**The runbook documented a `_connect` bug the code does not have**, telling operators to
+expect the sentinel as a sixth row in `reports[]` while `connection_service` subtracts it
+explicitly. A runbook describing a defect that is not there sends the reader looking for
+it, and teaches them the document is not to be trusted about the things that are.
+
+**And `config.py` asserted that 21 600 stays below 7 200**, citing a test whose own
+docstring explains that this invariant was deliberately removed because tying the two
+ceilings capped the manual path below what a full rebuild needs — the exact error that
+test file exists to stop anybody repeating.
+
 ### Fixed — the UX base is three documents and only one of them was checked
 
 P3 row 22; TEST-08, TEST-12, TEST-14 and BIZ-14.

@@ -29,6 +29,9 @@ GA4_SECRET = json.dumps(
         "project_id": "demo-project",
         "client_email": "collector@demo-project.iam.gserviceaccount.com",
         "private_key": "-----BEGIN PRIVATE KEY-----\nMIIBVERYSECRET\n-----END PRIVATE KEY-----\n",
+        # A real key downloaded from Google Cloud always carries this, and the
+        # adapter has always refused one without it (ANA-08).
+        "token_uri": "https://oauth2.googleapis.com/token",
     }
 )
 
