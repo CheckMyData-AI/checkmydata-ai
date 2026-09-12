@@ -253,7 +253,19 @@ class SchedulerService:
             schedule.last_run_at = datetime.now(UTC)
             if result_summary:
                 schedule.last_result_json = result_summary
-            schedule.next_run_at = self.compute_next_run(schedule.cron_expression)
+            # OPS-11: do NOT recompute the next slot here. `claim_due` advanced it
+            # atomically at claim time, and that conditional UPDATE is the whole
+            # multi-dyno guard — recomputing from `datetime.now()` at COMPLETION time
+            # overwrites the reservation with a different instant. A run that outlasts
+            # one cron interval therefore skipped the slot it had already claimed, and
+            # two dynos finishing at different moments disagreed about which instant
+            # comes next.
+            #
+            # The one case that still needs a slot computed here is a run that never
+            # claimed: `run_now` records a run directly, and a schedule whose
+            # `next_run_at` is NULL would drop out of `get_due_schedules` for ever.
+            if schedule.next_run_at is None:
+                schedule.next_run_at = self.compute_next_run(schedule.cron_expression)
 
         await db.commit()
         await db.refresh(run)

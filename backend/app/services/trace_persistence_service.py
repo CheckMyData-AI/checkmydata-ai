@@ -161,7 +161,24 @@ class TracePersistenceService:
         logger.info("TracePersistenceService stopped")
 
     async def _on_event(self, event: WorkflowEvent) -> None:
-        """Called by WorkflowTracker on every broadcast."""
+        """Called by WorkflowTracker on every broadcast.
+
+        OPS-14: `_deliver_local` runs **every** hook, including on the Redis
+        rebroadcast path — so a worker's `pipeline_start` reaches this method in the
+        web process too. `RunCoordinator._on_event` guards against exactly that, and
+        this one did not: the web process created a `_WorkflowBuffer` for a workflow it
+        is not running, and only a matching `pipeline_end` **on the same process** ever
+        frees one. The worker's `pipeline_end` arrives here as a rebroadcast as well, so
+        under the old code the buffer was created by one branch and removed by another;
+        any run whose end was lost — a dropped Redis message, a worker SIGKILL — left
+        its spans in the web dyno's heap for the life of the process.
+        """
+        # The process that EXECUTES the pipeline persists its trace. A receiver only
+        # relays SSE, and has nothing of its own to record. Read from the tracker this
+        # service is attached to rather than the module singleton — they are the same
+        # object in production, and only one of them is the truth in a test.
+        if self._tracker._external_rebroadcast:
+            return
         try:
             async with self._lock:
                 if event.step == "pipeline_start":

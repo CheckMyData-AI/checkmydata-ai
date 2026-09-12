@@ -142,6 +142,41 @@ class _PipelineState:
     requeued_doc_paths: list[str] = field(default_factory=list)
 
 
+#: What a recorded step completion is FOR, per step name (KNOW-09).
+#:
+#: `complete_step` is called for twelve names and the completed-step set is consulted
+#: for five. That is not uniformly a defect — two of the seven are ungated on purpose —
+#: but three of the writes carried comments explaining that a resume must re-run a
+#: failed step, and **no resume ever read those names**, so the guard those comments
+#: described was inert in both directions. A comment asserting a mechanism that does
+#: not exist is worse than none: the next reader trusts it.
+#:
+#: The intent is declared here and checked by a test. `GATED` means `_run_steps`
+#: consults this name before re-running the step; `UNGATED` means it deliberately does
+#: not, and the entry says why.
+STEP_RESUME_INTENT: dict[str, str] = {
+    # Read on resume: expensive, and the output survives in the database.
+    "cleanup_deleted": "GATED",
+    "code_symbol_embed": "GATED",
+    "cross_file_analysis": "GATED",
+    "detect_changes": "GATED",
+    "project_profile": "GATED",
+    # Deliberately re-run on every resume. `ast_parse` and `graph_build` rebuild
+    # IN-MEMORY state a resumed process does not have, and `graph_build` also merges
+    # into the stored graph — skipping either leaves later steps reading an empty
+    # graph, which is the failure `state.code_graph` rehydration exists to avoid.
+    "ast_parse": "UNGATED",
+    "graph_build": "UNGATED",
+    # Cheap relative to the run, and each depends on state the steps above rebuild.
+    "bm25_build": "UNGATED",
+    "enrich_docs": "UNGATED",
+    "graph_clustering": "UNGATED",
+    "graph_db_bridge": "UNGATED",
+    # Not a step: the marker a failed run leaves behind.
+    "pipeline_failed": "UNGATED",
+}
+
+
 class IndexingPipelineRunner:
     def __init__(
         self,
@@ -964,10 +999,10 @@ class IndexingPipelineRunner:
                         "failed",
                         "Clustering errored; continuing without clusters",
                     )
-                # Only mark the step complete when we actually finished —
-                # otherwise a later resume would treat the failure as "done"
-                # and the model would consult a cluster table that may be
-                # stale or empty.
+                # KNOW-09: "a later resume would treat the failure as done" was not
+                # true — no resume reads `graph_clustering`. The conditional stays
+                # because the completed-step set is also the run's own history, and
+                # recording a step that errored would make that history wrong.
                 if clustering_ok:
                     await self._cp_svc.complete_step(db, cp_id, "graph_clustering")
 

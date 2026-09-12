@@ -6,6 +6,71 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — five places the system said something it had not checked
+
+Board row 27, the last on the board; `OPS-11`, `OPS-14`, `API-07`, `KNOW-09`, `TEST-02`.
+
+**Two writers owned one column and neither knew about the other** (`OPS-11`).
+`claim_due` advances `next_run_at` atomically at claim time — that conditional UPDATE
+*is* the multi-dyno guard — and `record_run` then overwrote it from `datetime.now()` at
+**completion** time. A run that outlasts one cron interval therefore skipped the slot it
+had already reserved, and two dynos finishing at different moments disagreed about which
+instant comes next. `record_run` now leaves the reservation alone, and computes a slot
+only when there is none — `run_now` records a run without claiming, and a NULL
+`next_run_at` would drop the schedule out of `get_due_schedules` for ever.
+
+**The web process buffered the worker's spans** (`OPS-14`). `_deliver_local` runs every
+persistence hook, including on the Redis rebroadcast path, so every `pipeline_start` a
+worker published created a `_WorkflowBuffer` in the web process too — and only a matching
+`pipeline_end` **on the same process** frees one. `RunCoordinator._on_event` has guarded
+against exactly this since it was written; `TracePersistenceService._on_event` did not.
+The guard reads the tracker the service is attached to rather than the module singleton:
+the same object in production, and only one of them is the truth in a test.
+
+**Two routes handed out the raw driver exception at a 200** (`API-07`). On a failed
+connect that is precisely the message most likely to carry a DSN. Nothing needed
+writing — `app/core/redaction.safe_error` already exists, and its docstring already says
+*"use at every site that puts an exception's own words into an API response"*; two sites
+did not. The log keeps the full text.
+
+**Twelve steps recorded a completion; five were read** (`KNOW-09`). Not uniformly a
+defect — `ast_parse` and `graph_build` are ungated on purpose, because they rebuild
+in-memory state a resumed process does not have — but three of the writes carried
+comments explaining that a resume must re-run a failed step, and **no resume ever read
+those names**. The guard those comments described was inert in both directions, and a
+comment asserting a mechanism that does not exist is worse than none: the next reader
+trusts it. `STEP_RESUME_INTENT` declares `GATED`/`UNGATED` per step with the reason, a
+test compares the declaration against what `_run_steps` actually reads, and the two false
+comments are corrected rather than deleted — the conditionals stay, because the
+completed-step set is also the run's own history and recording a failed step would make
+that history wrong.
+
+**The retrieval gate was one-sided, and its docstring said otherwise** (`TEST-02`,
+downgraded high → low by its own verifier). `test_the_stub_alone_cannot_pass_the_gate`
+proves the dense leg cannot carry the gate; the mirror was missing. Measured here: with
+the dense leg returning **nothing** for every question, `run_eval` still passes and
+`ndcg_at_k` actually *rises* — the fixture corpus is 29 short documents worded to match
+the 10 golden questions lexically, so real BM25 clears every floor alone. Retrieval
+**quality** and leg **liveness** are two properties and the floors carry only the first.
+The second is measured by contribution rather than score: a document only the dense leg
+knows about must come back, and must stop coming back when that leg is emptied. Raising
+the floors would not fix it, and rewording the corpus to defeat BM25 would trade one
+blind side for the other. The file's docstring now says which property it carries.
+
+**Nine planted defects, and the most important one passed first time.** The OPS-11 test
+used an hourly cron, so `claim_due` and a recomputing `record_run` landed on the *same*
+instant and "overwrote" was indistinguishable from "left alone". It pins a deliberately
+distinctive slot now. Two more of the same family: the API-07 guard searched the source
+for `str(exc)` and went red against the comment explaining the fix — the third time in
+this remediation that a guard matched its own prose — so it reads the return expressions
+through the AST instead.
+
+**And one assertion was wrong rather than the code.** The redaction test claimed the host
+was scrubbed. It is not, and should not be: the host is the caller's own configuration
+echoed back to the person who entered it, and *"could not connect to [redacted]"* tells
+them nothing they can act on. What must never travel is the credential, which they did
+not type into this response and may not know.
+
 ### Fixed — five connector defects, each a place the data path went round a guard
 
 Board row 26; `SQL-03`, `SQL-05`, `SQL-08`, `SQL-09`, `SQL-10`.

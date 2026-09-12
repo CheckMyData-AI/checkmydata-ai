@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.core.audit import audit_log
 from app.core.rate_limit import limiter
+from app.core.redaction import safe_error
 from app.core.safety import SafetyGuard, SafetyLevel
 from app.services.batch_service import require_database_connection
 from app.services.connection_service import ConnectionService
@@ -286,12 +287,17 @@ async def execute_note(
         finally:
             await connector.disconnect()
     except Exception as e:
+        # API-07: `safe_error`, not `str(e)`. The driver's own message is usually
+        # harmless, but whatever wrapped it may carry the DSN, the host or the user
+        # name — and this call site cannot tell which it got. The status stays 200
+        # because the note itself resolved and its stored result is being returned
+        # beside the error; what changes is that the error is fit to hand out.
         logger.exception("Note re-execute failed for note=%s", note_id[:8])
         return ExecuteResponse(
             id=note_id,
             last_result_json=note.last_result_json,
             last_executed_at=note.last_executed_at,
-            error=str(e),
+            error=safe_error(e),
         )
 
     cols = getattr(result, "columns", None)

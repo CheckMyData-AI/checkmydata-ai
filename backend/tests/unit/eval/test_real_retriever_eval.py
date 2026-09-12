@@ -33,6 +33,18 @@ satisfying `VectorStoreLike`. Fusion — RRF, `min_score`, `max_rank`, the timeo
 the degradation labels — is entirely real. What this cannot see is embedding
 quality: the 256-token truncation and the silently-ignored 768-d model live in
 that layer, and `test_real_retriever_eval_slow.py` is where they are checked.
+
+**And the nDCG floors are one-sided — stated here because it was not (TEST-02).**
+The fixture corpus is 29 short documents worded to match the 10 golden questions
+lexically, so the real BM25 leg clears every floor on its own by a wide margin.
+Measured: with the dense leg returning nothing for every question, `run_eval`
+still passes and `ndcg_at_k` actually *rises*. Retrieval **quality** and
+leg **liveness** are two properties, and the floors carry only the first.
+`test_a_dead_dense_leg_is_caught` carries the second, by contribution rather
+than by score — a document only the dense leg knows about must come back, and
+must stop coming back when that leg is emptied. Raising the floors would not fix
+this; the corpus is what makes BM25 sufficient, and rewording it to defeat BM25
+would trade one blind side for the other.
 """
 
 from __future__ import annotations
@@ -230,6 +242,48 @@ class TestTheRealRetrieverIsMeasured:
 
         report = await run_eval(retrieve, k=10)
         assert report.passed, f"retrieval regressed: {report.failures} · {report.metrics}"
+
+    async def test_a_dead_dense_leg_is_caught(self, bm25):
+        """TEST-02 — the direction the gate was blind to, checked separately and why.
+
+        `test_the_stub_alone_cannot_pass_the_gate` proves the DENSE leg cannot carry
+        the gate alone. The mirror was missing: a regression that empties the dense leg
+        entirely — a construction failure swallowed by an `except`, a wrong collection
+        name, an empty pgvector table — leaves half of retrieval dead in production
+        while this file stays green.
+
+        **The nDCG floors cannot carry this property, and pretending otherwise is how
+        the file's docstring came to overclaim.** Measured here: with the dense leg
+        returning nothing for every question, `run_eval` still passes — the fixture
+        corpus is 29 short documents worded to match the 10 golden questions lexically,
+        so BM25 alone clears every floor by a wide margin, and `ndcg_at_k` actually
+        *rises*. Quality and leg-liveness are two properties; this is the second one,
+        and it is measured by CONTRIBUTION rather than by score.
+
+        `feature_flags` is the same distractor `test_a_single_leg_hit_survives` uses:
+        no golden question is about it, so BM25 will not rank it — if it comes back, it
+        came back on the dense leg.
+        """
+        live = _retriever(bm25, _StubDenseStore({"tell me about payments": ["feature_flags"]}))
+        dead = _retriever(bm25, _StubDenseStore({}))
+
+        with_dense = [r.doc_id for r in await live.query(_PROJECT, "tell me about payments", k=10)]
+        without_dense = [
+            r.doc_id for r in await dead.query(_PROJECT, "tell me about payments", k=10)
+        ]
+
+        assert "feature_flags" in with_dense, (
+            "the dense leg's own hit did not survive fusion, so this check cannot "
+            f"distinguish a live leg from a dead one: {with_dense}"
+        )
+        assert "feature_flags" not in without_dense, (
+            "a document only the dense leg knows about came back with the dense leg "
+            f"returning nothing: {without_dense}"
+        )
+        assert with_dense != without_dense, (
+            "emptying the dense leg changed no result at all — half of retrieval can "
+            "die in production and nothing here notices (TEST-02)"
+        )
 
     async def test_the_stub_alone_cannot_pass_the_gate(self, bm25):
         """The property that makes the test above a gate rather than a decoration.
