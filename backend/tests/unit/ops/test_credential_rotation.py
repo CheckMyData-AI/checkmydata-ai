@@ -27,6 +27,7 @@ from app.models.base import Base
 from app.models.connection import Connection
 from app.models.llm_credit import LlmCredit
 from app.models.project import Project
+from app.models.repository import ProjectRepository
 from app.models.ssh_key import SshKey
 from app.models.user import User
 from app.models.vendor_credential import VendorCredential
@@ -122,6 +123,18 @@ async def _seed_every_encrypted_column(factory) -> None:
                 provider="ga4",
                 secret_encrypted=enc.encrypt("vendor-secret"),
                 fingerprint="vfp",
+            )
+        )
+        s.add(
+            ProjectRepository(
+                project_id=p.id,
+                name="r",
+                repo_url="git@example.com:o/r.git",
+                # AUTH-05. Note the symmetry with the docstring above: this model
+                # once carried a DEAD encrypted column that the sweep swept for
+                # nothing, and now carries a live one. The derived assertion is what
+                # noticed both.
+                webhook_secret_encrypted=enc.encrypt("whsec-1"),
             )
         )
         await s.commit()

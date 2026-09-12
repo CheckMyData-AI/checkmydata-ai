@@ -6,10 +6,12 @@ import time
 import uuid
 from typing import Literal
 
+from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from git import Repo
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -426,6 +428,44 @@ def _verify_webhook_signature(secret: str, raw_body: bytes, headers) -> bool:
     return False
 
 
+async def _webhook_secret_for(db: AsyncSession, project_id: str) -> str | None:
+    """This project's own webhook secret, decrypted, or ``None``.
+
+    ``None`` covers every reason there is nothing to verify against: no repository
+    row, no secret stored on it, or a secret that cannot be decrypted (a key rotation
+    that lost the old key). All of them mean the same thing to the caller — this
+    request cannot be authorised — and the handler answers all of them identically.
+
+    Deliberately no fallback to `settings.git_webhook_secret`. A fallback would keep
+    the hole open for exactly the projects that have not been migrated, which is all
+    of them on the day this ships, and nothing would ever close it.
+    """
+    from app.models.repository import ProjectRepository
+    from app.services.encryption import decrypt
+
+    row = await db.scalar(
+        select(ProjectRepository)
+        .where(ProjectRepository.project_id == project_id)
+        .where(ProjectRepository.webhook_secret_encrypted.is_not(None))
+        .limit(1)
+    )
+    if row is None or not row.webhook_secret_encrypted:
+        return None
+    try:
+        return decrypt(row.webhook_secret_encrypted)
+    except (InvalidToken, ValueError, TypeError):
+        # `decrypt` logs and re-raises whatever Fernet raised. The reachable cases are
+        # a token no surviving key can read (`InvalidToken`), a malformed one
+        # (`ValueError`), and a non-string column value (`TypeError`); a wider clause
+        # would hide a defect in this function behind "refusing the hook".
+        logger.warning(
+            "Webhook secret for project %s could not be decrypted; refusing the hook",
+            project_id[:8],
+            exc_info=True,
+        )
+        return None
+
+
 @router.post("/{project_id}/webhook", status_code=202)
 @limiter.limit("30/minute")
 async def repo_webhook(
@@ -441,11 +481,24 @@ async def repo_webhook(
     """
     if not settings.git_webhook_enabled:
         raise HTTPException(status_code=404, detail="Webhook ingestion disabled")
-    if not settings.git_webhook_secret:
-        raise HTTPException(status_code=503, detail="Webhook secret not configured")
 
+    from app.api.deps import validate_safe_id
+
+    validate_safe_id(project_id, "project_id")
     raw = await request.body()
-    if not _verify_webhook_signature(settings.git_webhook_secret, raw, request.headers):
+
+    # AUTH-05: the secret belongs to THIS project's repository, not to the
+    # deployment. A process-wide one proved "someone holds the deployment's secret"
+    # and never "someone controls this repository", so any tenant who had been given
+    # it to configure GitHub could sign a body for anybody else's project id and
+    # drive their memory-constrained worker into `generate_docs` on demand.
+    #
+    # One answer for "no such project", "no repository", "no secret configured" and
+    # "bad signature", because they are the same answer to a caller who cannot prove
+    # otherwise — three distinguishable replies enumerated which project ids exist
+    # and which of them have a repository, to an unauthenticated caller.
+    secret = await _webhook_secret_for(db, project_id)
+    if not secret or not _verify_webhook_signature(secret, raw, request.headers):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     # GitHub sends an event type header; ack pings and ignore non-push events.
@@ -455,12 +508,12 @@ async def repo_webhook(
     if event and event != "push":
         return JSONResponse(status_code=202, content={"status": "ignored", "event": event})
 
-    from app.api.deps import validate_safe_id
-
-    validate_safe_id(project_id, "project_id")
     project = await _project_svc.get(db, project_id)
     if not project or not project.repo_url:
-        raise HTTPException(status_code=404, detail="Project not found or no repository")
+        # Unreachable in practice — the secret lookup above already proved both —
+        # and kept as the same 401 rather than a 404, so this cannot become the
+        # oracle the secret check just closed.
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     result = await _spawn_repo_index(
         db,
@@ -1057,6 +1110,51 @@ async def update_repository(
         resource_id=repo_id,
     )
     return updated
+
+
+@router.post("/repositories/{repo_id}/webhook-secret", status_code=201)
+@limiter.limit("10/minute")
+async def mint_webhook_secret(
+    request: Request,
+    repo_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Mint (or rotate) this repository's own webhook secret (AUTH-05).
+
+    Returned **once, in plaintext**, because the caller has to paste it into GitHub
+    or GitLab and the stored copy is encrypted. Rotating invalidates the previous
+    one immediately — that is the point of having one per repository rather than one
+    per deployment.
+
+    Owner-only: a webhook secret authorises an unauthenticated caller to spend this
+    project's indexing budget, so handing it out is an owner's decision.
+    """
+    import secrets as _secrets
+
+    from app.services.encryption import encrypt
+
+    repo = await _repo_svc.get(db, repo_id)
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    await _membership_svc.require_role(db, repo.project_id, user["user_id"], "owner")
+
+    secret = _secrets.token_urlsafe(32)
+    repo.webhook_secret_encrypted = encrypt(secret)
+    await db.commit()
+
+    audit_log(
+        "repo.webhook_secret_mint",
+        user_id=user["user_id"],
+        project_id=repo.project_id,
+        resource_type="repository",
+        resource_id=repo_id,
+    )
+    return {
+        "secret": secret,
+        "webhook_url": f"/api/repos/{repo.project_id}/webhook",
+        "note": "Shown once. Paste it into the provider's webhook settings now.",
+    }
 
 
 @router.delete("/repositories/{repo_id}")

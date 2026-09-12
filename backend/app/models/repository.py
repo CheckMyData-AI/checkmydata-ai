@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -33,6 +33,14 @@ class ProjectRepository(Base):
 
     indexing_status: Mapped[str] = mapped_column(String(20), default="idle")
     last_indexed_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: This repository's own webhook secret, Fernet-encrypted like every other secret
+    #: in the schema (AUTH-05). One process-wide `GIT_WEBHOOK_SECRET` proved only
+    #: "someone holds the deployment's secret", never "someone controls THIS
+    #: project's repository" — so any tenant given the string could sign a body and
+    #: drive any other tenant's worker into `generate_docs` on demand. NULL means the
+    #: project predates per-project secrets and has none; the handler refuses rather
+    #: than falling back to the global one, because a fallback is the hole.
+    webhook_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

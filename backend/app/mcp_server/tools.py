@@ -29,6 +29,8 @@ from app.agents.orchestrator import AgentResponse, OrchestratorAgent
 from app.connectors.base import QueryResult
 from app.core import failure_kind as fk
 from app.core.agent_limiter import agent_limiter
+from app.core.audit import audit_log
+from app.core.redaction import safe_error
 from app.core.trace_meta import TraceMeta
 from app.core.workflow_tracker import tracker as _singleton_tracker
 from app.llm.router import LLMRouter
@@ -294,6 +296,7 @@ async def query_database(
             raise ToolError(budget_error)
 
         config = await _connection_svc.to_config(session, conn)
+        project_id = conn.project_id
         config.connection_id = conn.id
 
     wf_id = await _singleton_tracker.begin(
@@ -566,6 +569,7 @@ async def execute_raw_query(principal: Principal, connection_id: str, query: str
             raise ToolError(f"Query blocked: {safety_result.reason}")
 
         config = await _connection_svc.to_config(session, conn)
+        project_id = conn.project_id
 
     from app.connectors.registry import get_connector
 
@@ -578,6 +582,30 @@ async def execute_raw_query(principal: Principal, connection_id: str, query: str
             await connector.disconnect()
     except Exception as e:
         logger.exception("Raw query execution failed")
-        raise ToolError(str(e))
+        # AUTH-06: scrubbed, like every sibling path. `str(e)` on a connector
+        # exception carries whatever the driver put in it — a DSN, a host, a
+        # credential fragment — straight to an MCP client that may be a third party's
+        # agent. The DB branch of `connection_service` already wraps its own.
+        audit_log(
+            "mcp.execute_raw_query",
+            user_id=user_id,
+            project_id=project_id,
+            resource_type="connection",
+            resource_id=connection_id,
+            detail="failed",
+        )
+        raise ToolError(safe_error(e))
 
+    # BIZ-07: the one query path that wrote no audit row, against an invariant that
+    # says every answer is traceable — and it is the path that runs caller-supplied
+    # SQL. The statement itself is not logged: it is the customer's data shape, and
+    # `audit_logs` is retained on a different schedule from query history.
+    audit_log(
+        "mcp.execute_raw_query",
+        user_id=user_id,
+        project_id=project_id,
+        resource_type="connection",
+        resource_id=connection_id,
+        detail=f"rows={getattr(result, 'row_count', 0)}",
+    )
     return _format_query_result(result)

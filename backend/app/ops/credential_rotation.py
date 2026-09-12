@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.base import async_session_factory
 from app.models.connection import Connection
 from app.models.llm_credit import LlmCredit
+from app.models.repository import ProjectRepository
 from app.models.ssh_key import SshKey
 from app.models.vendor_credential import VendorCredential
 from app.services.encryption import is_on_primary_key, rotate_token
@@ -61,6 +62,11 @@ ENCRYPTED_COLUMNS: list[tuple[Any, tuple[str, ...]]] = [
     # to make any LLM call at all.
     (LlmCredit, ("key_encrypted",)),
     (VendorCredential, ("secret_encrypted",)),
+    # AUTH-05's per-repository webhook secret. Left un-rotated it becomes unreadable
+    # the moment the old key is dropped, and `_webhook_secret_for` then refuses every
+    # push for that repository — silently, because a refused webhook looks exactly
+    # like one nobody sent.
+    (ProjectRepository, ("webhook_secret_encrypted",)),
 ]
 
 #: Rows fetched per model per pass. Bounded so a large tenant cannot build one
