@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — the per-account OpenRouter key finally reaches the provider
+
+Board row 1c; BILL-01's other half, left open by choice in `ADR-0003`.
+
+`provision()` mints a real key against OpenRouter, encrypts it into
+`llm_credits.key_encrypted`, meters it, renews it and revokes it — and was the **only**
+place that ever decrypted it, inside the same function, whose one caller discards the
+return value. `OpenRouterAdapter` bound `settings.openrouter_api_key` at construction and
+nothing downstream carried account context, so **no inference call had ever presented a
+per-account key**.
+
+ADR-0003 left it that way for a stated reason: a key is not a containment layer if a
+request can leave it, and it cannot bind on the OpenAI/Anthropic fallbacks. ADR-0004 then
+moved containment to a dollar ceiling that holds whichever provider served the call, which
+is what turns this from *the only thing between an account and an unbounded bill* into an
+**additive** change whose value is provider-side attribution per customer, plus a second
+belt on the OpenRouter path.
+
+**The difficulty the board row recorded held exactly.** `chat.py` builds
+`ConversationalAgent()` at **module level**, so one router and one set of adapters serve
+every request in the process; a constructor argument cannot reach it, and threading the key
+through `complete()` from every call site would touch dozens of them and still miss the
+next one. The key travels in a request-scoped `ContextVar` — the mechanism that already
+carries the MCP principal and the workflow id — read by the router only after its
+constructor argument, so the background indexing routers that pass theirs explicitly are
+unchanged. The adapter presents it as a per-request header override rather than building a
+client per request, which would throw away connection pooling for a header.
+
+**Three things it deliberately does not do**, each guarded:
+
+- *Claim to bind where it cannot.* An OpenRouter key presented to OpenAI is a 401, not a
+  fallback, so the key is offered to OpenRouter alone. A request that falls back now
+  carries a second disclosure line: it left the account's key behind, the call is billed to
+  the operator account, and per-customer attribution is short by it. Not a refusal —
+  `llm_allow_provider_fallback` is where a deployment makes that trade, and it should not be
+  made twice in one function.
+- *Cost a database round trip per LLM call.* Resolved once per request, by the caller that
+  already holds the session and the user id.
+- *Fail a request because the key could not be read.* An account with none provisioned, a
+  ciphertext written under a retired `MASTER_ENCRYPTION_KEY`, or a database that is simply
+  down all yield the operator key — which is exactly what every call used before this
+  existed. Refusing here would turn a reporting feature into an outage, and the plan's
+  dollar ceiling bounds the spend either way.
+
+Binding is structural rather than a second statement somebody can forget: `account_key_scope`
+restores the previous value on every path out, including an exception. `asyncio` copies the
+context into each task, so a key left bound is not merely stale — it is the previous
+customer's, in the process that serves the next one.
+
+Ten planted defects, ten caught. A third broad `except` was written and then **deleted**
+rather than ratcheted: `bind_account_key` wrapped a function documented and tested never to
+raise, so its handler could only have caught an ImportError — a suppression that suppresses
+nothing, which is the answer that ratchet exists to provoke.
+
 ### Changed — the ceiling is denominated in what the tier actually sells
 
 Board row 1b; `docs/adr/0004-cost-denominated-spend-ceiling.md`, which amends ADR-0003.

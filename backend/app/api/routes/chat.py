@@ -41,6 +41,7 @@ from app.core.session_rotation import measure as measure_history_pressure
 from app.core.trace_meta import TraceMeta
 from app.core.workflow_tracker import WorkflowEvent, tracker
 from app.core.ws_tickets import ws_ticket_store
+from app.llm.account_key import bind_account_key
 from app.services.chat_service import ChatService, SessionBusyError, session_processing_lock
 from app.services.connection_service import ConnectionService
 from app.services.membership_service import MembershipService
@@ -60,6 +61,22 @@ _chat_svc = ChatService()
 _conn_svc = ConnectionService()
 _project_svc = ProjectService()
 _agent = ConversationalAgent()
+
+
+async def _run_with_account_key(account_key, fn, /, **kwargs):
+    """Run *fn* with the account's OpenRouter key bound for its whole execution (P0-1c).
+
+    One helper rather than three `async with` blocks, because all three transports
+    call the same shared `_agent` and the re-indent would touch several hundred lines
+    of handler each — and because the binding must be *paired* with an unbind on every
+    path out, including an exception. `account_key_scope` guarantees that; a bare
+    `set()` at three call sites would not, and a key left bound is the previous
+    customer's, in the process that serves the next one.
+    """
+    from app.llm.account_key import account_key_scope
+
+    with account_key_scope(account_key):
+        return await fn(**kwargs)
 
 
 def _abnormal_trace_id(session_id: str, reason: str) -> str:
@@ -371,8 +388,15 @@ async def ask(
             # Bound the inline agent run with the same wall-clock budget the
             # stream path applies, so a stuck pipeline cannot hold the request
             # (and its concurrency slot) open indefinitely.
+            # P0-1c: bind the account's own OpenRouter key for the agent run. The
+            # scope is the run rather than the handler because `_agent` is built at
+            # MODULE level and shared by every request in this process — a key left
+            # bound is the previous customer's, in the process serving the next.
+            _account_key = await bind_account_key(db, user["user_id"])
             result = await asyncio.wait_for(
-                _agent.run(
+                _run_with_account_key(
+                    _account_key,
+                    _agent.run,
                     question=body.message,
                     project_id=body.project_id,
                     connection_config=config,
@@ -1060,8 +1084,12 @@ async def ask_stream(
             if body.continuation_context:
                 stream_extra["continuation_context"] = body.continuation_context
 
+            _account_key = await bind_account_key(db, user["user_id"])
+
             async def _process():
-                res = await _agent.run(
+                res = await _run_with_account_key(
+                    _account_key,
+                    _agent.run,
                     question=body.message,
                     project_id=body.project_id,
                     connection_config=config,
@@ -1826,7 +1854,10 @@ async def chat_websocket(
                 ws_sql_provider = _proj_sql_prov or ws_agent_provider
                 ws_sql_model = _proj_sql_mdl or ws_agent_model
 
-                result = await _agent.run(
+                _account_key = await bind_account_key(db, user_id)
+                result = await _run_with_account_key(
+                    _account_key,
+                    _agent.run,
                     question=message,
                     project_id=project_id,
                     connection_config=config,
