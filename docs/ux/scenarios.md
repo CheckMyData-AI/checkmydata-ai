@@ -483,7 +483,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** loading (repo access check), error, success
 - **Errors & recovery:** empty name → inline "Name is required"; repo access denied → inline red text; SSH URL without key → inline "add an SSH key first"; create fails → toast (`ProjectSelector.tsx:296-299,322-327,512-538`)
 - **Status:** implemented
-- **Coverage:** components/projects/ProjectSelector.tsx:461-655; components/Sidebar.tsx:749
+- **Coverage:** components/projects/ProjectSelector.tsx:461-655; components/Sidebar.tsx:494
 
 ### SCN-017: Switch between projects (multi-entity)
 - **Persona:** analyst
@@ -1124,12 +1124,13 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User clicks thumbs up or thumbs down
   2. On thumbs-down for a SQL result, an investigation prompt is auto-sent
-- **Expected result:** feedback recorded; negative SQL feedback triggers a "wrong data" investigation message
+- **Expected result:** the rating is recorded; a thumbs-down on a SQL answer **auto-sends a canned investigation prompt as the user's next message** ("I flagged the previous query result as incorrect…"), and the agent answers it like any other question. Two further effects carry the invariant and are the reason this scenario is not merely a rating: the backend **rolls back the learnings that answer exposed** (`exposed_learning_ids`), so a wrong answer does not keep teaching, and the client writes a **parallel `validate-data` verdict** for the connection
 - **UI elements:** thumbs up/down buttons (disabled while submitting)
 - **States covered:** loading, error, success
-- **Errors & recovery:** submit fails → toast "Failed to submit feedback" (`ChatMessage.tsx:290-292`). GAP: the richer WrongDataModal investigation flow is not wired in — thumbs-down sends a canned prompt instead
+- **Errors & recovery:** submit fails → toast "Failed to submit feedback" (`ChatMessage.tsx:243`). The `validate-data` write is deliberately fire-and-forget (`.catch(() => {})`): it is a second opinion on the same click, and failing it must not lose the rating
+- **Not built:** the richer `WrongDataModal` investigation flow. The Expected result above describes what ships — this line says what does not, which is the distinction the previous wording collapsed: its Expected result promised the modal flow while its own note said a canned prompt, so a reader taking the Expected result as the contract got the opposite of what ships (BIZ-14)
 - **Status:** implemented
-- **Coverage:** components/chat/ChatMessage.tsx:271-292,648-679
+- **Coverage:** components/chat/ChatMessage.tsx:216-245 (handler), :223-235 (the parallel validate-data write), :243 (the failure toast), :637-668 (the two buttons); backend/app/api/routes/chat_feedback.py:77-94 (the learning rollback)
 
 ### SCN-053: Save an answer to notes
 - **Persona:** analyst

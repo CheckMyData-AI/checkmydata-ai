@@ -15,7 +15,7 @@ needs showing it is an ASCII sketch in the repository. So the `Figma` column rea
 
 | ID | Screen | Used by | Figma | Status | Coverage |
 |----|--------|---------|-------|--------|----------|
-| SCR-01 | Data workspace | FLW-01, FLW-02, FLW-03, FLW-04 | n/a (text-only) | drifted | frontend/src/components/connections/ConnectionsPanel.tsx |
+| SCR-01 | Data workspace | FLW-01, FLW-02, FLW-03, FLW-04 | n/a (text-only) | drifted | frontend/src/components/connections/RailSourceList.tsx |
 | SCR-02 | Source-kind chooser | FLW-02 | n/a (text-only) | designed | none yet |
 | SCR-03 | Source form | FLW-02 | n/a (text-only) | drifted | frontend/src/components/connections/ConnectionSelector.tsx |
 | SCR-04 | Repository form | FLW-03 | n/a (text-only) | parked | none yet |
@@ -66,7 +66,7 @@ had never been specified, which is how it reached thirteen sections.
 
 - **Layout:** the sketch in `SCN-129`. Full content width, not the `max-w-xl` the current panel uses.
 - **Wireframe:** the ASCII sketch inside `SCN-129` (per the text-only decision)
-- **Coverage:** frontend/src/components/connections/ConnectionsPanel.tsx (the narrow wrapper this supersedes); frontend/src/app/app/page.tsx (the `connections` centre panel it mounts into)
+- **Coverage:** frontend/src/components/workspace/DataWorkspace.tsx (the panel this supersedes the narrow `ConnectionsPanel` wrapper with — that component was deleted, and `scenarios.md` SCN-113 records where its states went); frontend/src/app/app/page.tsx (the `connections` centre panel it mounts into)
 - **Scenarios:** SCN-129, SCN-131, SCN-132, SCN-133
 - **Resources:** `frontend/src/components/knowledge/KnowledgeHealthPanel.tsx` (the run/retry/cancel card to reuse rather than reinvent), `frontend/src/components/ui/ListError.tsx`, `backend/app/services/connection_service.py` (`is_queryable_database` — the predicate the capability chip must read), `backend/app/api/routes/projects.py` (the `sync-schedule` route that has no interface today)
 - **Status:** drifted — the screen exists at `max-w-xl` and re-renders the sidebar's compact list, so it is a second view of the sidebar rather than a management surface. Roles: a viewer sees cards without Edit / Index / Delete, and their absence is explained rather than shown dead (IS-17).
