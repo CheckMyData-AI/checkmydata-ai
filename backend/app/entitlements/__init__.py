@@ -22,7 +22,9 @@ __all__ = [
     "QuotaExceededError",
     "UnlimitedEntitlements",
     "get_entitlements",
+    "index_quota_bytes",
     "may_run_scheduled_work",
+    "seat_limit",
     "reset_entitlements",
     "set_entitlements",
 ]
@@ -119,6 +121,44 @@ async def index_quota_bytes(db: AsyncSession, user_id: str) -> int:
     except Exception:
         logger.warning(
             "entitlements: index_quota lookup failed for %s; treating as unlimited",
+            user_id[:8] if user_id else "?",
+            exc_info=True,
+        )
+        return 0
+
+
+async def seat_limit(db: AsyncSession, user_id: str) -> int:
+    """How many members this account's plan allows per project; ``0`` is unlimited.
+
+    Shaped exactly like :func:`index_quota_bytes`, and for the same reason: reading a
+    number the plan already publishes is not a fifth capability question, and the
+    protocol's whole point is that a private package satisfies it without importing
+    this repository.
+
+    Degrades **open** — a provider that predates the question, or a lookup that
+    raises, yields ``0``. A billing outage must not stop a team adding the colleague
+    they are already paying for.
+
+    Note the asymmetry this makes visible: `_no_plan()` returns ``seats=1`` while
+    every other zero in that same function means unlimited (BILL-09). That is
+    deliberate and stays — an account with no subscription is the one case where a
+    single seat is the honest answer — but it is the reason a caller must compare
+    against the limit rather than against "is it zero".
+    """
+    provider = get_entitlements()
+    ask = getattr(provider, "get_entitlements", None)
+    if ask is None:
+        logger.debug(
+            "entitlements: %s cannot answer seat_limit; treating as unlimited",
+            type(provider).__name__,
+        )
+        return 0
+    try:
+        ent = await ask(db, user_id)
+        return int(getattr(ent, "seats", 0) or 0)
+    except Exception:
+        logger.warning(
+            "entitlements: seat lookup failed for %s; treating as unlimited",
             user_id[:8] if user_id else "?",
             exc_info=True,
         )

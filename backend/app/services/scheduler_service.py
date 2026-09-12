@@ -1,11 +1,13 @@
 import json
 import logging
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from croniter import croniter
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.scheduled_query import ScheduledQuery, ScheduleRun
 
 logger = logging.getLogger(__name__)
@@ -13,10 +15,41 @@ logger = logging.getLogger(__name__)
 
 class SchedulerService:
     @staticmethod
+    def schedule_timezone() -> ZoneInfo:
+        """The clock a user's cron expression is written in (COR-01).
+
+        The same one the daily-sync and analytics crons share — the comment beside
+        those says they share it "so both agree what 3 a.m. means", and this was the
+        one scheduler that did not. Falls back to UTC on an unknown name rather than
+        raising: a bad setting must not stop every schedule in the deployment, and
+        UTC is the behaviour that was there before.
+        """
+        try:
+            return ZoneInfo(settings.daily_knowledge_sync_timezone)
+        except (KeyError, ValueError, OSError):
+            # ZoneInfoNotFoundError subclasses KeyError; a malformed name is a
+            # ValueError; a missing tzdata file is an OSError. Nothing else here can
+            # fail, so a wider clause would only hide a defect in this function.
+            logger.warning(
+                "Unknown daily_knowledge_sync_timezone %r; scheduling in UTC",
+                settings.daily_knowledge_sync_timezone,
+            )
+            return ZoneInfo("UTC")
+
+    @staticmethod
     def compute_next_run(cron_expression: str, base: datetime | None = None) -> datetime:
-        base = base or datetime.now(UTC)
+        """The next firing instant, in UTC, for a cron written in local time.
+
+        The expression is evaluated against the wall clock the user saw when they
+        picked it — the creation UI offers "Every day at 9 AM" with no qualifier —
+        and the result is converted back to UTC, which is what `next_run_at` and
+        `claim_due` have always meant. Before this, "0 9 * * *" fired at 09:00 UTC:
+        noon for a user in UTC+3, every day, with nothing saying so.
+        """
+        tz = SchedulerService.schedule_timezone()
+        base = (base or datetime.now(UTC)).astimezone(tz)
         cron = croniter(cron_expression, base)
-        return cron.get_next(datetime).replace(tzinfo=UTC)
+        return cron.get_next(datetime).replace(tzinfo=tz).astimezone(UTC)
 
     @staticmethod
     def validate_cron(cron_expression: str) -> bool:

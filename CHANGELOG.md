@@ -6,6 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — five promises the product makes on a schedule and did not keep
+
+P2 row 16; COR-01, COR-02, COR-03, COR-07 and BILL-09. Each is a feature that exists,
+is sold, and quietly did something other than what its own interface said.
+
+**"Every day at 9 AM" meant 9 AM UTC.** Every cron evaluation in `SchedulerService`
+ran against `datetime.now(UTC)`, while the creation UI offers presets labelled in bare
+wall-clock time and renders stored crons back as "Daily at 9:00" with no qualifier. The
+product's *other* two schedulers deliberately share `daily_knowledge_sync_timezone` "so
+both agree what 3 a.m. means" — user-facing scheduled queries were the one scheduler
+that ignored it, so a user in UTC+3 got their morning revenue check at noon, every day.
+The expression is now evaluated in that same timezone and converted back to UTC, which
+is what `next_run_at` has always meant.
+
+**`notification_channels` was accepted, validated, stored, returned and read by
+nothing.** When an alert fired, the only artifact was a `Notification` row behind the
+bell icon — an alerting feature that can only alert people already looking at the
+product — while two code comments asserted a mail delivery that did not exist and the
+`EmailService` it needed sat in the repository, in use for invites. Alerts now reach
+`email:<address>` channels, **and only addresses belonging to project members**: without
+that restriction a stored field on a customer-controlled row would mail arbitrary
+addresses on a schedule, which is a spam relay with this product's sending domain behind
+it. An unsupported channel is refused when the schedule is saved rather than ignored at
+03:00.
+
+**Alerts were evaluated against a truncated head built for storage.** The loop handed
+the evaluator `rows[:500]`; run-now re-cut to 50 *before* evaluating whenever the summary
+exceeded 1 MB. So the same query alerted differently depending on how wide its rows were,
+and `pct_change` — defined as "compare the latest two periods" — compared rows 499↔500 of
+the head once a daily series passed about seventeen months, while every run read
+`success`. The alert pass now sees every row the query returned; only storage is bounded,
+and both paths take their caps from one place so they cannot drift again.
+
+**Nothing pruned notifications or run history, and the loop's payload was uncapped**
+where the identical run-now path bounded it at 1 MB — into *two* tables. A `* * * * *`
+schedule with an always-true condition wrote 1 440 notifications and 1 440 run rows a day,
+for ever. The maintenance pass already pruned three other journals in the same function,
+so retention had been considered and these two were missed;
+`UNATTENDED_HISTORY_RETENTION_DAYS` (90) closes it.
+
+**And seats were priced, published on the pricing page, carried through entitlements, and
+compared to nothing.** Nine references — one column, one API projection, one dataclass
+field, four catalogue literals — and zero comparisons, so a `base` customer paying for
+five seats could accept two hundred members. `seat_limit` is shaped exactly like
+`index_quota_bytes` and degrades **open**: a billing outage must not stop a team adding a
+colleague they are already paying for. The cap is the project *owner's*, because the plan
+is theirs, and it is checked only on the branch that adds a member — a role change on an
+existing member must not be refused because the project is already at its cap.
+
 ### Fixed — the lexical leg was rebuilt per question, and then never rebuilt at all
 
 P2 row 15; RET-05 and RET-06. Opposite halves of one seam: the process paying for the

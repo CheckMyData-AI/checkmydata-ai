@@ -3,6 +3,18 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+#: Byte ceiling on a stored run summary. Lives here rather than in either caller
+#: because both write the same payload and only one used to bound it (COR-07): the
+#: scheduler loop stored 500 serialized rows uncapped into `schedule_runs` *and*
+#: `scheduled_queries.last_result_json`, while the identical run-now path cut it at
+#: 1 MB — so the bound plainly reflected intent and one path simply lacked it.
+MAX_RESULT_BYTES = 1_000_000
+
+#: Rows kept in a stored run summary. Storage only: the alert pass sees every row
+#: the query returned (COR-03).
+MAX_STORED_ROWS = 500
+MAX_STORED_ROWS_WHEN_OVERSIZE = 50
+
 _OPERATORS = {
     "gt": lambda a, b: a > b,
     "lt": lambda a, b: a < b,

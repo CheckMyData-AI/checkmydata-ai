@@ -123,6 +123,38 @@ class MembershipService:
             )
         return role
 
+    async def _enforce_seat_cap(self, db: AsyncSession, project_id: str) -> None:
+        """Refuse a new member when the project owner's plan has no seat for them.
+
+        The cap is the **owner's**, because the plan is the owner's: everyone else in
+        the project is on somebody else's subscription. `0` means unlimited, as it
+        does in every other column on `plans`, and a lookup that cannot answer yields
+        `0` too — a billing outage must not stop a team adding a colleague they are
+        already paying for.
+        """
+        from app.entitlements import QuotaExceededError, seat_limit
+
+        owner_id = await db.scalar(
+            select(ProjectMember.user_id).where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.role == "owner",
+            )
+        )
+        if not owner_id:
+            return
+        limit = await seat_limit(db, owner_id)
+        if limit <= 0:
+            return
+        current = await self.count_members(db, project_id)
+        if current >= limit:
+            raise QuotaExceededError(
+                f"This project has {current} of {limit} seats in use. "
+                "Upgrade the plan at /pricing to add more members.",
+                resource="seats",
+                limit=limit,
+                current=current,
+            )
+
     async def add_member(
         self,
         db: AsyncSession,
@@ -153,6 +185,13 @@ class MembershipService:
             await db.commit()
             await db.refresh(member)
             return member
+
+        # BILL-09: seats are priced, published on the pricing page and carried through
+        # entitlements, and until now nothing counted members against them. Checked
+        # only on the branch that ADDS one — a role change on an existing member must
+        # not be refused because the project is already at its cap, or a team that
+        # bought fewer seats than it has could not even demote somebody.
+        await self._enforce_seat_cap(db, project_id)
 
         member = ProjectMember(project_id=project_id, user_id=user_id, role=role)
         db.add(member)

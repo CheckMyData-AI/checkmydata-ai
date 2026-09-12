@@ -1234,9 +1234,15 @@ async def _scheduler_loop() -> None:
     import json
     import time as _time
 
-    from app.core.alert_evaluator import AlertEvaluator
+    from app.core.alert_evaluator import (
+        MAX_RESULT_BYTES,
+        MAX_STORED_ROWS,
+        MAX_STORED_ROWS_WHEN_OVERSIZE,
+        AlertEvaluator,
+    )
     from app.core.safety import SafetyGuard, SafetyLevel
     from app.models.notification import Notification
+    from app.services.alert_delivery import deliver_for_schedule
     from app.services.batch_service import DATABASE_SOURCE_TYPE, not_a_database_detail
     from app.services.connection_service import ConnectionService
     from app.services.scheduler_service import SchedulerService
@@ -1390,18 +1396,34 @@ async def _scheduler_loop() -> None:
 
                         cols = list(getattr(result, "columns", []))
                         rows = getattr(result, "rows", []) or []
-                        serialized = [[serialize_value(v) for v in row] for row in rows[:500]]
+                        # COR-03: the alert pass sees every row; only storage is
+                        # bounded. Handing the storage head to the evaluator made a
+                        # breach on row 501 invisible, and turned `pct_change` —
+                        # "compare the latest two periods" — into a comparison of
+                        # rows 499 and 500 once a daily series passed ~17 months.
+                        evaluation_rows = [[serialize_value(v) for v in row] for row in rows]
+                        serialized = evaluation_rows[:MAX_STORED_ROWS]
+                        total_rows = getattr(result, "row_count", len(rows))
                         summary = json.dumps(
-                            {
-                                "columns": cols,
-                                "rows": serialized,
-                                "total_rows": getattr(result, "row_count", len(rows)),
-                            },
+                            {"columns": cols, "rows": serialized, "total_rows": total_rows},
                             default=str,
                         )
+                        # COR-07: the same 1 MB bound run-now applies. This path
+                        # wrote the payload into TWO places with no byte cap at all.
+                        if len(summary) > MAX_RESULT_BYTES:
+                            serialized = serialized[:MAX_STORED_ROWS_WHEN_OVERSIZE]
+                            summary = json.dumps(
+                                {
+                                    "columns": cols,
+                                    "rows": serialized,
+                                    "total_rows": total_rows,
+                                    "truncated": True,
+                                },
+                                default=str,
+                            )
 
                         alerts = AlertEvaluator.evaluate(
-                            serialized, cols, schedule.alert_conditions
+                            evaluation_rows, cols, schedule.alert_conditions
                         )
                         status = "alert_triggered" if alerts else "success"
                         alerts_json = json.dumps(alerts) if alerts else None
@@ -1417,6 +1439,11 @@ async def _scheduler_loop() -> None:
                                         type="alert",
                                     )
                                 )
+                            # COR-02: and out of the app, when the schedule asked for
+                            # it. The notification row above is the durable record;
+                            # this is best-effort on top of it, so a mail failure
+                            # never turns a fired alert into a failed run.
+                            await deliver_for_schedule(session, schedule, alerts)
 
                         await svc.record_run(
                             session,
@@ -1587,6 +1614,7 @@ async def _maintenance_loop() -> None:
                 await _freshness_reconcile()
                 await _sweep_telemetry_retention()
                 await _prune_analytics_journal()
+                await _prune_unattended_history()
                 await _reconcile_billing()
             await asyncio.sleep(poll_seconds)
         except asyncio.CancelledError:
@@ -1685,6 +1713,53 @@ async def _prune_analytics_journal() -> None:
             await journal.prune(session, older_than_days=settings.analytics_journal_retention_days)
     except Exception:
         logger.warning("Analytics journal prune failed", exc_info=True)
+
+
+async def _prune_unattended_history() -> None:
+    """Drop old `notifications` and `schedule_runs` rows (COR-07).
+
+    Every alert writes a notification per triggered condition per run, and every
+    scheduled run writes a `ScheduleRun` carrying up to 500 rows of the customer's
+    data. Neither table had a TTL, a prune, or even a delete endpoint — while this
+    same function already pruned three other journals, so retention was considered
+    and these two were missed. A `* * * * *` schedule with an always-true condition
+    wrote 1 440 notifications and 1 440 run rows a day, for ever.
+
+    Best-effort, like the journal prune beside it: failing to prune history is never
+    worth failing the maintenance pass over.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import delete
+
+    from app.models.notification import Notification
+    from app.models.scheduled_query import ScheduleRun
+
+    days = settings.unattended_history_retention_days
+    if days <= 0:
+        return
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    try:
+        async with async_session_factory() as session:
+            runs = await session.execute(
+                delete(ScheduleRun).where(ScheduleRun.executed_at < cutoff)
+            )
+            notes = await session.execute(
+                delete(Notification).where(Notification.created_at < cutoff)
+            )
+            await session.commit()
+        pruned_runs = int(getattr(runs, "rowcount", 0) or 0)
+        pruned_notes = int(getattr(notes, "rowcount", 0) or 0)
+        if pruned_runs or pruned_notes:
+            logger.info(
+                "Unattended history prune: %d schedule run(s), %d notification(s) older "
+                "than %d days",
+                pruned_runs,
+                pruned_notes,
+                days,
+            )
+    except SQLAlchemyError:
+        logger.warning("Unattended history prune failed", exc_info=True)
 
 
 async def _maybe_initial_backup() -> None:

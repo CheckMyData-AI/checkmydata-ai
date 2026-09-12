@@ -107,10 +107,27 @@ class TestComputeNextRun:
         assert nxt.minute == 0
 
     def test_daily_at_9(self):
+        """09:00 on the user's clock, which is what the UI that created it promised.
+
+        This asserted `nxt.hour == 9` on the UTC instant, and that was COR-01: the
+        creation UI offers "Every day at 9 AM" with no qualifier while every cron
+        evaluation ran against `datetime.now(UTC)`. The product's daily-sync and
+        analytics crons already share `daily_knowledge_sync_timezone` so they agree
+        what 3 a.m. means; this was the one scheduler that did not.
+        """
+        import zoneinfo
+
+        from app.config import settings
+
+        tz = zoneinfo.ZoneInfo(settings.daily_knowledge_sync_timezone)
         base = datetime(2026, 3, 21, 10, 0, 0, tzinfo=UTC)
         nxt = SchedulerService.compute_next_run("0 9 * * *", base)
-        assert nxt.day == 22
-        assert nxt.hour == 9
+
+        local = nxt.astimezone(tz)
+        assert (local.hour, local.minute) == (9, 0)
+        assert nxt > base
+        # Stored in UTC, as `next_run_at` and `claim_due` have always meant.
+        assert nxt.utcoffset() == UTC.utcoffset(None)
 
 
 class TestValidateCron:
