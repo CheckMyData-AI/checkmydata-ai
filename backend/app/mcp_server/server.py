@@ -246,7 +246,17 @@ def create_mcp_server() -> FastMCP:
         raw: dict = await _with_principal(
             lambda p: tools.query_database(p, project_id, question, connection_id),
             tool_name="checkmydata_query_database",
-            limited=True,
+            # AUTH-04: the slot is taken INSIDE the tool, not here. It used to be
+            # both, and `AgentLimiter.acquire` is a counter rather than a re-entrant
+            # lock — it increments `_concurrent` and appends to the hourly window on
+            # every call. Two parallel MCP queries therefore took three of three slots
+            # and the second was refused with a message naming a limit it had not
+            # reached, and the same client was cut off after 50 calls against a
+            # configured ceiling of 100. Both F-MCP-02 comments claim to be adding the
+            # gate for the first time, in two places, which is why neither author
+            # could see it. The tool body is the layer that keeps it, because that is
+            # where the release lives.
+            limited=False,
         )
         return AgentResponseOutput(**raw)
 
@@ -266,7 +276,7 @@ def create_mcp_server() -> FastMCP:
         raw: dict = await _with_principal(
             lambda p: tools.search_codebase(p, project_id, question),
             tool_name="checkmydata_search_codebase",
-            limited=True,
+            limited=False,  # AUTH-04 — acquired inside the tool, see above
         )
         return AgentResponseOutput(**raw)
 

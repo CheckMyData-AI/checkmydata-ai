@@ -284,6 +284,7 @@ Per-connection agent memory. Learnings are **not** shared across connections by 
 | GET | `/api/repos/{project_id}/repositories` | List repositories |
 | PATCH | `/api/repos/repositories/{id}` | Update repository |
 | DELETE | `/api/repos/repositories/{id}` | Delete repository |
+| POST | `/api/repos/repositories/{repo_id}/webhook-secret` | Mint or rotate this repository's own git-webhook secret. Owner only; the plaintext is returned **once**, because the stored copy is encrypted and the caller has to paste it into the provider. Rotating invalidates the previous one immediately. Until a repository has one, `POST /api/repos/{project_id}/webhook` refuses every push — there is deliberately no fallback to a deployment-wide secret (AUTH-05). |
 | POST | `/api/repos/{project_id}/index` | Index repository |
 | GET | `/api/repos/{project_id}/docs` | List indexed documents |
 | POST | `/api/repos/check-access` | Verify SSH/HTTPS reachability of a repository and list its branches |

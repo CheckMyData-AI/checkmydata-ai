@@ -572,10 +572,18 @@ class Settings(BaseSettings):
     # POST /index behaviour; flip individually to opt into automation.
     #
     # Git push webhook (POST /api/repos/{id}/webhook). When enabled, a verified
-    # push event enqueues a (debounced) repo re-index. ``git_webhook_secret`` is
-    # the shared HMAC secret used to verify GitHub-style ``X-Hub-Signature-256``
-    # (and GitLab ``X-Gitlab-Token``) headers; an empty secret rejects all calls.
+    # push event enqueues a (debounced) repo re-index.
     git_webhook_enabled: bool = False
+    #: RETIRED and read by nothing (AUTH-05). It was one process-wide HMAC secret,
+    #: and a signature made with it proved "someone holds the deployment's secret",
+    #: never "someone controls THIS project's repository" — so any tenant given the
+    #: string to configure GitHub could sign a body for another tenant's project id
+    #: and drive their memory-constrained worker into `generate_docs` on demand.
+    #: Each repository now carries its own, minted by
+    #: `POST /api/repos/repositories/{repo_id}/webhook-secret`. The field is kept so
+    #: an existing `.env` does not fail to parse; there is deliberately no fallback
+    #: to it, because a fallback would leave the hole open for exactly the projects
+    #: that have not been migrated.
     git_webhook_secret: str = ""
     # Collapse a burst of pushes into a single re-index: a new trigger within this
     # window after the last one is ignored (the running/queued index already

@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — one webhook secret authorised every tenant's project, and five more drifts
+
+P2 row 20; AUTH-04, AUTH-05, AUTH-06, AUTH-07, AUTH-08 and BIZ-07.
+
+**A git webhook proved the wrong thing.** `POST /api/repos/{project_id}/webhook` HMACed
+the body against one process-wide `GIT_WEBHOOK_SECRET`, and nothing bound that secret to
+the project id in the path — so a valid signature proved *"someone holds the deployment's
+secret"* and never *"someone controls this project's repository"*. Every tenant who wired
+a webhook had to be given the same string, and could then sign a body for anybody else's
+project id and drive their memory-constrained worker into `generate_docs`, on demand and
+repeatedly. The endpoint also answered three distinguishable ways — a 404 for an unknown
+id, a different 404 for an unindexed one, a 401 for a bad signature — so it enumerated
+which project ids exist and which have a repository, to an unauthenticated caller.
+
+Each repository now carries its own secret, Fernet-encrypted like every other secret in
+the schema, minted by `POST /api/repos/repositories/{repo_id}/webhook-secret` and shown
+once. **There is deliberately no fallback to the global secret**: a fallback would keep
+the hole open for exactly the projects that have not been migrated, which is all of them
+on the day this ships, and nothing would ever close it. A repository with no secret
+refuses every webhook, and refuses it with the same 401 the bad signature gets.
+
+**Operator action:** existing webhooks stop working until their owner mints a secret and
+pastes it into the provider. That is the migration, and it is deliberate — the previous
+credential authorised more than its holder was entitled to.
+
+**Every MCP agent call took the concurrency slot twice.** Once at dispatch
+(`limited=True`) and once inside the tool body, and `AgentLimiter.acquire` is a counter
+rather than a re-entrant lock — it increments `_concurrent` *and* appends to the hourly
+window on every call. Two parallel MCP queries therefore took three of three slots and
+the second was refused with a message naming a limit it had not reached; the same client
+was cut off after **50** calls against a configured ceiling of 100. Both F-MCP-02
+comments claim to be adding the gate for the first time, in two places, which is why
+neither author could see it.
+
+**And four smaller ones.** `execute_raw_query` handed the raw connector exception to the
+MCP client, bypassing the scrubber every sibling path uses — and wrote no audit row, the
+one query path that did not, against an invariant that says every answer is traceable and
+on the path that runs caller-supplied SQL. `get_accessible_projects` was a third,
+**member-only** reader of a rule whose own docstring calls itself the single source of
+truth and states it as *owns OR is a member of*, so an owner whose member row is missing
+was refused there and admitted by the other four. And `update_member_role` wrote the role
+without validating it: the F-PROJ-07 guard reached one of the two writers, and a stored
+typo ranks 0 — it locks the member out of everything, silently.
+
 ### Fixed — six ways the orchestrator's bookkeeping disagreed with the run it describes
 
 P2 row 19; ORCH-01, ORCH-03, ORCH-05, ORCH-07, ORCH-10, ORCH-11.

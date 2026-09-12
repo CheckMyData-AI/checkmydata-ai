@@ -257,6 +257,10 @@ class MembershipService:
             return None
         if member.role == "owner":
             raise HTTPException(status_code=400, detail="Cannot change the owner's role")
+        # AUTH-08: the F-PROJ-07 guard was applied to `add_member` and not to this,
+        # the second writer. A stored typo ranks 0 and locks the member out of
+        # everything — silently, because nothing reads roles back for validity.
+        _require_valid_role(new_role, what="Member role")
         member.role = new_role
         await db.commit()
         await db.refresh(member, attribute_names=["user"])
@@ -476,10 +480,21 @@ class MembershipService:
         db: AsyncSession,
         user_id: str,
     ) -> list[Project]:
+        # AUTH-07: through `_accessible_filter`, which calls itself the single source
+        # of truth for this rule and states it as *owns OR is a member of*. This
+        # reader joined `ProjectMember` and nothing else, so an owner whose member row
+        # is missing — which project creation's two separate commits can produce, and
+        # which `can_access` was fixed to tolerate for exactly that reason — was
+        # refused here and admitted by the other four readers.
+        #
+        # `outerjoin` rather than `join`: an owner with no member row must still
+        # match, and `distinct` because a user who is both owner and member would
+        # otherwise appear twice.
         result = await db.execute(
             select(Project)
-            .join(ProjectMember, ProjectMember.project_id == Project.id)
-            .where(ProjectMember.user_id == user_id)
+            .outerjoin(ProjectMember, ProjectMember.project_id == Project.id)
+            .where(self._accessible_filter(user_id))
+            .distinct()
         )
         return list(result.scalars().all())
 
