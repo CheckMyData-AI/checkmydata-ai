@@ -392,6 +392,10 @@ class OrchestratorAgent(BaseAgent):
         self._git = GitAgent(repo_analyzer=self._repo_analyzer)
         self._mcp_source = mcp_source_agent or MCPSourceAgent(llm_router=self._llm)
         self._wf_sql_results: dict[str, list[SQLAgentResult]] = {}
+        #: When each workflow last touched any of the maps below. The sweep reads
+        #: THIS rather than `_wf_enriched`, which only `process_data` writes
+        #: (ORCH-05).
+        self._wf_seen: dict[str, float] = {}
         self._wf_sql_lock = asyncio.Lock()
         # B7: in-process set of pipeline_run_ids currently being resumed, to
         # reject duplicate concurrent resumes of the same run (e.g. a
@@ -510,15 +514,40 @@ class OrchestratorAgent(BaseAgent):
             llm_model=used_model,
         )
 
+    def _note_workflow_seen(self, wf_id: str) -> None:
+        """Record when this workflow last touched any per-workflow cache (ORCH-05).
+
+        The sweep used to enumerate stale ids from `_wf_enriched`, which only
+        `ToolDispatcher._handle_process_data` ever writes — so a workflow that ran
+        `query_database` and never called `process_data`, which is most of them, was
+        unreachable by it. Its `_wf_sql_results` entry holds full `QueryResult`s with
+        every row, and `ConversationalAgent` is built at module scope, so nothing
+        freed them short of a dyno restart.
+
+        One timestamp per workflow rather than one per map: the maps are written at
+        different moments in the same turn, and six independent clocks would sweep
+        halves of the same workflow at different times.
+        """
+        import time as _time
+
+        self._wf_seen[wf_id] = _time.time()
+
     def _cleanup_stale_results(self, stale_seconds: float) -> None:
         """Remove per-workflow SQL caches older than *stale_seconds*."""
         import time as _time
 
         now = _time.time()
-        stale_wf_ids = [
-            wid for wid, (_, ts) in self._wf_enriched.items() if (now - ts) > stale_seconds
+        stale_wf_ids = [wid for wid, ts in self._wf_seen.items() if (now - ts) > stale_seconds]
+        # Belt and braces: anything in `_wf_enriched` that predates this bookkeeping
+        # is still swept on age, so entries written before the deploy do not survive
+        # for ever waiting for a timestamp nobody recorded.
+        stale_wf_ids += [
+            wid
+            for wid, (_, ts) in self._wf_enriched.items()
+            if (now - ts) > stale_seconds and wid not in self._wf_seen
         ]
         for wid in stale_wf_ids:
+            self._wf_seen.pop(wid, None)
             self._wf_enriched.pop(wid, None)
             self._wf_sql_results.pop(wid, None)
             self._wf_correction_counts.pop(wid, None)
@@ -771,6 +800,10 @@ class OrchestratorAgent(BaseAgent):
             has_repo = self._ctx_loader.has_repo(context.project_id)
 
             # --- LLM-driven routing ---
+            # ORCH-05: one stamp per workflow, here because every workflow reaches
+            # this line. The sweep reads it instead of `_wf_enriched`, which only
+            # `process_data` writes.
+            self._note_workflow_seen(wf_id)
             await self._tracker.emit(wf_id, "thinking", "in_progress", "Routing request…")
 
             if is_continuation or context.extra.get("_skip_complexity"):
@@ -808,11 +841,22 @@ class OrchestratorAgent(BaseAgent):
             )
             # ...and again where the *caller* can reach it: the line above
             # rebinds a local copy, so nothing outside this method sees it.
-            self._wf_routing[wf_id] = (
-                route_result.route,
-                route_result.complexity,
-                route_result.estimated_queries,
-            )
+            #
+            # ORCH-07: NOT on a continuation. `_fallback_to_unified` re-enters `run()`
+            # with `_skip_complexity`, which synthesises route="explore",
+            # complexity="moderate" — and overwriting here replaced the router's real
+            # verdict in the persisted trace and the metrics, so every
+            # pipeline→flat-loop bounce was mis-attributed and "how often does the
+            # pipeline bounce, and on what?" was unanswerable from history. This is
+            # the field #267 existed to make honest after 222 traces of 222 read
+            # "unknown"; the docstring on `_fallback_to_unified` already claims the
+            # original complexity is preserved, and until now nothing preserved it.
+            if not is_continuation and wf_id not in self._wf_routing:
+                self._wf_routing[wf_id] = (
+                    route_result.route,
+                    route_result.complexity,
+                    route_result.estimated_queries,
+                )
 
             logger.info(
                 "Router: route=%s complexity=%s (wf=%s)",
@@ -2853,8 +2897,11 @@ class OrchestratorAgent(BaseAgent):
             # — burning a replan on a structurally-doomed plan.  Detect that up
             # front and stop replanning, surfacing the prior (stage_failed)
             # result as honest partial results instead.
+            rejected_ids = set(getattr(exec_result, "rejected_stage_ids", []) or [])
             seedable_ids = {s.stage_id for s in new_plan.stages} | {
-                sid for sid, sr in completed.items() if sr.status in ("success", "degraded")
+                sid
+                for sid, sr in completed.items()
+                if sr.status in ("success", "degraded") and sid not in rejected_ids
             }
             dangling = {
                 dep
@@ -2899,7 +2946,13 @@ class OrchestratorAgent(BaseAgent):
                 plan=new_plan,
                 pipeline_run_id=run_id,
             )
+            # ORCH-03: whatever the layer gate refused is not carried over. Those
+            # results were committed before the gate ran and still read "success", so
+            # seeding on status alone hands the rejection to the next plan intact.
+            rejected = set(getattr(exec_result, "rejected_stage_ids", []) or [])
             for sid, sr in completed.items():
+                if sid in rejected:
+                    continue
                 # ORCH-RP01: carry over both success and degraded results —
                 # degraded stages have usable query_result / summary and
                 # re-running them just wastes budget.

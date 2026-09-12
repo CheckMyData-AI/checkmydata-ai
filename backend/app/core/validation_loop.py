@@ -23,7 +23,7 @@ from app.core.query_validation import (
     ValidationLoopResult,
 )
 from app.core.retry_strategy import RetryStrategy
-from app.core.safety import SafetyGuard, SafetyLevel
+from app.core.safety import SafetyGuard, SafetyLevel, is_read_only_statement
 from app.core.workflow_tracker import WorkflowTracker
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,27 @@ _TRANSIENT_BACKOFF_MAX_SECONDS = 4.0
 # 2026-08-06 11:39:24 spent 120.3 s across ten repairs rewriting a correct query
 # while even ``MIN/MAX(id)`` on an indexed primary key was timing out.
 _MAX_TIMEOUT_REPAIRS = 1
+
+
+def _is_repeatable_after_connection_loss(query: str, config: Any | None) -> bool:
+    """May this statement be re-sent after the connection dropped mid-flight?
+
+    Two ways to be sure, and both must be checked because either alone leaves a hole:
+
+    * the **connection** is read-only, so the engine would refuse a write whatever
+      the text says; or
+    * the **statement** is a read, so repeating it changes nothing.
+
+    A write on a writable connection is neither, and the honest answer there is that
+    nobody knows whether it ran — the server may have committed before the socket
+    closed. Saying so beats doubling a non-idempotent statement in silence.
+
+    Degrades towards REFUSING when the connection is unknown: an absent config means
+    the caller could not say, and a repeat is the irreversible half of the choice.
+    """
+    if config is not None and getattr(config, "is_read_only", False):
+        return True
+    return is_read_only_statement(query, getattr(config, "db_type", "") or "postgres")
 
 
 class ValidationLoop:
@@ -448,6 +469,23 @@ class ValidationLoop:
         # query defect. Re-run the SAME query after a bounded backoff instead of
         # asking the LLM to "repair" it (which would change nothing and, after
         # A2, be blocked by the identity guard anyway).
+        #
+        # ORCH-11: "not a query defect" holds for a SELECT, and `error_types.py` says
+        # so in those words. It does not hold for a statement that may have COMMITTED
+        # before the socket dropped — MySQL's `Lost connection` arrives after the
+        # server has done the work — so `UPDATE … SET n = n + 1` ran twice and neither
+        # the agent nor the user was told. The SSH reconnect path settled this
+        # already (F-SSH-07) using the same primitive.
+        if error.error_type in _TRANSIENT_RETRY_ERRORS and not _is_repeatable_after_connection_loss(
+            failed_query, connection_config
+        ):
+            logger.warning(
+                "Transient %s on a statement that may already have run; refusing to "
+                "re-send it. The result is unknown, not failed.",
+                error.error_type.value,
+            )
+            return None
+
         if error.error_type in _TRANSIENT_RETRY_ERRORS:
             delay = min(
                 _TRANSIENT_BACKOFF_BASE_SECONDS * (2 ** (current_attempt - 1)),

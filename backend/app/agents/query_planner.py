@@ -21,12 +21,32 @@ logger = logging.getLogger(__name__)
 # Plan validation helpers
 # ------------------------------------------------------------------
 
+#: Tools a plan may name. `_CREATE_PLAN_TOOL`'s enum is literally `list(...)` of this,
+#: so a name absent here is not merely rejected — it is never offered to the model.
+#:
+#: ORCH-01: `query_analytics_source` was missing while the planner prompt documented
+#: it, gave it an explicit CROSS-SOURCE RECIPE, and `StageExecutor._execute_stage`
+#: dispatched it. A plan that followed the prose was rejected twice, `plan()` fell back
+#: to a one-stage `query_database`, and the analytics half of the question was silently
+#: dropped — a wrong-scope answer rather than an error, after paying for two planner
+#: LLM calls. A test walks the executor's dispatch against this set.
 _VALID_TOOLS = {
     "query_database",
+    "query_analytics_source",
     "search_codebase",
     "analyze_results",
     "process_data",
     "synthesize",
+    "query_mcp_source",
+    "analyze_git",
+}
+
+#: The subset that actually FETCHES something. A plan with none of these has nothing to
+#: reason over, which is why it is refused separately.
+_DATA_RETRIEVAL_TOOLS = {
+    "query_database",
+    "query_analytics_source",
+    "search_codebase",
     "query_mcp_source",
     "analyze_git",
 }
@@ -80,13 +100,7 @@ def _validate_plan_structure(
             if dep not in ids and dep not in external_ids:
                 errors.append(f"Stage '{sid}' depends on unknown stage '{dep}'")
 
-    data_retrieval_tools = {
-        "query_database",
-        "search_codebase",
-        "query_mcp_source",
-        "analyze_git",
-    }
-    if not any(s.get("tool") in data_retrieval_tools for s in stages):
+    if not any(s.get("tool") in _DATA_RETRIEVAL_TOOLS for s in stages):
         errors.append("Plan must include at least one data-retrieval stage")
 
     # Topological cycle detection (Kahn's algorithm)

@@ -370,6 +370,16 @@ class StageExecutor:
                             passed=False, errors=verdict.failures
                         ),
                         replan_eligible=any(s.replan_on_failure for s in batch),
+                        # ORCH-03: `_process_one_stage` commits each result into
+                        # `stage_ctx` BEFORE this cross-item gate runs on the finished
+                        # batch, and the checker never changes their status — so the
+                        # replan copied in exactly the siblings it had just refused,
+                        # the new plan was free to depend on them, and they were never
+                        # re-run. `layer_checker` states the requirement verbatim: "the
+                        # convergence must depend on this verdict rather than on the
+                        # branches, or the gate has a bypass and the shape is
+                        # decoration."
+                        rejected_stage_ids=[s.stage_id for s in batch],
                     )
 
             for stage, outcome in zip(batch, outcomes):
@@ -1620,6 +1630,7 @@ class _StageExecutorResult:
         data_gate_outcome: DataGateOutcome | None = None,
         replan_eligible: bool = True,
         degraded_reason: str | None = None,
+        rejected_stage_ids: list[str] | None = None,
     ) -> None:
         self.status = status  # completed | checkpoint | stage_failed
         self.stage_ctx = stage_ctx
@@ -1627,6 +1638,10 @@ class _StageExecutorResult:
         #: Why the final answer is less than the plan promised — set when the
         #: synthesis itself degraded, which no stage result can carry (ORCH-08).
         self.degraded_reason = degraded_reason
+        #: Stages a cross-item gate refused. Their results are already committed to
+        #: `stage_ctx` and still carry `status="success"`, so a replan that seeds on
+        #: status alone would carry the rejection straight through (ORCH-03).
+        self.rejected_stage_ids: list[str] = rejected_stage_ids or []
         self.checkpoint_stage = checkpoint_stage
         self.checkpoint_result = checkpoint_result
         self.failed_stage = failed_stage
