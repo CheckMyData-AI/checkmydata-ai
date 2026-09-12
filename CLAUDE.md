@@ -1062,8 +1062,11 @@ Read `vision.md` before any new feature. If a request conflicts with §7 invaria
 
 - `docs/ux/scenarios.md` is the source of truth for all user-facing behavior.
 - **The chain now has three layers, and they are not equally complete.**
-  `scenarios.md` covers the whole product (151 scenarios; 128 `implemented`, 23
-  `draft`). `flows.md` (FLW-01–05) and `screens.md` (SCR-01–10) were added
+  `scenarios.md` covers the whole product (**153 scenarios; 141 `implemented`, 12
+  `draft`** — measured 2026-09-12 by `make ux-status`, and asserted by
+  `test_the_ux_base_checks_all_three_documents.py`, because the previous figure
+  here said 151/128/23 while the generated block in the document itself counted
+  153/141/12 and nothing compared the two). `flows.md` (FLW-01–05) and `screens.md` (SCR-01–10) were added
   2026-09-07 and cover **only the data-onboarding scope** — adding a project,
   connecting sources and repositories, describing them, refreshing the docs, and the
   sidebar rail every flow starts from. Outside that scope there is no flow layer, so

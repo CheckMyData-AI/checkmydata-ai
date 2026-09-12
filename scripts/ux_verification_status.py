@@ -42,11 +42,23 @@ END = "<!-- verification-status:end -->"
 #: quoted as if fresh.
 STALE_AFTER_DAYS = 30
 
-#: The id may carry a lowercase suffix (`SCN-101a`). Without it that row matched
-#: nothing here and was absent from every number this script prints — which stayed
-#: invisible while it read `implemented` like its neighbours, and became a wrong
-#: status the moment it changed to `draft`.
-_ROW = re.compile(r"^\|\s*(SCN-\d+[a-z]?)\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|", re.M)
+#: The id may carry a lowercase suffix (`SCN-101a`). Written ONCE and used everywhere
+#: (TEST-12): it used to be spelled inline in five places, and the widening reached
+#: two of them. The three it missed did not merely ignore a suffixed row — `git grep
+#: -oE "SCN-[0-9]+"` captures `SCN-101a` as `SCN-101`, so an anchor was credited to a
+#: DIFFERENT scenario while the suffixed one reported none, and `audit_backlog` never
+#: listed it at all.
+#:
+#: `\b` is deliberately not used as the right-hand boundary: `SCN-101a` ends on a word
+#: character, so `SCN-101\b` would not match it and `SCN-101` would match its prefix.
+SCENARIO_ID = r"SCN-\d+[a-z]?"
+SCENARIO_ID_RE = re.compile(SCENARIO_ID)
+#: The same shape for `git grep -E`, which speaks POSIX ERE and knows no `\d`.
+SCENARIO_ID_ERE = "SCN-[0-9]+[a-z]?"
+
+_ROW = re.compile(
+    rf"^\|\s*({SCENARIO_ID})\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|", re.M
+)
 
 
 def rows(text: str) -> list[tuple[str, str, str]]:
@@ -68,7 +80,7 @@ _NOT_AN_ANCHOR = (
 def anchored_ids() -> set[str]:
     """Scenario ids referenced from code or tests — the ones a machine could check."""
     out = subprocess.run(
-        ["git", "grep", "-noE", "SCN-[0-9]+", "--", "*.py", "*.ts", "*.tsx"],
+        ["git", "grep", "-noE", SCENARIO_ID_ERE, "--", "*.py", "*.ts", "*.tsx"],
         cwd=REPO,
         capture_output=True,
         text=True,
@@ -174,17 +186,19 @@ def audit_backlog(text: str, *, since: str) -> list[tuple[str, str, int, list[st
 
     titles = {
         m.group(1): m.group(2).strip()
-        for m in re.finditer(r"^\|\s*(SCN-\d+[a-z]?)\s*\|([^|]*)\|", text, re.M)
+        for m in re.finditer(rf"^\|\s*({SCENARIO_ID})\s*\|([^|]*)\|", text, re.M)
     }
     stale_ids = {
         m.group(1)
         for m in re.finditer(
-            rf"^\|\s*(SCN-\d+)\s*\|[^|]*\|[^|]*\|[^|]*\|[^|]*\|\s*{re.escape(since)}", text, re.M
+            rf"^\|\s*({SCENARIO_ID})\s*\|[^|]*\|[^|]*\|[^|]*\|[^|]*\|\s*{re.escape(since)}",
+            text,
+            re.M,
         )
     }
 
     out = []
-    parts = re.split(r"^### (SCN-\d+)", text, flags=re.M)
+    parts = re.split(rf"^### ({SCENARIO_ID})", text, flags=re.M)
     for scenario_id, body in zip(parts[1::2], parts[2::2], strict=False):
         if scenario_id not in stale_ids:
             continue

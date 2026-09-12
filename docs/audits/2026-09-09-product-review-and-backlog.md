@@ -235,8 +235,8 @@ measured:
 
 | # | Task | Refs | Effort |
 |---|---|---|---|
-| 21 | 🔶 **IN PROGRESS 2026-09-12** — Test-gate integrity: drop `DEPRECATED` exclusion; YAML-parse the CI guards; fix stale 72 %; smoke into CI; AST-based source guards; contrast test reads real alphas; delete leftover skipifs; reload finalizer | TEST-03…07/09/10/11/13 | M |
-| 22 | Scenario tooling: suffixed ids everywhere; line-anchor validation; screens/flows under the same guards; SCN-052 + SCR-01 corrections; CLAUDE.md counts point at `make ux-status` | TEST-08/12/14, BIZ-14 | S–M |
+| 21 | ✅ **DONE 2026-09-12** (#357) — Test-gate integrity: drop `DEPRECATED` exclusion; YAML-parse the CI guards; fix stale 72 %; smoke into CI; AST-based source guards; contrast test reads real alphas; delete leftover skipifs; reload finalizer | TEST-03…07/09/10/11/13 | M |
+| 22 | 🔶 **IN PROGRESS 2026-09-12** — Scenario tooling: suffixed ids everywhere; line-anchor validation; screens/flows under the same guards; SCN-052 + SCR-01 corrections; CLAUDE.md counts point at `make ux-status` | TEST-08/12/14, BIZ-14 | S–M |
 | 23 | Docs truth: vision §8 carve-out for chat rows; API.md rate-limit paragraph regenerated; ANA runbook blockquote; OPS comment/invariant fixes; `query` back-fill on the single-block path | BIZ-08/10, API-13, ANA-08/09, OPS-12 | S |
 | 24 | UX polish: FE state honesty (dashboard error vs not-found, notes error vs empty, task spin TTL), scroll throttle, semantic tokens, readiness TTL, i18n of degradation strings, viewer role contract | FE-04/06/07/09/10/11, COR-04/05/06/08 | M |
 

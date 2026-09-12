@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the UX base is three documents and only one of them was checked
+
+P3 row 22; TEST-08, TEST-12, TEST-14 and BIZ-14.
+
+**`screens.md` and `flows.md` had no guards at all.** They were added on 2026-09-07,
+carry 26 path references between them, and had no body/index pairing test, no
+path-existence test and no status test — while `scenarios.md` has had all three since it
+was written. SCR-01's Coverage named `ConnectionsPanel.tsx`, a component `scenarios.md`
+states in prose was deleted: the two halves of the base disagreeing about the same file,
+with nothing comparing them. Every check now iterates the three documents, so a fourth
+is covered by adding one line rather than by remembering to copy four tests.
+
+**166 `file:line` citations were unchecked.** `_PATH_RE` captures the path token and
+stops before the `:1511-1523`, so the line anchors were never parsed — and the scenario
+guard's own re-audit record says the citations are precisely what decays: three batches
+of five scenarios found **15 of 15 behaviourally correct and 22 stale citations**. One
+reference already pointed at line 749 of a 651-line file.
+
+**`CLAUDE.md` stated a scenario tally the document itself contradicted** — 151 / 128 /
+23 against a generated block counting 153 / 141 / 12 — with nothing comparing the two.
+That is the same shape as a board quoting a tally that has moved, one document over.
+
+**A suffixed id was credited to a different scenario.** The row parser was widened to
+accept `SCN-101a` after that row was found invisible to every count; `anchored_ids()`
+two functions below still ran `git grep -oE "SCN-[0-9]+"`, which captures `SCN-101a` as
+`SCN-101` — so the anchor was attributed to a **different scenario** while the suffixed
+one reported none, and `audit_backlog` never listed it at all. The id shape is written
+once now and used in all five places, in both regex dialects the script needs.
+
+The suffix fix is visible as a measurement: the generated block's *Referenced from code
+or tests* figure moved from **33 of 153 to 37** — four anchors that were being credited
+to the wrong scenario, now credited to the right one.
+
+**And SCN-052 contradicted itself while stamped `implemented / PASS`.** Its Expected
+result promised the `WrongDataModal` investigation flow; its own `Errors & recovery`
+note said thumbs-down sends a canned prompt instead. A reader taking the Expected result
+as the contract got the opposite of what ships. Every cited line number was 40–55 lines
+adrift, and the scenario documented neither of the two effects that actually carry the
+invariant — the `exposed_learning_ids` rollback and the parallel `validate-data` write.
+All three are fixed, and what is *not* built now has its own line rather than being
+folded into the note about errors.
+
 ### Fixed — nine gates that reported a check they were not performing
 
 P3 row 21; TEST-03, TEST-04, TEST-05, TEST-06, TEST-07, TEST-09, TEST-10, TEST-11,
