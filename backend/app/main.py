@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -61,7 +60,7 @@ from app.api.routes import (
 from app.config import settings
 from app.core.distributed_lock import redis_lock
 from app.core.logging_config import configure_logging
-from app.core.rate_limit import limiter
+from app.core.rate_limit import limiter, rate_limit_exceeded_handler
 from app.models.base import async_session_factory, init_db, run_migrations
 from app.services.checkpoint_service import CheckpointService
 
@@ -392,7 +391,11 @@ app = FastAPI(
 )
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+# API-06: ours, not slowapi's. Its handler emits {"error": …} with no `detail`
+# key, while API.md states every error is {"detail": …} and the frontend reads
+# exactly that — so the one status every client must handle carried two
+# incompatible bodies.
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 if settings.mcp_enabled and settings.mcp_mount_enabled:
     from app.mcp_server.asgi import build_mounted_mcp_app

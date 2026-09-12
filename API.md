@@ -625,7 +625,13 @@ Common status codes:
 - `404` — Not found
 - `409` — Conflict (duplicate resource)
 - `422` — Validation error (Pydantic)
-- `429` — Rate limit exceeded
+- `429` — Rate limit exceeded **or token budget spent** — two different conditions
+  on one status. The rate limiter's body carries `"error_type": "rate_limit"` and
+  `"is_retryable": true`; a spent token budget carries
+  `{"detail": {"message": …, "error_type": "token_budget", "is_retryable": false}}`
+  and resets with the billing period rather than in a moment. A client that treats
+  them alike tells the second kind of caller to wait for something that will not
+  change today.
 - `500` — Internal server error
 
 ## Rate Limiting
@@ -636,8 +642,23 @@ unthrottled exceptions include `POST /api/checkout`, `POST /api/portal`,
 `POST /api/data-validation/investigate/{id}/confirm-fix`, `POST /api/auth/logout`,
 `POST /api/auth/complete-onboarding`, and the Stripe `POST /api/webhook` — see
 [`docs/qa-audit/full-audit-2026-07-24/02-api-contract.md`](docs/qa-audit/full-audit-2026-07-24/02-api-contract.md)
-§3 N-1). Limits vary by endpoint sensitivity. The `X-RateLimit-*` headers
-indicate current usage.
+§3 N-1). Limits vary by endpoint sensitivity.
+
+**What a limit counts against** is the authenticated user where the request carries a
+readable token, and otherwise the caller's address. It used to be
+`request.client.host` verbatim, which behind a platform router is the *router's*
+address for every caller — so each limit was one counter shared by the whole tenant
+base, and the sixth registration attempt anywhere in the world in a minute was
+refused (API-05).
+
+The address is read from `X-Forwarded-For` by counting `TRUSTED_PROXY_HOPS` entries in
+from the **right**. Each proxy appends what it saw, so the left-hand entries are
+whatever the caller sent; taking the right-most is what stops one caller minting an
+unlimited number of buckets. `TRUSTED_PROXY_HOPS=0` ignores the header entirely.
+
+The `X-RateLimit-*` headers indicate current usage — note that a browser on a
+different origin cannot read them unless the API's CORS configuration exposes them
+(API-10, open).
 
 ## OpenAPI Documentation
 

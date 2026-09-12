@@ -1440,7 +1440,17 @@ async def trigger_sync(
     # H5: budget pre-flight — block over-budget owners before we even acquire the lock.
     ok, reason, _ = await preflight_owner_budget(db, conn.project_id)
     if not ok:
-        raise HTTPException(status_code=429, detail=reason)
+        raise HTTPException(
+            status_code=429,
+            # API-06: this 429 resets tomorrow, not in a moment. Without the
+            # marker the client cannot tell it from the rate limiter's, and
+            # told a user whose budget was spent to wait.
+            detail={
+                "message": reason,
+                "error_type": "token_budget",
+                "is_retryable": False,
+            },
+        )
 
     sync_start_lock = _sync_start_locks.setdefault(connection_id, asyncio.Lock())
     async with sync_start_lock:

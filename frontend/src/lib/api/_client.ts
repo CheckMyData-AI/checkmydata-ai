@@ -171,7 +171,29 @@ export async function request<T>(
         throw new Error("You don't have permission to perform this action.");
       }
       if (res.status === 429) {
-        throw new Error("Too many requests. Please wait a moment and try again.");
+        // API-06: the backend serves two different conditions as 429 — the rate
+        // limiter ("wait a moment") and token-budget exhaustion ("upgrade, or come
+        // back next month"). This used to discard the body and throw the first
+        // wording for both, so the message naming /pricing never reached anybody and
+        // a user whose monthly budget was spent was told to wait.
+        const body = await res.json().catch(() => ({}));
+        // Two shapes, because FastAPI nests an HTTPException's payload under
+        // `detail` while our own limiter handler composes the envelope itself.
+        const nested =
+          typeof body.detail === "object" && body.detail !== null ? body.detail : {};
+        const message: string =
+          (typeof body.detail === "string" ? body.detail : "") || nested.message || "";
+        const errorType = body.error_type ?? nested.error_type;
+        const isRetryable = body.is_retryable ?? nested.is_retryable;
+        // A retryable 429 is the rate limiter, and "20 per 1 minute" is an
+        // implementation detail the user cannot act on — the advice is what helps.
+        // Anything else at this status is a ceiling that does not reset in a moment,
+        // and there the backend's own prose (which names /pricing) is the message.
+        const retryable = isRetryable !== false && errorType !== "token_budget";
+        if (retryable || !message) {
+          throw new Error("Too many requests. Please wait a moment and try again.");
+        }
+        throw new Error(message);
       }
       if (res.status === 402) {
         // Plan paywall (T-BILL-2): backend returns a structured payload.
