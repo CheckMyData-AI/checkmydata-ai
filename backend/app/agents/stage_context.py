@@ -273,11 +273,28 @@ class StageContext:
                 lines.append(f"  SQL: {sr.query[:_CONTEXT_FIELD_CAP]}")
             if sr.query_result:
                 lines.append(f"  Columns: {sr.query_result.columns}")
-                lines.append(f"  Rows: {sr.query_result.row_count}")
+                # ORCH-10: `from_summary_dict` restores at most `_MAX_SAMPLE_ROWS`
+                # rows on a resumed stage while KEEPING the original `row_count`, and
+                # marks the result truncated. This builder ignored the flag, so the
+                # string handed to the model read "Rows: 5000" beside five rows and
+                # the model reasonably concluded 4 995 more existed behind them. The
+                # `process_data` path is protected — `derive_result` carries
+                # `truncated` and `_aggregate_data` prefixes PARTIAL DATA — and the
+                # LLM path had no such guard.
+                held = len(sr.query_result.rows)
+                if sr.query_result.truncated and held < sr.query_result.row_count:
+                    lines.append(
+                        f"  Rows: {held} of {sr.query_result.row_count} "
+                        "(PARTIAL — the rest were not carried across the checkpoint; "
+                        "do not compute totals from these)"
+                    )
+                else:
+                    lines.append(f"  Rows: {sr.query_result.row_count}")
                 if sr.query_result.rows:
                     sample = sr.query_result.rows[:5]
+                    label = "Sample data" if held > len(sample) else "Data"
                     lines.append(
-                        f"  Sample data (first {len(sample)} rows): "
+                        f"  {label} (first {len(sample)} of {held} held): "
                         f"{str(sample)[:_CONTEXT_FIELD_CAP]}"
                     )
             if sr.summary:

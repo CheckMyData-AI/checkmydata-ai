@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — six ways the orchestrator's bookkeeping disagreed with the run it describes
+
+P2 row 19; ORCH-01, ORCH-03, ORCH-05, ORCH-07, ORCH-10, ORCH-11.
+
+**A shipped capability was unreachable on the pipeline path.**
+`query_analytics_source` is in the planner's prompt, in its explicit CROSS-SOURCE
+RECIPE, and in the executor's dispatch — and it was not in the plan validator's tool
+set. `_CREATE_PLAN_TOOL`'s enum is literally `list(_VALID_TOOLS)`, so the schema did not
+even offer the name to the model, and a plan that followed the prose was rejected twice:
+once for the tool, once for "at least one data-retrieval stage". `plan()` then fell back
+to a one-stage `query_database`, which tripped the trivial-plan bounce into the flat
+loop — so "compare GA4 sessions with signups per day" silently dropped the analytics
+half after paying for two planner LLM calls. Both sides were already tested; nothing
+tested the seam, and a test now walks the executor's dispatch against the validator's
+set.
+
+**A rejected layer was seeded straight into the next plan.** `_process_one_stage` commits
+each result into `stage_ctx` *before* the cross-item gate runs on the finished batch, and
+the gate never changes their status — so the replan copied in exactly the siblings it had
+refused, the new plan was free to depend on them, and they were never re-run.
+`layer_checker.py` states the requirement it violated verbatim: *"the convergence must
+depend on this verdict rather than on the branches, or the gate has a bypass and the
+shape is decoration."* A quality gate that reports a rejection and is then overruled by
+the recovery path is worse than no gate, because the SSE event told the operator it
+fired.
+
+**Two per-workflow caches were never swept.** The sweep enumerated stale ids from
+`_wf_enriched`, which only `process_data` ever writes — so a workflow that ran
+`query_database` and nothing else, which is most of them, was unreachable by it, and its
+`_wf_sql_results` entry pinned a full row set for the life of the dyno on the
+memory-constrained process. One clock per workflow now, stamped where every workflow
+passes.
+
+**The flat-loop fallback overwrote the router's real verdict**, in the exact field
+`#267` existed to make honest after 222 production traces of 222 read `"unknown"`.
+`_fallback_to_unified` re-enters `run()` with `_skip_complexity`, which synthesises
+`route="explore", complexity="moderate"` — and its own docstring claims the original
+complexity is preserved. Nothing preserved it, so every pipeline→flat-loop bounce was
+mis-attributed and *"how often does the pipeline bounce, and on what?"* was unanswerable
+from history.
+
+**A resumed stage's prompt claimed five thousand rows beside ten.** `from_summary_dict`
+restores at most ten rows while keeping the original `row_count` and marking the result
+truncated; the prompt builder never read the flag. The `process_data` path was protected
+all along — `derive_result` carries `truncated` and `_aggregate_data` prefixes PARTIAL
+DATA — and the LLM path had no such guard.
+
+**And a dropped connection re-ran the identical statement.** "Not a query defect" holds
+for a `SELECT` and `error_types.py` says so in those words; it does not hold for a
+statement that may have committed before the socket closed — MySQL's `Lost connection`
+arrives *after* the server has done the work. `UPDATE … SET n = n + 1` ran twice and
+nobody was told. The SSH reconnect path settled this already (F-SSH-07) with the same
+primitive, and the check now degrades towards refusing: an unknown connection means the
+caller could not say, and the repeat is the irreversible half of the choice.
+
 ### Fixed — the database the migrations build was not the one the models describe
 
 P2 row 18; DATA-02, DATA-03, DATA-04, DATA-05, DATA-07, DATA-08, DATA-09, DATA-11.
