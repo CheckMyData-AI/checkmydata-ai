@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a model deleted from a file that still exists was asserted forever
+
+`KNOW-06`, the last item the 2026-09-09 audit left open, and the board's row 9 recorded
+it as staying open **with its measurement** rather than as an oversight.
+
+`_incremental_update` copies every cached entity whose name is not in the fresh set, and
+removes only entities whose `file_path` is in `deleted_files`. Delete `class LegacyOrder`
+from `app/Models/Legacy.php` while the file itself remains, and the commit puts that path
+in `changed_files`, not `deleted_files`: the entity satisfies neither condition, survives,
+and is re-copied from the cache on every subsequent run. It then travels into
+`project_caches`, into `generate_summary_doc`, into every document's `enrichment_context`
+and into `graph_db_bridge`'s lineage — with its inferred table name, columns and
+relationships. Only a full rebuild ever removed it.
+
+**The refusal to close it earlier was right, and it named what was missing.** The code
+carried a paragraph explaining that the audit's own fix direction — *drop entities absent
+from the fresh set* — deletes live entities, because entities come from the database
+schemas and an empty fresh set means both "the file stopped defining it" and "no schemas
+were passed to this run". What it asked for was a per-file model re-scan. That scanner
+turns out to be one call away: `repo_analyzer._extract_model_names` reads class
+declarations per file, and is where these names came from in the first place.
+
+So the rule is **positive**, not an absence. An entity is dropped only when its own
+defining file was read in this run and no longer declares its name. Kept otherwise: a
+file that did not change did not change its declarations; an entity with no `file_path`
+has nothing to re-read; and a file that could not be opened vouches for everything it
+used to declare — `deleted_files` is how a deletion is stated, and guessing one from a
+failed read would delete live entities whenever a working tree is mid-checkout.
+
+Six planted defects. Three were caught; the other three were the useful ones:
+
+- **A real gap.** The test asserting that an unchanged file's entities survive pointed at
+  a path that was not on disk, so it passed through the unreadable-file branch and proved
+  nothing about `changed_files`. A defect that scanned every file regardless of the
+  changed set went green against it. The fixture writes both files now.
+- **A guard that decides nothing.** The empty-`file_path` clause cannot change an
+  outcome: `repo_dir / ""` is the directory itself and reading it raises, so the entity
+  survives either way. It stays — cheaper and self-documenting — with that written in the
+  code and in the test, rather than a test claiming to prove a line it cannot
+  distinguish.
+- **An optimisation mistaken for a guard.** `if not changed_files: return` changes no
+  behaviour; the membership test already keeps every entity when the changed set is
+  empty. The test holds the behaviour and says so.
+
 ### Added — the per-account OpenRouter key finally reaches the provider
 
 Board row 1c; BILL-01's other half, left open by choice in `ADR-0003`.

@@ -480,6 +480,76 @@ def _full_scan(
     return knowledge
 
 
+def _drop_entities_their_files_no_longer_declare(
+    repo_dir: Path,
+    knowledge: ProjectKnowledge,
+    changed_files: list[str],
+) -> None:
+    """Remove cached entities whose own file was re-read and no longer declares them.
+
+    KNOW-06. `class LegacyOrder` is deleted from `app/Models/Legacy.php` while the file
+    remains: the commit puts that path in `changed_files`, not `deleted_files`, so the
+    entity was copied forward from the cache on every run, carrying its inferred table
+    name, its columns and its relationships into `project_caches`, into the summary
+    doc, into every document's `enrichment_context` and into the code→DB lineage. Only
+    a full rebuild ever removed it.
+
+    **Positive evidence only.** An entity is dropped when its defining file was read
+    *in this run* and that file's text no longer declares its name. Every other case is
+    kept:
+
+    - the file is not among `changed_files` — it did not change, so neither did its
+      declarations;
+    - the entity has no `file_path` — most do not, because they come from the database
+      schema and `file_path` records only where a matching model was once found;
+    - the file cannot be read — a deletion the caller failed to report, an unreadable
+      file, or a working tree mid-checkout. `deleted_files` is how a deletion is
+      stated, and guessing one from a failed read would delete live entities.
+
+    The scan is the same `class <Name>` reading `repo_analyzer._extract_model_names`
+    performs — which is where these names came from in the first place, so a name that
+    survived extraction survives this check for as long as it is written down.
+    """
+    if not changed_files:
+        return
+
+    from app.knowledge.repo_analyzer import RepoAnalyzer
+
+    analyzer = RepoAnalyzer.__new__(RepoAnalyzer)  # only the pure scanner is needed
+    #: file -> the names it declares, or ``None`` when it could not be read. ``None``
+    #: rather than an empty set, because a file that legitimately declares nothing and a
+    #: file nobody could open must not be the same value: the first is evidence, the
+    #: second is its absence, and they lead to opposite actions.
+    declared_by_file: dict[str, set[str] | None] = {}
+
+    for name in list(knowledge.entities.keys()):
+        file_path = knowledge.entities[name].file_path
+        # The empty-path clause is belt over braces: `repo_dir / ""` is the directory
+        # itself and reading it raises, so the outcome is the same either way. It is
+        # here to say what is meant and to skip a filesystem call, not to change a
+        # decision — a planted defect confirmed it changes nothing.
+        if not file_path or file_path not in set(changed_files):
+            continue
+        if file_path not in declared_by_file:
+            try:
+                content = (repo_dir / file_path).read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                # Keep everything this file defines. Absence of evidence is not
+                # evidence of absence.
+                declared_by_file[file_path] = None
+            else:
+                declared_by_file[file_path] = set(analyzer._extract_model_names(file_path, content))
+        declared = declared_by_file[file_path]
+        if declared is None or name in declared:
+            continue
+        logger.info(
+            "entity %r dropped: %s no longer declares it (KNOW-06)",
+            name,
+            file_path,
+        )
+        del knowledge.entities[name]
+
+
 def _incremental_update(
     repo_dir: Path,
     schemas: list[ExtractedSchema],
@@ -496,15 +566,15 @@ def _incremental_update(
         if name not in knowledge.entities:
             knowledge.entities[name] = entity
 
-    # KNOW-06 is NOT fixed here, and the reason is worth the paragraph. The audit's fix
-    # direction — "drop entities whose defining file no longer yields them" — presumes this
-    # function re-extracts entities per FILE. It does not: `knowledge.entities` comes from
-    # `_extract_entities_from_schemas`, i.e. from the DATABASE schemas, and `file_path` only
-    # records where a matching model was once found. So "absent from the fresh set" cannot
-    # distinguish "the file stopped defining it" from "no schemas were passed to this run",
-    # and dropping on that basis deletes live entities — measured, by
-    # `test_deleted_file_entities_removed` going red on a changed file whose class is still
-    # there. Closing it needs a per-file model re-scan that does not exist yet.
+    # KNOW-06, closed 2026-09-12. The audit's fix direction — "drop entities whose
+    # defining file no longer yields them" — was refused here, and the refusal was
+    # right: `knowledge.entities` comes from `_extract_entities_from_schemas`, i.e. from
+    # the DATABASE schemas, so "absent from the fresh set" cannot distinguish "the file
+    # stopped defining it" from "no schemas were passed to this run", and dropping on
+    # that basis empties the cache. What was missing was named exactly — a per-file
+    # model re-scan — and it is below: the rule is POSITIVE, not an absence.
+    _drop_entities_their_files_no_longer_declare(repo_dir, knowledge, changed_files)
+
     stale_set = set(changed_files) | set(deleted_files or [])
 
     for tbl, usage in cached.table_usage.items():
