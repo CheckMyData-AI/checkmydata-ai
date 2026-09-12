@@ -293,10 +293,13 @@ indistinguishable from nothing having happened yet. Treat a `_connect` entry as
 connect deletes any stale `_connect` row, so a fixed credential stops showing
 yesterday's banner.
 
-> The sentinel's stated contract is that the reader "surfaces the error and
-> excludes `_connect` from the per-report list", but `collection_status` builds
-> `reports[]` from every report name in the journal, so the entry is currently
-> **included**. Read it as a run-level verdict, not as a sixth GA4 report.
+`collection_status` excludes it from `reports[]` explicitly
+(`connection_service.py:915`) — so it is a run-level verdict, never a sixth GA4
+report. This paragraph used to carry a standing caveat saying the opposite, telling
+operators to expect the entry in the list (ANA-09). A runbook describing a defect the
+code does not have is worse than one that is merely silent: it sends the reader looking
+for something that is not there, and teaches them the document is not to be trusted
+about the things that ARE.
 
 ---
 

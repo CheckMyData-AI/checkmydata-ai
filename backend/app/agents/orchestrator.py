@@ -2321,13 +2321,21 @@ class OrchestratorAgent(BaseAgent):
         # block those two were taken from, keeping all three consistent.
         primary_results = last_sql_result.results if last_sql_result else None
         primary_explanation = last_sql_result.query_explanation if last_sql_result else None
+        primary_query = last_sql_result.query if last_sql_result else None
         if last_sql_result is None and sql_result_blocks:
             primary_results = sql_result_blocks[-1].results
             primary_explanation = sql_result_blocks[-1].query_explanation
+            # BIZ-08: `query` was the one field the comment above did not cover, and
+            # it is the one the landing page promises is always shown. The other two
+            # were back-filled "keeping all three consistent" and the third stayed
+            # None — so an answer went out with real rows, a real explanation and a
+            # null query, and `chat.py` persisted `"query": null` beside them. Neither
+            # the response nor the stored message could then show the SQL.
+            primary_query = sql_result_blocks[-1].query
 
         return AgentResponse(
             answer=final_text,
-            query=last_sql_result.query if last_sql_result else None,
+            query=primary_query,
             query_explanation=primary_explanation,
             results=primary_results,
             viz_type=viz_type,

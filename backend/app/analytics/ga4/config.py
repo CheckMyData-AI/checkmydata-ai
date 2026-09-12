@@ -39,7 +39,10 @@ GA4_SCOPES = ("https://www.googleapis.com/auth/analytics.readonly",)
 DEFAULT_BACKFILL_DAYS = 30
 
 #: Service-account JSON keys without which authentication cannot possibly work.
-_REQUIRED_SA_FIELDS = ("client_email", "private_key", "token_uri")
+#: Public because `vendor_credential_service` validates the same file at paste time
+#: and must not be more permissive than the layer that uses it (ANA-08).
+REQUIRED_SA_FIELDS = ("client_email", "private_key", "token_uri")
+_REQUIRED_SA_FIELDS = REQUIRED_SA_FIELDS
 
 
 def _normalise_property_id(raw: Any) -> str:
