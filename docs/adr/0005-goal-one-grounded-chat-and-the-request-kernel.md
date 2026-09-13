@@ -260,6 +260,10 @@ first three days of this plan for that reason.
 > **Amended 2026-09-14 by ADR-0006:** a wave 0.5 (`codebase-memory-mcp` sidecar replacing
 > the in-house AST/graph/embedding/prose steps) runs beside wave 1; PRJ-06 shrinks to S.
 > The table in ADR-0006 §5 is the current schedule; the waves below are unchanged in content.
+>
+> **Amended 2026-09-14 by ADR-0007:** adds PRJ-16 (recipes — saved, parameterised query chains
+> callable over MCP, invalidated by the index, repaired into unverified versions) after wave 2, and
+> PRJ-15 (the workspace shell, scenario-first) as a third track beside wave 2.
 
 Effort is engineer-days; each wave is one `/task-pipeline` run or a small set of them; each
 ends with a measured gate, not a merged PR.

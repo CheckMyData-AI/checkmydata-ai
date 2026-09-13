@@ -11,6 +11,8 @@ done-criteria, the target "Request Kernel" architecture and a four-wave plan are
 **Everything below waits for it** — no new sources, agents or connectors until D1–D7 are green.
 Buy-before-build decisions (code intelligence via `codebase-memory-mcp`, DuckDB compute, Vanna not
 adopted) and the shortened schedule: [`docs/adr/0006-buy-before-build-code-intelligence-and-compute.md`](docs/adr/0006-buy-before-build-code-intelligence-and-compute.md).
+Recipes (saved query chains over MCP, invalidated by the index) and the workspace shell:
+[`docs/adr/0007-recipes-and-the-workspace-shell.md`](docs/adr/0007-recipes-and-the-workspace-shell.md).
 
 ### Stability & Security (Active)
 - Comprehensive test coverage (target: 80%+)
