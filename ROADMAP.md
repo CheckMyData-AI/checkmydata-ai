@@ -9,6 +9,8 @@ shows tables and charts, and never invents a number: every figure comes from cod
 done-criteria, the target "Request Kernel" architecture and a four-wave plan are in
 [`docs/adr/0005-goal-one-grounded-chat-and-the-request-kernel.md`](docs/adr/0005-goal-one-grounded-chat-and-the-request-kernel.md).
 **Everything below waits for it** — no new sources, agents or connectors until D1–D7 are green.
+Buy-before-build decisions (code intelligence via `codebase-memory-mcp`, DuckDB compute, Vanna not
+adopted) and the shortened schedule: [`docs/adr/0006-buy-before-build-code-intelligence-and-compute.md`](docs/adr/0006-buy-before-build-code-intelligence-and-compute.md).
 
 ### Stability & Security (Active)
 - Comprehensive test coverage (target: 80%+)

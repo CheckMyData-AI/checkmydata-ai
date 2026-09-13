@@ -257,6 +257,10 @@ first three days of this plan for that reason.
 
 ## 5. The plan — waves, fastest path
 
+> **Amended 2026-09-14 by ADR-0006:** a wave 0.5 (`codebase-memory-mcp` sidecar replacing
+> the in-house AST/graph/embedding/prose steps) runs beside wave 1; PRJ-06 shrinks to S.
+> The table in ADR-0006 §5 is the current schedule; the waves below are unchanged in content.
+
 Effort is engineer-days; each wave is one `/task-pipeline` run or a small set of them; each
 ends with a measured gate, not a merged PR.
 
