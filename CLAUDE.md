@@ -1060,6 +1060,7 @@ Read `vision.md` before any new feature. If a request conflicts with §7 invaria
 | Live Git roadmap | `docs/GIT_ACCESS_AUDIT_AND_ROADMAP.md` |
 | Deployment | `docs/DEPLOYMENT.md`, `INSTALLATION.md#production-deployment` |
 | Audit remediation | `docs/AUDIT_REMEDIATION_PLAN_2026-06.md` |
+| Connections · sync · orchestrator audit + project plan (2026-09-13) | `docs/audits/2026-09-13-connections-sync-orchestrator-audit.md` — two live P0s and 14 scoped projects; start with PRJ-01 |
 | QA / test plan | `docs/MASTER_TEST_PLAN.md` |
 | Contributing | `CONTRIBUTING.md` |
 | Security | `SECURITY.md` |
