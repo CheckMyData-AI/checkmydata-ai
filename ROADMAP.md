@@ -2,6 +2,14 @@
 
 ## Current Priorities
 
+### Goal #1 — a grounded chat over an indexed project (Active, 2026-09-14)
+One database + one repository → indexed → a chat (web and MCP) that answers correctly,
+shows tables and charts, and never invents a number: every figure comes from code that ran
+(SQL, then `compute_sql` over the results); the model only narrates. Seven measurable
+done-criteria, the target "Request Kernel" architecture and a four-wave plan are in
+[`docs/adr/0005-goal-one-grounded-chat-and-the-request-kernel.md`](docs/adr/0005-goal-one-grounded-chat-and-the-request-kernel.md).
+**Everything below waits for it** — no new sources, agents or connectors until D1–D7 are green.
+
 ### Stability & Security (Active)
 - Comprehensive test coverage (target: 80%+)
 - Security audit and hardening
