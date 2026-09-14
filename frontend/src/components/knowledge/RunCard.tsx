@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { useBackgroundTasks, type BgTask } from "@/stores/background-tasks-store";
 import type { RunHistoryItem } from "@/lib/api/types";
 import { Icon } from "@/components/ui/Icon";
+import { RunStepTimeline } from "@/components/knowledge/RunStepTimeline";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { toast } from "@/stores/toast-store";
 import { stepLabel } from "@/components/tasks/stepLabels";
@@ -37,6 +38,7 @@ export function RunCard({
   triggerDisabled,
 }: RunCardProps) {
   const tasks = useBackgroundTasks((s) => s.tasks);
+  const [showSteps, setShowSteps] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<RunHistoryItem[] | null>(null);
 
@@ -135,9 +137,24 @@ export function RunCard({
       )}
 
       {failed && task && (
-        <p className="text-kicker text-error/80 truncate" title={task.error}>
-          {task.error || "Run failed"}
-        </p>
+        <>
+          <p className="text-kicker text-error/80 truncate" title={task.error}>
+            {task.error || "Run failed"}
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowSteps((v) => !v)}
+            aria-expanded={showSteps}
+            className="flex items-center gap-1 text-kicker text-text-tertiary hover:text-text-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring rounded"
+          >
+            <Icon name="chevron-down" size={9} className={showSteps ? "rotate-180" : ""} />
+            {showSteps ? "Hide steps" : "What happened"}
+          </button>
+          {/* A failure message names the outcome; the step log names the place. When
+              a repo index dies at `graph_build`, "stale run reaped" is true and
+              useless without it. */}
+          {showSteps && <RunStepTimeline runId={task.runId} />}
+        </>
       )}
 
       <button
