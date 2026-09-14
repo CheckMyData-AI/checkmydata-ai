@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from app.connectors.base import QueryResult, SchemaInfo, TableInfo
 from app.llm.base import Message, Tool, ToolParameter
 from app.llm.router import LLMRouter
-from app.llm.tool_args import as_text
+from app.llm.tool_args import as_bool, as_int, as_text
 
 logger = logging.getLogger(__name__)
 
@@ -199,18 +199,25 @@ class DbIndexValidator:
                 col_notes = as_text(args.get("column_notes", "{}"), "{}")
                 numeric_notes = as_text(args.get("numeric_format_notes", "{}"), "{}")
 
+                # Every field, not the two that happened to get a guard. Five of
+                # these land in `DbIndex` columns (`models/db_index.py:49-66`) and a
+                # dict reaching any of them raises inside `store_results`, rolling
+                # back the whole connection's index — 213 tables lost for one row.
+                # `relevance_score` was the quiet one: `int({})` raised inside the
+                # try, discarding the analysis of this table AND of every table
+                # after it in the batch.
                 return TableAnalysis(
                     table_name=table.name,
-                    is_active=args.get("is_active", True),
-                    relevance_score=max(1, min(5, int(args.get("relevance_score", 3)))),
-                    business_description=args.get("business_description", ""),
-                    data_patterns=args.get("data_patterns", ""),
+                    is_active=as_bool(args.get("is_active", True), True),
+                    relevance_score=as_int(args.get("relevance_score", 3), 3, lo=1, hi=5),
+                    business_description=as_text(args.get("business_description", "")),
+                    data_patterns=as_text(args.get("data_patterns", "")),
                     column_notes_json=col_notes,
-                    query_hints=args.get("query_hints", ""),
+                    query_hints=as_text(args.get("query_hints", "")),
                     code_match_status=_clamp_code_match(
                         args.get("code_match_status", "no_code_info"),
                     ),
-                    code_match_details=args.get("code_match_details", ""),
+                    code_match_details=as_text(args.get("code_match_details", "")),
                     numeric_format_notes=numeric_notes,
                 )
 
@@ -275,16 +282,16 @@ class DbIndexValidator:
                     results.append(
                         TableAnalysis(
                             table_name=tbl.name,
-                            is_active=args.get("is_active", True),
-                            relevance_score=max(1, min(5, int(args.get("relevance_score", 3)))),
-                            business_description=args.get("business_description", ""),
-                            data_patterns=args.get("data_patterns", ""),
+                            is_active=as_bool(args.get("is_active", True), True),
+                            relevance_score=as_int(args.get("relevance_score", 3), 3, lo=1, hi=5),
+                            business_description=as_text(args.get("business_description", "")),
+                            data_patterns=as_text(args.get("data_patterns", "")),
                             column_notes_json=col_notes,
-                            query_hints=args.get("query_hints", ""),
+                            query_hints=as_text(args.get("query_hints", "")),
                             code_match_status=_clamp_code_match(
                                 args.get("code_match_status", "no_code_info"),
                             ),
-                            code_match_details=args.get("code_match_details", ""),
+                            code_match_details=as_text(args.get("code_match_details", "")),
                             numeric_format_notes=numeric_notes,
                         )
                     )
