@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api, type Connection, type Project } from "@/lib/api";
 import { MAX_POLL_MS, POLL_INTERVAL_MS } from "@/lib/polling";
 import { useAppStore } from "@/stores/app-store";
+import { ResendVerificationButton } from "@/components/auth/ResendVerificationButton";
 import { useAuthStore } from "@/stores/auth-store";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
@@ -300,24 +301,45 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
     switch (step) {
       case 0:
         if (!canCreate) {
+          // Two different reasons, and they must not read the same. The right to
+          // create is granted BY email verification (auth_service.verify_email),
+          // so an unverified account needs to click a link in its inbox — not wait
+          // for a human. Telling everyone "request approval" sent the one group
+          // that could help itself to a button that only mails somebody, which is
+          // how a signup became a waitlist nobody was draining. The backend has
+          // distinguished these since F-PROJ-01 (projects.py:152-166); the UI did not.
+          const unverified = user?.email_verified === false;
           return (
             <div className="space-y-4 py-2">
               <div className="rounded-lg bg-accent-muted/50 border border-accent/20 p-4">
                 <p className="text-sm text-text-primary font-medium mb-2">
-                  Project creation requires approval
+                  {unverified ? "Verify your email to continue" : "Project creation requires approval"}
                 </p>
                 <p className="text-xs text-text-secondary leading-relaxed">
-                  To create your own project, you need to be approved first. You can request
-                  access below, or join an existing project via invite. You can also use the{" "}
-                  <strong>self-hosted version</strong> to create projects freely.
+                  {unverified ? (
+                    <>
+                      We sent a verification link to <strong>{user?.email}</strong>. Click it and
+                      this step unlocks — no approval needed. Nothing arrived? Resend it below.
+                    </>
+                  ) : (
+                    <>
+                      To create your own project, you need to be approved first. You can request
+                      access below, or join an existing project via invite. You can also use the{" "}
+                      <strong>self-hosted version</strong> to create projects freely.
+                    </>
+                  )}
                 </p>
               </div>
-              <button
-                onClick={() => setShowAccessRequest(true)}
-                className={btnPrimary + " w-full"}
-              >
-                Request project access
-              </button>
+              {unverified ? (
+                <ResendVerificationButton className={btnPrimary + " w-full"} />
+              ) : (
+                <button
+                  onClick={() => setShowAccessRequest(true)}
+                  className={btnPrimary + " w-full"}
+                >
+                  Request project access
+                </button>
+              )}
             </div>
           );
         }

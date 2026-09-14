@@ -26,9 +26,19 @@ export function EmailVerifyBanner() {
   const handleResend = async () => {
     setSending(true);
     try {
-      await api.auth.resendVerification();
-      setSent(true);
-      toast("Verification email sent — check your inbox.", "success");
+      const res = await api.auth.resendVerification();
+      if (res?.email_sent === false) {
+        // The route reports its real send result now; saying "check your inbox"
+        // about a mail the provider refused is the failure this banner exists to
+        // prevent, not to cause.
+        toast(
+          "We could not send the email — the mail provider rejected it. Contact support and we will verify you by hand.",
+          "error",
+        );
+      } else {
+        setSent(true);
+        toast("Verification email sent — check your inbox.", "success");
+      }
     } catch (err) {
       toast(
         err instanceof Error ? err.message : "Could not send verification email.",

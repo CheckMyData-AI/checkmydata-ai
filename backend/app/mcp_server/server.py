@@ -64,6 +64,14 @@ class _QueryResultOutput(BaseModel):
     error: str | None = None
 
 
+class _StageResultOutput(BaseModel):
+    """One query-bearing stage of a multi-stage answer."""
+
+    query: str | None = None
+    query_explanation: str | None = None
+    results: _QueryResultOutput | None = None
+
+
 class _KnowledgeSource(BaseModel):
     source_path: str
     doc_type: str
@@ -78,6 +86,14 @@ class AgentResponseOutput(BaseModel):
     viz_type: str | None = None
     viz_config: Any | None = None
     sources: list[_KnowledgeSource] | None = None
+    #: The knowledge-freshness warning. Present whenever the index behind this
+    #: answer is stale — the web has always shown it; this surface did not.
+    staleness_warning: str | None = None
+    #: Every query-bearing stage, when a pipeline answer used more than one.
+    #: `results` remains the final stage, for callers that only want that.
+    stage_results: list[_StageResultOutput] | None = None
+    #: Which connection answered — an agent holding several cannot otherwise tell.
+    connection_id: str | None = None
     error: str | None = None
 
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Project, type RepoCheckResult } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
+import { VerifyEmailNeededModal } from "@/components/auth/VerifyEmailNeededModal";
 import { useAuthStore } from "@/stores/auth-store";
 import { InviteManager } from "./InviteManager";
 import { RequestAccessModal } from "./RequestAccessModal";
@@ -177,8 +178,13 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
   const triggerProjectEdit = useAppStore((s) => s.triggerProjectEdit);
   const setTriggerProjectEdit = useAppStore((s) => s.setTriggerProjectEdit);
   const canCreate = useAuthStore((s) => s.user?.can_create_projects ?? false);
+  // An unverified account is not an unapproved one: verification IS the grant
+  // (auth_service.verify_email). Routing it to "request access" — an endpoint that
+  // only sends an email to a human — hides the one action the user can take alone.
+  const emailUnverified = useAuthStore((s) => s.user?.email_verified === false);
   const [showCreate, setShowCreate] = useState(false);
   const [showAccessRequest, setShowAccessRequest] = useState(false);
+  const [showVerifyNeeded, setShowVerifyNeeded] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [managingAccessId, setManagingAccessId] = useState<string | null>(null);
   const [form, setForm] = useState<ProjectFormState>({ ...EMPTY_FORM });
@@ -282,12 +288,14 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
         setEditingId(null);
         resetForm();
         setShowCreate(true);
+      } else if (emailUnverified) {
+        setShowVerifyNeeded(true);
       } else {
         setShowAccessRequest(true);
       }
       onCreateHandled?.();
     }
-  }, [createRequested, onCreateHandled, canCreate]);
+  }, [createRequested, onCreateHandled, canCreate, emailUnverified]);
 
   const [nameError, setNameError] = useState("");
 
@@ -778,6 +786,10 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
         />
       )}
 
+      <VerifyEmailNeededModal
+        open={showVerifyNeeded}
+        onClose={() => setShowVerifyNeeded(false)}
+      />
       <RequestAccessModal
         open={showAccessRequest}
         onClose={() => setShowAccessRequest(false)}
