@@ -370,9 +370,11 @@ def create_mcp_server() -> FastMCP:
         ),
         structured_output=True,
     )
-    async def checkmydata_execute_raw_query(connection_id: str, query: str) -> RawQueryOutput:
+    async def checkmydata_execute_raw_query(
+        connection_id: str, query: str, max_rows: int | None = None
+    ) -> RawQueryOutput:
         raw: dict = await _with_principal(
-            lambda p: tools.execute_raw_query(p, connection_id, query),
+            lambda p: tools.execute_raw_query(p, connection_id, query, max_rows),
             tool_name="checkmydata_execute_raw_query",
             limited=True,
         )
