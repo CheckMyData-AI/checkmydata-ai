@@ -154,3 +154,28 @@ async def test_a_value_that_cannot_be_serialised_degrades_to_the_default():
     out = await analyzer.analyze_table(table_name="orders", code_context="", db_context="")
     _assert_storable(out)
     assert json.loads(out.required_filters_json) == {}
+
+
+async def test_the_summary_writer_coerces_too():
+    """`SyncSummaryResult`'s four fields are `string` in the schema and `Text` in the DB.
+
+    It runs after the per-table store, so while that one was failing it never had the
+    chance to fail — fixing only the observed half would have moved the outage one step
+    later instead of closing it.
+    """
+    call = ToolCall(
+        id="x",
+        name="sync_summary",
+        arguments={
+            "global_notes": {"central": ["orders", "payments"]},
+            "data_conventions": ["utc timestamps", "cents"],
+            "query_guidelines": "always filter deleted_at IS NULL",
+            "join_recommendations": {"orders": "payments ON orders.id = payments.order_id"},
+        },
+    )
+    analyzer = CodeDbSyncAnalyzer(_Router([call]))
+    out = await analyzer.generate_summary([], "esim-php")
+    for field in ("global_notes", "data_conventions", "query_guidelines", "join_recommendations"):
+        assert isinstance(getattr(out, field), str), f"{field} is not str"
+    assert "orders" in out.global_notes
+    assert "utc timestamps" in out.data_conventions

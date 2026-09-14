@@ -428,11 +428,16 @@ class CodeDbSyncAnalyzer:
                     "LLM sync summary generated for %d tables",
                     len(analyses),
                 )
+                # Coerced like the per-table fields above, and for the same reason:
+                # all four are declared ``type="string"`` and all four land in ``Text``
+                # columns (``CodeDbSyncSummary``). This writer runs AFTER the per-table
+                # store, so while that one was failing it never got the chance — fixing
+                # only the observed half would have moved the outage one step later.
                 return SyncSummaryResult(
-                    global_notes=args.get("global_notes", ""),
-                    data_conventions=args.get("data_conventions", ""),
-                    query_guidelines=args.get("query_guidelines", ""),
-                    join_recommendations=args.get("join_recommendations", ""),
+                    global_notes=_as_text(args.get("global_notes", "")),
+                    data_conventions=_as_text(args.get("data_conventions", "")),
+                    query_guidelines=_as_text(args.get("query_guidelines", "")),
+                    join_recommendations=_as_text(args.get("join_recommendations", "")),
                 )
 
             logger.info("LLM sync summary: fallback (no tool call)")

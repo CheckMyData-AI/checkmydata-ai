@@ -24,6 +24,11 @@ default rather than reaching the driver. The existing fixture mirrored the *sche
 (`"{}"`), which is why 8 698 tests stayed green through four nights of production
 failure; the new ones mirror a *model*.
 
+The same round found a fifth site of the same class: `SyncSummaryResult` takes four
+schema-declared `string` arguments into four `Text` columns, and it runs *after* the
+per-table store — so while that one was failing it never had the chance to. Fixing only
+the observed half would have moved the outage one step later rather than closing it.
+
 **Every repository rebuild that reached `generate_docs` died.** `PgVectorStore.delete_by_source_path`
 composed `" AND doc_id LIKE 'sym:%'"` by concatenation into a query psycopg3 scans for
 client-side placeholders, so it raised `only '%s', '%b', '%t' are allowed as
