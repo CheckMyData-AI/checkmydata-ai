@@ -45,6 +45,80 @@ map it wrote rather than on the run row describing it.
   database *before* the heartbeat opens, so a hung tunnel was reaped before the pipeline
   had begun).
 
+### Fixed — the coercion class, closed by a machine rather than by attention
+
+Three passes by a careful reader over the same defect class produced three incomplete
+results. The outage of 2026-09-10 found two fields; the ladder walk after it found a
+sixth in a module the outage never touched; a later sweep found **five more in a file
+the fix had already edited** — `db_index_validator` received `as_text` on two fields and
+left the five siblings in the same constructor raw. The class is invisible at the call
+site, because `args.get("business_description", "")` reads exactly like a string.
+
+So the closure is a test, not a resolution. `test_no_raw_tool_argument_reaches_a_typed_sink`
+walks every module under `app/` and fails when a tool-call argument reaches something
+that assumes its declared type — a `str` method, `int()`/`float()`, a slice — without
+passing through `as_text` / `as_int` / `as_float` / `as_bool`. It found three more sites
+the sweep had missed, all the same shape: `(args.get("x") or "").strip()`, where a
+non-empty dict is truthy and sails through the guard into an `AttributeError`.
+
+**The guard is deliberately narrow.** It recognises `str(…)` as the coercion spelled
+inline, and it recognises a call inside a `try` that catches `TypeError`/`ValueError` —
+because `int(args.get("max_results", 5))` under such a handler *is* the correct pattern,
+and flagging it would teach a reader that this test does not know what it is looking at.
+Every exemption carries its reason in the file, and a second test fails if one does not:
+a guard that cries wolf is one somebody disables.
+
+`as_int` and `as_bool` join `as_text`. `relevance_score` was the quiet member of the
+family — `int({})` raises *inside* the surrounding `try`, so a bad score discarded the
+LLM analysis of that table **and of every table after it in the batch**, with no error
+anywhere. `as_bool` matters because `bool("false")` is `True`.
+
+**And a claim computed from the input.** `db_index_pipeline` emitted
+`Stored {len(analyses)} table entries` **before** the commit that decides whether
+anything was stored — so a run losing all 213 tables to one bad field reported storing
+213. It counts what `upsert_table` actually took, and reports after the commit.
+
+### Fixed — the first run, and the second interface
+
+**A new email/password account could not create a project, and the interface named the
+wrong reason.** `User.can_create_projects` defaults to `False` and is granted *by* email
+verification (`auth_service.verify_email`), so an unverified account is one click from
+being able to create. The backend has distinguished the two causes since F-PROJ-01, with
+two different 403 messages. The UI collapsed them into *"Project creation requires
+approval … you need to be approved first"*, whose only button posts to an endpoint that
+sends an email to a human — so the one group that could help itself was sent to a
+waitlist. Google sign-in sets both flags, which is why this was invisible to anyone who
+tested with Google: **the product's basic loop could not start at all for an email
+signup.**
+
+**And the resend button claimed a delivery nobody had checked.** `EmailService._send`
+returns `False` with no provider configured and after its retries are spent;
+`POST /api/auth/resend-verification` discarded that boolean and answered `{"ok": true}`
+either way, so the banner said *"check your inbox"* about a mail that was never
+dispatched — to the account type that cannot proceed without it. Registration already
+carried the field (`verification_email_sent`, and its comment says exactly why); the
+resend path did not, and the frontend read neither. The route reports it now and both
+surfaces say what actually happened.
+
+**The MCP interface disclosed less than the web for the same answer.** Both run the same
+orchestrator, so the reasoning and the gates were already identical; the wrapper was not.
+Three things the web has always shown never reached an MCP client:
+
+- the **knowledge-freshness warning** — an agent received a confident answer from a
+  six-week-old index with nothing to object;
+- **every query-bearing stage's table** — a pipeline answer computed from three stages
+  showed one, which is ORCH-09's shape on a surface the remediation board did not cover;
+- **which connection answered**, for an agent holding several.
+
+The connection picker took `connections[0]` with no check that it is a *database*, so a
+project whose first connection is GA4 answered a natural-language SQL question with no
+database attached. Filtered on the row rather than on a built config, because `to_config`
+decrypts credentials and re-runs the rebinding guard — a filter that costs that per
+discarded candidate is the wrong filter. And `resources.py` returned `str(e)` unscrubbed,
+the same defect fixed in `tools.py` as AUTH-06 and left standing one file over, where the
+exception can carry a DSN.
+
+
 
 ### Fixed — the coercion is one rule now, and the ladder walk found a sixth field
 

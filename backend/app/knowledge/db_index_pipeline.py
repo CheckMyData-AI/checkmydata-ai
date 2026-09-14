@@ -1063,6 +1063,7 @@ class DbIndexPipeline:
                                 f"Removed {deleted} stale table index entries",
                             )
 
+                        stored = 0
                         for analysis in analyses:
                             sample_result, ordering_col = samples.get(
                                 analysis.table_name, (QueryResult(), None)
@@ -1101,14 +1102,22 @@ class DbIndexPipeline:
                                 "code_match_details": analysis.code_match_details,
                             }
                             await self._svc.upsert_table(session, connection_id, table_data)
+                            stored += 1
 
+                        # Committed FIRST, then reported. `len(analyses)` is what was
+                        # requested; the commit is what decides whether anything was
+                        # stored. Emitting before it means a run that stores nothing
+                        # — because one table's LLM field arrived as an object and
+                        # asyncpg refused the whole transaction — still tells the
+                        # operator it stored 213 tables. Same correction as
+                        # `ops/embedding_reconcile.py:112`.
+                        await session.commit()
                         await self._tracker.emit(
                             wf_id,
                             "store_results",
                             "started",
-                            f"Stored {len(analyses)} table entries",
+                            f"Stored {stored} table entries",
                         )
-                        await session.commit()
 
                 # Step 6: Generate connection summary
                 async with self._tracker.step(
