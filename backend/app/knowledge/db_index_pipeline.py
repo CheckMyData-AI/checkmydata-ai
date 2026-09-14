@@ -40,6 +40,7 @@ from app.knowledge.db_index_validator import DbIndexValidator, TableAnalysis
 from app.llm.router import LLMRouter
 from app.models.base import async_session_factory
 from app.services.db_index_service import DbIndexService
+from app.services.run_coordinator import run_beat_by_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -422,10 +423,27 @@ class DbIndexPipeline:
             },
         )
 
+        # Both rows, because the reaper sweeps both and they answer different
+        # questions. The summary row is what the UI reads for this connection; the
+        # `IndexingRun` row is what `StaleRunReaper` judges, what `/sync-history`
+        # lists and what the requeue budget counts — and it was beaten only by
+        # manifest step events, which `fetch_samples` does not emit between items.
+        #
+        # Measured on production v409, both rows read in one frame: 319 s elapsed,
+        # 302 s since the run row's beat, 11 s since the summary's. Reaped at 347 s
+        # while the worker log showed it working, then completed at 619 s with its
+        # row reading `failed` — so the product could not tell a successful run from
+        # a failed one in its own table.
+        _run_hb = run_beat_by_workflow(wf_id)
+
         async def _hb() -> None:
             async with async_session_factory() as s:
                 await self._svc.touch_heartbeat(s, connection_id)
                 await s.commit()
+            # After the summary's session closes, not inside it: two sessions held
+            # at once for one beat is two connections against a pooler whose ceiling
+            # this deployment has already measured itself against.
+            await _run_hb()
 
         async with heartbeat(_hb, interval_seconds=settings.heartbeat_interval_seconds):
             connector: BaseConnector | None = None
