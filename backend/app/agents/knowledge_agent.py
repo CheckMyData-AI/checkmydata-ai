@@ -146,7 +146,9 @@ class KnowledgeAgent(BaseAgent):
                     model=context.model,
                 )
                 _sd_kllm["input_preview"] = self._messages_preview(messages)
-                _sd_kllm["output_preview"] = (llm_resp.content or "")[:500]
+                _sd_kllm["output_preview"] = (llm_resp.content or "")[
+                    : settings.tool_preview_max_chars
+                ]
                 if llm_resp.model:
                     _sd_kllm["model"] = llm_resp.model
                 for _uk in ("prompt_tokens", "completion_tokens", "total_tokens"):
@@ -191,7 +193,9 @@ class KnowledgeAgent(BaseAgent):
                     span_type="rag",
                 ):
                     result_text = await self._dispatch_tool(tc, context, collected_sources)
-                    _sd_ktool["output_preview"] = (result_text or "")[:500]
+                    _sd_ktool["output_preview"] = (result_text or "")[
+                        : settings.tool_preview_max_chars
+                    ]
 
                 tool_call_log.append(
                     {

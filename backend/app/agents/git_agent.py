@@ -156,7 +156,10 @@ class GitAgent(BaseAgent):
 
         try:
             state, ahead, behind = await self._git_tracker.classify_freshness_async(
-                repo_dir, last_sha, "HEAD"
+                repo_dir,
+                last_sha,
+                "HEAD",
+                fetch_origin=settings.git_freshness_fetch_origin,
             )
         except Exception:  # noqa: BLE001 — freshness is best-effort
             # Not a routine event: the repo resolved and the indexed SHA resolved, so a
@@ -318,7 +321,9 @@ class GitAgent(BaseAgent):
                     model=context.model,
                 )
                 _sd_llm["input_preview"] = self._messages_preview(messages)
-                _sd_llm["output_preview"] = (llm_resp.content or "")[:500]
+                _sd_llm["output_preview"] = (llm_resp.content or "")[
+                    : settings.tool_preview_max_chars
+                ]
                 if llm_resp.model:
                     _sd_llm["model"] = llm_resp.model
                 for _uk in ("prompt_tokens", "completion_tokens", "total_tokens"):
@@ -352,7 +357,9 @@ class GitAgent(BaseAgent):
                     "in_progress",
                     f"Git Agent → {tc.name}",
                 )
-                _sd_tool: dict[str, Any] = {"input_preview": str(tc.arguments or {})[:500]}
+                _sd_tool: dict[str, Any] = {
+                    "input_preview": str(tc.arguments or {})[: settings.tool_preview_max_chars]
+                }
                 async with tracker.step(
                     wf_id,
                     f"git:tool:{tc.name}",
@@ -361,7 +368,9 @@ class GitAgent(BaseAgent):
                     span_type="rag",
                 ):
                     result_text = await self._dispatch_tool(tc, context, inspector)
-                    _sd_tool["output_preview"] = (result_text or "")[:500]
+                    _sd_tool["output_preview"] = (result_text or "")[
+                        : settings.tool_preview_max_chars
+                    ]
 
                 tool_call_log.append(
                     {

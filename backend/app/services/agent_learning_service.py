@@ -52,6 +52,8 @@ CATEGORY_LABELS = {
 SIMILARITY_THRESHOLD = 0.75
 
 MIN_LESSON_LENGTH = 15
+#: Fallback only — `settings.max_lesson_length` is the knob, and this is what
+#: it defaults to. Read through `_max_lesson_length()` so a deployment can move it.
 MAX_LESSON_LENGTH = 500
 
 SUBJECT_BLOCKLIST = frozenset(
@@ -122,9 +124,27 @@ def _word_char_ratio(text: str) -> float:
     return sum(1 for c in text if c.isalnum()) / len(text)
 
 
+def _max_lesson_length() -> int:
+    """The cap, read at call time so a deployment can move it."""
+    return settings.max_lesson_length or MAX_LESSON_LENGTH
+
+
+def _subject_blocklist() -> frozenset[str]:
+    """The blocklist plus whatever the deployment added.
+
+    `learning_subject_blocklist_extra` is the documented extension point and was
+    never merged into the frozenset it extends — so a deployment that added a term
+    to it kept storing learnings about that term.
+    """
+    extra = settings.learning_subject_blocklist_extra or []
+    if not extra:
+        return SUBJECT_BLOCKLIST
+    return SUBJECT_BLOCKLIST | frozenset(t.strip().lower() for t in extra if t and t.strip())
+
+
 def validate_learning_quality(subject: str, lesson: str) -> str | None:
     """Return an error message if the learning fails quality checks, else None."""
-    if subject.lower() in SUBJECT_BLOCKLIST:
+    if subject.lower() in _subject_blocklist():
         return f"Subject '{subject}' is in the blocklist"
     if len(lesson.strip()) < MIN_LESSON_LENGTH:
         return f"Lesson too short ({len(lesson.strip())} chars, min {MIN_LESSON_LENGTH})"
@@ -142,8 +162,9 @@ def normalize_lesson_text(lesson: str) -> str:
     text = " ".join(lesson.split())
     if text and text[0].islower():
         text = text[0].upper() + text[1:]
-    if len(text) > MAX_LESSON_LENGTH:
-        text = text[: MAX_LESSON_LENGTH - 1] + "\u2026"
+    cap = _max_lesson_length()
+    if len(text) > cap:
+        text = text[: cap - 1] + "\u2026"
     return text
 
 
@@ -805,7 +826,8 @@ class AgentLearningService:
         result = await session.execute(stmt)
         rows = list(result.scalars().all())
         if skip_blocklisted:
-            rows = [r for r in rows if r.subject.lower() not in SUBJECT_BLOCKLIST]
+            blocked = _subject_blocklist()
+            rows = [r for r in rows if r.subject.lower() not in blocked]
         if table_filter:
             tbl_lower = table_filter.lower()
             rows = [
@@ -1001,9 +1023,13 @@ class AgentLearningService:
         """
         import math as _math
 
-        conf_part = lrn.confidence * 0.4
-        confirmed_part = _math.log1p(lrn.times_confirmed) * 0.4
-        applied_part = _math.log1p(lrn.times_applied) * 0.2
+        # The three weights come from settings, which is what they were declared for.
+        # They were plumbed all the way through `AgentSettingsView` and then ignored
+        # here in favour of three literals — and the plumbing is what made them look
+        # wired. An operator tuning the ranking during an incident changed nothing.
+        conf_part = lrn.confidence * settings.learning_weight_confidence
+        confirmed_part = _math.log1p(lrn.times_confirmed) * settings.learning_weight_confirmed
+        applied_part = _math.log1p(lrn.times_applied) * settings.learning_weight_applied
         # Exposed-but-unapplied penalty: only the surplus exposures over
         # applications count, kept small so it breaks ties rather than dominates.
         unused_exposure = max(0, (lrn.times_exposed or 0) - (lrn.times_applied or 0))
