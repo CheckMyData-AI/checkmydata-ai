@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — PRJ-01, the production hotfix wave
+
+Wave 0 of ADR-0005. Four defects the 2026-09-13 audit measured against production, two of
+them live outages nobody's gate could see, each shipped with a test that is red on the
+commit before it.
+
+**The code↔DB map had not updated since 2026-09-09.** Four consecutive `code_db_sync`
+runs died in `store_sync` with `asyncpg.exceptions.DataError: invalid input for query
+argument $6: {} (expected str)`, while the nightly sync reported it had run. The parsing
+line dates from March; what moved on 2026-09-10 is `DEFAULT_LLM_MODEL`, to a model that
+returns JSON **objects** for parameters the tool schema declares `type="string"`. One
+neighbouring field had a `isinstance(..., dict)` guard and the two beside it did not.
+Every string-declared argument of that analyzer now passes through one coercion helper —
+six fields, not the two observed failing — and an unserialisable value degrades to the
+default rather than reaching the driver. The existing fixture mirrored the *schema*
+(`"{}"`), which is why 8 698 tests stayed green through four nights of production
+failure; the new ones mirror a *model*.
+
+**Every repository rebuild that reached `generate_docs` died.** `PgVectorStore.delete_by_source_path`
+composed `" AND doc_id LIKE 'sym:%'"` by concatenation into a query psycopg3 scans for
+client-side placeholders, so it raised `only '%s', '%b', '%t' are allowed as
+placeholders, got '%''` — introduced by #344 at 20:43 UTC on 2026-09-11 and killing a
+1 174 s run at 19:48 the next day. The literal is doubled now, and a test runs psycopg's
+own scanner over every statement that store composes, needing no database. Nothing had
+read the production vector backend's SQL at all: the store's unit test asserts the
+factory and the signatures without executing a statement, and `make setup` creates SQLite
+where pgvector's migration is a deliberate no-op.
+
+**`exposed_learning_ids` never reached a response, on any request ever served.**
+`OrchestratorAgent.run` recorded the router's verdict with `replace(context, extra={…})`,
+which builds a **new dict**; every sub-agent then wrote into copies of it while
+`ConversationalAgent.run` read the dict it had constructed. `credit_validated_learnings`
+was a no-op, thumbs-up and thumbs-down had nothing to attribute, and `times_applied`
+never moved — R4-1, R4-2 and R4-3 inert behind one keyword argument. `dataclasses.replace`
+copies a *reference* when a field is not passed, so all three sites that rebuilt `extra`
+now mutate it, and an AST guard fails the build if anyone rebuilds it again. That guard
+found a third site the grep for it had missed.
+
+**A completed answer's `total_duration_ms` was its last query's execution time.**
+`QueryResult.execution_time_ms` is a `float` defaulting to `0.0`, never `None`, and
+`finalize_trace` writes any value that `is not None` over the elapsed time the buffer
+flush already measured. All three transports passed it. The three call sites pass `None`
+now, and an AST guard over `chat.py` keeps them there — the duration is the number
+ADR-0005's latency criterion is graded on, and a metric computed from the wrong quantity
+cannot fail.
+
 ### Fixed — three defects every gate was green on
 
 Board row 28. A review of the 25 PRs this programme merged (#343–#367), run with lint,

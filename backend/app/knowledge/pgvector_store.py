@@ -299,11 +299,18 @@ class PgVectorStore:
         production actually runs (`VECTOR_STORE_BACKEND=auto` resolves to pgvector on
         Postgres), so a filter reaching only Chroma would reach only development.
         """
+        # ``%%`` and not ``%``: psycopg3 scans the query TEXT for client-side
+        # placeholders before it reaches the server, so a literal percent inside a
+        # string literal must be doubled. Written bare, this raised
+        # ``only '%s', '%b', '%t' are allowed as placeholders, got '%''`` and killed
+        # every rebuild that reached ``generate_docs`` on the production backend
+        # (2026-09-11). ``test_pgvector_sql_is_valid.py`` runs psycopg's own scanner
+        # over what this composes.
         kind_clause = ""
         if kind == "symbol":
-            kind_clause = " AND doc_id LIKE 'sym:%'"
+            kind_clause = " AND doc_id LIKE 'sym:%%'"
         elif kind == "prose":
-            kind_clause = " AND doc_id NOT LIKE 'sym:%'"
+            kind_clause = " AND doc_id NOT LIKE 'sym:%%'"
         with self._pool.connection() as conn:
             cur = conn.execute(
                 # Both keys — see `vector_store.delete_by_source_path`.

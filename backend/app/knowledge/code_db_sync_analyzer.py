@@ -204,6 +204,61 @@ class SyncSummaryResult:
     join_recommendations: str = ""
 
 
+def _as_text(value: object, default: str = "") -> str:
+    """Coerce a tool-call argument the schema declared ``string`` into one.
+
+    A model is free to ignore ``type="string"`` and hand back an object or a list,
+    and one did: after ``DEFAULT_LLM_MODEL`` moved on 2026-09-10, every
+    ``code_db_sync`` run died in ``store_sync`` with
+    ``asyncpg.exceptions.DataError: invalid input for query argument $6: {}
+    (expected str)`` — four nights in a row, with the last good map left standing and
+    the nightly sync reporting it had run. The columns behind these arguments are
+    ``Text`` (``models/code_db_sync.py:36-42``), so the boundary that must not leak is
+    this one, not the database's.
+
+    A dict or list is serialised, a scalar is stringified, and anything that will not
+    serialise degrades to ``default`` — a lost note is a gap the prompt works around,
+    a dict handed to asyncpg is a run that stores nothing.
+    """
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, dict | list):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            logger.warning(
+                "sync analysis: unserialisable %s argument, using default",
+                type(value).__name__,
+            )
+            return default
+    if isinstance(value, bool | int | float):
+        return str(value)
+    logger.warning("sync analysis: unexpected %s argument, using default", type(value).__name__)
+    return default
+
+
+def _analysis_from_args(args: dict, table_name: str) -> TableSyncAnalysis:
+    """Build one analysis, coercing every field the tool schema declares ``string``.
+
+    Six of them land in ``Text`` columns; only two were observed failing, and a fix
+    covering the observed two would leave four loaded with the same round.
+    """
+    return TableSyncAnalysis(
+        table_name=table_name,
+        data_format_notes=_as_text(args.get("data_format_notes", "")),
+        column_sync_notes_json=_as_text(args.get("column_sync_notes", "{}"), "{}"),
+        business_logic_notes=_as_text(args.get("business_logic_notes", "")),
+        conversion_warnings=_as_text(args.get("conversion_warnings", "")),
+        query_recommendations=_as_text(args.get("query_recommendations", "")),
+        required_filters_json=_as_text(args.get("required_filters", "{}"), "{}"),
+        column_value_mappings_json=_as_text(args.get("column_value_mappings", "{}"), "{}"),
+        sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
+        confidence_score=_coerce_confidence(args.get("confidence_score", 3)),
+    )
+
+
 class CodeDbSyncAnalyzer:
     """Uses LLM to analyze code-database alignment per table."""
 
@@ -238,22 +293,7 @@ class CodeDbSyncAnalyzer:
 
             if resp.tool_calls:
                 args = resp.tool_calls[0].arguments
-                col_notes = args.get("column_sync_notes", "{}")
-                if isinstance(col_notes, dict):
-                    col_notes = json.dumps(col_notes)
-
-                result = TableSyncAnalysis(
-                    table_name=table_name,
-                    data_format_notes=args.get("data_format_notes", ""),
-                    column_sync_notes_json=col_notes,
-                    business_logic_notes=args.get("business_logic_notes", ""),
-                    conversion_warnings=args.get("conversion_warnings", ""),
-                    query_recommendations=args.get("query_recommendations", ""),
-                    required_filters_json=args.get("required_filters", "{}"),
-                    column_value_mappings_json=args.get("column_value_mappings", "{}"),
-                    sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
-                    confidence_score=_coerce_confidence(args.get("confidence_score", 3)),
-                )
+                result = _analysis_from_args(args, table_name)
                 logger.info(
                     "LLM sync: %s → %s (confidence=%d)",
                     table_name,
@@ -323,21 +363,7 @@ class CodeDbSyncAnalyzer:
                         "batch sync: duplicate analysis for %s — keeping first", canonical
                     )
                     continue
-                col_notes = args.get("column_sync_notes", "{}")
-                if isinstance(col_notes, dict):
-                    col_notes = json.dumps(col_notes)
-                results_by_name[canonical] = TableSyncAnalysis(
-                    table_name=canonical,
-                    data_format_notes=args.get("data_format_notes", ""),
-                    column_sync_notes_json=col_notes,
-                    business_logic_notes=args.get("business_logic_notes", ""),
-                    conversion_warnings=args.get("conversion_warnings", ""),
-                    query_recommendations=args.get("query_recommendations", ""),
-                    required_filters_json=args.get("required_filters", "{}"),
-                    column_value_mappings_json=args.get("column_value_mappings", "{}"),
-                    sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
-                    confidence_score=_coerce_confidence(args.get("confidence_score", 3)),
-                )
+                results_by_name[canonical] = _analysis_from_args(args, canonical)
         except Exception:
             logger.warning("Batch sync analysis failed", exc_info=True)
 
