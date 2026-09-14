@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the coercion is one rule now, and the ladder walk found a sixth field
+
+PRJ-01's stage-10 ladder walk asks each requirement what its seam is and reads the other
+side of it. R1's seam is "a tool-call argument becomes application data", and the other
+side of it is not one module: `db_index_validator` writes `summary_text` and
+`recommendations` — both declared `type="string"`, both landing in `Text` columns
+(`db_index.py:89`) — with no coercion at all. It has not failed yet because the nightly
+`db_index` has not met an object in that field; the writer beside it in the same file had
+an ad-hoc `isinstance(..., dict)` guard, which is exactly the pattern that let one field
+survive while its neighbour broke.
+
+`as_text` now lives in `app/llm/tool_args.py` and both modules use it — **eleven fields
+across two modules**, named individually in `test_tool_args_coercion.py` so a twelfth
+cannot be added without the test noticing. The ad-hoc guards are gone; they were dead once
+the helper ran first, and a dead guard reads like protection.
+
+The rule it states once: **a tool-call argument is untrusted input, and its declared type
+is a request, not a guarantee.** Parse it at the boundary or the database will, hours
+later, in a background job.
+
+
 ### Fixed — the second defect in the same clause (PRJ-01 follow-up)
 
 The first rebuild after PRJ-01 deployed failed one line further on:
