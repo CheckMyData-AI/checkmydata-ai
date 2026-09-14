@@ -8,12 +8,12 @@ to avoid common data-interpretation errors.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 
 from app.llm.base import Message, Tool, ToolParameter
 from app.llm.router import LLMRouter
+from app.llm.tool_args import as_text
 
 logger = logging.getLogger(__name__)
 
@@ -204,41 +204,6 @@ class SyncSummaryResult:
     join_recommendations: str = ""
 
 
-def _as_text(value: object, default: str = "") -> str:
-    """Coerce a tool-call argument the schema declared ``string`` into one.
-
-    A model is free to ignore ``type="string"`` and hand back an object or a list,
-    and one did: after ``DEFAULT_LLM_MODEL`` moved on 2026-09-10, every
-    ``code_db_sync`` run died in ``store_sync`` with
-    ``asyncpg.exceptions.DataError: invalid input for query argument $6: {}
-    (expected str)`` — four nights in a row, with the last good map left standing and
-    the nightly sync reporting it had run. The columns behind these arguments are
-    ``Text`` (``models/code_db_sync.py:36-42``), so the boundary that must not leak is
-    this one, not the database's.
-
-    A dict or list is serialised, a scalar is stringified, and anything that will not
-    serialise degrades to ``default`` — a lost note is a gap the prompt works around,
-    a dict handed to asyncpg is a run that stores nothing.
-    """
-    if isinstance(value, str):
-        return value
-    if value is None:
-        return default
-    if isinstance(value, dict | list):
-        try:
-            return json.dumps(value, ensure_ascii=False)
-        except (TypeError, ValueError):
-            logger.warning(
-                "sync analysis: unserialisable %s argument, using default",
-                type(value).__name__,
-            )
-            return default
-    if isinstance(value, bool | int | float):
-        return str(value)
-    logger.warning("sync analysis: unexpected %s argument, using default", type(value).__name__)
-    return default
-
-
 def _analysis_from_args(args: dict, table_name: str) -> TableSyncAnalysis:
     """Build one analysis, coercing every field the tool schema declares ``string``.
 
@@ -247,13 +212,13 @@ def _analysis_from_args(args: dict, table_name: str) -> TableSyncAnalysis:
     """
     return TableSyncAnalysis(
         table_name=table_name,
-        data_format_notes=_as_text(args.get("data_format_notes", "")),
-        column_sync_notes_json=_as_text(args.get("column_sync_notes", "{}"), "{}"),
-        business_logic_notes=_as_text(args.get("business_logic_notes", "")),
-        conversion_warnings=_as_text(args.get("conversion_warnings", "")),
-        query_recommendations=_as_text(args.get("query_recommendations", "")),
-        required_filters_json=_as_text(args.get("required_filters", "{}"), "{}"),
-        column_value_mappings_json=_as_text(args.get("column_value_mappings", "{}"), "{}"),
+        data_format_notes=as_text(args.get("data_format_notes", "")),
+        column_sync_notes_json=as_text(args.get("column_sync_notes", "{}"), "{}"),
+        business_logic_notes=as_text(args.get("business_logic_notes", "")),
+        conversion_warnings=as_text(args.get("conversion_warnings", "")),
+        query_recommendations=as_text(args.get("query_recommendations", "")),
+        required_filters_json=as_text(args.get("required_filters", "{}"), "{}"),
+        column_value_mappings_json=as_text(args.get("column_value_mappings", "{}"), "{}"),
         sync_status=_clamp_sync_status(args.get("sync_status", "unknown")),
         confidence_score=_coerce_confidence(args.get("confidence_score", 3)),
     )
@@ -434,10 +399,10 @@ class CodeDbSyncAnalyzer:
                 # store, so while that one was failing it never got the chance — fixing
                 # only the observed half would have moved the outage one step later.
                 return SyncSummaryResult(
-                    global_notes=_as_text(args.get("global_notes", "")),
-                    data_conventions=_as_text(args.get("data_conventions", "")),
-                    query_guidelines=_as_text(args.get("query_guidelines", "")),
-                    join_recommendations=_as_text(args.get("join_recommendations", "")),
+                    global_notes=as_text(args.get("global_notes", "")),
+                    data_conventions=as_text(args.get("data_conventions", "")),
+                    query_guidelines=as_text(args.get("query_guidelines", "")),
+                    join_recommendations=as_text(args.get("join_recommendations", "")),
                 )
 
             logger.info("LLM sync summary: fallback (no tool call)")
