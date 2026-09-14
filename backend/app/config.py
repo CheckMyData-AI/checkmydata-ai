@@ -340,7 +340,6 @@ class Settings(BaseSettings):
     # the clone auto-pulls.
     git_freshness_fetch_origin: bool = False
 
-
     # Query validation loop settings
     query_max_retries: int = 3
     query_enable_explain: bool = True

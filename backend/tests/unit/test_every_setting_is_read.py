@@ -20,7 +20,6 @@ zero exemptions — it is that adding one requires saying something true out lou
 
 from __future__ import annotations
 
-import ast
 import pathlib
 
 import pytest
