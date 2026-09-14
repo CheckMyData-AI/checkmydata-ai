@@ -14,11 +14,15 @@ two runs pass without it applying).
 | S-06 | Verify a fix on the **artefact it was supposed to produce**, not on the bookkeeping around it. A run row can say `failed` while the job it describes completed. | PRJ-01 (R6: the row read `failed: stale run reaped`, the log read `completed … tables=300, 619.54s`) | PRJ-02 makes the status trustworthy |
 | S-07 | A watch whose window includes history will fire on history. Scope a monitor to the run you started — by start time or id — and put the elapsed seconds outside the change-detection key, or it emits on every poll. | PRJ-01 (a 6-hour window raised a false alarm on the previous night's failure) | never — tooling hygiene |
 
+| S-08 | Lint locally with **CI's exact scope and order**: `ruff format --check app/ tests/`, then `ruff check app/ tests/`. Running it over `app/` alone is running a different check — and the narrower one passes on a tree CI rejects in sixty seconds. | 2026-09-14 (three errors in a test file CI caught and a local `ruff check app/` could not) | the lint scope stops being two trees |
+| S-09 | A validation must **gate** the write, not accompany it. A check that raises after `&&` has already run the next command protects nothing. | 2026-09-14 (conflict markers reached a commit because the resolver's assertion failed *after* the chain had committed) | never — this is the shape, not the instance |
+
 ## Run stamps
 
 | Run | Commit | Diverged? |
 |---|---|---|
 | PRJ-01 production hotfix wave | `259cfea5` … `23fd0f24` | yes — four entries below |
+| PRJ-02 + the audit wave (MCP, coercion class, settings, interface) | `e981b73d` … `fb154271` | yes — two entries below |
 
 ## Entries
 
@@ -83,3 +87,40 @@ that field.
 
 **Fix, by grade.** Procedural for this run, structural for the next: REQ rows now name the
 artefact. Recorded as S-06.
+
+### 5. Linted the wrong tree
+
+**Symptom.** PR #377 failed CI on three lint errors — two long lines and an unused
+import, all in a test file — after a local run I had called clean.
+
+**Surfaced at** stage 7 (deploy). **Owned by** stage 6 (tests), which is where the
+parity command is supposed to be run.
+
+**Root cause.** I ran `ruff check app/`. CI runs `ruff format --check app/ tests/` and
+then `ruff check app/ tests/`. A narrower scope is not a weaker version of the same
+check; it is a different check that cannot see the files I had just written.
+`CLAUDE.md` records this exact trap costing two CI cycles in one afternoon, which is
+how I knew to look for it and not enough to stop me causing it.
+
+**Fix, by grade.** Procedural, recorded as S-08. There is a `make lint` that does it
+correctly; the reason I did not use it is that its `$(VENV)` path resolves from the
+repository root and I was inside `backend/`. That is worth fixing in the Makefile, and
+it is on the board rather than in this run.
+
+### 6. The check that ran after the commit
+
+**Symptom.** Conflict markers reached a commit on `fix/close-the-coercion-class`.
+
+**Surfaced at** stage 7, one command later. **Owned by** stage 5.
+
+**Root cause.** The resolution script asserted its result and the shell chain behind it
+was `python3 - <<PY ... PY; git add ... && git commit`. The assertion failed, the script
+exited non-zero, and the `git add` ran anyway because it was a new statement rather than
+a continuation. A guard placed after the action it is meant to prevent is decoration.
+
+**Fix, by grade.** Structural: the resolver is a file now (`/tmp/resolve_changelog.py`
+in this run, and it belongs in `scripts/`), it validates **before** `write_text`, and it
+exits non-zero so the `&&` chain behind it stops. It has since refused to write twice,
+and was right both times — the `## [Unreleased]` heading sits *above* the conflict in
+this file, so a resolver that adds one produces two.
+
