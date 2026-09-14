@@ -6,13 +6,13 @@ and produces a structured assessment.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 
 from app.connectors.base import QueryResult, SchemaInfo, TableInfo
 from app.llm.base import Message, Tool, ToolParameter
 from app.llm.router import LLMRouter
+from app.llm.tool_args import as_text
 
 logger = logging.getLogger(__name__)
 
@@ -196,12 +196,8 @@ class DbIndexValidator:
 
             if resp.tool_calls:
                 args = resp.tool_calls[0].arguments
-                col_notes = args.get("column_notes", "{}")
-                if isinstance(col_notes, dict):
-                    col_notes = json.dumps(col_notes)
-                numeric_notes = args.get("numeric_format_notes", "{}")
-                if isinstance(numeric_notes, dict):
-                    numeric_notes = json.dumps(numeric_notes)
+                col_notes = as_text(args.get("column_notes", "{}"), "{}")
+                numeric_notes = as_text(args.get("numeric_format_notes", "{}"), "{}")
 
                 return TableAnalysis(
                     table_name=table.name,
@@ -274,12 +270,8 @@ class DbIndexValidator:
                 if tc.name == "table_analysis" and tool_idx < len(tables):
                     args = tc.arguments
                     tbl = tables[tool_idx][0]
-                    col_notes = args.get("column_notes", "{}")
-                    if isinstance(col_notes, dict):
-                        col_notes = json.dumps(col_notes)
-                    numeric_notes = args.get("numeric_format_notes", "{}")
-                    if isinstance(numeric_notes, dict):
-                        numeric_notes = json.dumps(numeric_notes)
+                    col_notes = as_text(args.get("column_notes", "{}"), "{}")
+                    numeric_notes = as_text(args.get("numeric_format_notes", "{}"), "{}")
                     results.append(
                         TableAnalysis(
                             table_name=tbl.name,
@@ -365,9 +357,13 @@ class DbIndexValidator:
 
             if resp.tool_calls:
                 args = resp.tool_calls[0].arguments
+                # Both are declared ``string`` and both land in ``Text`` columns
+                # (``db_index.py:89``). Found by walking the REQ ladder after PRJ-01,
+                # not by a failure: this writer runs in a step the nightly db_index
+                # reaches every night and has simply not met an object yet.
                 return ConnectionSummaryResult(
-                    summary_text=args.get("summary_text", ""),
-                    recommendations=args.get("recommendations", ""),
+                    summary_text=as_text(args.get("summary_text", "")),
+                    recommendations=as_text(args.get("recommendations", "")),
                 )
 
             return ConnectionSummaryResult(
