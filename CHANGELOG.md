@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the second defect in the same clause (PRJ-01 follow-up)
+
+The first rebuild after PRJ-01 deployed failed one line further on:
+
+    psycopg.errors.UndefinedColumn: column "doc_id" does not exist
+
+`doc_embeddings` has never had a `doc_id`; its primary key is `(project_id, id)`, and the
+`sym:` prefix the filter matches lives on `id`. **Two defects sat in one clause, stacked so
+that the outer one hid the inner one** — psycopg refused the statement for its unescaped
+percent before Postgres could refuse the column, so escaping the percent did not fix the
+clause, it revealed the rest of it. Both `generate_docs` and `code_symbol_embed` call this
+method, and production has held **zero** symbol chunks since #344 shipped on 2026-09-11.
+
+The test written for the first defect proved the statement was *parseable*, which is what
+the production error had said, and could not know whether the columns existed. It now also
+checks every identifier the statement names against `DocEmbedding.__table__.columns` — no
+database, so it runs in the ordinary suite. Worse, that test had asserted `"doc_id LIKE" in
+sql`, written from the code rather than from the schema: it locked the second defect in
+while proving the first was gone. A test that asserts the bug is worse than no test, and
+the column check is what makes that shape impossible to write again.
+
+
 ### Fixed — PRJ-01, the production hotfix wave
 
 Wave 0 of ADR-0005. Four defects the 2026-09-13 audit measured against production, two of
