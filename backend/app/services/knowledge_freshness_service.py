@@ -313,6 +313,7 @@ class KnowledgeFreshnessService:
                             repo_clone_dir,
                             last_sha,
                             "HEAD",
+                            fetch_origin=settings.git_freshness_fetch_origin,
                         )
                         if state is GitFreshness.FRESH:
                             # Everything is up to date — no warning.

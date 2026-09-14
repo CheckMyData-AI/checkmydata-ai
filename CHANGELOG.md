@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — ten settings that read as levers and moved nothing
+
+`reranker_enabled` was the loud case of this: documented default-on while its dependency
+was in no dependency list. That one is findable at boot, because it names a missing
+package. This is the quieter case, which `ops/capability_report.py` structurally cannot
+catch — a setting referenced **nowhere outside `config.py`**, with no dependency to miss,
+while a constant a few files over decides the behaviour it claims to control. An operator
+reaches for it during an incident and nothing happens.
+
+`git_freshness_fetch_origin` is the example worth keeping: six lines of docstring, an
+entry in `CLAUDE.md`, a line in `CHANGELOG.md`, and a real implementation behind it —
+`GitTracker.classify_freshness_async(..., fetch_origin=…)` — that **both** of its two
+callers declined to reach. It is passed now.
+
+**Six wired**, because each had a constant it was meant to replace: the three learning
+ranking weights (hardcoded `0.4`/`0.4`/`0.2`, and plumbed all the way through
+`AgentSettingsView` first, which is what made them look connected),
+`learning_subject_blocklist_extra` (the documented extension point, never merged into the
+frozenset it extends — so a deployment that added a term kept storing learnings about it),
+`max_lesson_length`, and `tool_preview_max_chars` (eight literal `[:500]` slices).
+
+**Four deleted**, because inventing a use for a knob nobody ever wired is adding a feature
+under the guise of a fix: `include_sample_data`, `min_synthesis_length`,
+`slow_query_warning_ms`, `stripe_publishable_key`. `extra="ignore"` means a deployment
+that set one of them keeps booting; it simply stops being told a lie about it.
+
+`test_every_setting_is_read` fails on the next one. Its allowlist carries a reason per
+entry and a second test enforces that — `db_connection_ceiling` is consumed by its own
+boot validator, and the four `stripe_price_*` are reached through
+`getattr(settings, f"stripe_price_{plan.id}")`, so neither is dead and both would
+otherwise read as such.
+
 ### Fixed — one heartbeat, one truth (PRJ-02)
 
 Four run kinds beat four different ways, and three of them ticked a row the reaper does
@@ -44,6 +76,7 @@ map it wrote rather than on the run row describing it.
   later), and the pre-index schema peek is bounded at 30 s (it connects to the customer's
   database *before* the heartbeat opens, so a hung tunnel was reaped before the pipeline
   had begun).
+
 
 ### Fixed — four controls that described something and would not take you there
 

@@ -345,7 +345,9 @@ class SQLAgent(BaseAgent):
                     on_retry=_on_retry,
                 )
                 _sd_llm["input_preview"] = self._messages_preview(messages)
-                _sd_llm["output_preview"] = (llm_resp.content or "")[:500]
+                _sd_llm["output_preview"] = (llm_resp.content or "")[
+                    : settings.tool_preview_max_chars
+                ]
                 if llm_resp.model:
                     _sd_llm["model"] = llm_resp.model
                 for _uk in ("prompt_tokens", "completion_tokens", "total_tokens"):
@@ -386,7 +388,7 @@ class SQLAgent(BaseAgent):
                 if tc.name == "execute_query":
                     _sd_tool["input_preview"] = (_tc_args.get("query", ""))[:1000]
                 else:
-                    _sd_tool["input_preview"] = str(_tc_args)[:500]
+                    _sd_tool["input_preview"] = str(_tc_args)[: settings.tool_preview_max_chars]
                 _tool_span_type = (
                     "db_query"
                     if tc.name
@@ -409,7 +411,9 @@ class SQLAgent(BaseAgent):
                         wf_id,
                         run_state,
                     )
-                    _sd_tool["output_preview"] = (result_text or "")[:500]
+                    _sd_tool["output_preview"] = (result_text or "")[
+                        : settings.tool_preview_max_chars
+                    ]
 
                 result_text = _cap_tool_result(tc.name, result_text)
 

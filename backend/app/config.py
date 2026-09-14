@@ -31,8 +31,6 @@ class AgentSettingsView:
     router_last_turn_char_limit: int
     history_db_load_limit: int
     synthesis_data_token_budget_pct: float
-    min_synthesis_length: int
-    slow_query_warning_ms: int
     pipeline_run_ttl_days: int
     max_stage_retries: int
     max_pipeline_replans: int
@@ -342,8 +340,6 @@ class Settings(BaseSettings):
     # the clone auto-pulls.
     git_freshness_fetch_origin: bool = False
 
-    include_sample_data: bool = False
-
     # Query validation loop settings
     query_max_retries: int = 3
     query_enable_explain: bool = True
@@ -565,10 +561,8 @@ class Settings(BaseSettings):
     synthesis_data_token_budget_pct: float = 0.4
     # Minimum length the synthesis answer must reach before we treat it as a real answer
     # (rather than falling back to the static "step_limit_reached" message). 0 disables.
-    min_synthesis_length: int = 0
 
     # Slow query warning threshold (post-validator)
-    slow_query_warning_ms: int = 30_000
 
     # Knowledge-lifecycle maintenance loop interval (hours). Drives learning /
     # session-note confidence decay and insight TTL/decay on a fixed cadence,
@@ -1168,7 +1162,6 @@ class Settings(BaseSettings):
     billing_enabled: bool = False
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
-    stripe_publishable_key: str = ""
     # Map of plan slug -> Stripe price id; set via env, e.g.
     # STRIPE_PRICE_PRO=price_xxx, STRIPE_PRICE_TEAM=price_yyy
     #: Per-plan Stripe price ids, read by `_price_id_for` when the `plans` row carries
@@ -1261,8 +1254,6 @@ class Settings(BaseSettings):
             router_last_turn_char_limit=self.router_last_turn_char_limit,
             history_db_load_limit=self.history_db_load_limit,
             synthesis_data_token_budget_pct=self.synthesis_data_token_budget_pct,
-            min_synthesis_length=self.min_synthesis_length,
-            slow_query_warning_ms=self.slow_query_warning_ms,
             pipeline_run_ttl_days=self.pipeline_run_ttl_days,
             max_stage_retries=self.max_stage_retries,
             max_pipeline_replans=self.max_pipeline_replans,
