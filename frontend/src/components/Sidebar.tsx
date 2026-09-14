@@ -97,6 +97,8 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
 
   const focusSection = useAppStore((s) => s.focusSidebarSection);
   const setFocusSection = useAppStore((s) => s.setFocusSidebarSection);
+  // Step 3 of the checklist opens the project form, where `repo_url` lives.
+  const setTriggerProjectEdit = useAppStore((s) => s.setTriggerProjectEdit);
 
   useEffect(() => {
     if (!focusSection) return;
@@ -211,11 +213,18 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                 <p className="text-meta font-semibold text-accent">Getting Started</p>
                 <div className="space-y-2 text-meta">
                   {[
-                    { done: projects.length > 0, step: 1, label: "Create your first project" },
-                    { done: connections.length > 0, step: 2, label: "Add a database connection" },
-                    { done: projects.some((p) => p.repo_url), step: 3, label: "Connect your code (optional)" },
+                { done: projects.length > 0, step: 1, label: "Create your first project", onClick: () => setProjCreateReq(true) },
+                { done: connections.length > 0, step: 2, label: "Add a database connection", onClick: () => { setPanel("connections"); onClose?.(); } },
+                { done: projects.some((p) => p.repo_url), step: 3, label: "Connect your code (optional)", onClick: () => { setTriggerProjectEdit(true); onClose?.(); } },
                   ].map((item) => (
-                    <div key={item.step} className="flex items-center gap-2.5">
+                    <button
+                  key={item.step}
+                  type="button"
+                  onClick={item.onClick}
+                  disabled={item.done}
+                  aria-label={item.label}
+                  className="flex items-center gap-2.5 w-full text-left rounded px-1 py-0.5 -mx-1 hover:bg-surface-2/60 disabled:hover:bg-transparent disabled:cursor-default focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors"
+                >
                       <span className={`w-5 h-5 rounded-full flex items-center justify-center text-kicker font-medium shrink-0 ${
                         item.done ? "bg-success-muted text-success" : "bg-surface-2 text-text-muted"
                       }`}>
@@ -224,7 +233,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                       <span className={item.done ? "text-text-muted line-through" : "text-text-secondary"}>
                         {item.label}
                       </span>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -405,23 +414,45 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
             </p>
             <div className="space-y-2 text-meta">
               {[
+                // Each step now takes the user there. They were three plain
+                // `<div>`s with no handler: a checklist that tells a first-time
+                // user what to do and refuses to take them.
                 {
                   done: projects.length > 0,
                   step: 1,
                   label: "Create your first project",
+                  onClick: () => setProjCreateReq(true),
                 },
                 {
                   done: connections.length > 0,
                   step: 2,
                   label: "Add a database connection",
+                  onClick: () => {
+                    setPanel("connections");
+                    onClose?.();
+                  },
                 },
                 {
                   done: projects.some((p) => p.repo_url),
                   step: 3,
                   label: "Connect your code (optional)",
+                  onClick: () => {
+                    // The repository lives on the project, so this is the project
+                    // form — the same place the Data panel used to describe and
+                    // not offer.
+                    setTriggerProjectEdit(true);
+                    onClose?.();
+                  },
                 },
               ].map((item) => (
-                <div key={item.step} className="flex items-center gap-2.5">
+                <button
+                  key={item.step}
+                  type="button"
+                  onClick={item.onClick}
+                  disabled={item.done}
+                  aria-label={item.label}
+                  className="flex items-center gap-2.5 w-full text-left rounded px-1 py-0.5 -mx-1 hover:bg-surface-2/60 disabled:hover:bg-transparent disabled:cursor-default focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring transition-colors"
+                >
                   <span
                     className={`w-5 h-5 rounded-full flex items-center justify-center text-kicker font-medium shrink-0 ${
                       item.done
@@ -444,7 +475,7 @@ export function Sidebar({ isMobile = false, isOpen = false, onClose }: SidebarPr
                   >
                     {item.label}
                   </span>
-                </div>
+                </button>
               ))}
             </div>
           </div>

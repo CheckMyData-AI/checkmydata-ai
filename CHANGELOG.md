@@ -38,6 +38,45 @@ boot validator, and the four `stripe_price_*` are reached through
 `getattr(settings, f"stripe_price_{plan.id}")`, so neither is dead and both would
 otherwise read as such.
 
+### Fixed — four controls that described something and would not take you there
+
+Each is small, and each stopped a step of the basic loop for a user who did the
+reasonable thing.
+
+- **The Getting Started checklist** told a first-time user to create a project, add a
+  connection and connect their code — as three plain `<div>`s with no handler. Each step
+  now takes them there, in **both** copies: the sidebar renders the list twice, mobile
+  and desktop, and fixing one would have left it inert on exactly the devices least able
+  to work around it. A test counts both.
+- **The Data panel** printed *"No repository connected. Code questions are unavailable
+  without one"* on the panel called Data, with no control to connect one. `repo_url`
+  lives on the project, so the way in was the sidebar's project form or the one-shot
+  onboarding wizard — and a user who dismissed onboarding read a statement of absence
+  with nowhere to click.
+- **The demo was reachable exactly once.** `POST /api/demo/setup` had a single caller
+  inside a wizard that mounts only while the user is un-onboarded with no projects, and
+  every exit from it — Escape included — calls `completeOnboarding()`. Pressing Skip
+  burned the fastest path to a working product permanently. `LoadDemoDataButton` loads it
+  from anywhere, and says so honestly when it cannot.
+- **Past batch runs were write-only.** `GET /api/batch?project_id=` and
+  `DELETE /api/batch/{id}` have had typed clients since they shipped and no component
+  caller, so a run was readable only in the modal that produced it — closing it was
+  final, and the rows stayed in the database and left the product. A `Batch runs`
+  section on the Data panel lists them, with empty, loading, error and delete-failed
+  all rendered rather than assumed.
+- **A failed run showed a string and never its steps.** `GET /api/runs/{id}/events`
+  returns each step with its status, detail and `elapsed_ms`, and its typed client had
+  no caller — so when a repository index died at `graph_build`, the interface could say
+  *"stale run reaped"* and nothing about which step, how far in, or how long it had been
+  working, which are the three things that decide what to do next. A failed run now
+  offers **What happened**.
+- **The Activity panel was hidden from non-owners and not denied to them.** The sidebar
+  omits the entry (`Sidebar.tsx:325`), and `?panel=logs` is a URL an editor can be
+  handed; the panel itself did not check. The backend refuses the data either way, so
+  this is about the UI saying why rather than rendering a screen of empty sections — a
+  control that is only hidden is not a control that is denied.
+
+
 ### Fixed — the coercion class, closed by a machine rather than by attention
 
 Three passes by a careful reader over the same defect class produced three incomplete
@@ -70,6 +109,7 @@ anywhere. `as_bool` matters because `bool("false")` is `True`.
 `Stored {len(analyses)} table entries` **before** the commit that decides whether
 anything was stored — so a run losing all 213 tables to one bad field reported storing
 213. It counts what `upsert_table` actually took, and reports after the commit.
+
 
 ### Fixed — the first run, and the second interface
 
