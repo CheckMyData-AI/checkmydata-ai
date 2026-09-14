@@ -830,17 +830,24 @@ class OrchestratorAgent(BaseAgent):
             # ORCH-A03 (C-G): persist the 3 router signals into context.extra so
             # _record_request_metrics (unified path) and the pipeline metrics block
             # both read the REAL values instead of falling back to "unknown"/0.
-            context = replace(
-                context,
-                extra={
-                    **context.extra,
+            # Mutated IN PLACE, never rebuilt. ``dataclasses.replace`` copies a
+            # *reference* when a field is not passed, so one dict is shared by the
+            # caller and by every sub-agent copy downstream — which is the only way
+            # a write from inside the SQL agent (``exposed_learning_ids``) reaches
+            # ``ConversationalAgent.run``. Rebuilding it here orphaned every such
+            # write for the whole life of the product; a guard test now fails if
+            # anyone passes ``extra=`` to ``replace(context, …)`` again.
+            context.extra.update(
+                {
                     "route": route_result.route,
                     "complexity": route_result.complexity,
                     "estimated_queries": route_result.estimated_queries,
-                },
+                }
             )
-            # ...and again where the *caller* can reach it: the line above
-            # rebinds a local copy, so nothing outside this method sees it.
+            # ...and again where the TRACE can reach it. The line above now mutates
+            # the shared dict, so the caller does see it — but the trace is built by
+            # `chat.py` from `pop_routing`, not from the context, so this second home
+            # is what `finalize_trace` actually reads.
             #
             # ORCH-07: NOT on a continuation. `_fallback_to_unified` re-enters `run()`
             # with `_skip_complexity`, which synthesises route="explore",
@@ -2392,13 +2399,9 @@ class OrchestratorAgent(BaseAgent):
         """
         await self._tracker.emit(wf_id, "thinking", "in_progress", reason)
         logger.warning("Falling back to flat loop: %s", reason)
-        return await self.run(
-            replace(
-                context,
-                workflow_id=wf_id,
-                extra={**context.extra, "_skip_complexity": True},
-            ),
-        )
+        # In place — see the note at the routing annotation above.
+        context.extra["_skip_complexity"] = True
+        return await self.run(replace(context, workflow_id=wf_id))
 
     async def _run_complex_pipeline(
         self,
@@ -2747,10 +2750,13 @@ class OrchestratorAgent(BaseAgent):
 
         continuation_summary = "\n".join(summary_parts)
 
-        new_extra = {k: v for k, v in context.extra.items() if k != "pipeline_action"}
-        new_extra["_continuation_summary"] = continuation_summary
-
-        return replace(context, extra=new_extra)
+        # In place — see the note at the routing annotation above. Dropping
+        # ``pipeline_action`` is what stops ``_check_pipeline_resume`` (the very next
+        # call) from reading a continuation as a resume, and it must apply to the one
+        # shared dict, not to a copy.
+        context.extra.pop("pipeline_action", None)
+        context.extra["_continuation_summary"] = continuation_summary
+        return context
 
     async def _check_pipeline_resume(self, context: AgentContext) -> dict | None:
         """Detect if the user message is a pipeline action (continue/modify/retry)."""

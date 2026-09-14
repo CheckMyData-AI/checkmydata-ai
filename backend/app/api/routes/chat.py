@@ -620,9 +620,12 @@ async def ask(
                         response_type=result.response_type or "text",
                         status="failed" if result.error else "completed",
                         error_message=result.error,
-                        total_duration_ms=(
-                            result.results.execution_time_ms if result.results else None
-                        ),
+                        # None, deliberately: the buffer flush already wrote the
+                        # request's measured elapsed time, and any non-None value
+                        # here replaces it. ``QueryResult.execution_time_ms`` is one
+                        # query's time and defaults to 0.0, so passing it recorded a
+                        # duration that was never the request's (PRJ-01 R3).
+                        total_duration_ms=None,
                         total_tokens=usage.get("total_tokens", 0)
                         or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)),
                         meta=_trace_meta(
@@ -1421,9 +1424,8 @@ async def ask_stream(
                                     response_type=result.response_type or "text",
                                     status="failed" if result.error else "completed",
                                     error_message=result.error,
-                                    total_duration_ms=result.results.execution_time_ms
-                                    if result.results
-                                    else None,
+                                    # See the REST path: the flush's elapsed time stands.
+                                    total_duration_ms=None,
                                     total_tokens=stream_usage.get("total_tokens", 0)
                                     or (
                                         stream_usage.get("prompt_tokens", 0)
@@ -2000,9 +2002,8 @@ async def chat_websocket(
                                     response_type=result.response_type or "text",
                                     status="failed" if result.error else "completed",
                                     error_message=result.error,
-                                    total_duration_ms=(
-                                        result.results.execution_time_ms if result.results else None
-                                    ),
+                                    # See the REST path: the flush's elapsed time stands.
+                                    total_duration_ms=None,
                                     total_tokens=ws_usage.get("total_tokens", 0)
                                     or (
                                         ws_usage.get("prompt_tokens", 0)
