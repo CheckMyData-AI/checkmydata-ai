@@ -129,12 +129,31 @@ def _paginate(items: list, offset: int, limit: int) -> dict[str, Any]:
     }
 
 
-def _format_query_result(qr: QueryResult) -> dict[str, Any]:
-    rows = qr.rows[:MAX_RESULT_ROWS]
+def clamp_max_rows(max_rows: int | None) -> int:
+    """Caller-chosen row cap for a raw query, bounded by the connector's own ceiling.
+
+    The default stays at ``MAX_RESULT_ROWS`` (100): it protects an LLM agent's context
+    from a careless ``SELECT *``. A *programmatic* caller — a scheduled job assembling a
+    monthly P&L — knows exactly how many aggregate rows it asked for and pays for the
+    cap in a different currency: it had to cut its window into half-years to stay under
+    100 and still could not run a cohort query at all. The ceiling is the connector's
+    ``MAX_RESULT_ROWS`` (10 000): the server-side ``SQL_SELECT_LIMIT`` is set to one more
+    than that, so anything above it would be truncated silently by the driver.
+    """
+    from app.connectors.base import MAX_RESULT_ROWS as CONNECTOR_CAP
+
+    if max_rows is None:
+        return MAX_RESULT_ROWS
+    return max(1, min(int(max_rows), CONNECTOR_CAP))
+
+
+def _format_query_result(qr: QueryResult, max_rows: int | None = None) -> dict[str, Any]:
+    cap = clamp_max_rows(max_rows)
+    rows = qr.rows[:cap]
     # Signal truncation explicitly: an MCP client agent must not mistake a
     # partial result for the full set. Combine the connector's own truncation
     # flag (e.g. byte/row caps) with the MCP-level row cap applied here.
-    truncated = bool(qr.truncated) or len(qr.rows) > MAX_RESULT_ROWS
+    truncated = bool(qr.truncated) or len(qr.rows) > cap
     return {
         "columns": qr.columns,
         "rows": rows,
@@ -608,4 +627,4 @@ async def execute_raw_query(principal: Principal, connection_id: str, query: str
         resource_id=connection_id,
         detail=f"rows={getattr(result, 'row_count', 0)}",
     )
-    return _format_query_result(result)
+    return _format_query_result(result, max_rows)
