@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — one heartbeat, one truth (PRJ-02)
+
+Four run kinds beat four different ways, and three of them ticked a row the reaper does
+not read. Measured on production v409 with both rows in one frame: a `code_db_sync` at
+**319 s** elapsed had **302 s** since its `IndexingRun` beat and **11 s** since its
+summary beat, while the worker log showed it analysing tables in that same second. It was
+reaped at 347 s — 345 s the night before, so the timing is arithmetic rather than luck —
+and then **completed successfully at 619 s**, its row reading `failed: stale run reaped`.
+
+The consequence is not cosmetic: `/sync-history`, the UI, the attention rail and the
+reaper's own requeue budget all read that status, so the product could not tell a
+successful run from a failed one in its own table. PRJ-01's fix had to be verified on the
+map it wrote rather than on the run row describing it.
+
+- **One writer.** `run_beat_by_workflow` is extracted from the shape `pipeline_runner`
+  already proved, keyed on `workflow_id` because that is what the two pipelines hold
+  (`IndexingRun.workflow_id` is UNIQUE). `db_index` and `code_db_sync` now beat **both**
+  rows — the summary beats were never the bug, since the reaper sweeps four models and
+  each row needs its own.
+- **The last status condition is gone.** The `daily_sync` parent beat was the fifth and
+  final writer carrying `WHERE status = 'running'` — the shape `pipeline_runner` removed
+  on 2026-08-31 under a comment whose first line says it *"mirrors
+  daily_knowledge_sync_service"*. It mirrored the version that has since been fixed.
+- **A reaped-then-completed parent is reconciled**, not left `failed` forever: the tail
+  skipped its own terminal write because the row was already terminal, so the reaper's
+  provisional guess became permanent. The reap fact is preserved in `meta_json["reaped"]`
+  — both are true.
+- **A beat that matches no row says so**, once per gap. A targeted UPDATE matching
+  nothing raises nothing, and that silence is why the 2026-08-31 gap could not be
+  diagnosed from the data.
+- **An AST guard** fails the build on any heartbeat writer conditioned on status. This
+  condition has now been written five times; the guard found the fifth.
+- Plus two the audit named beside it: the pipeline sets `IndexingCheckpoint.status` when
+  it fails (it caught every exception rather than raising, so the caller's `mark_failed`
+  never fired and the checkpoint stayed `running` until the reaper flipped it 300 s
+  later), and the pre-index schema peek is bounded at 30 s (it connects to the customer's
+  database *before* the heartbeat opens, so a hung tunnel was reaped before the pipeline
+  had begun).
+
+
 ### Fixed — the coercion is one rule now, and the ladder walk found a sixth field
 
 PRJ-01's stage-10 ladder walk asks each requirement what its seam is and reads the other

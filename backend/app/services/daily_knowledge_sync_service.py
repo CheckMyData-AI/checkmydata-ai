@@ -6,10 +6,9 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -23,7 +22,8 @@ from app.models.project import Project
 from app.services.checkpoint_service import CheckpointService
 from app.services.connection_service import ConnectionService
 from app.services.project_service import ProjectService
-from app.services.run_coordinator import RunCoordinator
+from app.services.run_coordinator import RunCoordinator, run_beat_by_workflow_or_id
+from app.services.stale_run_reaper import REAP_ERROR
 
 logger = logging.getLogger(__name__)
 
@@ -161,17 +161,20 @@ class DailyKnowledgeSyncService:
                 ).id
             )
 
-        async def _hb() -> None:
-            # H1/C4-1: targeted UPDATE (not a full-row ORM load) so the parent
-            # heartbeat never races the M3 _on_event projection on
-            # ``IndexingRun.version``. Only refreshes a still-running parent.
-            async with async_session_factory() as s:
-                await s.execute(
-                    update(IndexingRun)
-                    .where(IndexingRun.id == run_id, IndexingRun.status == "running")
-                    .values(heartbeat_at=datetime.now(UTC))
-                )
-                await s.commit()
+        # H1/C4-1: targeted UPDATE (not a full-row ORM load) so the parent heartbeat
+        # never races the M3 _on_event projection on ``IndexingRun.version``.
+        #
+        # PRJ-02: the `status == "running"` condition this carried is gone. It was
+        # the last of five, and the shape `pipeline_runner._hb` removed on
+        # 2026-08-31 under a comment whose first line says it "mirrors
+        # daily_knowledge_sync_service" — it mirrored the version that has since
+        # been fixed. A reap is provisional; while the beat is conditioned on the
+        # status the reaper writes, the instant it flips the row the beat stops
+        # matching and the guess makes itself true. `_is_live` then reads a
+        # heartbeat that can no longer advance, judges the parent dead, and the
+        # next wave is free to dispatch a second `daily_sync` for the same project
+        # while the first is still walking the repo index.
+        _hb = run_beat_by_workflow_or_id(run_id)
 
         _started = time.monotonic()
         async with heartbeat(_hb, interval_seconds=settings.heartbeat_interval_seconds):
@@ -201,6 +204,33 @@ class DailyKnowledgeSyncService:
                 await db.commit()
                 await coord.finish(
                     db, run, terminal, error=result.error_message, failure_kind=failure_kind
+                )
+            elif run is not None and run.error == REAP_ERROR:
+                # The reaper flipped this parent while it was working, so the branch
+                # above skipped it as already terminal and the row kept `failed`
+                # forever — for a run that went on to finish. The reap verdict is
+                # provisional; the work's own outcome is the truth, and the reap fact
+                # is preserved in `meta_json["reaped"]` so the UI can show both.
+                # This is `RunCoordinator._reconcile_reaped_run`'s rule, applied at
+                # the one terminal that reaches it by return value rather than by a
+                # `pipeline_end` event.
+                try:
+                    meta = json.loads(run.meta_json or "{}")
+                except ValueError:
+                    meta = {}
+                meta["reaped"] = {"error": run.error, "reaped_at": None}
+                meta["status"] = result.status
+                meta["steps"] = result.steps_json
+                run.meta_json = json.dumps(meta, default=str)
+                run.status = terminal
+                run.error = result.error_message
+                run.failure_kind = failure_kind
+                await db.commit()
+                logger.info(
+                    "daily_sync %s was reaped while working and finished %s — "
+                    "reconciled",
+                    run_id[:8],
+                    terminal,
                 )
         return result
 

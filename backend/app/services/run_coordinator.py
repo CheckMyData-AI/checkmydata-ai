@@ -143,6 +143,59 @@ def _run_beat(run_id: str) -> Callable[[], Awaitable[None]]:
     return _beat
 
 
+def run_beat_by_workflow(wf_id: str) -> Callable[[], Awaitable[None]]:
+    """Keep the run identified by *wf_id* alive, on its own session.
+
+    The sibling of :func:`_run_beat`, keyed on ``workflow_id`` because that is what
+    the two pipelines hold — `DbIndexPipeline.run` and `CodeDbSyncPipeline.run` take
+    a `wf_id` and never see the run's id. `IndexingRun.workflow_id` carries a UNIQUE
+    index (`models/indexing_run.py:86`), so the key is exact.
+
+    **Not conditioned on status, and that is the whole point.** A reap is provisional
+    — `RunCoordinator._reconcile_reaped_run` exists to fold a late `pipeline_end` into
+    a row the reaper gave up on. While a beat is conditioned on `status == "running"`,
+    the instant the reaper flips the row the beat stops matching and a working run can
+    never re-assert liveness: the guess makes itself true.
+
+    A zero-rowcount UPDATE raises nothing, and that silence is why a beat gap could
+    not be diagnosed from the data — a beat keyed on a workflow id the row does not
+    carry looks exactly like a beat that worked. Logged once per gap.
+    """
+    state = {"warned": False}
+
+    async def _beat() -> None:
+        async with async_session_factory() as hb:
+            result = await hb.execute(
+                update(IndexingRun)
+                .where(IndexingRun.workflow_id == wf_id)
+                .values(heartbeat_at=_now())
+            )
+            await hb.commit()
+        matched = getattr(result, "rowcount", -1)
+        if matched == 0 and not state["warned"]:
+            state["warned"] = True
+            logger.warning(
+                "heartbeat matched no IndexingRun for workflow %s — this run cannot "
+                "be seen as alive and will be reaped at the stale-run timeout",
+                wf_id,
+            )
+        elif matched != 0:
+            state["warned"] = False
+
+    return _beat
+
+
+def run_beat_by_workflow_or_id(run_id: str) -> Callable[[], Awaitable[None]]:
+    """:func:`_run_beat`, exported for callers outside this module.
+
+    The daily-sync parent holds its run id and nothing else, so it beats by id; the
+    two pipelines hold a workflow id and use :func:`run_beat_by_workflow`. Both are
+    the same writer with the same two properties: its own session, and no condition
+    on the status the reaper writes.
+    """
+    return _run_beat(run_id)
+
+
 def _manifest_flags() -> dict[str, bool]:
     return {
         "code_graph_enabled": settings.code_graph_enabled,

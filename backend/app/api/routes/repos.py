@@ -101,6 +101,10 @@ async def cancel_background_tasks() -> None:
     _indexing_tasks.clear()
 
 
+#: How long the pre-index schema peek may take before it is abandoned.
+#: Short on purpose: it runs outside the heartbeat, so a hang here is a reap.
+_LIVE_TABLE_NAMES_TIMEOUT_S = 30.0
+
 class RepoCheckRequest(BaseModel):
     repo_url: str
     ssh_key_id: str | None = None
@@ -719,7 +723,27 @@ async def _run_index_background(
                         force_full=bool(body.force_full),
                     )
 
-                live_table_names = await _fetch_live_table_names(db, project_id)
+                # Bounded, and it happens BEFORE the heartbeat opens below — this
+                # call connects to the customer's database (through an SSH tunnel
+                # where one exists) and introspects it, with nothing but
+                # `RunCoordinator.start`'s single initial beat covering it. A hung
+                # tunnel here is reaped at 300 s before the pipeline has begun, and
+                # the task itself stays stuck until the connector's own timeout.
+                # The table names are an enrichment for the project summary: losing
+                # them costs a cross-reference, not the index.
+                try:
+                    live_table_names = await asyncio.wait_for(
+                        _fetch_live_table_names(db, project_id),
+                        timeout=_LIVE_TABLE_NAMES_TIMEOUT_S,
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "live table names timed out after %ss for project %s — "
+                        "indexing continues without the cross-reference",
+                        _LIVE_TABLE_NAMES_TIMEOUT_S,
+                        project_id[:8],
+                    )
+                    live_table_names = []
 
                 try:
                     from app.config import settings as _settings
