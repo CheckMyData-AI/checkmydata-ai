@@ -9,6 +9,7 @@ import { AuthGate } from "@/components/auth/AuthGate";
 import { EmailVerifyBanner } from "@/components/auth/EmailVerifyBanner";
 import { ProjectOverview } from "@/components/projects/ProjectOverview";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
+import { usePermission } from "@/hooks/usePermission";
 import { DataWorkspace } from "@/components/workspace/DataWorkspace";
 import { KnowledgePanel } from "@/components/knowledge/KnowledgePanel";
 import { DashboardsPanel } from "@/components/dashboards/DashboardsPanel";
@@ -62,6 +63,7 @@ import { NotificationBell } from "@/components/ui/NotificationBell";
 import { SectionErrorBoundary } from "@/components/ui/SectionErrorBoundary";
 
 function AppPageContent() {
+  const { isOwner } = usePermission();
   const activeProject = useAppStore((s) => s.activeProject);
   const activeConnection = useAppStore((s) => s.activeConnection);
   const activeSession = useAppStore((s) => s.activeSession);
@@ -142,6 +144,30 @@ function AppPageContent() {
 
   const renderCenterPanel = () => {
     if (effectivePanel === "logs") {
+      // Gated here as well as in the sidebar. The sidebar hides the entry for a
+      // non-owner (`Sidebar.tsx:325`), but `?panel=logs` is a URL an editor can be
+      // handed — and a control that is only hidden is not a control that is denied.
+      // The backend refuses the data either way; this is so the UI says why rather
+      // than rendering a panel of empty sections.
+      if (!isOwner) {
+        return (
+          <SectionErrorBoundary sectionName="Request History">
+            <div className="p-8 text-center space-y-2">
+              <p className="text-sm text-text-primary">Activity is owner-only</p>
+              <p className="text-meta text-text-muted">
+                Request history, errors and runs are visible to project owners.
+              </p>
+              <button
+                type="button"
+                onClick={closePanel}
+                className="text-sm text-accent hover:underline"
+              >
+                Back
+              </button>
+            </div>
+          </SectionErrorBoundary>
+        );
+      }
       return (
         <SectionErrorBoundary sectionName="Request History">
           <LogsScreen onClose={closePanel} />
