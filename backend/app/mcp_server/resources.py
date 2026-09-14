@@ -14,6 +14,7 @@ import logging
 
 from mcp.server.fastmcp.exceptions import ToolError
 
+from app.core.redaction import safe_error
 from app.mcp_server.runtime import Principal
 from app.models.base import async_session_factory
 from app.services.connection_service import ConnectionService
@@ -161,6 +162,6 @@ async def get_project_knowledge(principal: Principal, project_id: str) -> str:
                 "project_id": project_id,
                 "document_count": 0,
                 "status": "unavailable",
-                "error": str(e),
+                "error": safe_error(e),
             }
         )

@@ -66,7 +66,7 @@ export const auth = {
   // Re-sends the verification email for the signed-in user. No-op (already_verified:
   // true) for Google or already-verified accounts.
   resendVerification: () =>
-    request<{ ok: boolean; already_verified: boolean }>("/auth/resend-verification", {
+    request<{ ok: boolean; already_verified: boolean; email_sent?: boolean }>("/auth/resend-verification", {
       method: "POST",
     }),
   // SCN-013: public endpoints. forgot-password always resolves to {ok:true} (the

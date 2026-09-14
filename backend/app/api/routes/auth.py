@@ -190,11 +190,21 @@ async def resend_verification(
         return {"ok": True, "already_verified": True}
 
     verify_token = await _auth.issue_email_verification(db, user)
-    await _email_svc.send_verification_email(
+    # The send result is REPORTED, not discarded. `EmailService._send` returns False
+    # when no provider is configured and after its retries are spent, and this route
+    # used to answer `{"ok": true}` either way — so the banner said "check your inbox"
+    # about a mail that was never dispatched, to the one account type that cannot
+    # create anything until it arrives. Registration already carries this field
+    # (`verification_email_sent`, F-PROJ-06); the resend path did not.
+    sent = await _email_svc.send_verification_email(
         user_id=user.id, email=user.email, token=verify_token, display_name=user.display_name
     )
-    audit_log("auth.resend_verification", user_id=user.id, detail=user.email)
-    return {"ok": True, "already_verified": False}
+    audit_log(
+        "auth.resend_verification",
+        user_id=user.id,
+        detail=f"{user.email} sent={bool(sent)}",
+    )
+    return {"ok": True, "already_verified": False, "email_sent": bool(sent)}
 
 
 @router.post("/forgot-password")

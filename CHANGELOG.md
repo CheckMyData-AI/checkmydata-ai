@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+<<<<<<< HEAD
 ### Fixed — the coercion class, closed by a machine rather than by attention
 
 Three passes by a careful reader over the same defect class produced three incomplete
@@ -38,6 +39,47 @@ anywhere. `as_bool` matters because `bool("false")` is `True`.
 `Stored {len(analyses)} table entries` **before** the commit that decides whether
 anything was stored — so a run losing all 213 tables to one bad field reported storing
 213. It counts what `upsert_table` actually took, and reports after the commit.
+=======
+### Fixed — the first run, and the second interface
+
+**A new email/password account could not create a project, and the interface named the
+wrong reason.** `User.can_create_projects` defaults to `False` and is granted *by* email
+verification (`auth_service.verify_email`), so an unverified account is one click from
+being able to create. The backend has distinguished the two causes since F-PROJ-01, with
+two different 403 messages. The UI collapsed them into *"Project creation requires
+approval … you need to be approved first"*, whose only button posts to an endpoint that
+sends an email to a human — so the one group that could help itself was sent to a
+waitlist. Google sign-in sets both flags, which is why this was invisible to anyone who
+tested with Google: **the product's basic loop could not start at all for an email
+signup.**
+
+**And the resend button claimed a delivery nobody had checked.** `EmailService._send`
+returns `False` with no provider configured and after its retries are spent;
+`POST /api/auth/resend-verification` discarded that boolean and answered `{"ok": true}`
+either way, so the banner said *"check your inbox"* about a mail that was never
+dispatched — to the account type that cannot proceed without it. Registration already
+carried the field (`verification_email_sent`, and its comment says exactly why); the
+resend path did not, and the frontend read neither. The route reports it now and both
+surfaces say what actually happened.
+
+**The MCP interface disclosed less than the web for the same answer.** Both run the same
+orchestrator, so the reasoning and the gates were already identical; the wrapper was not.
+Three things the web has always shown never reached an MCP client:
+
+- the **knowledge-freshness warning** — an agent received a confident answer from a
+  six-week-old index with nothing to object;
+- **every query-bearing stage's table** — a pipeline answer computed from three stages
+  showed one, which is ORCH-09's shape on a surface the remediation board did not cover;
+- **which connection answered**, for an agent holding several.
+
+The connection picker took `connections[0]` with no check that it is a *database*, so a
+project whose first connection is GA4 answered a natural-language SQL question with no
+database attached. Filtered on the row rather than on a built config, because `to_config`
+decrypts credentials and re-runs the rebinding guard — a filter that costs that per
+discarded candidate is the wrong filter. And `resources.py` returned `str(e)` unscrubbed,
+the same defect fixed in `tools.py` as AUTH-06 and left standing one file over, where the
+exception can carry a DSN.
+>>>>>>> main
 
 
 ### Fixed — the coercion is one rule now, and the ladder walk found a sixth field
