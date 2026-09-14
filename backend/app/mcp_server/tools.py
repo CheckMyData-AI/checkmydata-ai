@@ -565,7 +565,9 @@ async def get_schema(
     return _emit(payload, response_format, _md_schema)
 
 
-async def execute_raw_query(principal: Principal, connection_id: str, query: str) -> dict[str, Any]:
+async def execute_raw_query(
+    principal: Principal, connection_id: str, query: str, max_rows: int | None = None
+) -> dict[str, Any]:
     """Execute a raw SQL query against a connection the principal can access.
 
     Requires the connection to be in read-only mode for safety.
