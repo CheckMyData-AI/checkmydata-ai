@@ -294,6 +294,24 @@ only quote it. Four producers populate it — `_run_sql_stage`
 sample rows). `query_mcp_source`, `search_codebase`, `analyze_git` and `analyze_results` do
 not, which is why nothing downstream can compute on their output.
 
+**`AgentContext.extra` is the other currency, and it is a RETURN channel** — the eighth
+most connected node in the repository (191 edges, `graphify god-nodes`) and, until
+2026-09-14, described in `docs/SYSTEM_ARCHITECTURE.md` §2.3 only by what it contains.
+Sub-agents return typed results, except for what the orchestrator cannot know to ask for:
+which learnings a prompt actually exposed, the result gate's suspicion flag. Those are
+written onto `context.extra` several copies deep, and `dataclasses.replace` copies a
+*reference* when the field is not passed — so one dict is shared and the write reaches
+`core/agent.py:92`.
+
+Three sites passed `extra=` to `replace(context, …)`, which builds a **new** dict.
+`AgentResponse.exposed_learning_ids` was therefore `[]` on every request ever served:
+`credit_validated_learnings` a no-op, thumbs-up and thumbs-down with nothing to attribute,
+`times_applied` frozen, R4-1/R4-2/R4-3 inert. Nothing failed and nothing logged, because
+the tests asserted on the context handed *to* the SQL agent rather than on the response.
+Mutate it; never rebuild it. `test_exposure_survives_the_context_copy.py` fails the build
+otherwise — and it found the third site grep had missed, which built the dict into a local
+variable before passing it.
+
 Multilingual: the agent reasons in English but answers in the user's language. Session rotation auto-summarizes near context limits (`session_rotation_enabled`).
 
 ### Knowledge indexing pipeline (M1–M6)

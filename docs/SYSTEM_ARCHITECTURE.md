@@ -206,7 +206,26 @@ Every sub-agent receives the same `AgentContext` (defined in `backend/app/agents
 | `model` | `str \| None` | e.g. "openai/gpt-4o" |
 | `sql_provider` / `sql_model` | `str \| None` | Separate model for SQL generation |
 | `project_name` | `str \| None` | Human-readable project name |
-| `extra` | `dict` | Pipeline action, session ID, flags |
+| `extra` | `dict` | Pipeline action, session ID, flags — **and the return channel** (below) |
+
+**`extra` carries writes back up, so its identity is part of the contract.** Sub-agents
+return typed results, with one exception: things the orchestrator cannot know to ask for —
+which learnings were actually exposed in a prompt (`sql_agent.py:2172`), the result gate's
+suspicion flag — are written onto `context.extra` by whoever discovers them, several
+copies deep. `dataclasses.replace` copies a *reference* when a field is not passed, so
+every copy shares one dict and a write from any depth reaches `ConversationalAgent.run`.
+
+Passing `extra=` to `replace(context, …)` breaks that silently: it builds a new dict, and
+every write after it lands somewhere the caller never reads. Three sites did, and
+`AgentResponse.exposed_learning_ids` was `[]` on every request the product ever served —
+feedback attribution had nothing to credit and `times_applied` never moved. Nothing
+failed, nothing logged, and the tests asserted on the context handed *to* the sub-agent
+rather than on the response. `test_exposure_survives_the_context_copy.py` now fails the
+build on any rebuild of the dict; it found a third site the grep for the same thing had
+missed, because that one built the dict into a local variable first.
+
+**So: mutate `context.extra`, never rebuild it.** If a field other than `extra` must
+change, `replace(context, field=…)` is correct and leaves the dict shared.
 
 ### 2.4 Unified Router
 
