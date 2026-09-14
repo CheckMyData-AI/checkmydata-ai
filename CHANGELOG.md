@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the coercion class, closed by a machine rather than by attention
+
+Three passes by a careful reader over the same defect class produced three incomplete
+results. The outage of 2026-09-10 found two fields; the ladder walk after it found a
+sixth in a module the outage never touched; a later sweep found **five more in a file
+the fix had already edited** — `db_index_validator` received `as_text` on two fields and
+left the five siblings in the same constructor raw. The class is invisible at the call
+site, because `args.get("business_description", "")` reads exactly like a string.
+
+So the closure is a test, not a resolution. `test_no_raw_tool_argument_reaches_a_typed_sink`
+walks every module under `app/` and fails when a tool-call argument reaches something
+that assumes its declared type — a `str` method, `int()`/`float()`, a slice — without
+passing through `as_text` / `as_int` / `as_float` / `as_bool`. It found three more sites
+the sweep had missed, all the same shape: `(args.get("x") or "").strip()`, where a
+non-empty dict is truthy and sails through the guard into an `AttributeError`.
+
+**The guard is deliberately narrow.** It recognises `str(…)` as the coercion spelled
+inline, and it recognises a call inside a `try` that catches `TypeError`/`ValueError` —
+because `int(args.get("max_results", 5))` under such a handler *is* the correct pattern,
+and flagging it would teach a reader that this test does not know what it is looking at.
+Every exemption carries its reason in the file, and a second test fails if one does not:
+a guard that cries wolf is one somebody disables.
+
+`as_int` and `as_bool` join `as_text`. `relevance_score` was the quiet member of the
+family — `int({})` raises *inside* the surrounding `try`, so a bad score discarded the
+LLM analysis of that table **and of every table after it in the batch**, with no error
+anywhere. `as_bool` matters because `bool("false")` is `True`.
+
+**And a claim computed from the input.** `db_index_pipeline` emitted
+`Stored {len(analyses)} table entries` **before** the commit that decides whether
+anything was stored — so a run losing all 213 tables to one bad field reported storing
+213. It counts what `upsert_table` actually took, and reports after the commit.
+
+
 ### Fixed — the coercion is one rule now, and the ladder walk found a sixth field
 
 PRJ-01's stage-10 ladder walk asks each requirement what its seam is and reads the other

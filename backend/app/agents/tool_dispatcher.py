@@ -27,6 +27,7 @@ from app.config import settings
 from app.core.workflow_tracker import WorkflowTracker
 from app.llm.base import ToolCall
 from app.llm.errors import RETRYABLE_LLM_ERRORS
+from app.llm.tool_args import as_text
 from app.services.data_processor import get_data_processor
 
 if TYPE_CHECKING:
@@ -260,7 +261,8 @@ class ToolDispatcher:
             if tc.name not in ToolDispatcher._DEDUP_TOOL_NAMES:
                 continue
             args = tc.arguments or {}
-            q = (args.get("question") or "").strip()
+            # `or ""` lets a truthy dict through to `.strip()`.
+            q = as_text(args.get("question")).strip()
             if not q:
                 continue
             candidates.append((idx, tc, q))
@@ -832,8 +834,8 @@ class ToolDispatcher:
             return "Git analysis is not available for this project.", None
 
         args = tc.arguments or {}
-        sub_question: str = args.get("question", context.user_question)
-        details: str = (args.get("details") or "").strip()
+        sub_question: str = as_text(args.get("question"), context.user_question)
+        details: str = as_text(args.get("details")).strip()
         effective_question = (
             f"{sub_question}\n\nAdditional context: {details}" if details else sub_question
         )
@@ -916,17 +918,23 @@ class ToolDispatcher:
         if self._git is None:
             return "Code notes are not available for this project."
         args = tc.arguments or {}
+        # `or ""` does not screen a dict — a non-empty dict is truthy and passes
+        # straight through to a `String(255)` column.
         return await self._git.write_code_note(
             context.project_id,
-            args.get("subject") or "",
-            args.get("note") or "",
+            as_text(args.get("subject")),
+            as_text(args.get("note")),
         )
 
     async def _handle_manage_rules(self, args: dict, ctx: AgentContext, wf_id: str) -> str:
-        action: str = args.get("action", "")
-        name: str = args.get("name", "").strip()
-        content: str = args.get("content", "").strip()
-        rule_id: str = args.get("rule_id", "").strip()
+        # Coerced at function entry, ABOVE the try that begins further down: an
+        # `AttributeError` here escapes the handler's own error path and the
+        # membership check below it, so the user sees a raw Python message and the
+        # rule is silently not written.
+        action: str = as_text(args.get("action", ""))
+        name: str = as_text(args.get("name", "")).strip()
+        content: str = as_text(args.get("content", "")).strip()
+        rule_id: str = as_text(args.get("rule_id", "")).strip()
 
         if action not in ("create", "update", "delete"):
             return f"Error: invalid action '{action}'. Use 'create', 'update', or 'delete'."
