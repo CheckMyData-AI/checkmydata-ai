@@ -37,7 +37,7 @@ from app.llm.router import LLMRouter
 from app.llm.usage_sink import DbUsageSink
 from app.mcp_server.runtime import Principal
 from app.models.base import async_session_factory
-from app.services.connection_service import ConnectionService
+from app.services.connection_service import ConnectionService, is_analytics_source
 from app.services.db_index_service import DbIndexService
 from app.services.membership_service import MembershipService
 from app.services.project_service import ProjectService
@@ -183,6 +183,28 @@ def _agent_response_to_dict(resp: AgentResponse) -> dict[str, Any]:
         result["sources"] = [
             {"source_path": s.source_path, "doc_type": s.doc_type} for s in resp.knowledge_sources
         ]
+    # The freshness warning is the product's own honesty mechanism, and it reached
+    # the web and not this surface — so an MCP agent received an answer from a
+    # six-week-old index with nothing saying so. The second interface gets the same
+    # disclosure as the first, or it is not the same product.
+    if getattr(resp, "staleness_warning", None):
+        result["staleness_warning"] = resp.staleness_warning
+    # Every query-bearing stage, not only the last one. `resp.results` is the FINAL
+    # stage's table, so a pipeline answer computed from three of them showed one
+    # here — ORCH-09's shape on the MCP path. Serialised from `SQLResultBlock`
+    # (`agents/response_builder.py:30-38`), and emitted only when there is more
+    # than one, which is the same threshold the web's own builder uses
+    # (`chat_response_builder.build_sql_results_payload`, "fewer than 2 -> None").
+    blocks = getattr(resp, "sql_results", None) or []
+    if len(blocks) > 1:
+        result["stage_results"] = [
+            {
+                "query": blk.query,
+                "query_explanation": blk.query_explanation,
+                "results": _format_query_result(blk.results) if blk.results else None,
+            }
+            for blk in blocks
+        ]
     if resp.error:
         result["error"] = resp.error
     return result
@@ -305,10 +327,27 @@ async def query_database(
             if not conn or conn.project_id != project_id:
                 raise ToolError(f"Connection '{connection_id}' not found")
         else:
-            conn = next(
-                (c for c in connections if getattr(c, "is_active", True)),
-                connections[0],
-            )
+            # A *database* question needs a connection that IS a database. The
+            # project's connection list also holds analytics sources (GA4) and MCP
+            # sources, for which `is_queryable_database` is False — binding one of
+            # those to a natural-language SQL question answers with no database
+            # attached and says nothing about it. The web never does this: it only
+            # builds a config when the caller names a connection explicitly.
+            # A *database* question needs a connection that IS a database. The
+            # project's list also holds analytics sources (GA4), for which
+            # `is_queryable_database` is False — binding one to a natural-language
+            # SQL question answers with no database attached and says nothing about
+            # it. Filtered on the ROW, not on a built config: `to_config` decrypts
+            # credentials and re-runs the DNS-rebinding guard, so calling it per
+            # candidate would pay that for connections we are about to discard.
+            usable = [c for c in connections if not is_analytics_source(c.source_type)]
+            if not usable:
+                raise ToolError(
+                    "No queryable database connection in this project. An analytics "
+                    "source cannot answer a SQL question — pass connection_id "
+                    "explicitly, or add a database connection."
+                )
+            conn = next((c for c in usable if getattr(c, "is_active", True)), usable[0])
 
         budget_error = await _usage_svc.check_token_budget(session, user_id)
         if budget_error:
@@ -368,7 +407,11 @@ async def query_database(
         except Exception:
             logger.warning("MCP: failed to finalize trace", exc_info=True)
 
-        return _agent_response_to_dict(resp)
+        payload = _agent_response_to_dict(resp)
+        # Which connection answered. An agent holding several could not tell,
+        # and the picker above may have chosen one it never named.
+        payload["connection_id"] = conn.id
+        return payload
     finally:
         await agent_limiter.release(user_id)
 

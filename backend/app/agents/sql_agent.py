@@ -48,6 +48,7 @@ from app.knowledge.vector_store import VectorStore, make_vector_store
 from app.llm.base import LLMResponse, Message, ToolCall
 from app.llm.retry import llm_call_with_retry
 from app.llm.router import LLMRouter
+from app.llm.tool_args import as_text
 from app.services.project_cache_service import ProjectCacheService
 from app.services.query_failure_service import maybe_record_query_failure
 
@@ -817,7 +818,9 @@ class SQLAgent(BaseAgent):
         self, args: dict, ctx: AgentContext, wf_id: str, **kwargs: Any
     ) -> str:
         """M6: resolve a cluster handle to the set of tables it touches."""
-        cluster = (args.get("cluster") or "").strip()
+        # `or ""` does not screen a dict: a non-empty dict is truthy, so it reaches
+        # `.strip()` and raises `AttributeError` before any validation runs.
+        cluster = as_text(args.get("cluster")).strip()
         if not cluster:
             return (
                 "No cluster specified. Provide a cluster_id (e.g. '3') or "
@@ -898,9 +901,15 @@ class SQLAgent(BaseAgent):
         """
         import json
 
-        category: str = args.get("category", "")
-        subject: str = args.get("subject", "").strip()
-        lesson: str = args.get("lesson", "").strip()
+        # `.strip()` on an unchecked argument raises `AttributeError` before any
+        # validation runs, and `category` reaches a `set` membership test where a
+        # dict raises `TypeError` rather than the `ValueError` this handler catches.
+        # Both escape to the dispatcher's catch-all: the lesson is lost, an
+        # iteration is burned, and the model is handed a Python error message it
+        # can do nothing with.
+        category: str = as_text(args.get("category", ""))
+        subject: str = as_text(args.get("subject", "")).strip()
+        lesson: str = as_text(args.get("lesson", "")).strip()
 
         if not category or not subject or not lesson:
             return json.dumps(
@@ -1011,9 +1020,10 @@ class SQLAgent(BaseAgent):
         """Persist a session note. Returns a structured JSON status string."""
         import json
 
-        category: str = args.get("category", "")
-        subject: str = args.get("subject", "").strip()
-        note_text: str = args.get("note", "").strip()
+        # See `record_learning` above — same shape, same destinations.
+        category: str = as_text(args.get("category", ""))
+        subject: str = as_text(args.get("subject", "")).strip()
+        note_text: str = as_text(args.get("note", "")).strip()
 
         if not category or not subject or not note_text:
             return json.dumps(
