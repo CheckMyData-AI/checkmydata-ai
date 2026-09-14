@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.query_validation import QueryAttempt, QueryErrorType
+from app.llm.tool_args import as_float, as_text
 from app.services.agent_learning_service import SUBJECT_BLOCKLIST
 
 if TYPE_CHECKING:
@@ -776,12 +777,18 @@ class LLMAnalyzer:
             cat = item.get("category", "")
             if cat not in valid_categories:
                 continue
-            subject = item.get("subject", "")
-            lesson_text = item.get("lesson", "")
-            conf = item.get("confidence", 0.7)
+            # Coerced, because this loop sits OUTSIDE the try that wraps the JSON
+            # parse: `{}[:255]` raises `TypeError: unhashable type: 'slice'` and
+            # `float({})` raises too, and both escape to a caller that logs at
+            # DEBUG — invisible at production's INFO. One malformed element lost
+            # all five candidate lessons with no line in the log at all. And the
+            # emptiness guard below does not screen a dict: a non-empty dict is
+            # truthy, so it passed straight through to the slice.
+            subject = as_text(item.get("subject", ""))
+            lesson_text = as_text(item.get("lesson", ""))
             if not subject or not lesson_text:
                 continue
-            conf = max(0.5, min(0.9, float(conf)))
+            conf = min(0.9, max(0.5, as_float(item.get("confidence", 0.7), 0.7)))
             lessons.append(
                 ExtractedLesson(
                     category=cat,
