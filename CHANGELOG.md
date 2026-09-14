@@ -32,6 +32,12 @@ reasonable thing.
   final, and the rows stayed in the database and left the product. A `Batch runs`
   section on the Data panel lists them, with empty, loading, error and delete-failed
   all rendered rather than assumed.
+- **A failed run showed a string and never its steps.** `GET /api/runs/{id}/events`
+  returns each step with its status, detail and `elapsed_ms`, and its typed client had
+  no caller — so when a repository index died at `graph_build`, the interface could say
+  *"stale run reaped"* and nothing about which step, how far in, or how long it had been
+  working, which are the three things that decide what to do next. A failed run now
+  offers **What happened**.
 - **The Activity panel was hidden from non-owners and not denied to them.** The sidebar
   omits the entry (`Sidebar.tsx:325`), and `?panel=logs` is a URL an editor can be
   handed; the panel itself did not check. The backend refuses the data either way, so
