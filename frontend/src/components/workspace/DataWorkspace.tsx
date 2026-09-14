@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type Connection, type SyncSchedule } from "@/lib/api";
+import { LoadDemoDataButton } from "@/components/onboarding/LoadDemoDataButton";
 import { useAppStore } from "@/stores/app-store";
 import { useAppPanel } from "@/hooks/useAppPanel";
 import { usePermission } from "@/hooks/usePermission";
@@ -295,6 +296,7 @@ function SyncHourControl({ projectId }: { projectId: string }) {
 }
 
 export function DataWorkspace() {
+  const setTriggerProjectEdit = useAppStore((s) => s.setTriggerProjectEdit);
   const activeProject = useAppStore((s) => s.activeProject);
   const connections = useAppStore((s) => s.connections);
   const setConnections = useAppStore((s) => s.setConnections);
@@ -417,9 +419,23 @@ export function DataWorkspace() {
               </p>
             </>
           ) : (
-            <p className="text-meta text-text-muted">
-              No repository connected. Code questions are unavailable without one.
-            </p>
+            <div className="space-y-2">
+              <p className="text-meta text-text-muted">
+                No repository connected. Code questions are unavailable without one.
+              </p>
+              {/* The panel stated the absence and offered nothing. `repo_url` lives
+                  on the project, so the control is the project form — the same one
+                  the sidebar's checklist opens. */}
+              <button
+                type="button"
+                onClick={() => setTriggerProjectEdit(true)}
+                className="text-sm text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring rounded"
+              >
+                Connect a repository
+              </button>
+              <span className="text-meta text-text-muted"> · </span>
+              <LoadDemoDataButton className="text-sm text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring rounded" />
+            </div>
           )}
           <SyncHourControl projectId={activeProject.id} />
         </section>
