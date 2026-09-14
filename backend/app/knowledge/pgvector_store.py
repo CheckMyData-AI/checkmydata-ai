@@ -299,18 +299,22 @@ class PgVectorStore:
         production actually runs (`VECTOR_STORE_BACKEND=auto` resolves to pgvector on
         Postgres), so a filter reaching only Chroma would reach only development.
         """
+        # The column is ``id``. It was written ``doc_id`` — a column this table has
+        # never had — and that was invisible because the same clause was also
+        # unescaped, so psycopg refused the statement before Postgres could refuse
+        # the column. Fixing the escaping in PRJ-01 turned one error into the next:
+        # `UndefinedColumn: column "doc_id" does not exist`, measured on the first
+        # rebuild after that deploy. Two defects in one line, stacked so the outer
+        # one hid the inner one — which is why the test now checks the column NAMES
+        # against `DocEmbedding` as well as running the statement past psycopg.
+        #
         # ``%%`` and not ``%``: psycopg3 scans the query TEXT for client-side
-        # placeholders before it reaches the server, so a literal percent inside a
-        # string literal must be doubled. Written bare, this raised
-        # ``only '%s', '%b', '%t' are allowed as placeholders, got '%''`` and killed
-        # every rebuild that reached ``generate_docs`` on the production backend
-        # (2026-09-11). ``test_pgvector_sql_is_valid.py`` runs psycopg's own scanner
-        # over what this composes.
+        # placeholders, so a literal percent inside a string literal must be doubled.
         kind_clause = ""
         if kind == "symbol":
-            kind_clause = " AND doc_id LIKE 'sym:%%'"
+            kind_clause = " AND id LIKE 'sym:%%'"
         elif kind == "prose":
-            kind_clause = " AND doc_id NOT LIKE 'sym:%%'"
+            kind_clause = " AND id NOT LIKE 'sym:%%'"
         with self._pool.connection() as conn:
             cur = conn.execute(
                 # Both keys — see `vector_store.delete_by_source_path`.
