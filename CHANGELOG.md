@@ -6,7 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-<<<<<<< HEAD
 ### Fixed — the coercion class, closed by a machine rather than by attention
 
 Three passes by a careful reader over the same defect class produced three incomplete
@@ -39,7 +38,7 @@ anywhere. `as_bool` matters because `bool("false")` is `True`.
 `Stored {len(analyses)} table entries` **before** the commit that decides whether
 anything was stored — so a run losing all 213 tables to one bad field reported storing
 213. It counts what `upsert_table` actually took, and reports after the commit.
-=======
+
 ### Fixed — the first run, and the second interface
 
 **A new email/password account could not create a project, and the interface named the
@@ -79,7 +78,7 @@ decrypts credentials and re-runs the rebinding guard — a filter that costs tha
 discarded candidate is the wrong filter. And `resources.py` returned `str(e)` unscrubbed,
 the same defect fixed in `tools.py` as AUTH-06 and left standing one file over, where the
 exception can carry a DSN.
->>>>>>> main
+
 
 
 ### Fixed — the coercion is one rule now, and the ladder walk found a sixth field
