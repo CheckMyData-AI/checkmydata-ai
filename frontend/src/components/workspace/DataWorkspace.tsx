@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type Connection, type SyncSchedule } from "@/lib/api";
+import { BatchHistory } from "@/components/batch/BatchHistory";
 import { LoadDemoDataButton } from "@/components/onboarding/LoadDemoDataButton";
 import { useAppStore } from "@/stores/app-store";
 import { useAppPanel } from "@/hooks/useAppPanel";
@@ -438,6 +439,19 @@ export function DataWorkspace() {
             </div>
           )}
           <SyncHourControl projectId={activeProject.id} />
+        </section>
+
+        {/* ---- Past batch runs ---- */}
+        <section
+          className="animate-slide-in-left rounded-card border border-border bg-panel p-4 space-y-2"
+          style={{ animationDelay: "140ms", animationFillMode: "both" }}
+        >
+          <h3 className="text-xs font-medium text-text-secondary uppercase tracking-wider">
+            Batch runs
+          </h3>
+          {/* `batch.list` and `batch.delete` had typed clients and no caller, so a run
+              was readable only in the modal that produced it. */}
+          <BatchHistory projectId={activeProject.id} />
         </section>
 
         {/* ---- Schedules ----

@@ -26,6 +26,12 @@ reasonable thing.
   every exit from it — Escape included — calls `completeOnboarding()`. Pressing Skip
   burned the fastest path to a working product permanently. `LoadDemoDataButton` loads it
   from anywhere, and says so honestly when it cannot.
+- **Past batch runs were write-only.** `GET /api/batch?project_id=` and
+  `DELETE /api/batch/{id}` have had typed clients since they shipped and no component
+  caller, so a run was readable only in the modal that produced it — closing it was
+  final, and the rows stayed in the database and left the product. A `Batch runs`
+  section on the Data panel lists them, with empty, loading, error and delete-failed
+  all rendered rather than assumed.
 - **The Activity panel was hidden from non-owners and not denied to them.** The sidebar
   omits the entry (`Sidebar.tsx:325`), and `?panel=logs` is a URL an editor can be
   handed; the panel itself did not check. The backend refuses the data either way, so
