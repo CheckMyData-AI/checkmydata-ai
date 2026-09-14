@@ -227,8 +227,7 @@ class DailyKnowledgeSyncService:
                 run.failure_kind = failure_kind
                 await db.commit()
                 logger.info(
-                    "daily_sync %s was reaped while working and finished %s — "
-                    "reconciled",
+                    "daily_sync %s was reaped while working and finished %s — reconciled",
                     run_id[:8],
                     terminal,
                 )

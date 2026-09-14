@@ -298,9 +298,7 @@ class IndexingPipelineRunner:
                 # `repo_status.is_indexing` reads true, the manual route answers 409,
                 # and the daily sync reports "checkpoint status=running" instead of
                 # the exception it is holding.
-                await self._cp_svc.mark_failed(
-                    db, cp_id, "pipeline_failed", str(exc)[:500]
-                )
+                await self._cp_svc.mark_failed(db, cp_id, "pipeline_failed", str(exc)[:500])
             except Exception:
                 logger.debug("Failed to update checkpoint on pipeline error", exc_info=True)
             try:

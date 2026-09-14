@@ -105,6 +105,7 @@ async def cancel_background_tasks() -> None:
 #: Short on purpose: it runs outside the heartbeat, so a hang here is a reap.
 _LIVE_TABLE_NAMES_TIMEOUT_S = 30.0
 
+
 class RepoCheckRequest(BaseModel):
     repo_url: str
     ssh_key_id: str | None = None

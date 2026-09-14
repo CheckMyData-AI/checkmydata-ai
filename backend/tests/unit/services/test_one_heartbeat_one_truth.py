@@ -5,10 +5,11 @@ PRJ-02. Four run kinds beat four different ways and three of them tick a row
 
 | kind | what its pipeline beats | what the reaper reads |
 |---|---|---|
-| `index_repo` | `IndexingRun` by `workflow_id`, unconditioned | `IndexingRun` — correct since 2026-08-31 |
+| `index_repo` | `IndexingRun` by `workflow_id`, unconditioned | `IndexingRun` — right since 08-31 |
 | `db_index` | `DbIndexSummary` only | `IndexingRun` — beaten only by manifest step events |
 | `code_db_sync` | `CodeDbSyncSummary` only | `IndexingRun` — same |
-| `daily_sync` | `IndexingRun` **`WHERE status='running'`** | `IndexingRun` — so a reaped parent can never re-assert liveness |
+| `daily_sync` | `IndexingRun` **`WHERE status='running'`** | `IndexingRun` — a reaped parent
+|              |                                      | can never re-assert liveness |
 
 Measured on production v409, 2026-09-14, with both rows read in one frame: a
 `code_db_sync` at **319 s** elapsed had **302 s** since its `IndexingRun` beat and
@@ -29,7 +30,6 @@ needs its own beat. What was missing is the run row's.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
