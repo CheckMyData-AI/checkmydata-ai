@@ -24,6 +24,87 @@ def nullability_suffix(is_nullable: bool | None) -> str:
     return " NULL" if is_nullable is True else ""
 
 
+#: How many measured columns are worth spending prompt tokens on. The measurement is the
+#: valuable half, but a wide table would otherwise fill the window with it.
+_MEASURED_COLUMN_CAP = 15
+
+
+def _as_fraction(value: Any) -> float | None:
+    """A stored null rate as a number, or nothing.
+
+    It arrives from JSON written by four connectors and has been seen as a float, as the
+    string ``"0"``, and as absent. Returning ``None`` rather than swallowing the failure
+    with a bare ``pass`` keeps the decision — say nothing about nulls — where a reader
+    can see it, which is the whole argument this file makes about measurements.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def render_measured_facts(db_entry: Any) -> str:
+    """What the indexer COUNTED about this table's columns, labelled as counted.
+
+    B-12. Measured on production 2026-09-15: **139 of 214 indexed tables** carry hedged
+    prose somewhere in their generated text — "possibly", "likely", "appears to" — and
+    **209 of 214** carry real column statistics beside it. Guess and measurement sit in
+    one block with nothing to tell them apart, so an agent reading "Currency code, likely
+    USD" has no way to know that `distinct_count` for that column is 14.
+
+    This module already rendered `column_distinct_values_json` under "Distinct values",
+    and never rendered `column_stats_json` at all — so the agent saw the value LISTS,
+    which the sampler had spent on identifier columns (`id`, `user_id`, `payment_id`),
+    and not the counts, which is where the answer lives. For `purchases` that meant
+    thirty payment UUIDs on screen and `currency: 14 distinct` nowhere.
+
+    The word MEASURED is the point of the label, and it is the same one
+    `apply_measured_corrections` (B-08) and the rival-table caveat (B-09) use. A reader
+    who can see which claims were counted can discount the ones that were not; a reader
+    who cannot must treat them alike, and the hedged ones read as facts.
+    """
+    raw = getattr(db_entry, "column_stats_json", "") or ""
+    try:
+        stats = _json.loads(raw) if raw else {}
+    except (_json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(stats, dict) or not stats:
+        return ""
+
+    #: Ordered by how much the count narrows the column: a low distinct count is an
+    #: enum and settles a question, a high one is an identifier and settles nothing.
+    def _rank(item: tuple[str, Any]) -> tuple[int, str]:
+        dc = (item[1] or {}).get("distinct_count") if isinstance(item[1], dict) else None
+        return (dc if isinstance(dc, int) else 10**9, item[0])
+
+    lines: list[str] = []
+    for col, facts in sorted(stats.items(), key=_rank)[:_MEASURED_COLUMN_CAP]:
+        if not isinstance(facts, dict):
+            continue
+        bits: list[str] = []
+        dc = facts.get("distinct_count")
+        if isinstance(dc, int):
+            bits.append(f"{dc} distinct")
+        lo, hi = facts.get("min"), facts.get("max")
+        if lo is not None and hi is not None and str(lo) != str(hi):
+            bits.append(f"range {lo} … {hi}")
+        null_rate = _as_fraction(facts.get("null_rate"))
+        if null_rate is not None and null_rate > 0:
+            bits.append(f"{null_rate * 100:.0f}% NULL")
+        if bits:
+            lines.append(f"  {col}: {', '.join(bits)}")
+
+    if not lines:
+        return ""
+    return "MEASURED (counted by the indexer, not inferred):\n" + "\n".join(lines)
+
+
 def format_table_context(
     db_entry: Any,
     schema_table: Any,
@@ -36,6 +117,12 @@ def format_table_context(
     except *db_entry*.
     """
     parts: list[str] = [f"### {db_entry.table_name}"]
+    # B-12: what was counted goes above what was generated. The prose below hedges in
+    # 65% of indexed tables and is indistinguishable from a measurement once both are in
+    # the same block; put the measurement first and label it, and the hedge reads as one.
+    measured = render_measured_facts(db_entry)
+    if measured:
+        parts.append(measured)
     if db_entry.business_description:
         parts.append(f"{db_entry.business_description}")
     if db_entry.row_count is not None:

@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a measurement now says that it was measured
+
+B-12. Production, 2026-09-15, over 214 indexed tables: **139 carry hedged prose**
+somewhere in their generated text (*"possibly"*, *"likely"*, *"appears to"*), and **209
+carry real per-column statistics beside it**. Guess and measurement sat in one block with
+nothing to tell them apart, so an agent reading *"Currency code, likely USD"* had no way
+to know the indexer had counted `distinct_count: 14` for that column.
+
+`schema_context_builder` rendered `column_distinct_values_json` under *"Distinct values"*
+and **never rendered `column_stats_json` at all** — the same defect B-08 closed one layer
+earlier, arriving one layer later. The agent therefore saw the value LISTS, which the
+sampler had spent on identifier columns (`id`, `user_id`, `payment_id`), and not the
+counts, which is where the answer lives. For `purchases` that meant thirty payment UUIDs
+on screen and `currency: 14 distinct` nowhere.
+
+The measured facts are now rendered above the generated prose and labelled:
+
+```
+MEASURED (counted by the indexer, not inferred):
+  deleted_at: 12 distinct, range 2024-01-01 … 2026-09-01, 98% NULL
+  currency: 14 distinct, range BRL … VND
+  amount: 6022 distinct, range -3000 … 2147483647
+```
+
+Ordered by how much the count narrows the column, so the ones that settle a question lead
+and an identifier cannot crowd them out. Above the prose, because the first thing read
+should not be the hedge. Capped, because the measurement is the valuable half and a wide
+table would otherwise fill the window with it. `min == max` prints no range, since that
+would imply variation which is not there, and a null rate appears only where there are
+nulls.
+
+It never invents one: no statistics, unreadable statistics, an older row without the
+field, or a column with nothing countable all render **nothing at all** — silence rather
+than "unknown", because a table the sampler skipped and a table with no variation are
+different facts.
+
+The stored null rate arrives from four connectors as a float, as the string `"0"`, and as
+absent, so it is coerced by a named helper that returns `None` rather than swallowed by a
+bare `except: pass`. Two ratchets caught the first version, and they were right to: the
+decision to say nothing about nulls belongs where a reader can see it, which is the whole
+argument this change makes about measurements.
+
 ### Added — the index compares two tables that both look like revenue
 
 B-09. `payment_histories` sits in the schema index at relevance 4, described as
