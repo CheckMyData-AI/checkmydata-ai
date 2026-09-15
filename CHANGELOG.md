@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — per-workflow state outlived its workflow on the resume path
+
+B-04. `OrchestratorAgent` keeps seven per-workflow maps on an instance `chat.py` builds
+at **module scope**, so anything they hold lives as long as the dyno.
+`_cleanup_stale_results` frees them, and it enumerates stale ids from `_wf_seen` — a
+single timestamp written by `_note_workflow_seen`.
+
+That call sat beside the router under a comment reading *"here because every workflow
+reaches this line"*. **Every workflow does not.** Eight lines above it,
+`_check_pipeline_resume` returns straight into `_resume_pipeline`, so a resumed run wrote
+its maps under a workflow id the sweep had never heard of, and `_wf_sql_results` holds
+full `QueryResult`s with every row.
+
+The same shape as ORCH-06, on the same path: the resume is a second implementation of the
+tail, and it keeps being the one that misses what the fresh path has. The stamp is taken
+at the top of `run` now, before any branch can return.
+
+Two guards, because the two ways this breaks are not the same:
+
+- **the stamp is taken before anything can return** — expressed as a *position*, not a
+  presence. `_note_workflow_seen` was there the whole time; a test asserting merely that
+  `run` calls it would have passed against exactly this defect;
+- **the sweep frees every map that exists** — an eighth map added without a line in
+  `_cleanup_stale_results` leaks silently and for ever, which is the worry B-04 was
+  opened for. Maps are selected by their annotated type rather than by their name: the
+  first version keyed on the `_wf_` prefix and flagged `_wf_sql_lock`, one lock shared by
+  every workflow with nothing to free — a false finding, and the kind that gets a guard
+  disabled rather than obeyed.
+
+Both verified against planted defects.
+
 ### Fixed — a retrieved document says what kind of claim it is
 
 B-11. Production, 2026-09-15, over 782 knowledge documents: **537 are migrations** — and

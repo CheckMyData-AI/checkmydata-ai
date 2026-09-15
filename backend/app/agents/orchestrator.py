@@ -524,6 +524,11 @@ class OrchestratorAgent(BaseAgent):
         every row, and `ConversationalAgent` is built at module scope, so nothing
         freed them short of a dyno restart.
 
+        Called from the TOP of `run`, before any branch can return (B-04). This stamp is
+        the sweep's only key, so a path that skips it makes everything written under that
+        workflow id permanent — which is what the resume path did while this call sat
+        beside the router.
+
         One timestamp per workflow rather than one per map: the maps are written at
         different moments in the same turn, and six independent clocks would sweep
         halves of the same workflow at different times.
@@ -779,6 +784,22 @@ class OrchestratorAgent(BaseAgent):
         self._cleanup_stale_results(stale_seconds)
 
         try:
+            # ORCH-05 / B-04: stamped HERE, before anything can return.
+            #
+            # It used to sit thirty lines down, beside the router, under a comment
+            # saying "every workflow reaches this line". Every workflow does not: eight
+            # lines above it `_check_pipeline_resume` returns straight into
+            # `_resume_pipeline`, so a resumed run wrote its per-workflow maps under a
+            # workflow id `_wf_seen` had never heard of — and `_cleanup_stale_results`
+            # keys the sweep on exactly that, so those entries were unreachable for the
+            # life of the process. They hold full `QueryResult`s with every row, on an
+            # agent built at module scope.
+            #
+            # The same shape as ORCH-06, and on the same path: the resume is a second
+            # implementation of the tail, and it keeps being the one that misses what
+            # the fresh path has.
+            self._note_workflow_seen(wf_id)
+
             is_continuation = context.extra.get("pipeline_action") == "continue_analysis"
             if is_continuation:
                 context = self._apply_continuation_context(context)
@@ -800,10 +821,6 @@ class OrchestratorAgent(BaseAgent):
             has_repo = self._ctx_loader.has_repo(context.project_id)
 
             # --- LLM-driven routing ---
-            # ORCH-05: one stamp per workflow, here because every workflow reaches
-            # this line. The sweep reads it instead of `_wf_enriched`, which only
-            # `process_data` writes.
-            self._note_workflow_seen(wf_id)
             await self._tracker.emit(wf_id, "thinking", "in_progress", "Routing request…")
 
             if is_continuation or context.extra.get("_skip_complexity"):
