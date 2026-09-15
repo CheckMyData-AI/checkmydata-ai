@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Supported analytics sources**: `Connection.source_type` also accepts three analytics vendors (`backend/app/analytics/`, family defined once in `app/analytics/source_types.py`): **`ga4`** (Google Analytics 4 — the only one with a collector today), plus **`appstore`** and **`googleplay`**, reserved for m1/m2 (connection creation refuses them with 422 until their fact tables land). Runbook: `docs/ANALYTICS_SOURCES.md`.
 - **LLM providers**: OpenAI, Anthropic, OpenRouter (`backend/app/llm/router.py`). **Which model an unpinned call runs on is `DEFAULT_LLM_MODEL`** (empty = each adapter's hardcoded default), added 2026-09-09 after measuring that 8.06M tokens/30d of background work — code↔DB sync, validators, learning analyzer — rode the adapter constant `openai/gpt-4o` while both workloads that HAD a knob were already on cheaper models. Three model streams, three homes: background = `DEFAULT_LLM_MODEL` (production: `deepseek/deepseek-v4-flash-0731`), chat = per-project `agent_llm_model`/`sql_llm_model` (production: `z-ai/glm-5.2`), indexing docs = per-project `indexing_llm_model` + per-doc-type `INDEXING_LLM_MODEL_BY_DOC_TYPE` (production: `qwen/qwen3.8-flash`). A slash-namespaced default with a native provider is refused at boot. Prices are NOT in code — `model_pricing_service` reads the live OpenRouter catalogue. Changing the indexing model does not invalidate the T03 doc cache (the model is deliberately not in `content_hash`).
 - **Task tracking**: [Linear — CheckMyData.ai](https://linear.app/sshlg/project/checkmydataai-b7670b0dd990).
-- **Tests**: **9,487 total** — 8,716 backend collected (8,719 minus 3 deselected) + 771 frontend Vitest across 100 files (measured 2026-09-12: `pytest tests/ --collect-only -q`, `npx vitest run`). The 8,965 previously recorded here was measured 2026-09-09 and was stale by 522 after the remediation board closed — **this is the figure most likely to rot, so re-run both commands rather than editing the number.** Backend coverage **82%** (combined unit+integration, CI on #228); the CI gate `fail_under` is **80%**, and `test_coverage_gate_is_stated_once.py` fails when `pyproject.toml`, the workflow and this sentence disagree. The 78% recorded before 2026-08-26 was measured without `concurrency = ["greenlet", "thread"]` in `[tool.coverage.run]` — coverage stopped tracing at the first `await` into SQLAlchemy, so ~1,065 statements ran and were counted as untested.
+- **Tests**: **10,344 total** — 9,556 backend collected (9,559 minus 3 deselected) + 788 frontend Vitest (measured 2026-09-15: `pytest tests/ --collect-only -q`, `npx vitest run`). The 9,487 recorded before was measured 2026-09-12 and was stale by 857 after the 2026-09-13 audit's board closed — **this is the figure most likely to rot, so re-run both commands rather than editing the number.** Backend coverage **82%** (combined unit+integration, CI on #228); the CI gate `fail_under` is **80%**, and `test_coverage_gate_is_stated_once.py` fails when `pyproject.toml`, the workflow and this sentence disagree. The 78% recorded before 2026-08-26 was measured without `concurrency = ["greenlet", "thread"]` in `[tool.coverage.run]` — coverage stopped tracing at the first `await` into SQLAlchemy, so ~1,065 statements ran and were counted as untested.
 - **Remediation board: closed.** The 2026-09-09 audit produced 164 findings and
 `docs/audits/2026-09-09-product-review-and-backlog.md` routed them into 31 rows (the last
 added by reviewing the programme's own PRs). All 31 are ticked (2026-09-12, #343–#368). **The board's own completeness is an exit code,
@@ -502,6 +502,31 @@ The general shape, worth carrying to the next grammar added: **a language the ex
 does not know does not fail — it returns an empty or nonsense result that reads exactly
 like "this repository has no imports."** Adding a grammar to `GRAMMARS` is not the same as
 supporting it end to end; check that each stage downstream has a branch for it.
+
+### "We measured it and did not say it" — four findings in one day (2026-09-15)
+
+The knowledge layer's defects that day were not the model guessing. In every case the
+measurement existed, was persisted, and was withheld from whoever needed it.
+
+| Where | Measured | Said | Now |
+|---|---|---|---|
+| B-06 sync analyzer | `finish_reason="length"` on every adapter | nothing read it; a truncated tool call was stored as an analysis | `tool_call_truncated()` refuses it; caps are settings; `sync_status` moved second in the schema so a cap removes prose, not the verdict |
+| B-08 schema index | `purchases.currency`: `distinct_count 14`, BRL…VND | *"Currency code, likely USD"* and *"divide `amount` by 100 for dollars"* | the prompt renders `[measured: 14 distinct; …]`; `apply_measured_corrections` prepends the counted fact |
+| B-12 schema context | 209 of 214 tables carry column statistics | `column_stats_json` was rendered for the agent **nowhere**; 139 of 214 carry hedged prose beside it | a labelled `MEASURED (counted by the indexer, not inferred)` block leads the prose |
+| B-11 retrieval | the indexer knows each document's `doc_type` | the chunk header showed a file path; 537 of 782 documents are migrations, 286 of them `alter` | `migration` is marked HISTORY, `orm_model` CODE, each naming the DB index as authoritative |
+
+**B-09 is the exception that proves the shape**: `payment_histories` is 4.3x off `purchases`
+and *nothing had measured it*, because the fact is about the **relationship** and every
+document describes one file. `BaseConnector.period_total` runs the same aggregate on both
+now; `app/knowledge/rival_tables.py` bounds what is compared.
+
+Four settings came with them, all in `config.py` with `.env.example` entries:
+`SYNC_ANALYSIS_MAX_TOKENS` (8192), `SYNC_ANALYSIS_BATCH_MAX_TOKENS` (16384),
+`DB_INDEX_ANALYSIS_MAX_TOKENS` (8192), `DB_INDEX_RIVAL_TABLES_ENABLED` (on) +
+`DB_INDEX_RIVAL_BUDGET_SECONDS` (120).
+
+**The rule to carry:** before concluding a model guessed, check whether anything told it.
+Three of these four had the answer one field away.
 
 ### Code↔DB `sync_status`: structure outranks the model
 
