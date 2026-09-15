@@ -28,6 +28,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 MAKEFILE = Path(__file__).resolve().parents[4] / "Makefile"
 
 
@@ -59,9 +61,19 @@ def test_the_venv_path_survives_a_directory_change() -> None:
 def test_the_venv_the_makefile_names_is_the_one_that_exists() -> None:
     """The invariant above is about shape; this one is about this checkout.
 
-    Skipped nowhere on purpose: if the venv is absent the repository is not set up,
-    and a test that passes on an unset-up tree would have passed against the defect.
+    **Skipped where the venv is absent, and the first version was wrong to refuse that.**
+    Its stated reason — "a test that passes on an unset-up tree would have passed against
+    the defect" — does not hold: the shape rule above catches the defect on any tree,
+    because it reads the assignment rather than the filesystem. CI proved it in one run,
+    where dependencies are installed into the runner's own Python and `backend/.venv`
+    never exists; the test failed on a Makefile that was correct.
+
+    So what this adds is narrow and worth keeping: on a developer machine set up the way
+    `make setup` sets one up, the path the Makefile names is the venv that is there.
     """
     venv = _assignment("VENV").replace("$(CURDIR)", str(MAKEFILE.parent))
     venv = venv.replace("$(BACKEND_DIR)", _assignment("BACKEND_DIR"))
+    expected = Path(MAKEFILE.parent) / _assignment("BACKEND_DIR") / ".venv"
+    if not expected.exists():
+        pytest.skip("no backend/.venv in this checkout — the shape rule above still applies")
     assert Path(venv).is_dir(), f"the Makefile points $(VENV) at {venv}, which is not a directory"

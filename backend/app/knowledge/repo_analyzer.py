@@ -193,17 +193,14 @@ NON_AUTHORED_DIRS = frozenset(
 _MACHINE_OUTPUT_SUFFIXES = (".min.js", ".min.css", ".bundle.js", ".chunk.js", ".map")
 _PLACEHOLDER_NAMES = frozenset({".gitkeep", ".gitignore", ".keep", ".placeholder"})
 
-#: Below this, a file has no room for a schema declaration and any document generated
-#: from it is the model describing an absence. Deliberately small: the shortest real
-#: Laravel migration measured in the production repository is 232 bytes.
-_MIN_MEANINGFUL_BYTES = 40
+#: A file with no content at all cannot hold a declaration, and every document generated
+#: from one is the model describing an absence. This was a 40-byte floor, justified by
+#: "the shortest real Laravel migration measures 232 bytes" — which CI disproved in one
+#: run: `CREATE TABLE t1 (id INT);` is 25 bytes and is a complete schema declaration.
+#: The floor was an arbitrary number standing in for a rule, so the rule is stated
+#: instead. The measured case, `.gitkeep`, is empty and is caught by name as well.
+_MIN_MEANINGFUL_BYTES = 1
 
-#: A bundled asset is recognised by its SHAPE, not its name, for the same reason
-#: `is_plausible_table_name` uses shape: a list of the names seen in one repository
-#: (`vendor.js`, `runtime.js`, `polyfills.js`) passes that repository and fails the next.
-#: No hand-written source carries a 2 000-character line; a webpack bundle carries
-#: little else. `panel/public/assets/js/vendor.js` was indexed as an `orm_model` on
-#: production and is caught by this rather than by its name.
 _BUNDLED_LINE_CHARS = 2000
 
 

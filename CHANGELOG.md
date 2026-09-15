@@ -112,8 +112,12 @@ never buy it:
 
 - **`can_carry_schema()`** refuses the file before extraction, by SHAPE rather than by a
   list of names seen in one repository — a directory the project did not author, a
-  placeholder, a file too small to hold a declaration, or a line longer than 2 000
+  placeholder, a file with no content at all, or a line longer than 2 000
   characters, which no hand-written source has and a webpack bundle has little else of.
+  The size rule was a 40-byte floor for one CI run, justified by "the shortest real
+  Laravel migration measures 232 bytes" — and `CREATE TABLE t1 (id INT);` is 25 bytes and
+  a complete declaration. An arbitrary number standing in for a rule; the rule is stated
+  instead, and the measured case (`.gitkeep`) is empty and caught by name as well.
   `panel/public/assets/js/vendor.js` is caught by that last rule and not by its name.
   The directory walk's own skip set now reads from the same constant, so the two cannot
   disagree.
