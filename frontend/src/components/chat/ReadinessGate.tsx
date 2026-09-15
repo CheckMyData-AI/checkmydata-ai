@@ -217,6 +217,14 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
     sync: readiness.code_db_synced,
   };
 
+  // A step already running is not a step to start. Offering "Run" for one produces a
+  // second request the partial unique index refuses, so the button appears to do nothing
+  // — and the user has no way to learn that the work they wanted is already under way.
+  const stepBusy: Record<string, boolean> = {
+    index_db: readiness.db_indexing ?? false,
+    sync: readiness.code_db_syncing ?? false,
+  };
+
   const handleNavigate = (step: string) => {
     const nav = NAVIGABLE_STEPS[step];
     if (!nav) return;
@@ -239,7 +247,8 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
         <div className="space-y-1.5">
           {allSteps.map((step, idx) => {
             const done = stepDone[step];
-            const canAct = actionableSteps.has(step) && !done;
+            const busy = stepBusy[step] ?? false;
+            const canAct = actionableSteps.has(step) && !done && !busy;
             const prevDone = idx === 0 || stepDone[allSteps[idx - 1]];
             const isRunning = actionInProgress === step;
             const isNavigable = !done && step in NAVIGABLE_STEPS;
@@ -262,6 +271,9 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
                 )}
                 {done && (
                   <span className="text-kicker text-success/70 shrink-0">Done</span>
+                )}
+                {!done && busy && (
+                  <span className="text-kicker text-text-tertiary shrink-0">Running…</span>
                 )}
                 {canAct && (
                   <button

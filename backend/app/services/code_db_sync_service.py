@@ -202,6 +202,16 @@ class CodeDbSyncService:
         summary = await self.get_summary(session, connection_id)
         return summary is not None and summary.sync_status == "completed"
 
+    async def is_syncing(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+    ) -> bool:
+        """Whether a code<->DB sync is running right now. See `DbIndexService.is_indexing`
+        for why this is a separate question from :meth:`is_synced`."""
+        summary = await self.get_summary(session, connection_id)
+        return summary is not None and summary.sync_status == "running"
+
     async def set_sync_status(
         self,
         session: AsyncSession,
