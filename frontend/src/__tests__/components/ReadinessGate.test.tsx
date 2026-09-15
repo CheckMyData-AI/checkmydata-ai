@@ -34,6 +34,8 @@ function makeReadiness(overrides: Record<string, unknown> = {}) {
     db_connected: false,
     db_indexed: false,
     code_db_synced: false,
+    db_indexing: false,
+    code_db_syncing: false,
     ready: false,
     missing_steps: [],
     active_connection_id: null,
@@ -150,6 +152,56 @@ describe("ReadinessGate", () => {
     });
     await waitFor(() => {
       expect(screen.getByText(/Last indexed/)).toBeInTheDocument();
+    });
+  });
+
+  // Reported from production on 2026-09-15: the rail showed "Database indexed — Run" and
+  // "Code ↔ DB synced — Run" while an index was mid-flight, and the sync summary said
+  // `completed`. Two defects, one screen.
+  describe("a step already running", () => {
+    it("is shown as running rather than offered as an action", async () => {
+      readinessMock.mockResolvedValue(makeReadiness({
+        repo_connected: true,
+        repo_indexed: true,
+        db_connected: true,
+        db_indexing: true,
+        active_connection_id: "c1",
+      }));
+      const { ReadinessGate } = await import("@/components/chat/ReadinessGate");
+      render(
+        <ReadinessGate projectId="p1" connectionId="c1" onBypass={onBypass} />,
+      );
+      await waitFor(() => {
+        expect(screen.getByText("Running…")).toBeInTheDocument();
+      });
+      // …and the button that would start a second one is not offered. The second run is
+      // refused by the partial unique index, so the click would appear to do nothing.
+      // Every remaining "Run" belongs to another step: with `db_indexing` set, the
+      // database row must not have one.
+      // Only the sync step may offer one. Without the fix there are two, and the second
+      // starts a run the partial unique index refuses.
+      expect(screen.queryAllByRole("button", { name: "Run" })).toHaveLength(1);
+    });
+
+    it("does not hide a step that finished while another one runs", async () => {
+      // The sync summary read `completed` at 20:52 and the rail said "Run", because
+      // `is_synced` was consulted only inside `if indexed:` and an index had started at
+      // 21:34. One step's progress is not another step's state.
+      readinessMock.mockResolvedValue(makeReadiness({
+        repo_connected: true,
+        repo_indexed: true,
+        db_connected: true,
+        db_indexing: true,
+        code_db_synced: true,
+        active_connection_id: "c1",
+      }));
+      const { ReadinessGate } = await import("@/components/chat/ReadinessGate");
+      render(
+        <ReadinessGate projectId="p1" connectionId="c1" onBypass={onBypass} />,
+      );
+      await waitFor(() => {
+        expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(4);
+      });
     });
   });
 });

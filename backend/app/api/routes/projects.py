@@ -422,16 +422,39 @@ async def project_readiness(
 
     db_indexed = False
     code_db_synced = False
+    db_indexing = False
+    code_db_syncing = False
     active_connection_id = None
 
+    # Each step is asked about on its own. They used to be nested — `is_synced` was
+    # consulted only inside `if indexed:` — so a COMPLETED sync read as not done while an
+    # index happened to be running, which is what a user saw on 2026-09-15: the sync
+    # summary said `completed` at 20:52 and the rail offered "Run" for it because a
+    # db_index started at 21:34 was mid-flight. One step's progress is not another step's
+    # state.
+    #
+    # And "running" is its own answer, not a shade of "no". `is_indexed` is False while an
+    # index runs, correctly — nothing is indexed yet — but a caller given only that cannot
+    # tell *never indexed* from *indexing now*, so the rail offers "Run" for work already
+    # in flight. The second run is refused by the partial unique index on `indexing_runs`
+    # and the button appears to do nothing.
     for conn in connections:
-        active_connection_id = conn.id
         indexed = await _db_index_svc.is_indexed(db, conn.id)
+        synced = await _sync_svc.is_synced(db, conn.id)
+        indexing = await _db_index_svc.is_indexing(db, conn.id)
+        syncing = await _sync_svc.is_syncing(db, conn.id)
+
+        db_indexed = db_indexed or indexed
+        code_db_synced = code_db_synced or synced
+        db_indexing = db_indexing or indexing
+        code_db_syncing = code_db_syncing or syncing
+
+        # The connection the rail acts on: the first that is indexed, or — failing that —
+        # the first there is. Previously this held whichever connection the loop happened
+        # to stop on, which when none was indexed was the LAST one.
+        if active_connection_id is None or indexed:
+            active_connection_id = conn.id
         if indexed:
-            db_indexed = True
-            synced = await _sync_svc.is_synced(db, conn.id)
-            if synced:
-                code_db_synced = True
             break
 
     missing_steps = []
@@ -441,9 +464,10 @@ async def project_readiness(
         missing_steps.append({"step": "index_repo", "label": "Index the repository"})
     if not db_connected:
         missing_steps.append({"step": "connect_db", "label": "Add a database connection"})
-    if not db_indexed:
+    # A step already running is not a step to start, so it is not offered.
+    if not db_indexed and not db_indexing:
         missing_steps.append({"step": "index_db", "label": "Index the database"})
-    if not code_db_synced:
+    if not code_db_synced and not code_db_syncing:
         missing_steps.append({"step": "sync", "label": "Run Code-DB Sync"})
 
     ready = repo_connected and repo_indexed and db_connected and db_indexed and code_db_synced
@@ -453,6 +477,8 @@ async def project_readiness(
         "repo_indexed": repo_indexed,
         "db_connected": db_connected,
         "db_indexed": db_indexed,
+        "db_indexing": db_indexing,
+        "code_db_syncing": code_db_syncing,
         "code_db_synced": code_db_synced,
         "ready": ready,
         "missing_steps": missing_steps,
