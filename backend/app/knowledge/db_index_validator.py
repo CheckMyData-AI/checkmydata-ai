@@ -9,10 +9,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from app.config import settings
 from app.connectors.base import QueryResult, SchemaInfo, TableInfo
 from app.llm.base import Message, Tool, ToolParameter
 from app.llm.router import LLMRouter
-from app.llm.tool_args import as_bool, as_int, as_text
+from app.llm.tool_args import as_bool, as_int, as_text, tool_call_truncated
 
 logger = logging.getLogger(__name__)
 
@@ -191,10 +192,19 @@ class DbIndexValidator:
                 preferred_provider=preferred_provider,
                 model=model,
                 temperature=0.0,
-                max_tokens=2048,
+                max_tokens=settings.db_index_analysis_max_tokens,
             )
 
-            if resp.tool_calls:
+            if tool_call_truncated(resp):
+                logger.warning(
+                    "LLM analysis for table %s truncated at %d completion tokens — "
+                    "using the deterministic fallback rather than a half-read answer",
+                    table.name,
+                    settings.db_index_analysis_max_tokens,
+                )
+                return self._fallback_analysis(table, sample_data)
+
+            if resp.tool_calls and resp.tool_calls[0].arguments:
                 args = resp.tool_calls[0].arguments
                 col_notes = as_text(args.get("column_notes", "{}"), "{}")
                 numeric_notes = as_text(args.get("numeric_format_notes", "{}"), "{}")
@@ -269,12 +279,21 @@ class DbIndexValidator:
                 preferred_provider=preferred_provider,
                 model=model,
                 temperature=0.0,
-                max_tokens=4096,
+                max_tokens=settings.sync_analysis_batch_max_tokens,
             )
+
+            if tool_call_truncated(resp):
+                logger.warning(
+                    "Batch table analysis truncated at %d completion tokens over "
+                    "%d table(s) — every one falls back",
+                    settings.sync_analysis_batch_max_tokens,
+                    len(tables),
+                )
+                resp.tool_calls = []
 
             tool_idx = 0
             for tc in resp.tool_calls:
-                if tc.name == "table_analysis" and tool_idx < len(tables):
+                if tc.name == "table_analysis" and tc.arguments and tool_idx < len(tables):
                     args = tc.arguments
                     tbl = tables[tool_idx][0]
                     col_notes = as_text(args.get("column_notes", "{}"), "{}")
@@ -359,10 +378,18 @@ class DbIndexValidator:
                 preferred_provider=preferred_provider,
                 model=model,
                 temperature=0.0,
-                max_tokens=2048,
+                max_tokens=settings.db_index_analysis_max_tokens,
             )
 
-            if resp.tool_calls:
+            if tool_call_truncated(resp):
+                logger.warning(
+                    "Connection summary truncated at %d completion tokens — "
+                    "returning an empty summary rather than a partial one",
+                    settings.db_index_analysis_max_tokens,
+                )
+                return ConnectionSummaryResult()
+
+            if resp.tool_calls and resp.tool_calls[0].arguments:
                 args = resp.tool_calls[0].arguments
                 # Both are declared ``string`` and both land in ``Text`` columns
                 # (``db_index.py:89``). Found by walking the REQ ladder after PRJ-01,

@@ -139,3 +139,54 @@ def as_float(value: Any, default: float) -> float:
         type(value).__name__,
     )
     return default
+
+
+#: ``finish_reason`` values every supported provider uses to say "I ran out of room".
+#: OpenAI and OpenRouter emit ``length``; Anthropic emits ``max_tokens``.
+TRUNCATION_FINISH_REASONS = frozenset({"length", "max_tokens"})
+
+
+def tool_call_truncated(response: Any) -> bool:
+    """True when the model was cut off mid-tool-call and the arguments are unusable.
+
+    A provider says this plainly — ``finish_reason`` is ``length`` (OpenAI, OpenRouter)
+    or ``max_tokens`` (Anthropic) — and until 2026-09-15 **nothing in the product read
+    it**: all three adapters set the field on ``LLMResponse`` and no production code
+    path ever looked at it.
+
+    What that cost, measured on production the day it was found. Arguments arrive as a
+    JSON *string*, so a generation stopped at the cap leaves the object unclosed;
+    ``json.loads`` raises, and the OpenRouter adapter substituted ``args = {}`` and
+    appended the tool call anyway. The caller could not tell that from a model which
+    had genuinely answered with nothing to say, so ``_analysis_from_args({})`` wrote a
+    complete row of defaults — ``sync_status="unknown"``, ``confidence_score=3``, every
+    prose field empty — and recorded it as a real analysis with ``is_fallback=False``.
+
+    That is what blinded the guard built for exactly this degradation.
+    ``code_db_sync_pipeline`` refuses to persist when the non-fallback ratio falls below
+    ``sync_min_success_ratio_to_persist``, so the previous night's good rows survive an
+    LLM outage — and a truncated call is not a fallback, so the ratio read 100% while
+    every row was empty. Production on 2026-09-15: **126 of 263 map rows at
+    ``unknown``, 129 with no column notes, 121 at the default confidence**, written over
+    a map that had held 138 ``matched`` rows before the model changed.
+
+    The cap was the trigger, not the cause. ``SYNC_ANALYSIS_TOOL`` declares ten
+    parameters, three of them long prose, and the per-table call allowed 2048 completion
+    tokens: measured against fourteen real production tables, **every one of the
+    fourteen stopped at exactly 2048**. ``sync_status`` is emitted in schema order and
+    sat ninth of ten, so the decision was the first thing the cap removed — which is why
+    the failure looked like a model that would not decide rather than one never asked.
+
+    So this is checked at every site that hands a tool to a model with a cap, and a
+    truncated call is refused rather than parsed. Raising the cap alone would only move
+    the boundary; a document this size will find it again.
+    """
+    reason = getattr(response, "finish_reason", "") or ""
+    if str(reason).lower() in TRUNCATION_FINISH_REASONS:
+        return True
+    # Belt two: a provider that reports no reason, or reports one we do not know,
+    # still cannot produce a tool call whose arguments failed to parse. The adapters
+    # substitute an empty mapping there, and an empty mapping is never a real answer
+    # to a schema whose first parameter is required.
+    calls = getattr(response, "tool_calls", None) or []
+    return bool(calls) and not any(getattr(c, "arguments", None) for c in calls)

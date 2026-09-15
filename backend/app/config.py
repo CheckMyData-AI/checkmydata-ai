@@ -384,6 +384,20 @@ class Settings(BaseSettings):
     sync_min_success_ratio_to_persist: float = 0.5
     # H5: gate sync LLM spend on the project owner's token budget.
     sync_budget_enforcement_enabled: bool = True
+    # B-06: completion budget for one table's ``table_sync_analysis`` call. It was
+    # 2048 and the schema it has to fill is ten parameters, three of them long prose:
+    # measured against fourteen real production tables on 2026-09-15, **all fourteen
+    # stopped at exactly 2048**, the arguments JSON never closed, and the map was
+    # overwritten with 126 rows reading ``unknown``. A setting rather than a constant
+    # because the right value depends on the model, and the models differ by 3.4x in
+    # how much they write for the same table (measured: 1386 to 4735 completion tokens).
+    sync_analysis_max_tokens: int = 8192
+    # The batch call analyses up to ``BATCH_SIZE`` small tables in one response, so it
+    # needs headroom per table rather than per call.
+    sync_analysis_batch_max_tokens: int = 16384
+    # B-06, the same defect in the DB-index writer: one ``analyze_table`` call fills a
+    # business description, per-column notes, data patterns and query hints.
+    db_index_analysis_max_tokens: int = 8192
 
     auto_index_db_on_test: bool = False
     # R2-3: reuse prior LLM table analysis for tables whose schema signature
