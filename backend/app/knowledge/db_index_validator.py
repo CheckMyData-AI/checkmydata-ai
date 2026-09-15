@@ -172,6 +172,29 @@ _CURRENCY_COLUMNS = ("currency", "currency_code", "ccy")
 _AMOUNT_HINTS = ("amount", "price", "total", "cost", "revenue", "fee", "balance", "sum")
 
 
+#: The prefix every measured caveat carries, so a later run can tell its own additions
+#: from the model's prose and rebuild them instead of stacking them.
+MEASURED_PREFIX = "MEASURED:"
+
+
+def strip_measured_lines(hints: str) -> str:
+    """The generated advice with any previously-added measured caveat removed.
+
+    Every measured line is **rebuilt** from the current run rather than kept, and that is
+    the difference between a caveat and a leak. The reuse path clones a stored
+    `query_hints` verbatim for a table whose schema has not changed, and the store site
+    prepends this run's caveats to what it was handed — so without this, a table that
+    survives twenty nights unchanged accumulates twenty copies of the same warning, each
+    quoting a total from a different month.
+
+    Only lines that begin with the prefix are dropped, and only as whole lines: a
+    sentence the model wrote that happens to contain the word is prose, and prose is not
+    this function's to edit.
+    """
+    kept = [ln for ln in (hints or "").splitlines() if not ln.lstrip().startswith(MEASURED_PREFIX)]
+    return "\n".join(kept).strip()
+
+
 def _measured_suffix(col: ColumnInfo) -> str:
     """What is known about this column's values because it was counted, not inferred.
 
@@ -238,8 +261,9 @@ def apply_measured_corrections(analysis: TableAnalysis, table: TableInfo) -> Tab
         f"currency. Any SUM or comparison across rows must group by `{col}` or convert "
         f"through a rate; a bare total mixes currencies and is wrong."
     )
-    if "MEASURED:" not in analysis.query_hints:
-        analysis.query_hints = f"{caveat}\n{analysis.query_hints}".strip()
+    # Rebuilt, not appended: the stored hints may already carry this caveat from a
+    # previous run, and a reused analysis certainly does.
+    analysis.query_hints = f"{caveat}\n{strip_measured_lines(analysis.query_hints)}".strip()
     return analysis
 
 

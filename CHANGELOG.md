@@ -6,6 +6,71 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the third builder, and a caveat that would have stacked nightly
+
+Found by reading production after B-08 deployed: `purchases.column_notes_json` **still**
+read *"Currency code, likely USD"*, and the measured currency caveat was **absent from
+its hints**. The fix had shipped and had not taken.
+
+**There is a third builder of `TableAnalysis`.** A table whose column signature has not
+changed since the last successful index has its whole analysis **cloned from the stored
+`db_index` row** (R2-3, incremental reuse). B-08's correction sat on the two paths that
+build an analysis from a *tool call*; this one builds it from a *database row*, and the
+AST guard beside them was scoped to model-derived analyses, so it could not see it. A
+guard on two of three writers is the shape this repository keeps being caught by.
+
+The correction moved to the one place every analysis passes through — the loop that
+builds the row handed to `store_results`. It also has to live there rather than at the
+builders: the corrections read what `fetch_samples` measured onto `ColumnInfo`, and the
+reuse map is built before any of that exists.
+
+**And the caveat would have stacked.** A reused analysis arrives carrying the caveat a
+previous run added, and the store site prepends the current run's to whatever it was
+handed. A table surviving twenty nights unchanged would have accumulated twenty copies of
+the same warning, each quoting a total from a different month, with the field growing
+without bound while saying one thing. `apply_measured_corrections` now **rebuilds** the
+measured block instead of appending: `strip_measured_lines` drops only whole lines
+beginning with the prefix, so a sentence the model wrote that happens to contain the word
+is prose, and prose is not the stripper's to edit.
+
+The guard now watches the storage path and was verified against the defect that actually
+happened — removing the correction fails it naming `run`. Its selector keys on a dict
+literal with a `query_hints` **key**, not on the name, because `_build_reuse_map` mentions
+it too and must not be corrected there.
+
+### Fixed — a money table records its unit, and B-09's first production run said so
+
+The rival-table comparison shipped and was run against the real schema within the hour.
+It found six diverging pairs in 24 seconds, and **not one of them was the pair it exists
+for**:
+
+```
+rival tables: users vs balance_transactions        differ   16.16x over 2026-08
+rival tables: purchases vs user_crm_profiles       differ 1522.38x over 2026-08
+rival tables: purchases vs payment_tokens          differ  649.32x over 2026-08
+```
+
+`purchases` vs `payment_histories` was absent, crowded out by tables that rank higher and
+are not about money at all. `users.balance` is a **state** in some implied unit rather
+than a flow; `user_crm_profiles.total_*` is a tally. A 1522x "divergence" between them
+measures nothing, and warning about a table nobody would ask a revenue question about is
+exactly the noise that makes a real warning ignorable — which this feature's own tests
+were written to prevent, one rule short.
+
+The measurement gave the rule. Of the seven tables involved, **exactly three carry a
+currency column** — `purchases`, `payment_histories` and one reporting view — and two of
+those three are the pair that matters. So a table is comparable only if it records the
+unit its amount is in. A `balance` with no currency beside it is not a quantity this
+comparison can hold constant.
+
+It connects to B-08 rather than sitting beside it: a currency column is what makes an
+amount interpretable at all, and a table that records one is a table that knows it is
+handling money. `currency_rate` remains excluded — it holds a number, and matching it as
+a substring would readmit exactly the tables the rule removes.
+
+The noise self-corrects: `query_hints` is rebuilt from a fresh comparison on every
+`db_index` run, so the caveats that first run wrote disappear with the next one.
+
 ### Fixed — per-workflow state outlived its workflow on the resume path
 
 B-04. `OrchestratorAgent` keeps seven per-workflow maps on an instance `chat.py` builds

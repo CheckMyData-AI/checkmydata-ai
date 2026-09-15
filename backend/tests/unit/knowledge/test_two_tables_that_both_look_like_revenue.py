@@ -44,7 +44,12 @@ def _table(name, cols, *, rows=1000, indexes=(), kind="table"):
     )
 
 
-_MONEY = [("id", "bigint"), ("amount", "bigint"), ("created_at", "datetime")]
+_MONEY = [
+    ("id", "bigint"),
+    ("amount", "bigint"),
+    ("currency", "varchar"),
+    ("created_at", "datetime"),
+]
 
 
 class TestWhatIsWorthComparing:
@@ -79,7 +84,12 @@ class TestWhatIsWorthComparing:
         so two tables compared on it disagree for a reason that is not their contents."""
         table = _table(
             "t",
-            [("amount", "bigint"), ("updated_at", "datetime"), ("created_at", "datetime")],
+            [
+                ("amount", "bigint"),
+                ("currency", "varchar"),
+                ("updated_at", "datetime"),
+                ("created_at", "datetime"),
+            ],
         )
         assert describe(table).date_column == "created_at"
 
@@ -227,3 +237,65 @@ def test_the_money_hints_agree_with_the_schema_index() -> None:
     from app.knowledge.rival_tables import MONEY_NAME_HINTS
 
     assert set(MONEY_NAME_HINTS) == set(_AMOUNT_HINTS)
+
+
+def test_the_currency_names_agree_with_the_schema_index() -> None:
+    """Same argument, and it matters more here: this list now DECIDES what gets
+    compared at all, so a divergence would silently change which tables the step
+    can see."""
+    from app.knowledge.db_index_validator import _CURRENCY_COLUMNS
+    from app.knowledge.rival_tables import CURRENCY_COLUMNS
+
+    assert set(CURRENCY_COLUMNS) == set(_CURRENCY_COLUMNS)
+
+
+class TestAMoneyTableRecordsItsUnit:
+    """The rule the first production run demanded, within minutes of shipping.
+
+    Run without it against the real schema, the step found six pairs — `users` vs
+    `balance_transactions` (16x), `purchases` vs `user_crm_profiles` (1522x), `purchases`
+    vs `payment_tokens` (649x) and three more — and **the one pair it exists for,
+    `purchases` vs `payment_histories`, was not among them**, crowded out by tables that
+    rank higher and are not about money at all.
+
+    Of those seven tables exactly three carry a currency column, and two of the three are
+    the pair that matters. `users.balance` is a STATE in some implied unit rather than a
+    flow; `user_crm_profiles.total_*` is a tally. Warning about either is noise on a table
+    nobody would ask a revenue question about — and noise is what makes a real warning
+    ignorable.
+    """
+
+    def test_a_money_column_without_a_currency_column_is_refused(self) -> None:
+        wallet = _table(
+            "users", [("id", "bigint"), ("balance", "bigint"), ("created_at", "datetime")]
+        )
+        assert describe(wallet) is None
+
+    @pytest.mark.parametrize("unit", ["currency", "currency_code", "ccy", "settlement_currency"])
+    def test_any_spelling_of_the_unit_column_qualifies(self, unit: str) -> None:
+        t = _table("t", [("amount", "bigint"), (unit, "varchar"), ("created_at", "datetime")])
+        assert describe(t) is not None
+
+    def test_a_rate_is_not_a_unit(self) -> None:
+        """`currency_rate` holds a number. Matching it as a substring would readmit
+        exactly the tables this rule exists to exclude."""
+        t = _table(
+            "t", [("amount", "bigint"), ("currency_rate", "decimal"), ("created_at", "datetime")]
+        )
+        assert describe(t) is None
+
+    def test_the_production_pair_survives_the_rule(self) -> None:
+        """The rule has to keep what it was written for."""
+        tables = [
+            _table(
+                "users",
+                [("id", "bigint"), ("balance", "bigint"), ("created_at", "datetime")],
+                rows=900_000,
+            ),
+            _table("purchases", _MONEY, rows=10_368),
+            _table("payment_histories", _MONEY, rows=40_000),
+        ]
+        pairs = choose_pairs(tables, relevance={"users": 5, "purchases": 5, "payment_histories": 4})
+        names = {frozenset((a.name, b.name)) for a, b in pairs}
+        assert frozenset(("purchases", "payment_histories")) in names
+        assert all("users" not in p for p in names)

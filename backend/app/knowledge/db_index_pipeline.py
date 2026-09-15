@@ -36,7 +36,12 @@ from app.knowledge.db_index_completeness import (
     PARTIAL_EVIDENCE_KINDS,
     check_schema_completeness,
 )
-from app.knowledge.db_index_validator import DbIndexValidator, TableAnalysis
+from app.knowledge.db_index_validator import (
+    DbIndexValidator,
+    TableAnalysis,
+    apply_measured_corrections,
+    strip_measured_lines,
+)
 from app.knowledge.rival_tables import measure_rivalries
 from app.llm.router import LLMRouter
 from app.models.base import async_session_factory
@@ -1185,6 +1190,25 @@ class DbIndexPipeline:
                             tbl_distinct = distinct_values.get(analysis.table_name, {})
                             tbl_col_stats = column_stats.get(analysis.table_name, {})
 
+                            # B-08, applied HERE rather than where the analysis is built,
+                            # because there are three builders and only this one place
+                            # every analysis passes through.
+                            #
+                            # The third builder is the reason. A table whose column
+                            # signature has not changed has its whole analysis CLONED
+                            # from the stored row (R2-3), so `purchases.column_notes_json`
+                            # still read "Currency code, likely USD" after the fix
+                            # shipped — the correction sat on the two paths that build
+                            # from a tool call, and this one builds from a database row.
+                            # A guard on two of three writers is the shape this
+                            # repository keeps being caught by.
+                            #
+                            # It also has to be after `fetch_samples`: the corrections
+                            # read what was measured onto `ColumnInfo`, and the reuse map
+                            # is built before any of that exists.
+                            if table_info is not None:
+                                analysis = apply_measured_corrections(analysis, table_info)
+
                             table_data = {
                                 "table_name": analysis.table_name,
                                 "table_schema": table_info.schema if table_info else "public",
@@ -1211,10 +1235,18 @@ class DbIndexPipeline:
                                 # generated advice, for the same reason B-08's currency
                                 # caveat does — a hint that recommends a table is read
                                 # before any warning that follows it.
+                                #
+                                # `strip_measured_lines` first, because the hints handed
+                                # here may already carry a caveat: a table whose schema
+                                # has not changed has its whole analysis CLONED from the
+                                # stored row, caveats and all. Without the strip, a table
+                                # that survives twenty nights unchanged accumulates
+                                # twenty copies of the same warning, each quoting a total
+                                # from a different month.
                                 "query_hints": "\n".join(
                                     [
                                         *_rival_caveats.get(analysis.table_name, []),
-                                        analysis.query_hints,
+                                        strip_measured_lines(analysis.query_hints),
                                     ]
                                 ).strip(),
                                 "code_match_status": analysis.code_match_status,

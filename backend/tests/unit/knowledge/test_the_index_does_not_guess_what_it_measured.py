@@ -42,9 +42,9 @@ from app.knowledge.db_index_validator import (
     apply_measured_corrections,
 )
 
-VALIDATOR = (
-    pathlib.Path(__file__).resolve().parents[3] / "app" / "knowledge" / "db_index_validator.py"
-)
+_KNOWLEDGE = pathlib.Path(__file__).resolve().parents[3] / "app" / "knowledge"
+VALIDATOR = _KNOWLEDGE / "db_index_validator.py"
+PIPELINE = _KNOWLEDGE / "db_index_pipeline.py"
 
 
 def _col(name: str, dtype: str = "varchar", *, count: int | None = None, values=None):
@@ -156,29 +156,71 @@ class TestTheCaveatOutranksTheAdvice:
         assert twice.query_hints.count("MEASURED:") == 1
 
 
-def test_every_path_that_builds_an_analysis_passes_through_the_corrector() -> None:
-    """Two sites build a `TableAnalysis` from a tool call — the single-table path and the
-    batch — and a guard on one of two writers is a shape this repository has been caught
-    by before. Walked rather than asserted, so a third site cannot appear unnoticed."""
-    tree = ast.parse(VALIDATOR.read_text(encoding="utf-8"))
-    built_from_args: list[int] = []
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
-            continue
-        if node.func.id != "TableAnalysis":
-            continue
-        rendered = ast.unparse(node)
-        if "args.get" not in rendered:
-            continue  # the deterministic fallback builds one too, from no model output
-        built_from_args.append(node.lineno)
+def test_every_analysis_that_reaches_storage_passes_through_the_corrector() -> None:
+    """The guard moved, and the move is the finding.
 
-    assert len(built_from_args) >= 2, (
-        "fewer than two model-derived analyses found — the walker has stopped measuring"
-    )
-    source = VALIDATOR.read_text(encoding="utf-8").splitlines()
-    for lineno in built_from_args:
-        window = "\n".join(source[max(0, lineno - 4) : lineno])
-        assert "apply_measured_corrections" in window, (
-            f"db_index_validator.py:{lineno} builds a TableAnalysis from a tool call "
-            "without passing it through apply_measured_corrections"
+    Its first version walked `db_index_validator` and required every `TableAnalysis`
+    built **from a tool call** to be corrected. Both such sites were — and
+    `purchases.column_notes_json` still read "Currency code, likely USD" after the fix
+    shipped, because there is a THIRD builder: a table whose column signature has not
+    changed has its whole analysis cloned from the stored `db_index` row (R2-3), and that
+    one is built from a database row rather than from a model.
+
+    So the guard watches the place every analysis passes through instead of the places
+    they come from. `db_index_pipeline` stores them in one loop; if that loop can reach
+    `_svc.store_results`-bound `table_data` without the correction, a fourth builder will
+    be silently uncovered the same way.
+    """
+    tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
+
+    def _builds_the_stored_row(fn: ast.AST) -> bool:
+        """A dict literal with a `query_hints` KEY is the row handed to `store_results`.
+
+        Keyed on the literal rather than on the name: `_build_reuse_map` also mentions
+        `query_hints`, as a keyword argument cloning a stored row, and it must NOT be
+        corrected there — it runs before `fetch_samples`, so there is nothing measured
+        for a correction to read.
+        """
+        return any(
+            isinstance(node, ast.Dict)
+            and any(isinstance(k, ast.Constant) and k.value == "query_hints" for k in node.keys)
+            for node in ast.walk(fn)
         )
+
+    functions = [
+        fn
+        for fn in ast.walk(tree)
+        if isinstance(fn, ast.AsyncFunctionDef | ast.FunctionDef) and _builds_the_stored_row(fn)
+    ]
+    assert functions, "no function builds the stored row — the walk has stopped measuring"
+    for fn in functions:
+        body = ast.unparse(fn)
+        assert "apply_measured_corrections" in body, (
+            f"{fn.name} builds the row that is stored in `db_index` without passing the "
+            "analysis through apply_measured_corrections — a reused or future third-party "
+            "analysis would carry whatever prose it arrived with"
+        )
+
+
+def test_the_caveat_is_rebuilt_rather_than_stacked() -> None:
+    """A reused analysis arrives carrying the caveat a previous run added.
+
+    Without the strip, a table that survives twenty nights unchanged accumulates twenty
+    copies of the same warning, each quoting a total from a different month — and the
+    hints field grows without bound while saying the same thing.
+    """
+    analysis = TableAnalysis(table_name="purchases", query_hints="Use was_handled = 1.")
+    once = apply_measured_corrections(analysis, _purchases())
+    twice = apply_measured_corrections(once, _purchases())
+    thrice = apply_measured_corrections(twice, _purchases())
+    assert thrice.query_hints.count("MEASURED:") == 1
+    assert "Use was_handled = 1." in thrice.query_hints
+
+
+def test_the_model_s_own_prose_is_never_edited() -> None:
+    """Only whole lines beginning with the prefix are dropped. A sentence the model wrote
+    that happens to contain the word is prose, and prose is not the stripper's to edit."""
+    from app.knowledge.db_index_validator import strip_measured_lines
+
+    prose = "Nothing here is MEASURED: the column is undocumented."
+    assert strip_measured_lines(f"MEASURED: counted 3\n{prose}") == prose
