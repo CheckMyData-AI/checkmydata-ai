@@ -240,6 +240,28 @@ MAX_DISTINCT_VALUES = 30
 MAX_DISTINCT_CARDINALITY = 50
 
 
+def _attach_measurements(
+    table: TableInfo | None,
+    distinct: dict[str, list[str]],
+    stats: dict[str, dict],
+) -> None:
+    """Put what `fetch_samples` measured onto the columns the prompt is built from.
+
+    Writes nothing it did not measure: a column absent from both maps keeps its
+    ``None``, which renders as silence rather than as a claim of "no values".
+    """
+    if table is None:
+        return
+    for col in table.columns:
+        values = distinct.get(col.name)
+        if values:
+            col.distinct_values = values
+        measured = stats.get(col.name) or {}
+        count = measured.get("distinct_count")
+        if isinstance(count, int) and count >= 0:
+            col.distinct_count = count
+
+
 def _is_enum_candidate(col_name: str, data_type: str, row_count: int | None) -> bool:
     """Heuristic: column likely holds a small set of categorical values."""
     name_lower = col_name.lower()
@@ -544,6 +566,9 @@ class DbIndexPipeline:
                 samples: dict[str, tuple[QueryResult, str | None]] = {}
                 distinct_values: dict[str, dict[str, list[str]]] = {}
                 total_tables = len(schema.tables)
+                #: B-08: the objects `_build_table_prompt` is built from, by name,
+                #: so the measurements below can reach them.
+                _tables_by_name = {t.name: t for t in schema.tables}
                 _sample_sem = asyncio.Semaphore(5)
                 # The concurrency bound above says how many tables at once; this says how
                 # long in total. Without the second, `trigger='auto'` runs reached 8h25m
@@ -794,6 +819,26 @@ class DbIndexPipeline:
                             column_stats[tname] = tbl_stats
                         if approx_max is not None:
                             ordering_approx_max[tname] = approx_max
+                        # B-08: hand the measurements to the objects the analysis
+                        # prompt is built from. They were computed here, persisted to
+                        # `column_distinct_values_json` / `column_stats_json`, and shown
+                        # to nobody: `_build_table_prompt` renders a column as
+                        # `name: type` and never read either field, so the model that
+                        # writes `query_hints` was asked to describe a column whose
+                        # values this step had already counted.
+                        #
+                        # Measured on production 2026-09-15: `purchases.currency` has
+                        # `distinct_count: 14`, `min: "BRL"`, `max: "VND"` — and the
+                        # column note for it reads "Currency code, likely USD" while the
+                        # hint says "The 'amount' column should be divided by 100 to
+                        # convert from cents to dollars". Fourteen currencies measured,
+                        # one guessed, in the same row, written by the same run.
+                        #
+                        # Attached to `ColumnInfo` rather than threaded through two call
+                        # signatures because both the single-table and the batch path
+                        # build their prompt from these objects, and a parameter added to
+                        # one of the two is how half a fix ships.
+                        _attach_measurements(_tables_by_name.get(tname), tbl_distinct, tbl_stats)
                         if sample_failed:
                             sample_failures.add(tname)
                         distinct_failures += tbl_distinct_failures

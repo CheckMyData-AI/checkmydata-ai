@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass
 
 from app.config import settings
-from app.connectors.base import QueryResult, SchemaInfo, TableInfo
+from app.connectors.base import ColumnInfo, QueryResult, SchemaInfo, TableInfo
 from app.llm.base import Message, Tool, ToolParameter
 from app.llm.router import LLMRouter
 from app.llm.tool_args import as_bool, as_int, as_text, tool_call_truncated
@@ -159,6 +159,90 @@ class ConnectionSummaryResult:
     recommendations: str = ""
 
 
+#: How many measured values are worth spending prompt tokens on. Above this the list
+#: stops being evidence and becomes a sample of a sample.
+_PROMPT_VALUE_CAP = 12
+
+#: Column names that carry the unit a money column is denominated in. Matched as a whole
+#: name or a `_currency` suffix, never as a substring, so `currency_rate` — which holds a
+#: number, not a unit — is not one of these.
+_CURRENCY_COLUMNS = ("currency", "currency_code", "ccy")
+
+#: Money columns whose value is meaningless without the unit beside them.
+_AMOUNT_HINTS = ("amount", "price", "total", "cost", "revenue", "fee", "balance", "sum")
+
+
+def _measured_suffix(col: ColumnInfo) -> str:
+    """What is known about this column's values because it was counted, not inferred.
+
+    Silence where nothing was measured — an empty string rather than "0 values" or
+    "unknown", because a column the sampler skipped and a column with no values are
+    different facts and only one of them is a fact about the data.
+
+    The distinct COUNT leads, because it is the part that settles a question: no model
+    calls a column single-valued while reading that it holds fourteen. The values follow
+    when they are few enough to be evidence rather than a list.
+    """
+    bits: list[str] = []
+    if col.distinct_count is not None:
+        bits.append(f"{col.distinct_count} distinct")
+    values = col.distinct_values or []
+    if values and len(values) <= _PROMPT_VALUE_CAP:
+        bits.append("values: " + ", ".join(str(v) for v in values))
+    elif values:
+        shown = ", ".join(str(v) for v in values[:_PROMPT_VALUE_CAP])
+        bits.append(f"values incl.: {shown}, …")
+    return f" [measured: {'; '.join(bits)}]" if bits else ""
+
+
+def _multi_currency_columns(table: TableInfo) -> tuple[str, int] | None:
+    """A currency column this index MEASURED as holding more than one value."""
+    for col in table.columns:
+        name = col.name.lower()
+        if name in _CURRENCY_COLUMNS or name.endswith("_currency"):
+            if isinstance(col.distinct_count, int) and col.distinct_count > 1:
+                return col.name, col.distinct_count
+    return None
+
+
+def apply_measured_corrections(analysis: TableAnalysis, table: TableInfo) -> TableAnalysis:
+    """Put a measured fact in front of generated advice that contradicts it.
+
+    **Structure outranks the model** — the rule `resolve_sync_status` already states for
+    the code↔DB map, applied here to the schema index. The prompt now carries the
+    measurement (`_measured_suffix`), and a prompt is a request rather than a guarantee.
+
+    Production, 2026-09-15. `purchases.query_hints` read *"The 'amount' column should be
+    divided by 100 to convert from cents to dollars"* while `column_stats_json` for the
+    same row recorded `currency`: `distinct_count: 14`, spanning `BRL` to `VND`. `amount`
+    is minor units **of `currency`**; there is no dollar column anywhere. Summed as
+    dollars, fourteen currencies become one wrong number — stated confidently, because
+    the index told the agent to.
+
+    Additive on purpose. Rewriting model prose by pattern is how a correct sentence gets
+    corrupted by a guard aimed at a different one; this prepends what was counted and
+    leaves the rest to be read in its light. It fires only where there is a measurement
+    to stand on: a currency column whose distinct count was actually taken and is > 1.
+    """
+    measured = _multi_currency_columns(table)
+    if measured is None:
+        return analysis
+    money = [c.name for c in table.columns if any(h in c.name.lower() for h in _AMOUNT_HINTS)]
+    if not money:
+        return analysis
+
+    col, count = measured
+    caveat = (
+        f"MEASURED: `{col}` holds {count} distinct values in this table, so "
+        f"{', '.join(f'`{m}`' for m in money)} is denominated per row and is NOT a single "
+        f"currency. Any SUM or comparison across rows must group by `{col}` or convert "
+        f"through a rate; a bare total mixes currencies and is wrong."
+    )
+    if "MEASURED:" not in analysis.query_hints:
+        analysis.query_hints = f"{caveat}\n{analysis.query_hints}".strip()
+    return analysis
+
+
 class DbIndexValidator:
     """Uses LLM to analyze individual tables and generate connection summaries."""
 
@@ -216,19 +300,22 @@ class DbIndexValidator:
                 # `relevance_score` was the quiet one: `int({})` raised inside the
                 # try, discarding the analysis of this table AND of every table
                 # after it in the batch.
-                return TableAnalysis(
-                    table_name=table.name,
-                    is_active=as_bool(args.get("is_active", True), True),
-                    relevance_score=as_int(args.get("relevance_score", 3), 3, lo=1, hi=5),
-                    business_description=as_text(args.get("business_description", "")),
-                    data_patterns=as_text(args.get("data_patterns", "")),
-                    column_notes_json=col_notes,
-                    query_hints=as_text(args.get("query_hints", "")),
-                    code_match_status=_clamp_code_match(
-                        args.get("code_match_status", "no_code_info"),
+                return apply_measured_corrections(
+                    TableAnalysis(
+                        table_name=table.name,
+                        is_active=as_bool(args.get("is_active", True), True),
+                        relevance_score=as_int(args.get("relevance_score", 3), 3, lo=1, hi=5),
+                        business_description=as_text(args.get("business_description", "")),
+                        data_patterns=as_text(args.get("data_patterns", "")),
+                        column_notes_json=col_notes,
+                        query_hints=as_text(args.get("query_hints", "")),
+                        code_match_status=_clamp_code_match(
+                            args.get("code_match_status", "no_code_info"),
+                        ),
+                        code_match_details=as_text(args.get("code_match_details", "")),
+                        numeric_format_notes=numeric_notes,
                     ),
-                    code_match_details=as_text(args.get("code_match_details", "")),
-                    numeric_format_notes=numeric_notes,
+                    table,
                 )
 
             return self._fallback_analysis(table, sample_data)
@@ -299,19 +386,24 @@ class DbIndexValidator:
                     col_notes = as_text(args.get("column_notes", "{}"), "{}")
                     numeric_notes = as_text(args.get("numeric_format_notes", "{}"), "{}")
                     results.append(
-                        TableAnalysis(
-                            table_name=tbl.name,
-                            is_active=as_bool(args.get("is_active", True), True),
-                            relevance_score=as_int(args.get("relevance_score", 3), 3, lo=1, hi=5),
-                            business_description=as_text(args.get("business_description", "")),
-                            data_patterns=as_text(args.get("data_patterns", "")),
-                            column_notes_json=col_notes,
-                            query_hints=as_text(args.get("query_hints", "")),
-                            code_match_status=_clamp_code_match(
-                                args.get("code_match_status", "no_code_info"),
+                        apply_measured_corrections(
+                            TableAnalysis(
+                                table_name=tbl.name,
+                                is_active=as_bool(args.get("is_active", True), True),
+                                relevance_score=as_int(
+                                    args.get("relevance_score", 3), 3, lo=1, hi=5
+                                ),
+                                business_description=as_text(args.get("business_description", "")),
+                                data_patterns=as_text(args.get("data_patterns", "")),
+                                column_notes_json=col_notes,
+                                query_hints=as_text(args.get("query_hints", "")),
+                                code_match_status=_clamp_code_match(
+                                    args.get("code_match_status", "no_code_info"),
+                                ),
+                                code_match_details=as_text(args.get("code_match_details", "")),
+                                numeric_format_notes=numeric_notes,
                             ),
-                            code_match_details=as_text(args.get("code_match_details", "")),
-                            numeric_format_notes=numeric_notes,
+                            tbl,
                         )
                     )
                     tool_idx += 1
@@ -472,7 +564,17 @@ class DbIndexValidator:
             nullable = nullability_suffix(col.is_nullable)
             default = f" DEFAULT {col.default}" if col.default else ""
             comment = f" — {col.comment}" if col.comment else ""
-            parts.append(f"  - {col.name}: {col.data_type}{pk}{nullable}{default}{comment}")
+            # B-08: what `fetch_samples` MEASURED about this column, beside its type. It
+            # was measured, persisted and shown to nobody — this line ended at the
+            # comment, so the model writing `query_hints` described a column whose values
+            # the indexer had already counted. Production: `purchases.currency` measured
+            # `distinct_count: 14` spanning BRL to VND, and the note generated for it read
+            # "Currency code, likely USD". The guess was not the model's failure;
+            # withholding the measurement was ours.
+            parts.append(
+                f"  - {col.name}: {col.data_type}{pk}{nullable}{default}"
+                f"{_measured_suffix(col)}{comment}"
+            )
         if hidden_count > 0:
             parts.append(f"  (… {hidden_count} more columns)")
 
