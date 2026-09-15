@@ -6,6 +6,159 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — a comment that promises a test must name one, and the name must resolve
+
+B-05, and it is a class rather than one stale sentence. This codebase explains itself in
+comments, deliberately, and it is most of what makes its history legible — so *"a guard
+test now fails if anyone does this again"* is load-bearing prose: it is the only thing
+telling the next reader the rule is enforced rather than hoped for.
+
+Unnamed, that sentence is unfalsifiable. It cannot be checked, it cannot be found, and
+when the test moves the comment keeps asserting protection that no longer exists.
+Measured 2026-09-15: **13 comments promised a test, 8 named one, 5 did not** — among them
+the one guarding `orchestrator.py`'s `context.extra` mutation, whose defect left
+`exposed_learning_ids` empty on every request the product had ever served. All six are
+named now; the sixth was found by the guard itself, not by the survey that preceded it.
+
+Two rules: a promise names a `test_*.py`, and that file exists. The second is why this is
+a test and not a convention — a name that no longer resolves reads as a citation and is a
+dead link.
+
+**The name check runs over every comment, not only the ones still phrased as a promise**,
+and that independence is the whole design. The first version scanned inside promise
+blocks, so naming a test removed the phrasing that made it a promise and the reference it
+had just acquired stopped being checked: a guard whose coverage shrinks as the codebase
+complies is green exactly where the work was done. Both rules were verified against
+planted defects before being trusted.
+
+### Changed — the integration suite can run against PostgreSQL, and doing so found four differences
+
+B-02 asked for the unit suite on PostgreSQL as well as SQLite, because `Text` versus dict
+and `Numeric` versus float are invisible on SQLite. **128 unit-test files build their own
+in-memory engine deliberately, for speed**, so rewriting them buys nothing the integration
+suite does not: that suite is what writes through the ORM. `TEST_DATABASE_URL` now selects
+the engine there, defaulting to the SQLite it always used — **688 tests pass unchanged**.
+
+Run against `pgvector/pgvector:pg17`, it surfaced four things at once:
+
+1. **`doc_embeddings.embedding` is `vector(384)`**, so `create_all` fails without the
+   extension. On SQLite that whole migration is a deliberate no-op, so nothing had ever
+   asked.
+2. **asyncpg prepares every statement**, so PostgreSQL refuses `cannot insert multiple
+   commands into a prepared statement` — the grant trigger had to become three.
+3. **The harness holds an uncommitted transaction and every second connection blocks on
+   it.** `client` overrides `get_db` to yield the fixture's `db_session` while replacing
+   `async_session_factory` with one that opens its own connections. Under `StaticPool` on
+   SQLite both are one physical connection and a lock is impossible; on PostgreSQL they
+   are two. Reproduced from `pg_stat_activity`: `_grant_project_creation` leaves
+   `UPDATE users SET can_create_projects` *idle in transaction* holding the row while the
+   request path's `UPDATE users SET email_verified` waits on `Lock`/`transactionid`. A run
+   that takes 198 s on SQLite had not finished in 33 minutes.
+4. **PostgreSQL aborts the whole transaction after a failed statement** and refuses
+   everything until rollback (`InFailedSQLTransactionError`), where SQLite lets the session
+   carry on. This one is not about the harness: any code that swallows a database error and
+   keeps using the same session is **already broken in production and green in CI**, which
+   is precisely what B-02 exists to expose.
+
+**The CI job is deliberately not added yet.** A job failing on hundreds of harness errors
+teaches people to ignore it, and the thing to change first is the single-session assumption
+in (3). The switch, the extension step, the split DDL and the measurement ship now; the row
+stays open with that named as its next step.
+
+### Added — every SQL string that reaches psycopg is compiled before it ships
+
+PRJ-14 / B-03. The narrow check already existed: `test_pgvector_sql_is_valid.py` drives
+`PgVectorStore`'s real methods with a stub pool and compiles what they compose, written
+after a production rebuild ran 1 174 s and died with `only '%s', '%b', '%t' are allowed
+as placeholders, got '%''`.
+
+The board asked for it across `app/`, assuming other modules also compose psycopg SQL.
+**Measured: two do.** `PgVectorStore`, and `models/base.py`, whose `pg_advisory_lock`
+statement is an f-string — uncovered until now, and safe today only because the value it
+interpolates is an integer constant.
+
+So this is a static reader rather than a second runtime harness. It resolves each
+statement as far as the syntax allows (a literal, an f-string's literal parts, a
+concatenation), neutralises interpolations, and hands the result to psycopg's own
+client-side scanner. That reduction is the right one for this defect class: the scanner
+reads the **literal** text, so a stray `%` in a literal fragment survives every
+interpolation and is caught no matter how the pieces were assembled. Verified by planting
+one in the advisory-lock statement — it failed, naming the file and line — and removing it.
+
+A companion test fails if the walker stops finding both known composers by name, because
+a guard that has quietly stopped matching passes forever.
+
+B-01 closed with it, as a correction rather than a change: the tool-argument guard was
+**already** codebase-wide. `test_no_raw_tool_argument_reaches_a_typed_sink.py` walks
+`APP.rglob("*.py")` and flags a type-assuming method, builtin or slice applied to a raw
+tool argument anywhere in `app/`. The board row described a narrower state than the code
+was in.
+
+### Fixed — a generated non-answer is not stored
+
+Measured on production 2026-09-15 over 782 knowledge documents: **25** said in prose that
+the file had nothing to do with the database — including **all three** `query_pattern`
+documents, one of which described a translation bundle — and **16 more** described build
+output, vendor code and minified assets. Two `.gitkeep` files under
+`database/migrations/` were stored as **migration documents**, because the migration
+branch tested the path and never the content.
+
+Each cost an LLM call to produce, a row to hold, an embedding to index, and a retrieval
+slot it could win from a document that has an answer. The last part is the harm: a corpus
+is not improved by documents that say nothing, it is diluted by them.
+
+Two defences, in this order, because the cheapest way to not store a non-answer is to
+never buy it:
+
+- **`can_carry_schema()`** refuses the file before extraction, by SHAPE rather than by a
+  list of names seen in one repository — a directory the project did not author, a
+  placeholder, a file with no content at all, or a line longer than 2 000
+  characters, which no hand-written source has and a webpack bundle has little else of.
+  The size rule was a 40-byte floor for one CI run, justified by "the shortest real
+  Laravel migration measures 232 bytes" — and `CREATE TABLE t1 (id INT);` is 25 bytes and
+  a complete declaration. An arbitrary number standing in for a rule; the rule is stated
+  instead, and the measured case (`.gitkeep`) is empty and caught by name as well.
+  `panel/public/assets/js/vendor.js` is caught by that last rule and not by its name.
+  The directory walk's own skip set now reads from the same constant, so the two cannot
+  disagree.
+- **`is_non_answer()`** refuses the document after generation, for the file that looked
+  plausible and turned out not to be — a `SentrySampler.php` sitting among the models,
+  which no path rule can predict. Bounded twice on purpose: markers are matched as
+  phrases, because the word "database" appears in every document this pipeline writes,
+  and a long document is never a non-answer, because *"this model does not define a
+  table itself, it extends…"* is the opening of a real answer.
+
+An AST guard checks **both** storage sites — the batch and the retry after a failure.
+The second was found by walking, not by a failure, and a guard on one of two writers is
+a shape this repository has been caught by before. `generate_docs` now reports
+`non_answers=` beside `generated=` and `reused=`.
+
+### Fixed — `make lint` had never run, and its failure looked like a missing tool
+
+`VENV` was defined as `$(BACKEND_DIR)/.venv/bin`, relative to the repository root, while
+eight of the eleven recipes using it `cd $(BACKEND_DIR)` first. A relative path resolves
+*after* that `cd`, so each of them ran `backend/backend/.venv/bin/<tool>`:
+
+```
+$ make lint
+cd backend && backend/.venv/bin/ruff format --check app/ tests/
+/bin/sh: backend/.venv/bin/ruff: No such file or directory
+make: *** [lint] Error 127
+```
+
+`make lint`, `make check`, `make test`, `make test-all`, `make test-integration`,
+`make migrate` and `make dev-backend` — all of them, including the command `CLAUDE.md`
+documents as CI parity and the one `CONTRIBUTING.md` tells a contributor to run before
+pushing. The error names a path rather than a cause, so "ruff is not installed" is the
+obvious reading and the fix each time was to reach for the venv directly, which left the
+Makefile with its defect.
+
+`VENV` is now anchored on `$(CURDIR)` — this Makefile's own directory, so `make -C` and
+an invocation from a subdirectory resolve the same venv. `test_the_makefile_resolves_its_own_venv.py`
+pins the invariant rather than the spelling: a recipe that changes directory cannot use a
+path that was relative to the one it left. Verified against the original definition before
+being trusted.
+
 ### Removed — the cross-encoder reranker, which never ran
 
 `reranker_enabled` shipped default-on in 1.15.0 behind a benchmark gate, while

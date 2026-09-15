@@ -835,7 +835,8 @@ class OrchestratorAgent(BaseAgent):
             # caller and by every sub-agent copy downstream — which is the only way
             # a write from inside the SQL agent (``exposed_learning_ids``) reaches
             # ``ConversationalAgent.run``. Rebuilding it here orphaned every such
-            # write for the whole life of the product; a guard test now fails if
+            # write for the whole life of the product;
+            # ``tests/unit/test_exposure_survives_the_context_copy.py`` fails if
             # anyone passes ``extra=`` to ``replace(context, …)`` again.
             context.extra.update(
                 {

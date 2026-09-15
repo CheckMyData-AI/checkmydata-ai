@@ -47,7 +47,8 @@ BYTES_PER_EDGE = 150
 BYTES_PER_EMBEDDING = 384 * 4
 
 #: The LLM credit each tier's own description sells, in dollars per month. The single
-#: place the promise is a number; the prose repeats it and a test pins the two together.
+#: place the promise is a number; the prose repeats it and
+#: ``tests/unit/test_plan_token_ceilings.py`` pins the two together.
 #: ``enterprise`` is absent deliberately — it promises "no monthly cap", which is ``0``.
 PROMISED_CREDIT_USD: dict[str, float] = {"base": 30.0, "scale": 90.0, "team": 150.0}
 

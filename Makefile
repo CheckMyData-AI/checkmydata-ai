@@ -8,7 +8,13 @@ BACKEND_DIR  = backend
 FRONTEND_DIR = frontend
 LOGS_DIR     = logs
 PIDS_DIR     = .pids
-VENV         = $(BACKEND_DIR)/.venv/bin
+# Absolute, because most recipes below `cd $(BACKEND_DIR)` first and a relative
+# path resolves AFTER that cd — `backend/backend/.venv/bin/ruff`, which exists
+# nowhere. Every such target failed with `No such file or directory` and exit
+# 127, `make lint` and `make check` among them, so the documented CI-parity
+# command had never run. `CURDIR` is this Makefile's directory, so `make -C` and
+# an invocation from a subdirectory both resolve the same venv.
+VENV         = $(CURDIR)/$(BACKEND_DIR)/.venv/bin
 
 # ── Setup ────────────────────────────────────────────────────────
 
