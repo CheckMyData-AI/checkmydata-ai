@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the trap table stores money in a varchar, and the rule excluded it
+
+`payment_histories.price` is a **`varchar(20)`**. The rival comparison required a numeric
+type, so the one table it was built to warn about was the one table it could not see.
+
+That was found the same day and only because the previous change made refusals readable:
+
+```
+rival tables: payment_histories not compared — no money-shaped numeric column
+rival tables: ai_analyses not compared — `cost_usd` has no currency column beside it
+```
+
+Both lines are true and both were wrong about what to do next.
+
+**Money as text is admitted, and marked.** `SUM()` over a varchar is a coercion: the
+engine casts each value and a row that does not parse contributes **zero, silently** —
+the wrong number this product exists to prevent. So the caveat now says the column is
+text, and tells the reader to treat the **ratio** as the finding and the totals as
+indicative. Binary floating point stays refused: a coercion is knowable, an accumulated
+rounding error is not.
+
+**A column may name its own unit.** `cost_usd` is single-currency by construction and
+needs no currency column to say so. The accepted suffixes are a short explicit list —
+a rule taking any three letters would read `total_max` as a currency, which is how a
+narrow exception becomes the general case.
+
 ### Fixed — two correct fixes that cancelled each other
 
 Read back from production after both shipped: **no stored row carried the measured
