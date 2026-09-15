@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a nightly orphaned by a deploy is put back, not lost
+
+The orphan sweep put back `index_repo` and nothing else, on the recorded grounds that
+"the short kinds are covered by that cron". That is true of a `db_index` somebody started
+by hand. It is false of the cron itself.
+
+Measured on production 2026-09-14: a release at 22:20 UTC SIGTERMed the worker twenty
+minutes into a nightly that had begun at 22:00. `index_repo` had already finished, so the
+sweep found nothing to put back; the `daily_sync` parent and the `db_index` beneath it
+were reaped and never retried. The next attempt was the following night.
+
+Closing and re-enqueueing are now separate decisions, and the split is the point:
+
+- **Every orphanable kind is closed** — `index_repo`, `daily_sync`, `db_index`,
+  `code_db_sync`. A row belonging to a process that no longer exists is dead whatever its
+  kind, and leaving it `running` blocks its own replacement through the partial unique
+  index on `(project_id, kind, connection_id)`.
+- **`daily_sync` is put back**, because it is the run that was lost.
+- **`db_index` and `code_db_sync` are not put back on their own.** They execute *inside*
+  `run_for_project`, synchronously, rather than as separate queue jobs — so re-running
+  the parent redoes them, and enqueueing a child as well would have the parent's own step
+  collide with it on that index. Orphaned standalone, the nightly does cover them, which
+  is the original claim holding for the one case it was ever true of. Either way the row
+  is closed and catalogued, and the log says plainly that the next attempt is hours away.
+
+The test that asserted the old behaviour is replaced rather than extended: it encoded a
+belief the incident disproved.
+
 ### Fixed — a truncated tool call is not an analysis, and nothing was reading the reason
 
 The code↔DB map lost 86% of its `matched` rows after the 2026-09-10 model switch, and
