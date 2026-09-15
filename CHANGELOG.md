@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed — the cross-encoder reranker, which never ran
+
+`reranker_enabled` shipped default-on in 1.15.0 behind a benchmark gate, while
+`sentence-transformers` was in no dependency list at all. It was corrected to `False` on
+2026-08-10; between the two dates it degraded to a no-op in every deployment, and after
+them it was off. **No measurement of this stage exists, because it never executed.**
+
+Kept as scaffolding it would keep costing: two retrievers threaded a `reranker` and a
+`rerank_candidates` through their constructors, the hybrid retriever widened its per-leg
+fetch floor for a candidate pool nobody consumed, the schema retriever over-fetched BM25
+hits for the same reason, and four call sites built a reranker from settings on every
+construction. A CI gate ran its tests. A boot-time capability claim warned about it. Six
+documents described it. All of that maintained a stage that has produced no ranking in
+the product's history.
+
+Removed: `app/knowledge/reranker.py`, the settings `reranker_enabled`, `reranker_model`
+and `reranker_candidates`, the constructor parameters and over-fetch logic in
+`HybridRetriever` and `SchemaRetriever`, the four call sites, the `capability_report`
+claim, `test_reranker.py`, `test_w2_flag_flips.py`, the CI eval-gate entry, and the
+README bullet. The optional `ml` extra **stays**: it is also what the 768-d embedder
+needs, and that capability is live if unused.
+
+Two tests changed subject rather than being deleted. The capability-report tests used
+`reranker_enabled` as their worked example of "a flag whose dependency is missing";
+`chroma_embedding_model` on the Chroma backend has exactly that shape, so the behaviour
+under test is unchanged. And the README guard stops checking a *proximity* — "reranker"
+within ninety characters of "default-on", a rule that survived three rewordings of one
+bullet — and now checks an absence, which is what it should always have been: a reader
+cannot tell a removed feature from an undocumented one, and only one of those is worth
+their time.
+
+Bringing it back means a cross-encoder in the image, the memory for it on a worker that
+already runs over quota, and a benchmark that measures ranking rather than an oracle.
+
 ### Fixed — a nightly orphaned by a deploy is put back, not lost
 
 The orphan sweep put back `index_repo` and nothing else, on the recorded grounds that

@@ -2,7 +2,7 @@
 
 This package provides a deterministic, dependency-light way to measure
 retrieval quality so changes to the retrieval stack (RRF fusion, the
-cross-encoder reranker, schema retrieval) can be gated in CI instead of judged
+schema retrieval) can be gated in CI instead of judged
 by eye.
 
 Modules:

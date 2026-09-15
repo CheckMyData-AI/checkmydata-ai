@@ -93,7 +93,6 @@ class ContextLoader:
             from app.config import settings as _settings
             from app.knowledge.bm25_index import BM25Index
             from app.knowledge.hybrid_retriever import HybridRetriever
-            from app.knowledge.reranker import build_reranker
 
             self._hybrid_retriever = HybridRetriever(
                 bm25=BM25Index(_settings.bm25_data_dir),
@@ -102,11 +101,6 @@ class ContextLoader:
                 min_score=_settings.hybrid_min_score,
                 max_rank=_settings.hybrid_max_rank,
                 chroma_max_distance=_settings.rag_relevance_threshold,
-                reranker=build_reranker(
-                    enabled=_settings.reranker_enabled,
-                    model_name=_settings.reranker_model,
-                ),
-                rerank_candidates=_settings.reranker_candidates,
             )
         return self._hybrid_retriever
 

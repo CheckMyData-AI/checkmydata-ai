@@ -119,7 +119,6 @@ def test_the_report_still_logs_on_success(monkeypatch, caplog) -> None:
     from app.config import settings
 
     monkeypatch.setattr(settings, "chroma_embedding_model", "")
-    monkeypatch.setattr(settings, "reranker_enabled", False, raising=False)
     monkeypatch.setattr(settings, "chroma_server_url", "", raising=False)
     with caplog.at_level(logging.INFO, logger="app.ops.capability_report"):
         assert report_capabilities() == []

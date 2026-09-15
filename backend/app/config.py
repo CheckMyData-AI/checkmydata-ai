@@ -933,19 +933,13 @@ class Settings(BaseSettings):
     hybrid_max_rank: int = 30
     hybrid_k: int = 20
 
-    # Phase 3: cross-encoder reranking (second stage over fused RRF hits).
-    #
-    # OFF by default since 2026-08-10, and the change is a correction rather than a
-    # regression: `sentence-transformers` has never been in any dependency list, so
-    # this defaulted to True while degrading to a no-op in every deployment that has
-    # ever run. A flag that advertises a capability the image does not carry is worse
-    # than one that is off -- it is read as configuration and behaves as absence.
-    #
-    # To turn it on for real: `pip install -e '.[ml]'` (see optional-dependencies),
-    # which also unlocks the 768-d embedder named by `chroma_embedding_model`.
-    reranker_enabled: bool = False
-    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    reranker_candidates: int = 30
+    # Phase 3's cross-encoder reranking was removed in 2026-09. `reranker_enabled`,
+    # `reranker_model` and `reranker_candidates` lived here; the flag defaulted to
+    # True until the 2026-08-10 correction while `sentence-transformers` had never
+    # been in any dependency list, so the stage degraded to a no-op in every
+    # deployment that ever ran, and it was off for the month after. Nothing measured
+    # it because nothing could: it never executed. Deleted rather than kept as dead
+    # scaffolding — CHANGELOG names what would have to come back with it.
 
     # M4: question-aware schema retrieval (BM25 + embeddings over DbIndex).
     # Default ON: retrieved tables are unioned with the legacy relevance-score
@@ -970,7 +964,7 @@ class Settings(BaseSettings):
     # Phase 4: orchestrator Context Planner. When enabled, the orchestrator
     # plans which knowledge categories to load (query-aware lazy loading) and
     # assembles a single traceable ContextPack instead of 6+ eager loads.
-    # ON by default as of W2 (gated on retrieval-eval + reranker tests).
+    # ON by default as of W2 (gated on the retrieval eval).
     # mode: "heuristic" (zero-cost) or "llm".
     context_planner_enabled: bool = True
     context_planner_mode: str = "heuristic"

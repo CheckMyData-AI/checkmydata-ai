@@ -2,7 +2,7 @@
 
 `RERANKER_ENABLED=true` sat in production while neither `sentence_transformers` nor
 `torch` was in the image (verified inside the running dyno on 2026-08-23). Nothing broke:
-the reranker degrades honestly to a no-op. But an operator reading `heroku config` saw an
+the code degraded honestly. But an operator reading `heroku config` saw an
 enabled feature that does not exist, and had no way to learn otherwise — the only signal
 was one WARNING emitted lazily, on first use of the vector store, hours into a dyno's life
 and long past the boot log anybody reads after a deploy.
@@ -43,30 +43,40 @@ def loud(caplog):
     return caplog
 
 
+# These three used `reranker_enabled` as the worked example until that capability was
+# deleted in 2026-09. `chroma_embedding_model` on the Chroma backend has the same
+# shape — a setting whose promise is met only when `sentence_transformers` imports —
+# so the behaviour under test is unchanged and only the subject moved.
 def test_an_enabled_flag_without_its_dependency_warns(loud, monkeypatch) -> None:
     monkeypatch.setattr("app.ops.capability_report._importable", lambda name: False)
-    monkeypatch.setattr("app.ops.capability_report.settings.reranker_enabled", True)
+    monkeypatch.setattr("app.ops.capability_report._active_backend", lambda: "chroma")
+    monkeypatch.setattr(
+        "app.ops.capability_report.settings.chroma_embedding_model", "BAAI/bge-base-en-v1.5"
+    )
 
     unmet = report_capabilities()
 
-    assert "reranker_enabled" in {c.setting for c in unmet}
-    assert any("reranker_enabled" in m for m in _claims(loud))
+    assert "chroma_embedding_model" in {c.setting for c in unmet}
+    assert any("chroma_embedding_model" in m for m in _claims(loud))
     assert any(r.levelno == logging.WARNING for r in loud.records)
 
 
 def test_the_same_flag_with_its_dependency_present_is_silent(loud, monkeypatch) -> None:
     monkeypatch.setattr("app.ops.capability_report._importable", lambda name: True)
-    monkeypatch.setattr("app.ops.capability_report.settings.reranker_enabled", True)
+    monkeypatch.setattr("app.ops.capability_report._active_backend", lambda: "chroma")
+    monkeypatch.setattr(
+        "app.ops.capability_report.settings.chroma_embedding_model", "BAAI/bge-base-en-v1.5"
+    )
 
     unmet = report_capabilities()
 
-    assert "reranker_enabled" not in {c.setting for c in unmet}
+    assert "chroma_embedding_model" not in {c.setting for c in unmet}
 
 
 def test_a_disabled_flag_is_not_reported(loud, monkeypatch) -> None:
     """Off and unavailable is a coherent state, not a warning."""
     monkeypatch.setattr("app.ops.capability_report._importable", lambda name: False)
-    monkeypatch.setattr("app.ops.capability_report.settings.reranker_enabled", False)
+    monkeypatch.setattr("app.ops.capability_report.settings.chroma_embedding_model", "")
 
     assert "reranker_enabled" not in {c.setting for c in report_capabilities()}
 
@@ -115,7 +125,6 @@ def test_a_clean_configuration_says_so_once(loud, monkeypatch) -> None:
     """Silence is indistinguishable from the check not running."""
     monkeypatch.setattr("app.ops.capability_report._importable", lambda name: True)
     monkeypatch.setattr("app.ops.capability_report.settings.chroma_server_url", "")
-    monkeypatch.setattr("app.ops.capability_report.settings.reranker_enabled", False)
     monkeypatch.setattr("app.ops.capability_report.settings.chroma_embedding_model", "")
 
     assert report_capabilities() == []
