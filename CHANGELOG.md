@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — `make lint` had never run, and its failure looked like a missing tool
+
+`VENV` was defined as `$(BACKEND_DIR)/.venv/bin`, relative to the repository root, while
+eight of the eleven recipes using it `cd $(BACKEND_DIR)` first. A relative path resolves
+*after* that `cd`, so each of them ran `backend/backend/.venv/bin/<tool>`:
+
+```
+$ make lint
+cd backend && backend/.venv/bin/ruff format --check app/ tests/
+/bin/sh: backend/.venv/bin/ruff: No such file or directory
+make: *** [lint] Error 127
+```
+
+`make lint`, `make check`, `make test`, `make test-all`, `make test-integration`,
+`make migrate` and `make dev-backend` — all of them, including the command `CLAUDE.md`
+documents as CI parity and the one `CONTRIBUTING.md` tells a contributor to run before
+pushing. The error names a path rather than a cause, so "ruff is not installed" is the
+obvious reading and the fix each time was to reach for the venv directly, which left the
+Makefile with its defect.
+
+`VENV` is now anchored on `$(CURDIR)` — this Makefile's own directory, so `make -C` and
+an invocation from a subdirectory resolve the same venv. `test_the_makefile_resolves_its_own_venv.py`
+pins the invariant rather than the spelling: a recipe that changes directory cannot use a
+path that was relative to the one it left. Verified against the original definition before
+being trusted.
+
 ### Removed — the cross-encoder reranker, which never ran
 
 `reranker_enabled` shipped default-on in 1.15.0 behind a benchmark gate, while
