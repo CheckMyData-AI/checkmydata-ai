@@ -336,3 +336,78 @@ class TestAnAbsurdRatioIsNotARivalry:
         ceiling must not cut those out to keep the absurd ones."""
         for ratio in (1.2, 4.3, 12.0, 19.9):
             assert Rivalry("a", "b", "2026-08", 1000.0, 1000.0 * ratio).diverges is True
+
+
+class TestTheTrapTableItselfQualifies:
+    """`payment_histories.price` is a `varchar(20)`, and the rule excluded it.
+
+    Measured on production 2026-09-15, from the refusal log the previous change added —
+    which is the only reason this was found at all: *"payment_histories not compared — no
+    money-shaped numeric column"*. Correct by the letter of a rule that required a numeric
+    type, and useless for the purpose: that is the trap table the whole comparison exists
+    to warn about, and it was the one table the comparison could not see.
+
+    Admitted now, and MARKED. `SUM()` over text is a coercion: the engine casts each value
+    and a row that does not parse contributes zero without saying so — the silent wrong
+    number this product exists to prevent. The caveat says the column is text, so a reader
+    discounts the totals and keeps the ratio, which is the part carrying the warning.
+    """
+
+    def test_money_stored_as_text_is_compared(self) -> None:
+        t = _table(
+            "payment_histories",
+            [("price", "varchar(20)"), ("currency", "varchar(255)"), ("created_at", "timestamp")],
+        )
+        described = describe(t)
+        assert described is not None
+        assert (described.money_column, described.money_kind) == ("price", "text")
+
+    def test_a_numeric_column_is_not_marked(self) -> None:
+        assert describe(_table("purchases", _MONEY)).money_kind == "numeric"
+
+    def test_the_caveat_says_the_total_is_a_coercion(self) -> None:
+        r = Rivalry(
+            "purchases",
+            "payment_histories",
+            "2026-08",
+            412_000.0,
+            1_771_600.0,
+            coerced=("payment_histories",),
+        )
+        text = r.caveat_for("purchases")
+        assert "stored as TEXT" in text
+        assert "contributes zero silently" in text
+        assert "RATIO as the finding" in text
+
+    def test_a_pair_of_numeric_columns_says_nothing_about_coercion(self) -> None:
+        """A note on every caveat is a note nobody reads."""
+        r = Rivalry("a", "b", "2026-08", 100.0, 500.0)
+        assert "TEXT" not in r.caveat_for("a")
+
+    def test_a_float_money_column_is_still_refused(self) -> None:
+        """Text is admitted because the total is knowably a coercion. Binary floating
+        point is refused because the error is invisible and accumulates."""
+        t = _table(
+            "t",
+            [("amount", "double precision"), ("currency", "varchar"), ("created_at", "datetime")],
+        )
+        assert describe(t) is None
+
+
+class TestAColumnCanNameItsOwnUnit:
+    """`cost_usd` has no currency column, and needs none.
+
+    From the same refusal log: *"`cost_usd` has no currency column beside it"* — true, and
+    beside the point. A column naming its unit is single-currency by construction.
+    """
+
+    def test_an_iso_suffix_satisfies_the_unit_rule(self) -> None:
+        t = _table("ai_analyses", [("cost_usd", "decimal(10,6)"), ("created_at", "timestamp")])
+        assert describe(t) is not None
+
+    @pytest.mark.parametrize("name", ["total_max", "amount_new", "price_old", "fee_avg"])
+    def test_a_three_letter_suffix_that_is_not_a_currency_does_not(self, name: str) -> None:
+        """A rule accepting any three letters would read `_max` as a currency, which is
+        how a narrow exception becomes the general case."""
+        t = _table("t", [(name, "bigint"), ("created_at", "datetime")])
+        assert describe(t) is None

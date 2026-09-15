@@ -58,6 +58,22 @@ MONEY_NAME_HINTS = ("amount", "price", "total", "cost", "revenue", "fee", "balan
 #: measured.
 MONEY_TYPES = ("int", "bigint", "smallint", "decimal", "numeric", "money")
 
+#: …and money stored as TEXT, which is admitted with its own mark rather than refused.
+#:
+#: Measured on production 2026-09-15: `payment_histories.price` is `varchar(20)`. That is
+#: the trap table this whole comparison was built to warn about, and a rule requiring a
+#: numeric type excluded it — correct by the letter, useless for the purpose. The log said
+#: so within a minute of the refusals becoming readable: *"payment_histories not compared
+#: — no money-shaped numeric column"*.
+#:
+#: Admitted, because a comparison that cannot see the one table it exists for is worth
+#: nothing. Marked, because `SUM()` over text is a COERCION: the engine casts each value
+#: and a row that does not parse contributes zero without saying so, which is exactly the
+#: silent-wrong-number this product exists to prevent. The caveat says the column is text
+#: so the reader discounts the totals and keeps the ratio, which is the part that carries
+#: the warning.
+TEXT_TYPES = ("char", "text", "string")
+
 #: Type fragments that make a column a period axis.
 DATE_TYPES = ("date", "time", "timestamp")
 
@@ -81,22 +97,52 @@ class MoneyTable:
     money_column: str
     date_column: str
     row_count: int
+    #: ``"numeric"`` or ``"text"``. A text column's `SUM()` is a coercion, and the caveat
+    #: says so rather than presenting a coerced total as a measurement.
+    money_kind: str = "numeric"
 
 
-def _is_money_column(col: ColumnInfo) -> bool:
+def _money_kind(col: ColumnInfo) -> str | None:
+    """``"numeric"``, ``"text"``, or nothing — what kind of money column this is."""
     name = col.name.lower()
     dtype = (col.data_type or "").lower()
     if not any(hint in name for hint in MONEY_NAME_HINTS):
-        return False
+        return None
     if name.endswith(("_id", "_count", "_rate", "_percent", "_pct")):
         # `total_count` is a tally and `amount_rate` is a ratio; neither is money, and
         # summing one produces a number that looks like revenue and is not.
-        return False
-    return any(t in dtype for t in MONEY_TYPES)
+        return None
+    if any(t in dtype for t in MONEY_TYPES):
+        return "numeric"
+    if any(t in dtype for t in TEXT_TYPES):
+        return "text"
+    return None
+
+
+def _is_money_column(col: ColumnInfo) -> bool:
+    return _money_kind(col) is not None
 
 
 def _is_date_column(col: ColumnInfo) -> bool:
     return any(t in (col.data_type or "").lower() for t in DATE_TYPES)
+
+
+#: Currency codes common enough to appear as a column-name suffix. A short list on
+#: purpose: `_usd` is a unit declaration, `_max` is not, and a rule that accepted any
+#: three letters would read the second as the first.
+_ISO_SUFFIXES = ("usd", "eur", "gbp", "rub", "brl", "mxn", "ngn", "vnd", "inr", "jpy")
+
+
+def _names_its_own_unit(col: ColumnInfo) -> bool:
+    """`cost_usd` declares its currency in its own name.
+
+    Found the same way as everything else here — the refusal log said
+    *"`cost_usd` has no currency column beside it"* for `ai_analyses`, which is true and
+    beside the point: a column that names its unit is single-currency by construction and
+    needs no column to say so. This is the narrow exception to the rule above it.
+    """
+    name = col.name.lower()
+    return any(name.endswith(f"_{code}") for code in _ISO_SUFFIXES)
 
 
 def _is_currency_column(col: ColumnInfo) -> bool:
@@ -150,10 +196,12 @@ def describe(table: TableInfo) -> MoneyTable | None:
         _refused(table.name, "a view's aggregate measures its definition, not the data")
         return None
 
-    money = next((c.name for c in table.columns if _is_money_column(c)), None)
-    if money is None:
-        _refused(table.name, "no money-shaped numeric column")
+    money_col = next((c for c in table.columns if _is_money_column(c)), None)
+    if money_col is None:
+        _refused(table.name, "no money-shaped column")
         return None
+    money = money_col.name
+    kind = _money_kind(money_col) or "numeric"
 
     # A money column is only comparable when the table records what unit it is in.
     #
@@ -174,8 +222,8 @@ def describe(table: TableInfo) -> MoneyTable | None:
     # The rule also connects to B-08: a currency column is what makes an amount
     # interpretable at all, and a table that records one is a table that knows it is
     # handling money.
-    if not any(_is_currency_column(c) for c in table.columns):
-        _refused(table.name, f"`{money}` has no currency column beside it")
+    if not (any(_is_currency_column(c) for c in table.columns) or _names_its_own_unit(money_col)):
+        _refused(table.name, f"`{money}` names no unit and has no currency column beside it")
         return None
 
     dates = [c.name for c in table.columns if _is_date_column(c)]
@@ -200,6 +248,7 @@ def describe(table: TableInfo) -> MoneyTable | None:
         money_column=money,
         date_column=date_col,
         row_count=rows,
+        money_kind=kind,
     )
 
 
@@ -260,6 +309,9 @@ class Rivalry:
     period: str
     left_total: float
     right_total: float
+    #: Tables whose money column is TEXT. Their totals are coercions, and the caveat says
+    #: so instead of presenting one as a measurement.
+    coerced: tuple[str, ...] = ()
 
     @property
     def ratio(self) -> float:
@@ -290,12 +342,21 @@ class Rivalry:
         theirs = self.right_total if table == self.left else self.left_total
         bigger = "larger" if mine > theirs else "smaller"
         factor = "∞" if self.ratio == float("inf") else f"{self.ratio:.2f}x"
+        coerced = [c for c in self.coerced if c in (table, other)]
+        note = ""
+        if coerced:
+            which = ", ".join(f"`{c}`" for c in coerced)
+            note = (
+                f" The money column on {which} is stored as TEXT, so these totals are "
+                f"coercions: a row that does not parse contributes zero silently. Treat "
+                f"the RATIO as the finding and the totals as indicative."
+            )
         return (
             f"MEASURED: over {self.period}, the same aggregate returns {mine:,.2f} here "
             f"and {theirs:,.2f} on `{other}` — {factor} apart, this side {bigger}. "
             f"The two tables are NOT interchangeable for a revenue question; one of them "
             f"counts something the other does not. Establish which before summing either, "
-            f"and say which table the answer came from."
+            f"and say which table the answer came from.{note}"
         )
 
 
@@ -367,7 +428,8 @@ async def measure_rivalries(
             # relationship, and saying "4x apart" about it would be a fabricated warning.
             continue
 
-        rivalry = Rivalry(left.name, right.name, label, l_total, r_total)
+        coerced = tuple(t.name for t in (left, right) if t.money_kind == "text")
+        rivalry = Rivalry(left.name, right.name, label, l_total, r_total, coerced=coerced)
         if rivalry.diverges:
             out.append(rivalry)
     return out
