@@ -139,13 +139,55 @@ class TestTheReplacementPutsBackWhatItReplaced:
         await _run(db, wf="w1", boot="older", status="completed")
         assert await requeue_orphaned_runs(db) == 0
 
-    async def test_only_index_repo_is_put_back(self, db) -> None:
-        """The same asymmetry `StaleRunReaper._REQUEUE_TASKS` already carries: the
-        nightly cron re-runs the short kinds, and only `index_repo` leaves an
-        `embedding_fingerprint` marker asserting a rebuild that did not happen."""
-        await _run(db, wf="w1", boot="older", kind="db_index")
-        await _run(db, wf="w2", boot="older", kind="daily_sync")
-        assert await requeue_orphaned_runs(db) == 0
+    async def test_an_orphaned_nightly_is_put_back(self, db) -> None:
+        """B-13. This test asserted the opposite until 2026-09-15, and the belief it
+        encoded — "the nightly cron re-runs the short kinds" — is true of a `db_index`
+        somebody started by hand and false of the cron itself.
+
+        Measured on production 2026-09-14: a release at 22:20 UTC SIGTERMed the worker
+        twenty minutes into a nightly that began at 22:00. `index_repo` had already
+        finished, so the sweep found nothing to put back, and the `daily_sync` parent
+        was reaped and never retried. The next attempt was the following night.
+        """
+        run_id = await _run(db, wf="w1", boot="older", kind="daily_sync")
+        enq = AsyncMock(return_value="job-9")
+        with patch("app.core.task_queue.enqueue", new=enq):
+            assert await requeue_orphaned_runs(db) == 1
+
+        assert enq.await_args.args[0] == "run_daily_project_knowledge_sync"
+        assert enq.await_args.kwargs == {"project_id": "p1"}
+        assert "force_full" not in enq.await_args.kwargs, (
+            "force_full belongs to the repo index alone; the nightly has no such argument"
+        )
+        row = await db.get(IndexingRun, run_id)
+        await db.refresh(row)
+        assert row.status == "failed"
+        assert row.error == ORPHAN_ERROR
+
+    async def test_a_nightly_s_own_steps_are_closed_but_not_enqueued_separately(self, db) -> None:
+        """`db_index` and `code_db_sync` execute INSIDE `run_for_project`, synchronously
+        — they are not separate queue jobs. Re-running the parent redoes them, and
+        enqueueing a child as well would have the parent's own step collide with it on
+        the partial unique index. So they are closed, never resurrected.
+
+        Closing still matters on its own: a row left `running` blocks its own
+        replacement through that same index, which is the state that made three
+        enqueued rebuilds bounce with "already has an active index run".
+        """
+        db_id = await _run(db, wf="w1", boot="older", kind="db_index")
+        sync_id = await _run(db, wf="w2", boot="older", kind="code_db_sync")
+        enq = AsyncMock(return_value="job-x")
+        with patch("app.core.task_queue.enqueue", new=enq):
+            assert await requeue_orphaned_runs(db) == 0
+            enq.assert_not_awaited()
+
+        for run_id in (db_id, sync_id):
+            row = await db.get(IndexingRun, run_id)
+            await db.refresh(row)
+            assert row.status == "failed", "a row left running blocks its own replacement"
+            assert row.error == ORPHAN_ERROR
+            assert row.finished_at is not None
+            assert row.failure_kind == "transient"
 
 
 class TestItNeverTakesTheWorkerDownWithIt:

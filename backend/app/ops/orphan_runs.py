@@ -44,11 +44,37 @@ logger = logging.getLogger(__name__)
 #: An orphan is neither of those things.
 ORPHAN_ERROR = "orphaned by a process restart"
 
-#: Only this kind, and the asymmetry matches `StaleRunReaper._REQUEUE_TASKS` for the same
-#: reason: `reconcile_embeddings` advances the `embedding_fingerprint` marker on enqueue,
-#: so an interrupted `index_repo` leaves a marker asserting a rebuild that never ran, and
-#: the nightly cron is `force_full=False` and cannot redo it. The short kinds are covered
-#: by that cron.
+#: The kinds this sweep closes. It used to be `index_repo` alone, on the recorded
+#: grounds that "the short kinds are covered by that cron" — which is true of a
+#: `db_index` a user started by hand and **false of one the cron itself was running**.
+#: Measured 2026-09-14 (B-13): a release at 22:20 UTC SIGTERMed the worker twenty
+#: minutes into a nightly that began at 22:00. `index_repo` had already finished, so
+#: the sweep found nothing to put back; the `daily_sync` parent and the `db_index`
+#: under it were reaped and never retried, and that night simply did not happen.
+#:
+#: Closing is separate from re-enqueueing, and the split is the point. A row belonging
+#: to a process that no longer exists is dead whatever its kind, and leaving it
+#: `running` blocks its own replacement through the partial unique index on
+#: `(project_id, kind, connection_id)`. So every kind is closed; only some are put back.
+_ORPHANABLE_KINDS = ("index_repo", "daily_sync", "db_index", "code_db_sync")
+
+#: What to enqueue for a kind that can be put back, and the two absentees are a
+#: decision rather than an omission.
+#:
+#: `daily_sync` is here because it is the run that was lost. Its `db_index` and
+#: `code_db_sync` steps execute **inside** `run_for_project`, synchronously — they are
+#: not separate queue jobs — so re-running the parent redoes them, and re-running a
+#: child as well would have the parent's own step collide with it on the unique index.
+#:
+#: `db_index` and `code_db_sync` are therefore NOT put back on their own. Orphaned
+#: under a parent, the parent covers them. Orphaned standalone — a person pressed
+#: "Test connection" and left — the nightly covers them, which is the claim that was
+#: true all along for this case and only this case. Either way the row is closed and
+#: catalogued, so the gap is visible in `/api/logs` rather than inferred.
+_REQUEUE_TASKS: dict[str, str] = {
+    "index_repo": "run_repo_index",
+    "daily_sync": "run_daily_project_knowledge_sync",
+}
 
 
 async def _catalog(
@@ -56,6 +82,7 @@ async def _catalog(
     project_id: str,
     run_id: str,
     current_step: str | None,
+    kind: str,
     *,
     message: str | None = None,
     failure_kind: str = "transient",
@@ -73,7 +100,7 @@ async def _catalog(
             session,
             project_id=project_id,
             source="run",
-            kind=_KIND,
+            kind=kind,
             message=message or f"{ORPHAN_ERROR} (step: {current_step or 'unknown'})",
             failure_kind=failure_kind,
             sample_ref=run_id,
@@ -81,9 +108,6 @@ async def _catalog(
         )
     except Exception:
         logger.warning("orphan sweep: failed to catalog orphaned run %s", run_id[:8], exc_info=True)
-
-
-_KIND = "index_repo"
 
 
 async def requeue_orphaned_runs(session: AsyncSession) -> int:
@@ -100,7 +124,7 @@ async def requeue_orphaned_runs(session: AsyncSession) -> int:
             await session.scalars(
                 select(IndexingRun).where(
                     IndexingRun.status == "running",
-                    IndexingRun.kind == _KIND,
+                    IndexingRun.kind.in_(_ORPHANABLE_KINDS),
                 )
             )
         ).all()
@@ -155,19 +179,34 @@ async def requeue_orphaned_runs(session: AsyncSession) -> int:
         # `error_log` row, so `/api/logs` showed nothing at all. Best-effort by
         # construction: a diagnostic that can abort the recovery it describes is worse
         # than one that is occasionally incomplete.
-        await _catalog(session, row.project_id, row.id, orphaned_step)
+        await _catalog(session, row.project_id, row.id, orphaned_step, row.kind)
+
+        task = _REQUEUE_TASKS.get(row.kind)
+        if task is None:
+            # Closed and catalogued, not put back — see `_REQUEUE_TASKS`. Said out loud
+            # because "the nightly will cover it" is a claim about the future, and an
+            # operator reading this at 22:30 is entitled to know the next attempt is
+            # hours away rather than seconds.
+            logger.info(
+                "orphan sweep: closed orphaned %s for project %s (step %s); not put "
+                "back on its own — the nightly sync covers this kind.",
+                row.kind,
+                row.project_id[:8],
+                orphaned_step or "unknown",
+            )
+            continue
+
+        kwargs: dict = {"project_id": row.project_id}
+        if row.kind == "index_repo":
+            kwargs["force_full"] = bool(meta.get("force_full", False))
 
         try:
-            job_id = await enqueue(
-                "run_repo_index",
-                project_id=row.project_id,
-                force_full=bool(meta.get("force_full", False)),
-            )
+            job_id = await enqueue(task, **kwargs)
         except Exception:
             logger.error(
                 "orphan sweep: %s for project %s was orphaned by a restart and could "
                 "NOT be put back — nothing is rebuilding it.",
-                _KIND,
+                row.kind,
                 row.project_id[:8],
                 exc_info=True,
             )
@@ -177,7 +216,7 @@ async def requeue_orphaned_runs(session: AsyncSession) -> int:
             logger.error(
                 "orphan sweep: %s for project %s was orphaned by a restart and could "
                 "NOT be put back — nothing is rebuilding it.",
-                _KIND,
+                row.kind,
                 row.project_id[:8],
             )
             await _catalog(
@@ -185,6 +224,7 @@ async def requeue_orphaned_runs(session: AsyncSession) -> int:
                 row.project_id,
                 row.id,
                 orphaned_step,
+                row.kind,
                 message=f"{ORPHAN_ERROR} (re-enqueue failed — nothing is rebuilding it)",
                 failure_kind="fatal",
             )
@@ -193,19 +233,18 @@ async def requeue_orphaned_runs(session: AsyncSession) -> int:
         requeued += 1
         logger.info(
             "orphan sweep: re-enqueued %s for project %s, orphaned at step %s by the "
-            "restart this process is (force_full=%s, job=%s)",
-            _KIND,
+            "restart this process is (job=%s)",
+            row.kind,
             row.project_id[:8],
             row.current_step or "unknown",
-            bool(meta.get("force_full", False)),
             job_id,
         )
 
     if rows:
         logger.info(
-            "orphan sweep: %d running %s run(s) seen, %d put back",
+            "orphan sweep: %d running run(s) seen across %s, %d put back",
             len(rows),
-            _KIND,
+            "/".join(_ORPHANABLE_KINDS),
             requeued,
         )
     return requeued
