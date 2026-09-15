@@ -69,6 +69,14 @@ _LOGGED_BUT_NOT_SECRET = {
     "history_tokens_est",
     "usage.get('total_tokens', 0) or usage.get('prompt_tokens', 0)"
     " + usage.get('completion_tokens', 0)",
+    # Completion budgets, not credentials. They are logged on purpose: the line that
+    # names them is the one saying a tool call was cut off at that cap, and a
+    # truncation report that will not say WHICH number was reached leaves the operator
+    # grepping config for the answer. The sweep matches on the substring "token", which
+    # is right for `api_token` and wrong for `max_tokens` — hence the allowlist.
+    "settings.sync_analysis_max_tokens",
+    "settings.sync_analysis_batch_max_tokens",
+    "settings.db_index_analysis_max_tokens",
 }
 
 
