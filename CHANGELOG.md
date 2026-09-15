@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — two correct fixes that cancelled each other
+
+Read back from production after both shipped: **no stored row carried the measured
+currency caveat**, while `apply_measured_corrections` and `strip_measured_lines` were both
+live and both doing exactly what they were written to do.
+
+The store site corrected the analysis and then stripped it. The strip exists to remove a
+*previous* run's caveats from a reused clone, and it removes every line beginning with the
+prefix — including the one the correction had just added, three lines earlier.
+
+Neither function is wrong. A test on either passes. **The defect is only visible as a
+sequence**, so that is what the guard now checks: within the loop that builds the stored
+row the strip appears *before* the correction, exactly once, and the join that follows
+does not strip again. Verified by replanting the production order, which fails it.
+
+The stale strip still does its job — a reused analysis arrives carrying last night's
+measured lines and loses them before this run's are computed — and
+`apply_measured_corrections` strips before it prepends, so the two are idempotent rather
+than merely ordered.
+
 ### Fixed — an absurd ratio is not a rivalry, and a refusal now says why
 
 The currency rule worked: the second production run of the rival comparison no longer

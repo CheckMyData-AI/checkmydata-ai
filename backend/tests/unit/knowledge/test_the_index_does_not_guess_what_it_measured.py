@@ -224,3 +224,54 @@ def test_the_model_s_own_prose_is_never_edited() -> None:
 
     prose = "Nothing here is MEASURED: the column is undocumented."
     assert strip_measured_lines(f"MEASURED: counted 3\n{prose}") == prose
+
+
+def test_the_stale_strip_runs_before_the_correction_not_after() -> None:
+    """Two correct fixes cancelled each other in production, and only the order says so.
+
+    Measured 2026-09-15: `apply_measured_corrections` was live, `strip_measured_lines` was
+    live, both did what they were written to do — and **no stored row carried the currency
+    caveat**, because the store site stripped the analysis AFTER correcting it and the
+    strip removes every line beginning with the prefix, including the one just added.
+
+    Neither function is wrong. A test on either would pass. What is wrong is only visible
+    as a sequence, so that is what this checks: within the loop that builds the stored
+    row, the strip appears before the correction and the join that follows does not strip
+    again.
+    """
+    tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
+    source = PIPELINE.read_text(encoding="utf-8").splitlines()
+
+    strip_lines = [
+        i + 1
+        for i, line in enumerate(source)
+        if "strip_measured_lines(analysis.query_hints)" in line
+    ]
+    correct_lines = [
+        i + 1
+        for i, line in enumerate(source)
+        if "apply_measured_corrections(analysis, table_info)" in line
+    ]
+    assert len(strip_lines) == 1, (
+        f"expected exactly one strip of the analysis hints, found {strip_lines}. Two "
+        "means one of them is undoing the correction; none means a reused analysis "
+        "carries last night's caveats for ever."
+    )
+    assert len(correct_lines) == 1, correct_lines
+    assert strip_lines[0] < correct_lines[0], (
+        f"the stale-caveat strip is at line {strip_lines[0]} and the correction at "
+        f"{correct_lines[0]}. Stripping after correcting removes the caveat that was "
+        "just added — both functions stay correct and the stored row carries nothing."
+    )
+
+    # …and the row that is stored must use the corrected value, not re-strip it.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values, strict=False):
+            if isinstance(key, ast.Constant) and key.value == "query_hints":
+                rendered = ast.unparse(value)
+                assert "strip_measured_lines" not in rendered, (
+                    "the stored `query_hints` strips again at the point of storage, which "
+                    "removes this run's measured caveats along with the stale ones"
+                )
