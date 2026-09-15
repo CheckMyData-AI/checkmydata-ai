@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the integration suite can run against PostgreSQL, and doing so found four differences
+
+B-02 asked for the unit suite on PostgreSQL as well as SQLite, because `Text` versus dict
+and `Numeric` versus float are invisible on SQLite. **128 unit-test files build their own
+in-memory engine deliberately, for speed**, so rewriting them buys nothing the integration
+suite does not: that suite is what writes through the ORM. `TEST_DATABASE_URL` now selects
+the engine there, defaulting to the SQLite it always used — **688 tests pass unchanged**.
+
+Run against `pgvector/pgvector:pg17`, it surfaced four things at once:
+
+1. **`doc_embeddings.embedding` is `vector(384)`**, so `create_all` fails without the
+   extension. On SQLite that whole migration is a deliberate no-op, so nothing had ever
+   asked.
+2. **asyncpg prepares every statement**, so PostgreSQL refuses `cannot insert multiple
+   commands into a prepared statement` — the grant trigger had to become three.
+3. **The harness holds an uncommitted transaction and every second connection blocks on
+   it.** `client` overrides `get_db` to yield the fixture's `db_session` while replacing
+   `async_session_factory` with one that opens its own connections. Under `StaticPool` on
+   SQLite both are one physical connection and a lock is impossible; on PostgreSQL they
+   are two. Reproduced from `pg_stat_activity`: `_grant_project_creation` leaves
+   `UPDATE users SET can_create_projects` *idle in transaction* holding the row while the
+   request path's `UPDATE users SET email_verified` waits on `Lock`/`transactionid`. A run
+   that takes 198 s on SQLite had not finished in 33 minutes.
+4. **PostgreSQL aborts the whole transaction after a failed statement** and refuses
+   everything until rollback (`InFailedSQLTransactionError`), where SQLite lets the session
+   carry on. This one is not about the harness: any code that swallows a database error and
+   keeps using the same session is **already broken in production and green in CI**, which
+   is precisely what B-02 exists to expose.
+
+**The CI job is deliberately not added yet.** A job failing on hundreds of harness errors
+teaches people to ignore it, and the thing to change first is the single-session assumption
+in (3). The switch, the extension step, the split DDL and the measurement ship now; the row
+stays open with that named as its next step.
+
 ### Added — every SQL string that reaches psycopg is compiled before it ships
 
 PRJ-14 / B-03. The narrow check already existed: `test_pgvector_sql_is_valid.py` drives

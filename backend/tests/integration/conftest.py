@@ -96,6 +96,32 @@ _GRANT_TRIGGER_PG = (
 #: writes through the ORM; the 128 unit-test files that build their own in-memory
 #: engine do so deliberately, for speed, and rewriting them would be a project that
 #: buys nothing this does not.
+#: **Setting this today does not give a green suite, and that is the finding.** Measured
+#: 2026-09-15 against `pgvector/pgvector:pg17`, three differences SQLite cannot show:
+#:
+#: 1. `doc_embeddings.embedding` is `vector(384)`, so `create_all` fails without the
+#:    extension — on SQLite that whole migration is a deliberate no-op.
+#: 2. asyncpg prepares every statement, so PostgreSQL refuses `cannot insert multiple
+#:    commands into a prepared statement`; the grant trigger had to be split into three.
+#: 3. **The harness holds an uncommitted transaction, and every second connection
+#:    blocks on it.** `client` overrides `get_db` to yield this fixture's `db_session`
+#:    while replacing `async_session_factory` with one that opens its OWN connections.
+#:    Under `StaticPool` on SQLite both are one physical connection and a lock is
+#:    impossible; on PostgreSQL they are two. Reproduced from `pg_stat_activity`:
+#:    `_grant_project_creation` leaves `UPDATE users SET can_create_projects` *idle in
+#:    transaction* holding the row, and the request path's `UPDATE users SET
+#:    email_verified` waits on `Lock`/`transactionid` forever. A run that takes 198 s on
+#:    SQLite had not finished in 33 minutes.
+#:
+#: The fourth difference is the one that matters beyond the harness: PostgreSQL aborts
+#: the whole transaction after a failed statement and refuses everything until rollback
+#: (`InFailedSQLTransactionError`), where SQLite lets the session continue. Any code that
+#: swallows a database error and keeps using the same session is therefore already broken
+#: in production and green in CI — which is exactly what B-02 exists to expose.
+#:
+#: So the switch ships and the CI job does not, yet: a job failing on hundreds of harness
+#: errors teaches people to ignore it. What must change first is the single-session
+#: assumption above.
 _TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 _ON_SQLITE = _TEST_DB_URL.startswith("sqlite")
 
