@@ -100,21 +100,23 @@ class TestTheDocumentSide:
         assert is_non_answer(document) is True
 
     def test_a_long_document_is_never_a_non_answer(self) -> None:
-        """"This model does not define a table itself, it extends…" is the OPENING of a
+        """ "This model does not define a table itself, it extends…" is the OPENING of a
         real answer. The length bound is what separates the two, and without it the
         phrase match would discard the documents the corpus is made of."""
-        real = "# Schema\n" + (
-            "This model does not define any database table itself; it extends Base "
-            "and contributes the soft-delete scope used by every model below it. "
-        ) * 30
+        real = (
+            "# Schema\n"
+            + (
+                "This model does not define any database table itself; it extends Base "
+                "and contributes the soft-delete scope used by every model below it. "
+            )
+            * 30
+        )
         assert len(real) > 1200
         assert is_non_answer(real) is False
 
     def test_a_document_with_an_answer_is_kept(self) -> None:
         assert (
-            is_non_answer(
-                "# Schema: `users`\n\n| column | type |\n|---|---|\n| id | bigint |\n"
-            )
+            is_non_answer("# Schema: `users`\n\n| column | type |\n|---|---|\n| id | bigint |\n")
             is False
         )
 

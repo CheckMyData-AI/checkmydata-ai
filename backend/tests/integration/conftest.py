@@ -4,6 +4,7 @@ Uses a real async SQLite database per test session, overriding the FastAPI
 dependency so every endpoint hits an actual DB instead of mocks.
 """
 
+import os
 import socket
 import uuid
 from collections.abc import AsyncGenerator
@@ -12,6 +13,7 @@ from unittest.mock import patch
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -51,36 +53,92 @@ from app.models import (  # noqa: F401
 )
 from app.models.base import Base
 
+#: Every test user may create projects. Written twice because the two engines spell a
+#: trigger differently, and the PostgreSQL form needs a function to carry the body.
+_GRANT_TRIGGER_SQLITE = (
+    "CREATE TRIGGER IF NOT EXISTS test_grant_can_create_projects "
+    "AFTER INSERT ON users BEGIN "
+    "UPDATE users SET can_create_projects = 1 WHERE id = NEW.id; "
+    "END;"
+)
+#: Three statements, sent one at a time: asyncpg prepares every statement it is given
+#: and PostgreSQL refuses `cannot insert multiple commands into a prepared statement`,
+#: so a single `text()` carrying all three fails where SQLite's one-liner does not.
+_GRANT_TRIGGER_PG = (
+    """
+    CREATE OR REPLACE FUNCTION test_grant_can_create_projects() RETURNS trigger AS $$
+    BEGIN
+        NEW.can_create_projects := TRUE;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    "DROP TRIGGER IF EXISTS test_grant_can_create_projects ON users",
+    """
+    CREATE TRIGGER test_grant_can_create_projects
+        BEFORE INSERT ON users
+        FOR EACH ROW EXECUTE FUNCTION test_grant_can_create_projects()
+    """,
+)
+
+
+#: B-02. The integration suite runs on SQLite by default and against PostgreSQL when
+#: this is set, which CI does in a second job with a `postgres:17` service.
+#:
+#: The defect class it exists for: **a `Text` column accepts a dict on SQLite and
+#: refuses it on PostgreSQL, and a `Numeric` column accepts a float on one and not the
+#: other.** Both differences are invisible to every test in this repository, and both
+#: have already shipped — `asyncpg.exceptions.DataError: invalid input for query
+#: argument $6: {} (expected str)` took four consecutive nightly `code_db_sync` runs
+#: out while every test stayed green.
+#:
+#: The integration suite is the right — and the proportionate — place. It is what
+#: writes through the ORM; the 128 unit-test files that build their own in-memory
+#: engine do so deliberately, for speed, and rewriting them would be a project that
+#: buys nothing this does not.
+_TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+_ON_SQLITE = _TEST_DB_URL.startswith("sqlite")
+
 
 @pytest_asyncio.fixture(scope="session")
 async def engine():
     from app.models.base import enable_sqlite_fk
 
-    # A bare ``sqlite+aiosqlite:///:memory:`` engine gives every pooled
-    # connection its OWN empty in-memory database. ``Base.metadata.create_all``
-    # below runs on one connection, so as soon as the pool opens a second
-    # connection (concurrent sessions, e.g. the request-scoped session plus a
-    # service opening its own) that connection sees an empty DB and every
-    # subsequent test errors at setup with ``no such table: users``. StaticPool
-    # keeps a single shared connection for the whole session-scoped engine, so
-    # all sessions hit the same in-memory DB with the schema present.
-    eng = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        echo=False,
-        poolclass=StaticPool,
-        connect_args={"check_same_thread": False},
-    )
-    enable_sqlite_fk(eng)  # F-AUTH-01: cascade tests must exercise real FK enforcement
-    async with eng.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(
-            __import__("sqlalchemy").text(
-                "CREATE TRIGGER IF NOT EXISTS test_grant_can_create_projects "
-                "AFTER INSERT ON users BEGIN "
-                "UPDATE users SET can_create_projects = 1 WHERE id = NEW.id; "
-                "END;"
-            )
+    if _ON_SQLITE:
+        # A bare ``sqlite+aiosqlite:///:memory:`` engine gives every pooled
+        # connection its OWN empty in-memory database. ``Base.metadata.create_all``
+        # below runs on one connection, so as soon as the pool opens a second
+        # connection (concurrent sessions, e.g. the request-scoped session plus a
+        # service opening its own) that connection sees an empty DB and every
+        # subsequent test errors at setup with ``no such table: users``. StaticPool
+        # keeps a single shared connection for the whole session-scoped engine, so
+        # all sessions hit the same in-memory DB with the schema present.
+        eng = create_async_engine(
+            _TEST_DB_URL,
+            echo=False,
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
         )
+        enable_sqlite_fk(eng)  # F-AUTH-01: cascade tests must exercise real FK enforcement
+    else:
+        # A real server needs none of the above: separate connections see the same
+        # database, and foreign keys are enforced without being asked.
+        eng = create_async_engine(_TEST_DB_URL, echo=False)
+        # `doc_embeddings.embedding` is `vector(384)`, so the table cannot be created
+        # without the extension — which is exactly the kind of thing SQLite hides, since
+        # there the whole migration is a deliberate no-op. Production carries pgvector
+        # 0.8.2; the CI service image ships it.
+        async with eng.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+        if _ON_SQLITE:
+            await conn.execute(text(_GRANT_TRIGGER_SQLITE))
+        else:
+            for statement in _GRANT_TRIGGER_PG:
+                await conn.execute(text(statement))
     yield eng
     await eng.dispose()
 
