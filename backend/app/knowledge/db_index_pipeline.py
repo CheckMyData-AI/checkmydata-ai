@@ -37,6 +37,7 @@ from app.knowledge.db_index_completeness import (
     check_schema_completeness,
 )
 from app.knowledge.db_index_validator import DbIndexValidator, TableAnalysis
+from app.knowledge.rival_tables import measure_rivalries
 from app.llm.router import LLMRouter
 from app.models.base import async_session_factory
 from app.services.db_index_service import DbIndexService
@@ -1088,6 +1089,70 @@ class DbIndexPipeline:
                             f"({len(batch)} small tables): {batch_names}",
                         )
 
+                # Step 4b: what two tables say about each other (B-09).
+                #
+                # `payment_histories` sits in this index at relevance 4, described as
+                # "historical payment records … transaction details, payment methods"
+                # with hints on how to join and filter it, and no warning at all. It is
+                # movement history including internal write-offs: against `purchases` it
+                # is off by 4.3x for one month and by a different factor every other.
+                #
+                # No amount of reading `payment_histories` produces that warning, because
+                # the fact is not about the table — it is about the relationship. So the
+                # index runs the same aggregate on both and stores what came back.
+                #
+                # Runs after the analyses so the model's own relevance can rank the
+                # candidates, and before `store_results` so the fact travels with the row
+                # rather than in a second write nobody would join to it.
+                rivalries: list = []
+                if settings.db_index_rival_tables_enabled:
+                    async with self._tracker.step(
+                        wf_id,
+                        "compare_rival_tables",
+                        "Comparing tables that both look like revenue",
+                    ):
+                        try:
+                            rivalries = await measure_rivalries(
+                                connector,
+                                schema.tables,
+                                relevance={a.table_name: a.relevance_score for a in analyses},
+                                budget_seconds=settings.db_index_rival_budget_seconds,
+                            )
+                        except Exception:
+                            # Degrades to silence on purpose. The only thing worse than no
+                            # warning about `payment_histories` is a warning about a table
+                            # that turns out to be fine, and an index that fails because a
+                            # diagnostic did is worse than both.
+                            logger.warning(
+                                "compare_rival_tables failed for connection %s; "
+                                "the index is stored without it",
+                                connection_id[:8],
+                                exc_info=True,
+                            )
+                        await self._tracker.emit(
+                            wf_id,
+                            "compare_rival_tables",
+                            "started",
+                            (
+                                f"{len(rivalries)} pair(s) diverge"
+                                if rivalries
+                                else "no pair diverged"
+                            ),
+                        )
+                        for r in rivalries:
+                            logger.info(
+                                "rival tables: %s vs %s differ %.2fx over %s",
+                                r.left,
+                                r.right,
+                                r.ratio,
+                                r.period,
+                            )
+
+                _rival_caveats: dict[str, list[str]] = {}
+                for r in rivalries:
+                    for side in (r.left, r.right):
+                        _rival_caveats.setdefault(side, []).append(r.caveat_for(side))
+
                 # Step 5: Store results
                 async with self._tracker.step(
                     wf_id,
@@ -1142,7 +1207,16 @@ class DbIndexPipeline:
                                 "data_patterns": analysis.data_patterns,
                                 "column_notes_json": analysis.column_notes_json,
                                 "numeric_format_notes": analysis.numeric_format_notes,
-                                "query_hints": analysis.query_hints,
+                                # B-09: the measured rivalry goes in FRONT of the
+                                # generated advice, for the same reason B-08's currency
+                                # caveat does — a hint that recommends a table is read
+                                # before any warning that follows it.
+                                "query_hints": "\n".join(
+                                    [
+                                        *_rival_caveats.get(analysis.table_name, []),
+                                        analysis.query_hints,
+                                    ]
+                                ).strip(),
                                 "code_match_status": analysis.code_match_status,
                                 "code_match_details": analysis.code_match_details,
                             }

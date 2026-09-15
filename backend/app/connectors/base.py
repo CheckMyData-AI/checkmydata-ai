@@ -1,9 +1,12 @@
 import hashlib
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.core.error_types import QueryErrorType
+
+_log = logging.getLogger(__name__)
 
 _REDACTED = "<redacted>"
 
@@ -537,6 +540,48 @@ class DatabaseAdapter(DataSourceAdapter):
         if qr.error or not qr.rows:
             return []
         return [str(r[0]) for r in qr.rows if r[0] is not None][:limit]
+
+    async def period_total(
+        self,
+        table: str,
+        money_column: str,
+        date_column: str,
+        period_start: str,
+        period_end: str,
+        schema: str | None = None,
+    ) -> tuple[float | None, int]:
+        """``SUM(money)`` and ``COUNT(*)`` over a half-open period. B-09.
+
+        The one aggregate the index runs on two tables to find out whether they are
+        telling the same story. Half-open (``>= start``, ``< end``) so a row on the
+        boundary is counted once and the same window means the same thing on both sides.
+
+        Returns ``(None, 0)`` on any failure rather than raising: this feeds a background
+        fact, and a comparison that cannot be made must produce no fact at all. A wrong
+        one would be presented to the user as measured.
+
+        The period bounds are bound as PARAMETERS in this repository's `:name` style,
+        never formatted in. They arrive from a date computed here, but a string reaching
+        a customer's database is bound, and the rule does not bend for a trusted caller.
+        """
+        tq = self._table_ref(table, schema)
+        mq = self._quote_identifier(money_column)
+        dq = self._quote_identifier(date_column)
+        try:
+            qr = await self.execute_query(
+                f"SELECT SUM({mq}) AS total, COUNT(*) AS n FROM {tq} "
+                f"WHERE {dq} >= :period_start AND {dq} < :period_end",
+                params={"period_start": period_start, "period_end": period_end},
+            )
+        except Exception:
+            _log.debug("period_total failed for %s.%s", table, money_column, exc_info=True)
+            return None, 0
+        if qr.error or not qr.rows:
+            return None, 0
+        total, count = qr.rows[0][0], qr.rows[0][1]
+        if total is None:
+            return None, int(count or 0)
+        return float(total), int(count or 0)
 
     async def approx_stats(self, table: str, column: str, schema: str | None = None) -> ColumnStats:
         """Return approximate per-column statistics (distinct count, null rate, min, max).

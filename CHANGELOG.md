@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — the index compares two tables that both look like revenue
+
+B-09. `payment_histories` sits in the schema index at relevance 4, described as
+*"historical payment records for users, including transaction details, payment methods,
+and associated metadata"*, with hints on how to join and filter it, and **no warning of
+any kind**. It is movement history including internal write-offs: against `purchases` it
+is off by **4.3x** for one month and by a different factor every other. An agent asked
+for revenue lands there and answers confidently and wrongly.
+
+No amount of reading `payment_histories` produces that warning. The fact is not about the
+table, it is about the **relationship** — the same aggregate run on both, compared —
+which is why every per-file document generated so far describes the trap accurately and
+sells it anyway.
+
+So the index computes it. `BaseConnector.period_total` runs `SUM(money)` and `COUNT(*)`
+over the last **complete** calendar month, half-open, with the bounds bound as parameters;
+`rival_tables` decides what to compare and stores the divergence in front of the generated
+hints, where a recommendation is read.
+
+**The selection is narrow, because every candidate costs a query against the customer's
+live database.** A table qualifies only with both a money-shaped numeric column and a date
+column. `total_count` is a tally and `amount_rate` a ratio, so neither is money. A money
+column in binary floating point is refused outright: summing one would put accumulated
+rounding error inside a fact this product presents as measured. A view is skipped, since
+its aggregate measures whatever its definition selected. A table above two million rows
+whose date column carries no **leading** index is skipped, because the aggregate becomes a
+full scan and a background job the customer can feel is worse than a missing fact.
+`created_at` beats any other date: an `updated_at` window moves rows between periods
+whenever somebody edits one, so two tables compared on it disagree for a reason that is
+not their contents.
+
+Candidates are ranked by the index's own relevance, capped at six, and the pairs drawn
+from them capped at eight — pairs grow as n(n-1)/2, so the ceiling has to be on the
+product. Each table is aggregated once however many pairs it appears in, and the whole
+comparison is bounded by a wall clock as well: the caps bound how many queries are issued,
+the clock bounds what they cost, and only the second survives meeting a table the planner
+decides to scan.
+
+**It degrades to silence, never to a guess.** A failed query, an empty period on either
+side, or a spent budget produces no fact — the only thing worse than no warning about
+`payment_histories` is a warning about a table that turns out to be fine. A period where
+one side is empty measures the backfill rather than the relationship, so it is refused
+even though the ratio would be dramatic.
+
+The last calendar month that has ended, rather than "the last 30 days", which moves under
+the comparison and makes two nights disagree over nothing.
+
+Settings: `DB_INDEX_RIVAL_TABLES_ENABLED` (on) and `DB_INDEX_RIVAL_BUDGET_SECONDS` (120).
+Takes effect on the next `db_index` run.
+
 ### Fixed — the index measured fourteen currencies and advised summing them as dollars
 
 B-08, and the shape is one this repository keeps finding: a measurement, a claim and a

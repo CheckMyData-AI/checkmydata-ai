@@ -392,6 +392,17 @@ class Settings(BaseSettings):
     # overwritten with 126 rows reading ``unknown``. A setting rather than a constant
     # because the right value depends on the model, and the models differ by 3.4x in
     # how much they write for the same table (measured: 1386 to 4735 completion tokens).
+    #: B-09: compare tables that both look like revenue, by running the same aggregate
+    #: on each and storing the divergence. On because the fact it produces cannot be had
+    #: any other way — `payment_histories` was described accurately and recommended
+    #: anyway by every per-file document, being 4.3x off `purchases` for one month and a
+    #: different factor every other. Off is for an operator who does not want a
+    #: background job issuing aggregates against their database at all.
+    db_index_rival_tables_enabled: bool = True
+    #: Wall clock for the whole comparison. The pair caps bound how many queries are
+    #: issued; this bounds what they cost, and only the second survives meeting a table
+    #: the planner decides to scan.
+    db_index_rival_budget_seconds: float = 120.0
     sync_analysis_max_tokens: int = 8192
     # The batch call analyses up to ``BATCH_SIZE`` small tables in one response, so it
     # needs headroom per table rather than per call.
