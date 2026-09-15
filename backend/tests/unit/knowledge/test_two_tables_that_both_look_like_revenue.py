@@ -299,3 +299,40 @@ class TestAMoneyTableRecordsItsUnit:
         names = {frozenset((a.name, b.name)) for a, b in pairs}
         assert frozenset(("purchases", "payment_histories")) in names
         assert all("users" not in p for p in names)
+
+
+class TestAnAbsurdRatioIsNotARivalry:
+    """The second production run's answer, and the rule it gave.
+
+    With the currency rule in place the step reported `purchases` vs
+    `partner_phone_number_sms` at **485 521 961x** and `purchases` vs
+    `kyc_verification_requests` at 162 722x. Eight orders of magnitude is not a
+    divergence between two accounts of the same thing — it is proof they are accounts of
+    different things, and nobody has ever confused them.
+
+    The warning earns its place in the middle band: close enough that the two could be
+    mistaken for each other, far enough apart that the mistake is expensive. The pair
+    this step was built for sits at 4.3x.
+    """
+
+    def test_the_pair_it_was_built_for_is_inside_the_band(self) -> None:
+        assert (
+            Rivalry("purchases", "payment_histories", "2026-08", 412_000.0, 1_771_600.0).diverges
+            is True
+        )
+
+    @pytest.mark.parametrize("other", [1_771_600.0 * 100, 485_521_961.0, 1e12])
+    def test_an_absurd_ratio_is_not_reported(self, other: float) -> None:
+        assert Rivalry("purchases", "x", "2026-08", 1.0, other).diverges is False
+
+    def test_one_empty_side_is_no_longer_reported_either(self) -> None:
+        """An infinite ratio is the most absurd of all. It still reads as an answer in
+        `caveat_for`, for a caller that wants it, but it is not a rivalry: a table with
+        nothing in the period is not a rival account of one that has money."""
+        assert Rivalry("a", "b", "2026-08", 0.0, 500.0).diverges is False
+
+    def test_the_ceiling_admits_a_plausible_confusion(self) -> None:
+        """Gross versus net, or with-tax versus without, land in single digits. The
+        ceiling must not cut those out to keep the absurd ones."""
+        for ratio in (1.2, 4.3, 12.0, 19.9):
+            assert Rivalry("a", "b", "2026-08", 1000.0, 1000.0 * ratio).diverges is True

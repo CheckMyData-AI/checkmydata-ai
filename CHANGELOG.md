@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — an absurd ratio is not a rivalry, and a refusal now says why
+
+The currency rule worked: the second production run of the rival comparison no longer
+touched `users`, `user_crm_profiles`, `payment_tokens` or `balance_transactions`. What it
+reported instead was worse in a different way:
+
+```
+rival tables: purchases vs partner_phone_number_sms    differ 485,521,961.11x over 2026-08
+rival tables: purchases vs kyc_verification_requests   differ    162,722.35x over 2026-08
+rival tables: zzz_rep_general_cohort_performance vs …  differ         96.43x over 2026-08
+```
+
+**Eight orders of magnitude is not a divergence between two accounts of the same thing.
+It is proof they are accounts of different things**, and nobody has ever confused them.
+The warning earns its place in a middle band: close enough that the two tables could be
+mistaken for each other, far enough apart that the mistake is expensive.
+`purchases` vs `payment_histories`, the pair this step was built for, sits at **4.3x**;
+everything that run produced above 70x was a pair no reader would conflate. `diverges` is
+bounded at both ends now — under the floor they agree, over the ceiling they are not
+rivals, and an operator who reads one absurd caveat stops reading the next.
+
+**And `payment_histories` was still absent, with nothing saying why.** Every rule in the
+selection removed a table silently, so a table that was dropped and a table that was never
+there looked identical from outside. Each refusal now names itself and the rule that made
+it — at DEBUG, because 214 tables produce 214 lines on a nightly and an operator hunting
+one of them can raise the level. The hypothesis is the row ceiling (6.9M rows, and
+`created_at` may lead no index), and the next run will say so rather than leave it
+guessed.
+
 ### Fixed — the third builder, and a caveat that would have stacked nightly
 
 Found by reading production after B-08 deployed: `purchases.column_notes_json` **still**

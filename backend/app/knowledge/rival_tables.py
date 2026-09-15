@@ -123,6 +123,21 @@ def _indexed_columns(table: TableInfo) -> set[str]:
     return out
 
 
+def _refused(table: str, why: str) -> None:
+    """Say why a table was not compared.
+
+    Every rule here removes a table from the comparison silently, and silence is how the
+    second production run spent its budget on `partner_phone_number_sms` while
+    `payment_histories` — the table this whole step exists for — was absent with no line
+    anywhere saying which rule dropped it. A refusal nobody can read is indistinguishable
+    from a table that was never there.
+
+    DEBUG rather than INFO: 214 tables produce 214 lines on a nightly, and an operator
+    looking for one of them can raise the level.
+    """
+    logger.debug("rival tables: %s not compared — %s", table, why)
+
+
 def describe(table: TableInfo) -> MoneyTable | None:
     """The measure and the period axis this table can be aggregated on, or nothing.
 
@@ -132,10 +147,12 @@ def describe(table: TableInfo) -> MoneyTable | None:
     nothing to do with their contents.
     """
     if getattr(table, "object_kind", "table") != "table":
-        return None  # a view's aggregate measures whatever its definition selected
+        _refused(table.name, "a view's aggregate measures its definition, not the data")
+        return None
 
     money = next((c.name for c in table.columns if _is_money_column(c)), None)
     if money is None:
+        _refused(table.name, "no money-shaped numeric column")
         return None
 
     # A money column is only comparable when the table records what unit it is in.
@@ -158,16 +175,23 @@ def describe(table: TableInfo) -> MoneyTable | None:
     # interpretable at all, and a table that records one is a table that knows it is
     # handling money.
     if not any(_is_currency_column(c) for c in table.columns):
+        _refused(table.name, f"`{money}` has no currency column beside it")
         return None
 
     dates = [c.name for c in table.columns if _is_date_column(c)]
     if not dates:
+        _refused(table.name, "no date column to hold a period constant")
         return None
     preferred = next((d for d in dates if "creat" in d.lower()), None)
     date_col = preferred or dates[0]
 
     rows = table.row_count or 0
     if rows > UNINDEXED_ROW_CEILING and date_col not in _indexed_columns(table):
+        _refused(
+            table.name,
+            f"{rows:,} rows and `{date_col}` leads no index — the aggregate would be a "
+            "full scan on a live database",
+        )
         return None
 
     return MoneyTable(
@@ -208,6 +232,20 @@ def choose_pairs(
 #: them would be noise. Above it they cannot both be revenue.
 DIVERGENCE_THRESHOLD = 0.10
 
+#: And above THIS, they are not rivals at all.
+#:
+#: Measured on production 2026-09-15, the second run of this step: with the currency rule
+#: in place it reported `purchases` vs `partner_phone_number_sms` at **485 521 961x** and
+#: `purchases` vs `kyc_verification_requests` at 162 722x. A ratio of eight orders of
+#: magnitude is not a divergence between two accounts of the same thing — it is proof
+#: they are accounts of different things, and nobody has ever confused them.
+#:
+#: The warning is worth reading in the middle band: close enough that the two tables
+#: could be mistaken for each other, far enough apart that the mistake is expensive.
+#: `purchases` vs `payment_histories`, the pair this step was built for, sits at 4.3x.
+#: Everything the run produced above 70x was a pair no reader would ever conflate.
+RIVALRY_CEILING = 20.0
+
 #: A period is compared only when both sides have something in it. Comparing a month in
 #: which one table is empty measures the backfill, not the relationship.
 MIN_ROWS_PER_SIDE = 1
@@ -235,7 +273,15 @@ class Rivalry:
 
     @property
     def diverges(self) -> bool:
-        return abs(self.ratio - 1.0) > DIVERGENCE_THRESHOLD
+        """Far enough apart to be worth a warning, close enough to be a rivalry.
+
+        Bounded at BOTH ends. Under the floor the two agree and the warning is noise;
+        over the ceiling they are measuring different things and the warning states the
+        obvious loudly, which is the same cost paid twice — an operator who reads one
+        absurd caveat stops reading the next one.
+        """
+        gap = abs(self.ratio - 1.0)
+        return DIVERGENCE_THRESHOLD < gap and self.ratio <= RIVALRY_CEILING
 
     def caveat_for(self, table: str) -> str:
         """The sentence stored on one table's hints, written from its own side."""
