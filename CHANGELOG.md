@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a retrieved document says what kind of claim it is
+
+B-11. Production, 2026-09-15, over 782 knowledge documents: **537 are migrations** — and
+within those, **286 `alter`, 13 `drop`, 204 `create`**. Every `alter` document describes
+an *intermediate* state of a table: the column widths, defaults and names as they were on
+the day it ran. Once a later migration touches the same column, the earlier document
+describes a schema that no longer exists, and it sits in retrieval with exactly the weight
+of the current one.
+
+The agent's only clue was the file path. Sixty-nine per cent of the corpus is history, the
+header read `### api/database/migrations/2022_11_24_160945_create_sendmail_tags_mapping.php`,
+and nothing said that reading it as the current schema would be wrong.
+
+A retrieved chunk now carries a one-line qualifier by document type:
+
+- **`migration`** — records a schema CHANGE at one point in time, not the schema as it is
+  now; where it disagrees with the database index, this document is the older one;
+- **`orm_model`** — how the application *declares* the table; the database may hold a
+  column the model omits, and name one that was dropped.
+
+Each marker **names where the truth is** rather than only casting doubt: a qualifier that
+makes the agent less certain and no better informed has bought nothing.
+
+`raw_sql`, `query_pattern`, `project_summary` and any unknown type carry **no marker**.
+Marking everything is the same as marking nothing — the two types that do make a claim
+about the database become ignorable the moment every chunk has a qualifier. An unknown
+type gets none for the reason that runs through this release: inventing a claim nobody
+measured is the defect, not the fix.
+
+The guard walks the renderer and follows the value: the name appended to `parts` is the
+text the agent reads, so its assignment is what must reference the marker. Its first
+version checked proximity — `claim_kind_marker` anywhere within a few lines — and a
+planted defect sailed past it, because the call was still there two lines up feeding a
+variable the chunk no longer used. **A guard that checks proximity checks nothing.**
+
 ### Fixed — a measurement now says that it was measured
 
 B-12. Production, 2026-09-15, over 214 indexed tables: **139 carry hedged prose**

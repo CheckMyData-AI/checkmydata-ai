@@ -38,6 +38,46 @@ class KnowledgeResult(AgentResult):
     tool_call_log: list[dict[str, Any]] = field(default_factory=list)
 
 
+#: What KIND of claim a retrieved document makes, by the type the indexer gave it.
+#:
+#: B-11. Measured on production 2026-09-15: of 782 knowledge documents, **537 are
+#: migrations** — and of those, **286 are `alter` and 13 are `drop`**. Every one of them
+#: describes an INTERMEDIATE state of a table: the column widths, defaults and names as
+#: they were on the day that migration ran. Once a later migration touches the same
+#: column the earlier document describes a schema that no longer exists, and it sits in
+#: retrieval with exactly the weight of the current one.
+#:
+#: The agent's only clue was the file path. 69% of the corpus is history, the header said
+#: `### api/database/migrations/2022_11_24_160945_create_sendmail_tags_mapping.php`, and
+#: nothing said that reading it as the current schema would be wrong.
+#:
+#: So the chunk says what kind of claim it is — the same move B-12 made for the schema
+#: index, where a counted fact now carries the word MEASURED and a hedged one does not.
+#: A marker costs one line per chunk and turns a document that competes with the truth
+#: into one that points at it.
+#:
+#: Only the two types that make a claim about the DATABASE carry a marker. `raw_sql`,
+#: `query_pattern` and `project_summary` describe themselves accurately and a qualifier
+#: on them would be noise, which is what makes the other two ignorable.
+_CLAIM_KIND: dict[str, str] = {
+    "migration": (
+        "[HISTORY — this records a schema CHANGE at one point in time, not the schema "
+        "as it is now. For current columns, types and nullability, the database index "
+        "is authoritative; where the two disagree, this document is the older one.]"
+    ),
+    "orm_model": (
+        "[CODE — this is how the application DECLARES the table. The database may have "
+        "columns the model omits, and a column the model names may have been dropped. "
+        "For what the database actually holds, the database index is authoritative.]"
+    ),
+}
+
+
+def claim_kind_marker(doc_type: str) -> str:
+    """The one-line qualifier for a retrieved document, or nothing."""
+    return _CLAIM_KIND.get((doc_type or "").strip().lower(), "")
+
+
 class KnowledgeAgent(BaseAgent):
     """Codebase / RAG specialist agent."""
 
@@ -308,7 +348,9 @@ class KnowledgeAgent(BaseAgent):
                 sim = f" (similarity: {1 - distance:.2f})"
             elif r.get("rrf_score") is not None:
                 sim = f" (rrf: {r['rrf_score']:.3f})"
-            chunk = f"### {source}{sim}\n{doc}"
+            marker = claim_kind_marker(meta.get("doc_type", ""))
+            head = f"### {source}{sim}"
+            chunk = f"{head}\n{marker}\n{doc}" if marker else f"{head}\n{doc}"
             if total_len + len(chunk) > total_cap:
                 parts.append("... (remaining documents omitted to save context)")
                 break
