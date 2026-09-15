@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — every SQL string that reaches psycopg is compiled before it ships
+
+PRJ-14 / B-03. The narrow check already existed: `test_pgvector_sql_is_valid.py` drives
+`PgVectorStore`'s real methods with a stub pool and compiles what they compose, written
+after a production rebuild ran 1 174 s and died with `only '%s', '%b', '%t' are allowed
+as placeholders, got '%''`.
+
+The board asked for it across `app/`, assuming other modules also compose psycopg SQL.
+**Measured: two do.** `PgVectorStore`, and `models/base.py`, whose `pg_advisory_lock`
+statement is an f-string — uncovered until now, and safe today only because the value it
+interpolates is an integer constant.
+
+So this is a static reader rather than a second runtime harness. It resolves each
+statement as far as the syntax allows (a literal, an f-string's literal parts, a
+concatenation), neutralises interpolations, and hands the result to psycopg's own
+client-side scanner. That reduction is the right one for this defect class: the scanner
+reads the **literal** text, so a stray `%` in a literal fragment survives every
+interpolation and is caught no matter how the pieces were assembled. Verified by planting
+one in the advisory-lock statement — it failed, naming the file and line — and removing it.
+
+A companion test fails if the walker stops finding both known composers by name, because
+a guard that has quietly stopped matching passes forever.
+
+B-01 closed with it, as a correction rather than a change: the tool-argument guard was
+**already** codebase-wide. `test_no_raw_tool_argument_reaches_a_typed_sink.py` walks
+`APP.rglob("*.py")` and flags a type-assuming method, builtin or slice applied to a raw
+tool argument anywhere in `app/`. The board row described a narrower state than the code
+was in.
+
 ### Fixed — a generated non-answer is not stored
 
 Measured on production 2026-09-15 over 782 knowledge documents: **25** said in prose that
