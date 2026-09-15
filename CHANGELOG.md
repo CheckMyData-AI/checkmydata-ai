@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the index measured fourteen currencies and advised summing them as dollars
+
+B-08, and the shape is one this repository keeps finding: a measurement, a claim and a
+consumer that all exist while nothing compares them.
+
+Production, 2026-09-15, **one row of `db_index` for `purchases`**:
+
+| field | content |
+|---|---|
+| `column_stats_json` → `currency` | `{"distinct_count": 14, "min": "BRL", "max": "VND"}` |
+| `column_notes_json` → `currency` | *"Currency code, likely USD."* |
+| `query_hints` | *"The `amount` column should be divided by 100 to convert from cents to dollars."* |
+
+Fourteen currencies counted and one guessed, written by the same run into the same row.
+`amount` is minor units **of `currency`** and there is no dollar column anywhere, so
+`SUM(amount)/100` presented as dollars is wrong by whatever the currency mix happens to
+be — and the agent says it confidently, because the index told it to.
+
+**The model was not the failure.** `_build_table_prompt` rendered a column as
+`name: type[PK][nullable][DEFAULT][comment]` and read neither `distinct_values` nor
+`distinct_count`, both of which `fetch_samples` had already measured and persisted. We
+measured it and did not say it.
+
+Two layers, because a prompt is a request and not a guarantee — the rule
+`resolve_sync_status` already states for the code↔DB map:
+
+- **The prompt carries what was counted.** A measured column now renders as
+  `currency: varchar(3) [measured: 14 distinct; values: BRL, MXN, USD]`. No model writes
+  "likely USD" against that. The count leads because it is the part that settles the
+  question; the values follow only while they are few enough to be evidence rather than a
+  list. A column the sampler skipped renders nothing at all — silence, not "0 values",
+  because an unmeasured column and an empty one are different facts.
+- **A measured caveat goes in front of the advice.** `apply_measured_corrections` prepends
+  what was counted to `query_hints` when a money column sits beside a currency column
+  measured at more than one value. Additive on purpose: rewriting generated prose by
+  pattern is how a correct sentence gets corrupted by a guard aimed at a different one.
+  It fires only where there is a measurement to stand on — an unmeasured currency column
+  is left alone, because asserting a mix nobody counted is the same defect facing the
+  other way.
+
+`currency_rate` is deliberately not a currency column: it holds a number, not a unit, and
+matching the name as a substring would fire the caveat on tables with no mix at all.
+
+An AST guard walks the validator and fails if either path that builds a `TableAnalysis`
+from a tool call — the single-table one or the batch — skips the corrector. Verified by
+planting a bypass on the batch site.
+
 ### Added — a comment that promises a test must name one, and the name must resolve
 
 B-05, and it is a class rather than one stale sentence. This codebase explains itself in
