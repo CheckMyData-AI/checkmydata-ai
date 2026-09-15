@@ -1206,6 +1206,15 @@ class DbIndexPipeline:
                             # It also has to be after `fetch_samples`: the corrections
                             # read what was measured onto `ColumnInfo`, and the reuse map
                             # is built before any of that exists.
+                            # Stale caveats come off FIRST, and the order is the whole
+                            # point. A reused analysis is cloned from the stored row with
+                            # last night's measured lines still in it; the correction
+                            # below adds this run's. Stripping after the correction
+                            # removes what it has just added — which is exactly what
+                            # happened on 2026-09-15: both fixes were live on production,
+                            # both were correct on their own, and the currency caveat was
+                            # absent from every stored row because they cancelled.
+                            analysis.query_hints = strip_measured_lines(analysis.query_hints)
                             if table_info is not None:
                                 analysis = apply_measured_corrections(analysis, table_info)
 
@@ -1236,17 +1245,14 @@ class DbIndexPipeline:
                                 # caveat does — a hint that recommends a table is read
                                 # before any warning that follows it.
                                 #
-                                # `strip_measured_lines` first, because the hints handed
-                                # here may already carry a caveat: a table whose schema
-                                # has not changed has its whole analysis CLONED from the
-                                # stored row, caveats and all. Without the strip, a table
-                                # that survives twenty nights unchanged accumulates
-                                # twenty copies of the same warning, each quoting a total
-                                # from a different month.
+                                # The hints are already stripped of stale caveats and
+                                # already carry this run's currency correction — see the
+                                # two lines above `table_data`. Stripping again here would
+                                # remove the correction that was just added.
                                 "query_hints": "\n".join(
                                     [
                                         *_rival_caveats.get(analysis.table_name, []),
-                                        strip_measured_lines(analysis.query_hints),
+                                        analysis.query_hints,
                                     ]
                                 ).strip(),
                                 "code_match_status": analysis.code_match_status,
