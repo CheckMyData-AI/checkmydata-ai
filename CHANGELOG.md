@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a generated non-answer is not stored
+
+Measured on production 2026-09-15 over 782 knowledge documents: **25** said in prose that
+the file had nothing to do with the database — including **all three** `query_pattern`
+documents, one of which described a translation bundle — and **16 more** described build
+output, vendor code and minified assets. Two `.gitkeep` files under
+`database/migrations/` were stored as **migration documents**, because the migration
+branch tested the path and never the content.
+
+Each cost an LLM call to produce, a row to hold, an embedding to index, and a retrieval
+slot it could win from a document that has an answer. The last part is the harm: a corpus
+is not improved by documents that say nothing, it is diluted by them.
+
+Two defences, in this order, because the cheapest way to not store a non-answer is to
+never buy it:
+
+- **`can_carry_schema()`** refuses the file before extraction, by SHAPE rather than by a
+  list of names seen in one repository — a directory the project did not author, a
+  placeholder, a file too small to hold a declaration, or a line longer than 2 000
+  characters, which no hand-written source has and a webpack bundle has little else of.
+  `panel/public/assets/js/vendor.js` is caught by that last rule and not by its name.
+  The directory walk's own skip set now reads from the same constant, so the two cannot
+  disagree.
+- **`is_non_answer()`** refuses the document after generation, for the file that looked
+  plausible and turned out not to be — a `SentrySampler.php` sitting among the models,
+  which no path rule can predict. Bounded twice on purpose: markers are matched as
+  phrases, because the word "database" appears in every document this pipeline writes,
+  and a long document is never a non-answer, because *"this model does not define a
+  table itself, it extends…"* is the opening of a real answer.
+
+An AST guard checks **both** storage sites — the batch and the retry after a failure.
+The second was found by walking, not by a failure, and a guard on one of two writers is
+a shape this repository has been caught by before. `generate_docs` now reports
+`non_answers=` beside `generated=` and `reused=`.
+
 ### Fixed — `make lint` had never run, and its failure looked like a missing tool
 
 `VENV` was defined as `$(BACKEND_DIR)/.venv/bin`, relative to the repository root, while

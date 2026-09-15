@@ -28,7 +28,7 @@ from app.knowledge.chunker import chunk_document
 from app.knowledge.code_graph import CodeGraph, CodeGraphBuilder
 from app.knowledge.code_symbol_chunker import make_chunker as _make_symbol_chunker
 from app.knowledge.doc_cache import doc_content_hash, should_reuse_document
-from app.knowledge.doc_generator import _is_binary_content
+from app.knowledge.doc_generator import _is_binary_content, is_non_answer
 from app.knowledge.indexing_pipeline import (
     generate_summary_doc,
     run_pass1_profile,
@@ -1042,6 +1042,7 @@ class IndexingPipelineRunner:
         is_incremental = state.last_sha is not None and not force_full
         total = len(state.enriched_docs)
         skipped = 0
+        non_answers = 0
         batch_flush_size = 10
 
         await self._cp_svc.complete_step(db, cp_id, "enrich_docs", total_docs=total)
@@ -1329,6 +1330,19 @@ class IndexingPipelineRunner:
                         continue
 
                     generated_content = generated
+                    # B-10: the model was asked what this file says about the database
+                    # and answered "nothing". Storing that answer puts a document with
+                    # no content into retrieval, where it competes with documents that
+                    # have some. `can_carry_schema` refuses most of these before the
+                    # call is bought; this is the file that looked plausible and was not.
+                    if is_non_answer(generated_content):
+                        non_answers += 1
+                        logger.info(
+                            "generate_docs: %s produced a non-answer — not stored",
+                            edoc.file_path,
+                        )
+                        continue
+
                     doc = await self._doc_store.upsert(
                         session=db,
                         project_id=project_id,
@@ -1432,6 +1446,12 @@ class IndexingPipelineRunner:
                             "warning",
                             f"{edoc.file_path} (retry): {msg}",
                         )
+                    elif is_non_answer(retry_out):
+                        non_answers += 1
+                        logger.info(
+                            "generate_docs: %s produced a non-answer on retry — not stored",
+                            edoc.file_path,
+                        )
                     else:
                         try:
                             doc = await self._doc_store.upsert(
@@ -1523,7 +1543,8 @@ class IndexingPipelineRunner:
             wf_id,
             "generate_docs",
             "completed",
-            f"generated={docs_generated} reused={docs_reused} skipped={skipped}",
+            f"generated={docs_generated} reused={docs_reused} skipped={skipped} "
+            f"non_answers={non_answers}",
         )
 
         # --- Step 10: bm25_build (M3) ---

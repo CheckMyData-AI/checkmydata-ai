@@ -79,6 +79,55 @@ def _sanitize_content(text: str) -> str:
     return text.replace("\x00", "")
 
 
+#: Phrases a model produces when the honest answer is "there is nothing here". Matched
+#: on a LOWERCASED document, as whole sentences rather than words, so a real document
+#: that *mentions* one of these in passing is not discarded.
+_NON_ANSWER_MARKERS = (
+    "no database schema found",
+    "does not contain any database",
+    "does not contain database",
+    "does not define any database",
+    "does not define a database",
+    "is not related to the database",
+    "not directly related to the database",
+    "no schema or migration",
+    "no database-related",
+    "contains no database",
+    "there is no database schema",
+)
+
+#: A non-answer is short. A real document about a file that happens to say "this model
+#: does not define a table itself" is long, because it goes on to say what the file DOES
+#: do. The length bound is what keeps this from discarding the second kind.
+_NON_ANSWER_MAX_CHARS = 1200
+
+
+def is_non_answer(document: str) -> bool:
+    """Whether the model answered that the file has nothing to document.
+
+    **A generated non-answer is a decision not to store, not a thing to store.** Measured
+    on production 2026-09-15 (B-10): 25 of 782 knowledge documents said in prose that the
+    file had nothing to do with the database — including all three `query_pattern`
+    documents, one of which described a translation bundle. Each cost an LLM call, a row,
+    an embedding, and a retrieval slot it could win from a document with an answer.
+
+    `can_carry_schema` in `repo_analyzer` refuses most of these before the call is bought.
+    This is the second line, for the file that looks plausible and turns out not to be —
+    a `SentrySampler.php` sitting among the models, which no path rule can predict.
+
+    Two bounds, both deliberate. The markers are matched as **phrases**, because the word
+    "database" appears in every document this pipeline writes. And a long document is
+    never a non-answer, because "this model does not define a table itself, it extends…"
+    is the opening of a real answer.
+    """
+    if not document:
+        return True
+    if len(document) > _NON_ANSWER_MAX_CHARS:
+        return False
+    lowered = document.lower()
+    return any(marker in lowered for marker in _NON_ANSWER_MARKERS)
+
+
 class DocGenerator:
     """Generates structured documentation from raw source code using LLM."""
 

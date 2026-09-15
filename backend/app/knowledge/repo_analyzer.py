@@ -155,6 +155,87 @@ DB_RELEVANT_EXTENSIONS = {
     ".graphql",
 }
 
+#: Directories that hold code the repository did not write. Measured on production
+#: 2026-09-15 (B-10): `panel/public/assets/js/vendor.js` and `panel/resources/js/custom.js`
+#: were indexed as `orm_model` documents, because `ORM_PATTERNS["sqlalchemy"]` matches the
+#: bare word `Column` and a bundled front-end asset contains it. Each one bought an LLM
+#: call whose answer was "this is a front-end file, no schema here" — a generated
+#: non-answer, stored and then retrieved as if it said something.
+#:
+#: `node_modules` was already skipped by the directory walk; these are its neighbours in
+#: every other ecosystem, and the walk's own `skip` set now reads from here so the two
+#: lists cannot disagree.
+NON_AUTHORED_DIRS = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "node_modules",
+        "vendor",
+        "bower_components",
+        "dist",
+        "build",
+        "out",
+        "target",
+        ".next",
+        ".nuxt",
+        "coverage",
+        "site-packages",
+    }
+)
+
+#: File-name shapes that cannot carry a schema a human wrote. A minified or bundled
+#: asset is machine output; a placeholder exists to keep an empty directory in Git.
+#: Two `.gitkeep` files under `database/migrations/` were indexed as **migration
+#: documents** on production, because the migration branch tests the PATH and never the
+#: content — "the file sits in a migrations directory" was the whole check.
+_MACHINE_OUTPUT_SUFFIXES = (".min.js", ".min.css", ".bundle.js", ".chunk.js", ".map")
+_PLACEHOLDER_NAMES = frozenset({".gitkeep", ".gitignore", ".keep", ".placeholder"})
+
+#: Below this, a file has no room for a schema declaration and any document generated
+#: from it is the model describing an absence. Deliberately small: the shortest real
+#: Laravel migration measured in the production repository is 232 bytes.
+_MIN_MEANINGFUL_BYTES = 40
+
+#: A bundled asset is recognised by its SHAPE, not its name, for the same reason
+#: `is_plausible_table_name` uses shape: a list of the names seen in one repository
+#: (`vendor.js`, `runtime.js`, `polyfills.js`) passes that repository and fails the next.
+#: No hand-written source carries a 2 000-character line; a webpack bundle carries
+#: little else. `panel/public/assets/js/vendor.js` was indexed as an `orm_model` on
+#: production and is caught by this rather than by its name.
+_BUNDLED_LINE_CHARS = 2000
+
+
+def can_carry_schema(rel_path: str, content: str) -> bool:
+    """Whether this file could hold a schema a person wrote.
+
+    The rule this states once: **a generated non-answer is a decision not to store, not
+    a thing to store.** Measured on production 2026-09-15, 25 of 782 knowledge documents
+    said in prose that the file had nothing to do with the database — including all three
+    `query_pattern` documents — and 16 more described build output, vendor code and
+    minified assets. Every one cost an LLM call to produce, a row to hold, an embedding
+    to index, and a retrieval slot it could win from a document with an answer.
+
+    Checked BEFORE extraction rather than after generation, because the cheapest way to
+    not store a non-answer is to never buy it.
+    """
+    posix = rel_path.replace("\\", "/")
+    parts = posix.split("/")
+    if any(part in NON_AUTHORED_DIRS for part in parts):
+        return False
+    name = parts[-1]
+    if name in _PLACEHOLDER_NAMES or name.startswith("."):
+        return False
+    if any(name.endswith(suffix) for suffix in _MACHINE_OUTPUT_SUFFIXES):
+        return False
+    if len(content.strip()) < _MIN_MEANINGFUL_BYTES:
+        return False
+    if any(len(line) > _BUNDLED_LINE_CHARS for line in content.splitlines()):
+        return False
+    return True
+
+
 BINARY_EXTENSIONS = {
     ".exe",
     ".dll",
@@ -595,7 +676,7 @@ class RepoAnalyzer:
         profile: ProjectProfile | None = None,
     ) -> list[Path]:
         relevant = []
-        skip = {".git", "node_modules", "__pycache__", ".venv", "venv"}
+        skip = set(NON_AUTHORED_DIRS)
 
         extra_dirs: set[str] = set()
         if profile:
@@ -622,6 +703,11 @@ class RepoAnalyzer:
         content: str,
         profile: ProjectProfile | None = None,
     ) -> list[ExtractedSchema]:
+        # B-10: refuse before extracting. Every branch below can produce a document,
+        # and the migration branch produces one from the PATH alone — which is how two
+        # `.gitkeep` files became migration documents on production.
+        if not can_carry_schema(rel_path, content):
+            return []
         results = []
 
         if rel_path.endswith(".sql"):
