@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a truncated tool call is not an analysis, and nothing was reading the reason
+
+The code↔DB map lost 86% of its `matched` rows after the 2026-09-10 model switch, and
+the recorded cause was wrong. The board said the model "frequently returns no tool call
+at all". It returns one every time; the call is **cut off mid-argument**.
+
+`SYNC_ANALYSIS_TOOL` declares ten parameters, three of them long prose, and the per-table
+call allowed 2048 completion tokens. Measured on 2026-09-15 against fourteen real
+production tables: **all fourteen stopped at exactly 2048.** Arguments arrive as a JSON
+string, so a generation stopped at the cap leaves the object unclosed, `json.loads`
+raises, and the OpenRouter adapter substituted `args = {}` and appended the tool call
+anyway. `_analysis_from_args({})` then wrote a complete row of defaults — `sync_status`
+`unknown`, `confidence_score` 3, every prose field empty — and recorded it with
+`is_fallback=False`.
+
+That flag is why it survived five days. `code_db_sync_pipeline` already refuses to
+persist a run whose non-fallback ratio falls below `sync_min_success_ratio_to_persist`,
+exactly so a degraded model cannot overwrite a good map. A truncated call was not a
+fallback, so the guard built for this read 100% success while every row it admitted was
+empty: **126 of 263 map rows at `unknown`, 129 with no column notes, 121 at the default
+confidence**, over a map that had held 138 `matched`.
+
+The provider had been saying so the whole time. All three adapters set
+`LLMResponse.finish_reason` — `length` on OpenAI and OpenRouter, `max_tokens` on
+Anthropic — and **no production code path read it**. The signal existed and the reader
+did not.
+
+Four changes, and the order matters because only the first two are the fix:
+
+- **A truncated tool call is refused, not parsed.** `tool_call_truncated()`
+  (`app/llm/tool_args.py`) reads `finish_reason`, with an empty-arguments belt for a
+  provider that reports none. Both knowledge writers — `code_db_sync_analyzer` and
+  `db_index_validator`, six call sites — now fall back on it, so the persist guard sees
+  the degradation it was built to see.
+- **`sync_status` and `confidence_score` moved to second and third in the schema.** A
+  model emits arguments in schema order, so a cap removes the end. Those two sat ninth
+  and tenth behind three prose fields, which is why the failure looked like a model that
+  would not decide rather than one never asked.
+- **The caps became settings** — `SYNC_ANALYSIS_MAX_TOKENS` (8192),
+  `SYNC_ANALYSIS_BATCH_MAX_TOKENS` (16384), `DB_INDEX_ANALYSIS_MAX_TOKENS` (8192). A
+  setting rather than a constant because the right value is a property of the model: the
+  eight measured on the same fourteen tables ranged from 1386 to 4735 completion tokens
+  for one analysis, a 3.4x spread.
+- **An AST guard keeps the class closed.** `test_a_truncated_tool_call_is_not_an_answer.py`
+  walks `app/` and fails on any call that hands a model a tool and **chooses** its own
+  completion cap without reading `finish_reason` in the same function. A cap forwarded
+  from the caller's own parameter is excluded deliberately: `LLMRouter.complete` is a
+  pipe, and a pipe cannot know what a half-written answer means for the caller's data.
+  Verified against a planted defect before being trusted.
+
+Measured through the shipped path after the change, against the same fourteen tables and
+the model production runs today: **0 of 14 decided → 13 of 14.** Raising the cap alone
+would only have moved the boundary; the refusal is what stops the next schema finding it.
+
 ### Fixed — ten settings that read as levers and moved nothing
 
 `reranker_enabled` was the loud case of this: documented default-on while its dependency

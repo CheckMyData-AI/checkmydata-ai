@@ -11,9 +11,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from app.config import settings
 from app.llm.base import Message, Tool, ToolParameter
 from app.llm.router import LLMRouter
-from app.llm.tool_args import as_text
+from app.llm.tool_args import as_text, tool_call_truncated
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,24 @@ SYNC_ANALYSIS_TOOL = Tool(
                 "The EXACT table name being analyzed, copied verbatim from the "
                 "'## Table: <name>' header. Required so results map to the right table."
             ),
+        ),
+        # ``sync_status`` and ``confidence_score`` are declared HERE, second and
+        # third, and the position is the fix rather than a tidy-up. A model emits a
+        # tool call's arguments in schema order, so whatever the completion cap
+        # removes, it removes from the end. These two sat ninth and tenth of ten
+        # behind three long prose fields, which is why a cap that was too small
+        # produced a map of 126 rows reading ``unknown`` instead of a map with
+        # short notes: the verdict was the first casualty, every time.
+        ToolParameter(
+            name="sync_status",
+            type="string",
+            description="How well code and database align for this table",
+            enum=["matched", "code_only", "db_only", "mismatch"],
+        ),
+        ToolParameter(
+            name="confidence_score",
+            type="integer",
+            description="1-5 confidence in the analysis accuracy",
         ),
         ToolParameter(
             name="data_format_notes",
@@ -121,17 +140,6 @@ SYNC_ANALYSIS_TOOL = Tool(
                 '"is_active": {"0": "inactive", "1": "active"}}. '
                 "Especially important for integer columns storing boolean-like or enum-like values."
             ),
-        ),
-        ToolParameter(
-            name="sync_status",
-            type="string",
-            description="How well code and database align for this table",
-            enum=["matched", "code_only", "db_only", "mismatch"],
-        ),
-        ToolParameter(
-            name="confidence_score",
-            type="integer",
-            description="1-5 confidence in the analysis accuracy",
         ),
     ],
 )
@@ -253,10 +261,19 @@ class CodeDbSyncAnalyzer:
                 preferred_provider=preferred_provider,
                 model=model,
                 temperature=0.0,
-                max_tokens=2048,
+                max_tokens=settings.sync_analysis_max_tokens,
             )
 
-            if resp.tool_calls:
+            if tool_call_truncated(resp):
+                logger.warning(
+                    "LLM sync: %s → truncated at %d completion tokens; "
+                    "counted as a fallback, not an analysis",
+                    table_name,
+                    settings.sync_analysis_max_tokens,
+                )
+                return self._fallback_analysis(table_name)
+
+            if resp.tool_calls and resp.tool_calls[0].arguments:
                 args = resp.tool_calls[0].arguments
                 result = _analysis_from_args(args, table_name)
                 logger.info(
@@ -309,10 +326,19 @@ class CodeDbSyncAnalyzer:
                 preferred_provider=preferred_provider,
                 model=model,
                 temperature=0.0,
-                max_tokens=4096,
+                max_tokens=settings.sync_analysis_batch_max_tokens,
             )
+            if tool_call_truncated(resp):
+                logger.warning(
+                    "batch sync: truncated at %d completion tokens for %d table(s) "
+                    "(%s) — every one counted as a fallback",
+                    settings.sync_analysis_batch_max_tokens,
+                    len(tables),
+                    ", ".join(t[0] for t in tables[:5]),
+                )
+                resp.tool_calls = []
             for tc in resp.tool_calls:
-                if tc.name != "table_sync_analysis":
+                if tc.name != "table_sync_analysis" or not tc.arguments:
                     continue
                 args = tc.arguments
                 raw_name = str(args.get("table_name", "")).lower()
@@ -384,10 +410,19 @@ class CodeDbSyncAnalyzer:
                 preferred_provider=preferred_provider,
                 model=model,
                 temperature=0.0,
-                max_tokens=2048,
+                max_tokens=settings.sync_analysis_max_tokens,
             )
 
-            if resp.tool_calls:
+            if tool_call_truncated(resp):
+                logger.warning(
+                    "LLM sync summary: truncated at %d completion tokens over %d "
+                    "table(s) — returning an empty summary rather than a partial one",
+                    settings.sync_analysis_max_tokens,
+                    len(analyses),
+                )
+                return SyncSummaryResult()
+
+            if resp.tool_calls and resp.tool_calls[0].arguments:
                 args = resp.tool_calls[0].arguments
                 logger.info(
                     "LLM sync summary generated for %d tables",
