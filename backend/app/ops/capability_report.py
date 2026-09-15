@@ -6,7 +6,7 @@ precisely the problem: the operator reading ``heroku config`` sees a feature swi
 and nothing ever tells them otherwise.
 
 Measured in production on 2026-08-23: ``RERANKER_ENABLED=true`` while neither
-``sentence_transformers`` nor ``torch`` was importable inside the dyno. The reranker had
+``sentence_transformers`` nor ``torch`` was importable inside the dyno. That reranker had
 been a no-op in every deployment that ever ran. The only signal was a single WARNING
 emitted lazily on first use of the vector store — hours into a dyno's life, long past the
 boot log anyone reads after a deploy.
@@ -107,16 +107,6 @@ def _model_configured() -> bool:
 
 
 CLAIMS: tuple[Claim, ...] = (
-    Claim(
-        setting="reranker_enabled",
-        asserted=lambda: bool(settings.reranker_enabled),
-        provided=lambda: _importable("sentence_transformers"),
-        consequence=(
-            "cross-encoder reranking is configured ON but degrades to a no-op; "
-            "retrieval is fused-RRF only, and the flag reads as a capability it is not"
-        ),
-        remedy="install the optional extra (`pip install -e '.[ml]'`) or unset RERANKER_ENABLED",
-    ),
     # TWO claims for one setting, because the two backends make different promises and a
     # single claim has to pick one and be wrong on the other.
     Claim(

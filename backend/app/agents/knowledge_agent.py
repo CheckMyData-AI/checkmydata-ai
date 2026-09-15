@@ -22,7 +22,6 @@ from app.core.types import RAGSource
 from app.knowledge.bm25_index import BM25Index
 from app.knowledge.entity_extractor import ProjectKnowledge
 from app.knowledge.hybrid_retriever import HybridRetriever
-from app.knowledge.reranker import build_reranker
 from app.knowledge.vector_store import VectorStore, make_vector_store
 from app.llm.base import LLMResponse, Message, ToolCall
 from app.services.project_cache_service import ProjectCacheService
@@ -59,10 +58,6 @@ class KnowledgeAgent(BaseAgent):
         """Return the cached :class:`HybridRetriever`, building it on first use."""
         if self._hybrid_retriever is None:
             bm25 = BM25Index(settings.bm25_data_dir)
-            reranker = build_reranker(
-                enabled=settings.reranker_enabled,
-                model_name=settings.reranker_model,
-            )
             self._hybrid_retriever = HybridRetriever(
                 bm25=bm25,
                 vector_store=self._vector_store,
@@ -70,8 +65,6 @@ class KnowledgeAgent(BaseAgent):
                 min_score=settings.hybrid_min_score,
                 max_rank=settings.hybrid_max_rank,
                 chroma_max_distance=settings.rag_relevance_threshold,
-                reranker=reranker,
-                rerank_candidates=settings.reranker_candidates,
             )
         return self._hybrid_retriever
 

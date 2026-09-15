@@ -161,27 +161,19 @@ class TestNothingRetiredIsStillForSale:
 
 
 class TestTheReadmeDoesNotSellAnInertFeature:
-    """BIZ-13."""
+    """BIZ-13.
 
-    def test_the_reranker_is_not_advertised_as_on(self) -> None:
-        """Proximity again, and for the third time in this file's own history.
+    This guarded a proximity — "reranker" within ninety characters of "default-on" —
+    through three rewordings of one README bullet. The capability behind it was
+    deleted in 2026-09 having never executed in any deployment, so the check becomes
+    the simpler one it should always have been: the front door must not name a stage
+    the product does not have. A reader cannot tell a removed feature from an
+    undocumented one, and only one of those is worth their time.
+    """
 
-        A page-wide conjunction of "reranker" and "default-on" fails against the corrected
-        text, which says the *hybrid retrieval* is default-on and the reranker is not —
-        two true statements in one bullet. The claim to catch is the one that attaches
-        "default-on" to the reranker, so the window is what matters.
-        """
-        from app.config import settings
-
+    def test_the_reranker_is_not_advertised_at_all(self) -> None:
         lowered = README.read_text(encoding="utf-8").lower()
-        if settings.reranker_enabled:  # pragma: no cover - only if the flag flips
-            return
-        idx = 0
-        while (idx := lowered.find("reranker", idx)) != -1:
-            window = lowered[idx : idx + 90]
-            assert "default-on" not in window, (
-                "the README advertises the cross-encoder reranker as default-on while "
-                "`reranker_enabled` is False and `sentence-transformers` is not in the "
-                "production image — a no-op in every deployment that has ever run"
-            )
-            idx += 1
+        assert "reranker" not in lowered, (
+            "the README names a cross-encoder reranker; that capability was removed "
+            "in 2026-09 after never running in any deployment"
+        )

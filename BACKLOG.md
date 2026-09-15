@@ -320,7 +320,7 @@
 - `LLM.stream()` and other `@abstractmethod` ABCs in `backend/app/llm/base.py` — standard ABC pattern, not stubs.
 - Per-request override of every flag via `extra` (operator escape hatch for projects that need different behavior).
 
-**Rollout status table:** maintained in [docs/ROLLOUT_M1_M6.md §5](docs/ROLLOUT_M1_M6.md). As of 1.15.0: `hybrid_retrieval_enabled`, `schema_retrieval_enabled`, `code_graph_enabled`, `lineage_enabled`, `reranker_enabled`, and `context_planner_enabled` default `True` (last four flipped in 1.15.0 W2/W6 via benchmark gates); `clustering_enabled` remains the only `pending` flag.
+**Rollout status table:** maintained in [docs/ROLLOUT_M1_M6.md §5](docs/ROLLOUT_M1_M6.md). As of 1.15.0: `hybrid_retrieval_enabled`, `schema_retrieval_enabled`, `code_graph_enabled`, `lineage_enabled` and `context_planner_enabled` default `True` (the last three flipped in 1.15.0 W2/W6 via benchmark gates); `clustering_enabled` remains the only `pending` flag. `reranker_enabled` was flipped on beside them, corrected to `False` on 2026-08-10, and removed with its capability in 2026-09.
 
 ---
 
@@ -436,8 +436,9 @@ Full ledger with evidence: `docs/superpowers/specs/2026-08-08-query-timeout-clas
   `route` / `complexity` no longer erased.
 - **K1** — process-wide circuit breaker per connection (Redis, half-open, cooldown).
 - **K6** — `sentence-transformers` absent from the production image: the embedder
-  silently falls back from `BAAI/bge-base-en-v1.5` (768-d) to `all-MiniLM-L6-v2` (384-d)
-  and `reranker_enabled` degrades to a no-op. Deploy note 3 in `CLAUDE.md`, never executed.
+  silently falls back from `BAAI/bge-base-en-v1.5` (768-d) to `all-MiniLM-L6-v2` (384-d).
+  Deploy note 3 in `CLAUDE.md`, never executed. The reranker that shared this row was
+  removed in 2026-09, so one of its two consequences no longer exists.
 - **K7** — worker OOM: `Error R14`, `mem=843M (163%)` sustained on 2026-08-07.
 - **K8** — `MCP_ALLOWED_HOSTS` empty in production (F-MCP-04 warns at every boot).
 - **K9** — a connection configured against `127.0.0.1` fails its health probe every
@@ -455,7 +456,7 @@ not by effort.
 | # | Item | Why this rank | Size |
 |---|---|---|---|
 | **P1** | **AUD-1 / K4 — cross-tenant SSH private-key use.** Ownership is unchecked when `ssh_key_id` is written (`connections.py:319,418`; `projects.py:48,93`), and the internal decrypt path runs unfiltered (`git_agent.py:165`, `pipeline_runner.py:214`) | Only item where another tenant's secret is *used* by the server. Chain confirmed end-to-end. Named "recommended next" one run ago and not taken | M |
-| **P2** | **K6 — `sentence-transformers` missing from the production image.** Embedder silently falls back 768-d → 384-d; `reranker_enabled` degrades to a no-op | Silent, permanent quality loss on every retrieval; the deploy note exists and was never executed | S |
+| **P2** | **K6 — `sentence-transformers` missing from the production image.** Embedder silently falls back 768-d → 384-d | Silent, permanent quality loss on every retrieval; the deploy note exists and was never executed | S |
 | **P3** | **K14 — verify the timeout fix against a real timeout.** `failure_kind` set, `total_duration_ms`/`route`/`complexity` no longer erased | The fix is deployed and unobserved; until seen, it is an assumption | S |
 | **P4** | **K7 — worker OOM.** `Error R14`, `mem=843M (163%)` sustained | Restarts drop in-flight jobs; masks other failures | M |
 | **P5** | **K9 — a connection points at `127.0.0.1`** and fails its health probe every 5 min | Broken for its owner today; needs the operator to identify which | S |

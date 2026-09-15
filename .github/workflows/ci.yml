@@ -140,7 +140,7 @@ jobs:
         # measured locally, so a cached model would make this affordable — worth
         # revisiting rather than assuming it is expensive forever.
         run: |
-          pytest tests/unit/test_retrieval_eval.py tests/unit/test_reranker.py \
+          pytest tests/unit/test_retrieval_eval.py \
                  tests/unit/eval/test_real_retriever_eval.py -q
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"

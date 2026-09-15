@@ -42,43 +42,17 @@ def _make_bm25(results: list[dict[str, Any]], reason: str = "ok") -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# RET-R11: fusion pool floor when reranker is present
-# ---------------------------------------------------------------------------
-
-
+# RET-R11: the fusion pool floor. A cross-encoder used to widen it further;
+# that stage never ran in any deployment and was deleted in 2026-09, so the
+# floor is now what RRF alone needs.
 @pytest.mark.asyncio
-async def test_ret_r11_per_leg_floor_with_reranker() -> None:
-    """RET-R11: with k=2 and a reranker(rerank_candidates=30), per_leg ≥ 30."""
-    from app.knowledge.hybrid_retriever import HybridRetriever
-    from app.knowledge.reranker import Reranker
-
-    bm25 = _make_bm25([])
-    chroma = _StubVector([])
-    reranker_mock = MagicMock(spec=Reranker)
-
-    retr = HybridRetriever(
-        bm25=bm25,
-        vector_store=chroma,
-        reranker=reranker_mock,
-        rerank_candidates=30,
-    )
-    await retr.query("proj", "find users", k=2)
-
-    # _run_bm25 is called with n = per_leg which should be >= rerank_candidates(30)
-    bm25.query_with_reason.assert_called_once()
-    # call_args[0] is (project_id, query_text, n)
-    n_arg = bm25.query_with_reason.call_args[0][2]
-    assert n_arg >= 30, f"expected per_leg ≥ 30 with reranker, got {n_arg}"
-
-
-@pytest.mark.asyncio
-async def test_ret_r11_per_leg_no_reranker_uses_2k() -> None:
-    """RET-R11: without reranker, per_leg = max(10, 2*k) as before."""
+async def test_ret_r11_per_leg_uses_2k() -> None:
+    """RET-R11: per_leg = max(10, 2*k)."""
     from app.knowledge.hybrid_retriever import HybridRetriever
 
     bm25 = _make_bm25([])
     chroma = _StubVector([])
-    retr = HybridRetriever(bm25=bm25, vector_store=chroma)  # no reranker
+    retr = HybridRetriever(bm25=bm25, vector_store=chroma)
 
     await retr.query("proj", "find users", k=7)
 

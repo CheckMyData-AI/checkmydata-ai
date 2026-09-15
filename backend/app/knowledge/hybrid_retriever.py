@@ -27,7 +27,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.knowledge.bm25_index import BM25_UNUSABLE, BM25Index
-from app.knowledge.reranker import Reranker
 from app.knowledge.retrieval_degradation import emit_retrieval_degraded
 from app.knowledge.vector_store import VectorStoreLike
 
@@ -87,8 +86,6 @@ class HybridRetriever:
         max_rank: int | None = None,
         retriever_timeout_sec: float = _DEFAULT_RETRIEVER_TIMEOUT_SEC,
         chroma_max_distance: float | None = None,
-        reranker: Reranker | None = None,
-        rerank_candidates: int = 30,
         tracker: Any = None,
         workflow_id: str | None = None,
     ) -> None:
@@ -116,10 +113,6 @@ class HybridRetriever:
         )
         #: Set by `_run_chroma` when the floor emptied a non-empty result (RET-04).
         self._dense_emptied_by_filter = False
-        # Phase 3: optional second-stage cross-encoder reranker. When None,
-        # fusion order is returned as-is (zero added latency).
-        self._reranker = reranker
-        self._rerank_candidates = max(1, rerank_candidates)
         # RET-R4: optional WorkflowTracker for emitting retrieval_degraded events.
         # When absent (None), only the metric is incremented.
         self._tracker = tracker
@@ -143,14 +136,11 @@ class HybridRetriever:
         """
         if not query_text or not query_text.strip():
             return []
-        # RET-R11: floor per_leg so a small caller k doesn't starve the rerank
-        # candidate pool.  When a reranker is wired we need at least
-        # rerank_candidates hits per leg to give the cross-encoder a useful pool.
-        if n_per_retriever is not None:
-            per_leg = n_per_retriever
-        else:
-            rerank_floor = self._rerank_candidates if self._reranker is not None else 0
-            per_leg = max(10, 2 * k, rerank_floor)
+        # RET-R11: floor per_leg so a small caller k does not starve the pool the
+        # fusion draws from. The cross-encoder that used to widen this floor further
+        # was removed in 2026-09 — it never ran in any deployment — so the floor is
+        # now what RRF alone needs.
+        per_leg = n_per_retriever if n_per_retriever is not None else max(10, 2 * k)
 
         bm25_task = asyncio.create_task(self._run_bm25(project_id, query_text, per_leg))
         chroma_task = asyncio.create_task(self._run_chroma(project_id, query_text, per_leg, where))
@@ -208,16 +198,7 @@ class HybridRetriever:
         # leg cannot bury a document the other leg ranked first.
         if self._max_rank is not None:
             fused = [r for r in fused if _best_rank(r) <= self._max_rank]
-        # Apply min_score (trim to k happens after optional reranking).
         fused = [r for r in fused if r.rrf_score >= self._min_score]
-
-        # Phase 3: second-stage cross-encoder rerank. Rescore the top
-        # ``rerank_candidates`` fused hits jointly against the query, then
-        # return the best k. Without a reranker this is a plain ``fused[:k]``.
-        if self._reranker is not None and len(fused) > 1:
-            candidates = fused[: self._rerank_candidates]
-            reranked = await self._reranker.rerank(query_text, candidates, top_k=k)
-            return list(reranked)[:k]
         return fused[:k]
 
     # ------------------------------------------------------------------

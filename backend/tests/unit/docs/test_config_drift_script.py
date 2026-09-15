@@ -63,7 +63,7 @@ def test_it_reads_every_bool_setting_config_py_declares(drift) -> None:
     # past booleans — one comparison path for bool, str and int. Three whose default is
     # load-bearing enough to be worth pinning by name.
     assert parsed["CROSS_CONNECTION_LEARNINGS_ENABLED"] == "false"
-    assert parsed["RERANKER_ENABLED"] == "false"
+    assert parsed["CLUSTERING_ENABLED"] == "false"
     assert parsed["CODE_GRAPH_ENABLED"] == "true", "declared with a trailing comment"
 
 
@@ -110,7 +110,15 @@ def test_the_ten_that_were_found_are_reported_as_drift(drift) -> None:
     #
     # The other nine were genuine drift and still are.
     was_misgrouped = {"AUTO_SYNC_AFTER_INDEX"}
-    assert sorted(k for k, _, _ in drifted) == sorted(set(found_in_prod) - was_misgrouped)
+    # `RERANKER_ENABLED` left for a different reason: the setting itself was deleted in
+    # 2026-09 along with the capability behind it, which had never executed. The
+    # checker ignores an env key `config.py` does not declare, so this one can no
+    # longer be drift — but it WAS drift on 2026-08-23, and editing it out of the
+    # fixture would erase the measurement this test exists to preserve.
+    no_longer_declared = {"RERANKER_ENABLED"}
+    assert sorted(k for k, _, _ in drifted) == sorted(
+        set(found_in_prod) - was_misgrouped - no_longer_declared
+    )
     assert recorded == []
     assert unparseable == []
     assert drift.code_defaults()["AUTO_SYNC_AFTER_INDEX"] == "true", (
@@ -126,15 +134,15 @@ def test_a_recorded_divergence_is_not_drift(drift) -> None:
 
 
 def test_a_value_matching_the_default_is_neither(drift) -> None:
-    drifted, recorded, _ = drift.compare({"RERANKER_ENABLED": "false"}, drift.code_defaults())
+    drifted, recorded, _ = drift.compare({"CLUSTERING_ENABLED": "false"}, drift.code_defaults())
     assert (drifted, recorded) == ([], [])
 
 
 def test_a_boolean_that_is_neither_true_nor_false_is_named(drift) -> None:
     """pydantic will either coerce it or refuse to boot; both are surprises, and a
     check that silently skipped the value would let either happen unannounced."""
-    _, _, unparseable = drift.compare({"RERANKER_ENABLED": "maybe"}, drift.code_defaults())
-    assert [k for k, _, _ in unparseable] == ["RERANKER_ENABLED"]
+    _, _, unparseable = drift.compare({"CLUSTERING_ENABLED": "maybe"}, drift.code_defaults())
+    assert [k for k, _, _ in unparseable] == ["CLUSTERING_ENABLED"]
 
 
 def test_settings_absent_from_config_py_are_ignored(drift) -> None:

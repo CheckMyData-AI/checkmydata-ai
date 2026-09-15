@@ -1503,18 +1503,10 @@ class SQLAgent(BaseAgent):
         """
         try:
             from app.knowledge.bm25_index import MISS_NO_SNAPSHOT
-            from app.knowledge.reranker import build_reranker
             from app.knowledge.retrieval_degradation import emit_retrieval_degraded
             from app.knowledge.schema_retriever import SchemaRetriever
 
-            retriever = SchemaRetriever(
-                data_dir=settings.bm25_data_dir,
-                reranker=build_reranker(
-                    enabled=settings.reranker_enabled,
-                    model_name=settings.reranker_model,
-                ),
-                rerank_candidates=settings.reranker_candidates,
-            )
+            retriever = SchemaRetriever(data_dir=settings.bm25_data_dir)
             # Row 2.6: threaded, like `bm25_local_reconcile.py:120` does with the
             # identical call. This probe is the EXPENSIVE half — it resolves
             # through `BM25Index.indexed_sha` to `load()`, which gunzips the
@@ -1536,8 +1528,7 @@ class SQLAgent(BaseAgent):
                 await emit_retrieval_degraded(None, "", leg="schema", reason=MISS_NO_SNAPSHOT)
                 return []
 
-            # aquery offloads BM25 (CPU-bound) off the loop and adds the
-            # optional cross-encoder rerank stage when enabled.
+            # aquery offloads BM25 (CPU-bound) off the event loop.
             hits = await retriever.aquery(
                 connection_id,
                 question,
