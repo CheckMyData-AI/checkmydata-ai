@@ -40,6 +40,12 @@ from app.connectors.base import ColumnInfo, TableInfo
 
 logger = logging.getLogger(__name__)
 
+#: Names of the column that carries the UNIT an amount is in. Shared with the schema
+#: index's B-08 caveat, kept here rather than imported to avoid a cycle;
+#: ``tests/unit/knowledge/test_two_tables_that_both_look_like_revenue.py`` pins the two
+#: against each other.
+CURRENCY_COLUMNS = ("currency", "currency_code", "ccy")
+
 #: Column names that hold a monetary measure. The same list the schema index uses for
 #: its currency caveat, kept here rather than imported to avoid a cycle;
 #: ``tests/unit/knowledge/test_two_tables_that_both_look_like_revenue.py`` pins the two
@@ -93,6 +99,19 @@ def _is_date_column(col: ColumnInfo) -> bool:
     return any(t in (col.data_type or "").lower() for t in DATE_TYPES)
 
 
+def _is_currency_column(col: ColumnInfo) -> bool:
+    """The column that says what unit the amount beside it is in.
+
+    Matched as a whole name or a `_currency` suffix, never as a substring, so
+    `currency_rate` — a number, not a unit — is not one. The same rule
+    `db_index_validator` uses for the B-08 caveat, and
+    ``tests/unit/knowledge/test_two_tables_that_both_look_like_revenue.py`` pins the
+    two together.
+    """
+    name = col.name.lower()
+    return name in CURRENCY_COLUMNS or name.endswith("_currency")
+
+
 def _indexed_columns(table: TableInfo) -> set[str]:
     out: set[str] = set()
     for idx in table.indexes or []:
@@ -117,6 +136,28 @@ def describe(table: TableInfo) -> MoneyTable | None:
 
     money = next((c.name for c in table.columns if _is_money_column(c)), None)
     if money is None:
+        return None
+
+    # A money column is only comparable when the table records what unit it is in.
+    #
+    # Measured on production 2026-09-15, the first run of this step: without this rule
+    # the six pairs it found were `users` vs `balance_transactions` (16x), `purchases`
+    # vs `user_crm_profiles` (1522x), `purchases` vs `payment_tokens` (649x) and three
+    # more of the same shape — and the ONE pair this whole step exists for,
+    # `purchases` vs `payment_histories`, was not among them, crowded out by tables
+    # ranked higher.
+    #
+    # Of those seven tables exactly three carry a currency column: `purchases`,
+    # `payment_histories`, and one reporting view. The four that produced the noise
+    # carry none. `users.balance` is a STATE in some implied unit rather than a flow,
+    # and `user_crm_profiles.total_*` is a tally; comparing either to revenue measures
+    # nothing and warns about a table nobody would ask a revenue question about, which
+    # is the noise that makes a real warning ignorable.
+    #
+    # The rule also connects to B-08: a currency column is what makes an amount
+    # interpretable at all, and a table that records one is a table that knows it is
+    # handling money.
+    if not any(_is_currency_column(c) for c in table.columns):
         return None
 
     dates = [c.name for c in table.columns if _is_date_column(c)]

@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a money table records its unit, and B-09's first production run said so
+
+The rival-table comparison shipped and was run against the real schema within the hour.
+It found six diverging pairs in 24 seconds, and **not one of them was the pair it exists
+for**:
+
+```
+rival tables: users vs balance_transactions        differ   16.16x over 2026-08
+rival tables: purchases vs user_crm_profiles       differ 1522.38x over 2026-08
+rival tables: purchases vs payment_tokens          differ  649.32x over 2026-08
+```
+
+`purchases` vs `payment_histories` was absent, crowded out by tables that rank higher and
+are not about money at all. `users.balance` is a **state** in some implied unit rather
+than a flow; `user_crm_profiles.total_*` is a tally. A 1522x "divergence" between them
+measures nothing, and warning about a table nobody would ask a revenue question about is
+exactly the noise that makes a real warning ignorable — which this feature's own tests
+were written to prevent, one rule short.
+
+The measurement gave the rule. Of the seven tables involved, **exactly three carry a
+currency column** — `purchases`, `payment_histories` and one reporting view — and two of
+those three are the pair that matters. So a table is comparable only if it records the
+unit its amount is in. A `balance` with no currency beside it is not a quantity this
+comparison can hold constant.
+
+It connects to B-08 rather than sitting beside it: a currency column is what makes an
+amount interpretable at all, and a table that records one is a table that knows it is
+handling money. `currency_rate` remains excluded — it holds a number, and matching it as
+a substring would readmit exactly the tables the rule removes.
+
+The noise self-corrects: `query_hints` is rebuilt from a fresh comparison on every
+`db_index` run, so the caveats that first run wrote disappear with the next one.
+
 ### Fixed — per-workflow state outlived its workflow on the resume path
 
 B-04. `OrchestratorAgent` keeps seven per-workflow maps on an instance `chat.py` builds
