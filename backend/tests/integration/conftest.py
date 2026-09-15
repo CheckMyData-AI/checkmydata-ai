@@ -122,6 +122,16 @@ _GRANT_TRIGGER_PG = (
 #: So the switch ships and the CI job does not, yet: a job failing on hundreds of harness
 #: errors teaches people to ignore it. What must change first is the single-session
 #: assumption above.
+#:
+#: **And the obvious fix is not one.** `_grant_project_creation` ends in `flush()`, not
+#: `commit()`, which is what leaves the row locked; committing it would free this
+#: particular deadlock and break the isolation the suite depends on, because the teardown
+#: `rollback()` would then undo nothing and the next test would inherit the row. On a
+#: shared PostgreSQL database that is cross-test pollution rather than a lock.
+#:
+#: The open transaction IS the isolation model. Replacing it — a truncation sweep, a
+#: schema per test, or a nested SAVEPOINT the app's own session can join — is the work,
+#: and it is a project rather than a tail item: 688 tests depend on the current shape.
 _TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 _ON_SQLITE = _TEST_DB_URL.startswith("sqlite")
 

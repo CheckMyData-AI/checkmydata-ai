@@ -237,6 +237,18 @@ CEILINGS: dict[str, int] = {
     # withholding direction would be a rail line reading "your index is over quota" that
     # the reader cannot verify and cannot act on, produced by an outage they never saw.
     # It logs at WARNING and returns 0, which means unlimited everywhere else in `plans`.
+    # 659 -> 660 on 2026-09-15. One, in `BaseConnector.period_total` (B-09). It runs the
+    # same aggregate on two tables so the index can say that `payment_histories` and
+    # `purchases` are 4.3x apart — a fact about their relationship, which no document
+    # about either table can carry. It returns `(None, 0)` on any failure rather than
+    # raising, and the narrow exception list this deserves cannot be written: the call
+    # reaches four connector implementations and, in SSH-exec mode, a CLI on a bastion,
+    # so the failure surface is the union of five drivers plus a shell. What makes the
+    # breadth safe is the CONSEQUENCE rather than the catch: a comparison that cannot be
+    # made must produce no fact at all, and the only thing worse than no warning about
+    # `payment_histories` is a fabricated one. The runner above it catches per pair for
+    # the same reason, and the pipeline step catches so a diagnostic cannot fail the
+    # index it was added to describe.
     # 657 -> 659 on 2026-09-12. Two, both in the MySQL connector (row 26, SQL-03).
     # `_apply_row_limit` asks the session to stop producing rows past the cap, and a
     # server that refuses the variable — an ancient version, a restrictive proxy —
@@ -313,7 +325,7 @@ CEILINGS: dict[str, int] = {
     # The json parse in `stale_run_reaper._requeue_attempts` added in the same change is
     # NOT here: `json.loads` raises `ValueError` or `TypeError` and nothing else can, so
     # it is caught narrowly rather than spending this budget.
-    "except Exception": 659,
+    "except Exception": 660,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

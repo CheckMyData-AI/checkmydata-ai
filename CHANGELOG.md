@@ -6,6 +6,164 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — per-workflow state outlived its workflow on the resume path
+
+B-04. `OrchestratorAgent` keeps seven per-workflow maps on an instance `chat.py` builds
+at **module scope**, so anything they hold lives as long as the dyno.
+`_cleanup_stale_results` frees them, and it enumerates stale ids from `_wf_seen` — a
+single timestamp written by `_note_workflow_seen`.
+
+That call sat beside the router under a comment reading *"here because every workflow
+reaches this line"*. **Every workflow does not.** Eight lines above it,
+`_check_pipeline_resume` returns straight into `_resume_pipeline`, so a resumed run wrote
+its maps under a workflow id the sweep had never heard of, and `_wf_sql_results` holds
+full `QueryResult`s with every row.
+
+The same shape as ORCH-06, on the same path: the resume is a second implementation of the
+tail, and it keeps being the one that misses what the fresh path has. The stamp is taken
+at the top of `run` now, before any branch can return.
+
+Two guards, because the two ways this breaks are not the same:
+
+- **the stamp is taken before anything can return** — expressed as a *position*, not a
+  presence. `_note_workflow_seen` was there the whole time; a test asserting merely that
+  `run` calls it would have passed against exactly this defect;
+- **the sweep frees every map that exists** — an eighth map added without a line in
+  `_cleanup_stale_results` leaks silently and for ever, which is the worry B-04 was
+  opened for. Maps are selected by their annotated type rather than by their name: the
+  first version keyed on the `_wf_` prefix and flagged `_wf_sql_lock`, one lock shared by
+  every workflow with nothing to free — a false finding, and the kind that gets a guard
+  disabled rather than obeyed.
+
+Both verified against planted defects.
+
+### Fixed — a retrieved document says what kind of claim it is
+
+B-11. Production, 2026-09-15, over 782 knowledge documents: **537 are migrations** — and
+within those, **286 `alter`, 13 `drop`, 204 `create`**. Every `alter` document describes
+an *intermediate* state of a table: the column widths, defaults and names as they were on
+the day it ran. Once a later migration touches the same column, the earlier document
+describes a schema that no longer exists, and it sits in retrieval with exactly the weight
+of the current one.
+
+The agent's only clue was the file path. Sixty-nine per cent of the corpus is history, the
+header read `### api/database/migrations/2022_11_24_160945_create_sendmail_tags_mapping.php`,
+and nothing said that reading it as the current schema would be wrong.
+
+A retrieved chunk now carries a one-line qualifier by document type:
+
+- **`migration`** — records a schema CHANGE at one point in time, not the schema as it is
+  now; where it disagrees with the database index, this document is the older one;
+- **`orm_model`** — how the application *declares* the table; the database may hold a
+  column the model omits, and name one that was dropped.
+
+Each marker **names where the truth is** rather than only casting doubt: a qualifier that
+makes the agent less certain and no better informed has bought nothing.
+
+`raw_sql`, `query_pattern`, `project_summary` and any unknown type carry **no marker**.
+Marking everything is the same as marking nothing — the two types that do make a claim
+about the database become ignorable the moment every chunk has a qualifier. An unknown
+type gets none for the reason that runs through this release: inventing a claim nobody
+measured is the defect, not the fix.
+
+The guard walks the renderer and follows the value: the name appended to `parts` is the
+text the agent reads, so its assignment is what must reference the marker. Its first
+version checked proximity — `claim_kind_marker` anywhere within a few lines — and a
+planted defect sailed past it, because the call was still there two lines up feeding a
+variable the chunk no longer used. **A guard that checks proximity checks nothing.**
+
+### Fixed — a measurement now says that it was measured
+
+B-12. Production, 2026-09-15, over 214 indexed tables: **139 carry hedged prose**
+somewhere in their generated text (*"possibly"*, *"likely"*, *"appears to"*), and **209
+carry real per-column statistics beside it**. Guess and measurement sat in one block with
+nothing to tell them apart, so an agent reading *"Currency code, likely USD"* had no way
+to know the indexer had counted `distinct_count: 14` for that column.
+
+`schema_context_builder` rendered `column_distinct_values_json` under *"Distinct values"*
+and **never rendered `column_stats_json` at all** — the same defect B-08 closed one layer
+earlier, arriving one layer later. The agent therefore saw the value LISTS, which the
+sampler had spent on identifier columns (`id`, `user_id`, `payment_id`), and not the
+counts, which is where the answer lives. For `purchases` that meant thirty payment UUIDs
+on screen and `currency: 14 distinct` nowhere.
+
+The measured facts are now rendered above the generated prose and labelled:
+
+```
+MEASURED (counted by the indexer, not inferred):
+  deleted_at: 12 distinct, range 2024-01-01 … 2026-09-01, 98% NULL
+  currency: 14 distinct, range BRL … VND
+  amount: 6022 distinct, range -3000 … 2147483647
+```
+
+Ordered by how much the count narrows the column, so the ones that settle a question lead
+and an identifier cannot crowd them out. Above the prose, because the first thing read
+should not be the hedge. Capped, because the measurement is the valuable half and a wide
+table would otherwise fill the window with it. `min == max` prints no range, since that
+would imply variation which is not there, and a null rate appears only where there are
+nulls.
+
+It never invents one: no statistics, unreadable statistics, an older row without the
+field, or a column with nothing countable all render **nothing at all** — silence rather
+than "unknown", because a table the sampler skipped and a table with no variation are
+different facts.
+
+The stored null rate arrives from four connectors as a float, as the string `"0"`, and as
+absent, so it is coerced by a named helper that returns `None` rather than swallowed by a
+bare `except: pass`. Two ratchets caught the first version, and they were right to: the
+decision to say nothing about nulls belongs where a reader can see it, which is the whole
+argument this change makes about measurements.
+
+### Added — the index compares two tables that both look like revenue
+
+B-09. `payment_histories` sits in the schema index at relevance 4, described as
+*"historical payment records for users, including transaction details, payment methods,
+and associated metadata"*, with hints on how to join and filter it, and **no warning of
+any kind**. It is movement history including internal write-offs: against `purchases` it
+is off by **4.3x** for one month and by a different factor every other. An agent asked
+for revenue lands there and answers confidently and wrongly.
+
+No amount of reading `payment_histories` produces that warning. The fact is not about the
+table, it is about the **relationship** — the same aggregate run on both, compared —
+which is why every per-file document generated so far describes the trap accurately and
+sells it anyway.
+
+So the index computes it. `BaseConnector.period_total` runs `SUM(money)` and `COUNT(*)`
+over the last **complete** calendar month, half-open, with the bounds bound as parameters;
+`rival_tables` decides what to compare and stores the divergence in front of the generated
+hints, where a recommendation is read.
+
+**The selection is narrow, because every candidate costs a query against the customer's
+live database.** A table qualifies only with both a money-shaped numeric column and a date
+column. `total_count` is a tally and `amount_rate` a ratio, so neither is money. A money
+column in binary floating point is refused outright: summing one would put accumulated
+rounding error inside a fact this product presents as measured. A view is skipped, since
+its aggregate measures whatever its definition selected. A table above two million rows
+whose date column carries no **leading** index is skipped, because the aggregate becomes a
+full scan and a background job the customer can feel is worse than a missing fact.
+`created_at` beats any other date: an `updated_at` window moves rows between periods
+whenever somebody edits one, so two tables compared on it disagree for a reason that is
+not their contents.
+
+Candidates are ranked by the index's own relevance, capped at six, and the pairs drawn
+from them capped at eight — pairs grow as n(n-1)/2, so the ceiling has to be on the
+product. Each table is aggregated once however many pairs it appears in, and the whole
+comparison is bounded by a wall clock as well: the caps bound how many queries are issued,
+the clock bounds what they cost, and only the second survives meeting a table the planner
+decides to scan.
+
+**It degrades to silence, never to a guess.** A failed query, an empty period on either
+side, or a spent budget produces no fact — the only thing worse than no warning about
+`payment_histories` is a warning about a table that turns out to be fine. A period where
+one side is empty measures the backfill rather than the relationship, so it is refused
+even though the ratio would be dramatic.
+
+The last calendar month that has ended, rather than "the last 30 days", which moves under
+the comparison and makes two nights disagree over nothing.
+
+Settings: `DB_INDEX_RIVAL_TABLES_ENABLED` (on) and `DB_INDEX_RIVAL_BUDGET_SECONDS` (120).
+Takes effect on the next `db_index` run.
+
 ### Fixed — the index measured fourteen currencies and advised summing them as dollars
 
 B-08, and the shape is one this repository keeps finding: a measurement, a claim and a
