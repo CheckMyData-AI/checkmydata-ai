@@ -58,7 +58,8 @@ _SAFE_ENVIRONMENTS = frozenset({"development", "dev", "test", "testing", "local"
 #: Connections the vector store's own psycopg pool opens, derived exactly as
 #: `PgVectorStore` derives it (`pgvector_store.py:87`). Duplicated deliberately rather
 #: than imported: importing the store here would pull psycopg into every config load,
-#: and a test pins the two expressions against each other so they cannot drift.
+#: and ``tests/unit/test_connection_budget_fits_the_pooler.py`` pins the two
+#: expressions against each other so they cannot drift.
 def _pgvector_pool_size(pool_size: int) -> int:
     return max(2, pool_size // 2)
 

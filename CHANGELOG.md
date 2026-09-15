@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — a comment that promises a test must name one, and the name must resolve
+
+B-05, and it is a class rather than one stale sentence. This codebase explains itself in
+comments, deliberately, and it is most of what makes its history legible — so *"a guard
+test now fails if anyone does this again"* is load-bearing prose: it is the only thing
+telling the next reader the rule is enforced rather than hoped for.
+
+Unnamed, that sentence is unfalsifiable. It cannot be checked, it cannot be found, and
+when the test moves the comment keeps asserting protection that no longer exists.
+Measured 2026-09-15: **13 comments promised a test, 8 named one, 5 did not** — among them
+the one guarding `orchestrator.py`'s `context.extra` mutation, whose defect left
+`exposed_learning_ids` empty on every request the product had ever served. All six are
+named now; the sixth was found by the guard itself, not by the survey that preceded it.
+
+Two rules: a promise names a `test_*.py`, and that file exists. The second is why this is
+a test and not a convention — a name that no longer resolves reads as a citation and is a
+dead link.
+
+**The name check runs over every comment, not only the ones still phrased as a promise**,
+and that independence is the whole design. The first version scanned inside promise
+blocks, so naming a test removed the phrasing that made it a promise and the reference it
+had just acquired stopped being checked: a guard whose coverage shrinks as the codebase
+complies is green exactly where the work was done. Both rules were verified against
+planted defects before being trusted.
+
 ### Changed — the integration suite can run against PostgreSQL, and doing so found four differences
 
 B-02 asked for the unit suite on PostgreSQL as well as SQLite, because `Text` versus dict

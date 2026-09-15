@@ -133,7 +133,8 @@ class _QuotaWallError(Exception):
 _SWEEP_SCOPE_COLUMNS: tuple[str, ...] = ("property_id", "date")
 
 #: GA4 report name -> fact table (spec §1.4). Keys must match
-#: :data:`app.analytics.ga4.reports.GA4_REPORTS`; a unit test asserts both that
+#: :data:`app.analytics.ga4.reports.GA4_REPORTS`;
+#: ``tests/unit/analytics/test_collect_service.py`` asserts both that
 #: the sets agree and that each report's columns are exactly its table's
 #: columns, because a silent mismatch would write the right numbers into the
 #: wrong column.

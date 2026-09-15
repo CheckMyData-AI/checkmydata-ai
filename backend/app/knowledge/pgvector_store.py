@@ -82,7 +82,8 @@ def _pool_max_size() -> int:
     `config._pgvector_pool_size`, which spells the same arithmetic. The duplication
     there is deliberate — importing this module into `config` would pull psycopg into
     every config load — and the contract its comment states is that "a test pins the
-    two expressions against each other so they cannot drift". That test used to assert
+    two expressions against each other so they cannot drift" —
+    `tests/unit/test_connection_budget_fits_the_pooler.py`. It used to assert
     the literal source text `"max(2, settings.db_pool_size // 2)"` (TEST-09), which a
     comment satisfied and an identical `>> 1` broke. Now there is something to read.
     """
@@ -305,7 +306,8 @@ class PgVectorStore:
         # the column. Fixing the escaping in PRJ-01 turned one error into the next:
         # `UndefinedColumn: column "doc_id" does not exist`, measured on the first
         # rebuild after that deploy. Two defects in one line, stacked so the outer
-        # one hid the inner one — which is why the test now checks the column NAMES
+        # one hid the inner one — which is why
+        # ``tests/unit/knowledge/test_pgvector_sql_is_valid.py`` checks the column NAMES
         # against `DocEmbedding` as well as running the statement past psycopg.
         #
         # ``%%`` and not ``%``: psycopg3 scans the query TEXT for client-side
