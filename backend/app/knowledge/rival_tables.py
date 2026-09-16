@@ -352,7 +352,8 @@ class Rivalry:
                 f"the RATIO as the finding and the totals as indicative."
             )
         return (
-            f"MEASURED: over {self.period}, the same aggregate returns {mine:,.2f} here "
+            f"MEASURED (rivalry): over {self.period}, the same aggregate returns "
+            f"{mine:,.2f} here "
             f"and {theirs:,.2f} on `{other}` — {factor} apart, this side {bigger}. "
             f"The two tables are NOT interchangeable for a revenue question; one of them "
             f"counts something the other does not. Establish which before summing either, "
