@@ -333,6 +333,10 @@ export interface ProjectReadiness {
   db_connected: boolean;
   db_indexed: boolean;
   code_db_synced: boolean;
+  /** A step in flight is a third state, not a shade of "not done" — without it the rail
+   *  offers "Run" for work already running, and the second run is refused. */
+  db_indexing: boolean;
+  code_db_syncing: boolean;
   ready: boolean;
   missing_steps: { step: string; label: string }[];
   active_connection_id: string | null;

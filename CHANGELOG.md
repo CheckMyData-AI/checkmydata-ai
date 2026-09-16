@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a step already running is not a step to start
+
+Reported from production on 2026-09-15 at 21:33 UTC. The readiness rail showed
+*"Database indexed — Run"* and *"Code ↔ DB synced — Run"*, while the database said:
+
+```
+code_db_sync_summary.sync_status  = completed   (synced_at 20:52)
+db_index_summary.indexing_status  = running     (heartbeat 21:35, current)
+```
+
+Two defects on one screen, and neither is about the data being wrong.
+
+**A completed sync had no state of its own.** `is_synced` was consulted only inside
+`if indexed:`, so a sync that had finished forty minutes earlier read as not done because
+a *different* step happened to be running. One step's progress is not another step's
+state.
+
+**A running index was reported simply as not indexed.** Correct — nothing is indexed yet
+— and useless: a caller given only that cannot tell *never indexed* from *indexing now*,
+so the rail renders the only thing it can, a button. Pressing it starts a second run that
+`uq_indexing_runs_active_one` refuses, and the click appears to do nothing at all.
+
+Each step is now asked about on its own and answers three questions: done, running,
+neither. `db_indexing` and `code_db_syncing` travel in the readiness payload, a running
+step is omitted from `missing_steps`, and the rail shows **"Running…"** where the button
+was. A third, smaller thing went with them: `active_connection_id` held whichever
+connection the loop stopped on, which when none was indexed was the *last* one.
+
+The tests are written as position and nesting rather than presence, because presence was
+never the problem — `is_synced` was always called, and a test asserting the call would
+have passed against this. Both verified against the original code.
+
+`docs/ux/scenarios.md` SCN-045 carries the new state.
+
 ### Fixed — the trap table stores money in a varchar, and the rule excluded it
 
 `payment_histories.price` is a **`varchar(20)`**. The rival comparison required a numeric
