@@ -184,6 +184,25 @@ class DbIndexService:
             return False
         return summary.indexed_at is not None
 
+    async def is_indexing(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+    ) -> bool:
+        """Whether an index is running right now.
+
+        Separate from :meth:`is_indexed` because the two answer different questions and
+        collapsing them costs the user a button. `is_indexed` is False while an index
+        runs, which is correct — nothing is indexed yet — and a caller that knows only
+        that cannot tell *never indexed* from *indexing now*, so it offers "Run" for work
+        already in flight. The second run is then refused by the partial unique index on
+        `indexing_runs`, and the button appears to do nothing at all.
+        """
+        summary = await self.get_summary(session, connection_id)
+        if not summary:
+            return False
+        return (getattr(summary, "indexing_status", "") or "") == "running"
+
     async def get_index_age(
         self,
         session: AsyncSession,
