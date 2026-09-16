@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a partial run erased a true warning
+
+Read back from production on 2026-09-16, and it is the flip side of *rebuild, never
+append*. The index that ran overnight finished `completed_partial`: the sampling budget
+was spent before it reached `purchases.currency`. The units caveat therefore had nothing
+to rebuild from — and an unconditional strip removed the correct one the previous run had
+established. The stored row went from carrying a true warning about **fourteen
+currencies** to carrying none, because the sampler ran out of time.
+
+**A caveat is replaced when there is a measurement to replace it with, and kept when there
+is not.** Forgetting something true on the strength of not having looked is the defect,
+not the fix.
+
+The two caveats are produced by different steps and a run can produce one without the
+other, so they are now distinguishable — `MEASURED (units):` and `MEASURED (rivalry):` —
+and each step strips only its own kind. The rivalry strip is further conditioned on the
+comparison having actually run: a step that was disabled, failed or timed out has
+established nothing, and deleting last night's finding on its behalf is the same mistake
+at the other end.
+
+The ordering guard was rewritten to read the parse tree rather than source lines. Its
+first version matched a one-line call and stopped seeing it the moment the call took a
+second argument and wrapped — a guard that silently narrows is the thing this file keeps
+being about.
+
 ### Fixed — a step already running is not a step to start
 
 Reported from production on 2026-09-15 at 21:33 UTC. The readiness rail showed
@@ -39,6 +64,7 @@ never the problem — `is_synced` was always called, and a test asserting the ca
 have passed against this. Both verified against the original code.
 
 `docs/ux/scenarios.md` SCN-045 carries the new state.
+
 
 ### Fixed — the trap table stores money in a varchar, and the rule excluded it
 

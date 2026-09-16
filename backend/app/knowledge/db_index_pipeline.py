@@ -37,6 +37,7 @@ from app.knowledge.db_index_completeness import (
     check_schema_completeness,
 )
 from app.knowledge.db_index_validator import (
+    MEASURED_RIVALRY,
     DbIndexValidator,
     TableAnalysis,
     apply_measured_corrections,
@@ -1110,6 +1111,11 @@ class DbIndexPipeline:
                 # candidates, and before `store_results` so the fact travels with the row
                 # rather than in a second write nobody would join to it.
                 rivalries: list = []
+                #: Whether the comparison completed. A step that never ran has established
+                #: nothing, and stripping last night's rivalry caveats on the strength of
+                #: not having looked loses a true warning — the same rule the units caveat
+                #: follows one line below.
+                _comparison_ran = False
                 if settings.db_index_rival_tables_enabled:
                     async with self._tracker.step(
                         wf_id,
@@ -1123,6 +1129,7 @@ class DbIndexPipeline:
                                 relevance={a.table_name: a.relevance_score for a in analyses},
                                 budget_seconds=settings.db_index_rival_budget_seconds,
                             )
+                            _comparison_ran = True
                         except Exception:
                             # Degrades to silence on purpose. The only thing worse than no
                             # warning about `payment_histories` is a warning about a table
@@ -1214,7 +1221,19 @@ class DbIndexPipeline:
                             # happened on 2026-09-15: both fixes were live on production,
                             # both were correct on their own, and the currency caveat was
                             # absent from every stored row because they cancelled.
-                            analysis.query_hints = strip_measured_lines(analysis.query_hints)
+                            #
+                            # Only the RIVALRY kind, and only when the comparison actually
+                            # ran. A `completed_partial` index on 2026-09-16 spent its
+                            # sampling budget before reaching `purchases.currency`, so the
+                            # units caveat had nothing to rebuild from — and an
+                            # unconditional strip deleted the correct one the night before
+                            # had established. The units caveat is `apply_measured_
+                            # corrections`' own to replace or leave; this line must not
+                            # touch it.
+                            if _comparison_ran:
+                                analysis.query_hints = strip_measured_lines(
+                                    analysis.query_hints, MEASURED_RIVALRY
+                                )
                             if table_info is not None:
                                 analysis = apply_measured_corrections(analysis, table_info)
 

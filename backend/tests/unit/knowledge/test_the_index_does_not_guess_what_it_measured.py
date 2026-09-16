@@ -101,7 +101,7 @@ class TestTheCaveatOutranksTheAdvice:
     def test_the_measured_currency_count_goes_in_front_of_the_advice(self) -> None:
         wrong = "The 'amount' column should be divided by 100 to convert from cents to dollars."
         out = apply_measured_corrections(self._analysis(wrong), _purchases())
-        assert out.query_hints.startswith("MEASURED:")
+        assert out.query_hints.startswith("MEASURED (units):")
         assert "14 distinct values" in out.query_hints
         assert "`amount`" in out.query_hints
         assert wrong in out.query_hints, (
@@ -139,7 +139,7 @@ class TestTheCaveatOutranksTheAdvice:
             name="t", columns=[_col(name, count=3), _col("total", "int")], row_count=9
         )
         assert apply_measured_corrections(self._analysis(""), table).query_hints.startswith(
-            "MEASURED:"
+            "MEASURED (units):"
         )
 
     def test_a_rate_column_is_not_a_unit_column(self) -> None:
@@ -153,7 +153,7 @@ class TestTheCaveatOutranksTheAdvice:
     def test_applying_it_twice_does_not_stack_the_caveat(self) -> None:
         once = apply_measured_corrections(self._analysis("hint"), _purchases())
         twice = apply_measured_corrections(once, _purchases())
-        assert twice.query_hints.count("MEASURED:") == 1
+        assert twice.query_hints.count("MEASURED (units):") == 1
 
 
 def test_every_analysis_that_reaches_storage_passes_through_the_corrector() -> None:
@@ -213,7 +213,7 @@ def test_the_caveat_is_rebuilt_rather_than_stacked() -> None:
     once = apply_measured_corrections(analysis, _purchases())
     twice = apply_measured_corrections(once, _purchases())
     thrice = apply_measured_corrections(twice, _purchases())
-    assert thrice.query_hints.count("MEASURED:") == 1
+    assert thrice.query_hints.count("MEASURED (units):") == 1
     assert "Use was_handled = 1." in thrice.query_hints
 
 
@@ -230,38 +230,44 @@ def test_the_stale_strip_runs_before_the_correction_not_after() -> None:
     """Two correct fixes cancelled each other in production, and only the order says so.
 
     Measured 2026-09-15: `apply_measured_corrections` was live, `strip_measured_lines` was
-    live, both did what they were written to do — and **no stored row carried the currency
-    caveat**, because the store site stripped the analysis AFTER correcting it and the
-    strip removes every line beginning with the prefix, including the one just added.
+    live, both did what they were written to do — and no stored row carried the currency
+    caveat, because the store site stripped the analysis AFTER correcting it.
 
-    Neither function is wrong. A test on either would pass. What is wrong is only visible
-    as a sequence, so that is what this checks: within the loop that builds the stored
-    row, the strip appears before the correction and the join that follows does not strip
-    again.
+    Neither function is wrong. A test on either passes. What is wrong is only visible as a
+    sequence, so that is what this checks — read from the parse tree rather than from the
+    source lines, because the first version matched a one-line call and stopped seeing it
+    the moment the call took a second argument and wrapped.
     """
     tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
-    source = PIPELINE.read_text(encoding="utf-8").splitlines()
 
-    strip_lines = [
-        i + 1
-        for i, line in enumerate(source)
-        if "strip_measured_lines(analysis.query_hints)" in line
+    def _calls(name: str) -> list[int]:
+        return sorted(
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == name
+            and "analysis.query_hints" in ast.unparse(node)
+        )
+
+    strips = _calls("strip_measured_lines")
+    corrections = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "apply_measured_corrections"
     ]
-    correct_lines = [
-        i + 1
-        for i, line in enumerate(source)
-        if "apply_measured_corrections(analysis, table_info)" in line
-    ]
-    assert len(strip_lines) == 1, (
-        f"expected exactly one strip of the analysis hints, found {strip_lines}. Two "
-        "means one of them is undoing the correction; none means a reused analysis "
-        "carries last night's caveats for ever."
+    assert len(strips) == 1, (
+        f"expected exactly one strip of the analysis hints, found {strips}. Two means one "
+        "is undoing the correction; none means a reused analysis carries last night's "
+        "caveats for ever."
     )
-    assert len(correct_lines) == 1, correct_lines
-    assert strip_lines[0] < correct_lines[0], (
-        f"the stale-caveat strip is at line {strip_lines[0]} and the correction at "
-        f"{correct_lines[0]}. Stripping after correcting removes the caveat that was "
-        "just added — both functions stay correct and the stored row carries nothing."
+    assert len(corrections) == 1, corrections
+    assert strips[0] < corrections[0], (
+        f"the stale-caveat strip is at line {strips[0]} and the correction at "
+        f"{corrections[0]}. Stripping after correcting removes the caveat just added — "
+        "both functions stay correct and the stored row carries nothing."
     )
 
     # …and the row that is stored must use the corrected value, not re-strip it.
@@ -270,8 +276,89 @@ def test_the_stale_strip_runs_before_the_correction_not_after() -> None:
             continue
         for key, value in zip(node.keys, node.values, strict=False):
             if isinstance(key, ast.Constant) and key.value == "query_hints":
-                rendered = ast.unparse(value)
-                assert "strip_measured_lines" not in rendered, (
+                assert "strip_measured_lines" not in ast.unparse(value), (
                     "the stored `query_hints` strips again at the point of storage, which "
                     "removes this run's measured caveats along with the stale ones"
                 )
+
+
+class TestAPartialRunDoesNotEraseATrueWarning:
+    """Measured on production 2026-09-16, and it is the flip side of "rebuild, never append".
+
+    A `completed_partial` index spent its sampling budget before reaching
+    `purchases.currency`. The units caveat therefore had nothing to rebuild from — and an
+    unconditional strip removed the correct one the night before had established. The
+    stored row went from carrying a true warning about fourteen currencies to carrying
+    none, because the sampler ran out of time.
+
+    **A caveat is replaced when there is a measurement to replace it with, and kept when
+    there is not.** Forgetting something true on the strength of not having looked is the
+    defect, not the fix.
+    """
+
+    _EXISTING = (
+        "MEASURED (units): `currency` holds 14 distinct values in this table, so `amount` "
+        "is denominated per row.\nUse was_handled = 1."
+    )
+
+    def test_an_unmeasured_run_keeps_what_a_previous_one_established(self) -> None:
+        unmeasured = TableInfo(
+            name="purchases",
+            columns=[_col("currency", "varchar(3)"), _col("amount", "int")],
+            row_count=120_000,
+        )
+        out = apply_measured_corrections(
+            TableAnalysis(table_name="purchases", query_hints=self._EXISTING), unmeasured
+        )
+        assert "14 distinct values" in out.query_hints
+        assert "Use was_handled = 1." in out.query_hints
+
+    def test_a_measured_run_replaces_it(self) -> None:
+        out = apply_measured_corrections(
+            TableAnalysis(table_name="purchases", query_hints=self._EXISTING), _purchases(9)
+        )
+        assert out.query_hints.count("MEASURED (units):") == 1
+        assert "9 distinct values" in out.query_hints
+
+    def test_the_units_strip_leaves_a_rivalry_caveat_alone(self) -> None:
+        """The two are produced by different steps. Removing one on the other's behalf is
+        how a warning disappears for a reason that has nothing to do with it."""
+        from app.knowledge.db_index_validator import MEASURED_RIVALRY, strip_measured_lines
+
+        both = (
+            "MEASURED (units): `currency` holds 14 distinct values.\n"
+            f"{MEASURED_RIVALRY} over 2026-08, 4.30x apart.\n"
+            "Use was_handled = 1."
+        )
+        from app.knowledge.db_index_validator import MEASURED_UNITS
+
+        kept = strip_measured_lines(both, MEASURED_UNITS)
+        assert "rivalry" in kept
+        assert "units" not in kept
+        assert "Use was_handled = 1." in kept
+
+
+def test_the_rivalry_strip_runs_only_when_the_comparison_ran() -> None:
+    """A step that never ran has established nothing.
+
+    Stripping last night's rivalry caveats because this run's comparison was disabled,
+    failed or timed out loses a true warning for a reason unrelated to its truth — the
+    same rule the units caveat follows, applied to the other step.
+    """
+    tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        rendered = ast.unparse(node)
+        if "strip_measured_lines" not in rendered or "analysis.query_hints" not in rendered:
+            continue
+        assert "MEASURED_RIVALRY" in rendered, (
+            "the store site strips every measured caveat rather than the rivalry kind, so "
+            "a run that measured no units erases the units caveat a previous run made"
+        )
+
+    source = PIPELINE.read_text(encoding="utf-8")
+    assert "if _comparison_ran:" in source, (
+        "the rivalry strip is unconditional — a comparison that was disabled or failed "
+        "would delete last night's caveats on the strength of not having looked"
+    )
