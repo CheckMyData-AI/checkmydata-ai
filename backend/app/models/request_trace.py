@@ -37,7 +37,10 @@ class RequestTrace(Base):
         nullable=True,
     )
     assistant_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    workflow_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    #: One row per workflow (PRJ-04). Two writers — the buffer flush at
+    #: ``pipeline_end`` and the chat route's ``finalize_trace`` — used to race a
+    #: ``SELECT … LIMIT 1`` into 65 duplicate rows of 242 in production.
+    workflow_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True, unique=True)
     question: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     response_type: Mapped[str] = mapped_column(String(30), nullable=False, server_default="text")
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="started")

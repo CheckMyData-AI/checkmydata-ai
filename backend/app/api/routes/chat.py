@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import (
@@ -79,26 +80,60 @@ async def _run_with_account_key(account_key, fn, /, **kwargs):
         return await fn(**kwargs)
 
 
-def _abnormal_trace_id(session_id: str, reason: str) -> str:
-    """Workflow id for a run that died before it could report its own.
+def _abnormal_trace_id(session_id: str, reason: str, extra: dict | None) -> str:
+    """Workflow id for a run that ended without a response to read it from (PRJ-04).
 
-    The SSE path captures the real id from the `pipeline_start` event and only falls
-    back when there is genuinely none (chat.py, `_finalize_on_error`). The REST path
-    had no such capture and always passed a synthetic id, which can never match
-    `RequestTrace.workflow_id` -- so `finalize_trace` missed its lookup and wrote a
-    second, empty row beside the real one instead of completing it.
+    ``ConversationalAgent.run`` writes ``_workflow_id`` into the caller's ``extra``
+    before anything can fail, so a timed-out or crashed run finalizes ITS trace —
+    the one the buffer flush already wrote with duration, spans and routing.
 
-    Until REST captures the real id (carry-over K12), make the fallback visible
-    rather than silent: it is a known gap, and a trace row nobody can join to its
-    spans should say so in the logs.
+    The fallback used to be the literal "unknown-" plus the session id: never joinable to its spans,
+    and 44 characters for a ``String(36)`` column, so Postgres refused the insert and
+    the failure was not recorded at all. Now a run with no id is one that failed
+    before its workflow began; it gets a fresh id of the right shape, and a warning.
     """
+    wf_id = (extra or {}).get("_workflow_id")
+    if isinstance(wf_id, str) and wf_id:
+        return wf_id
     logger.warning(
-        "Finalizing a trace without the run's workflow id (reason=%s, session=%s); "
-        "this row cannot be joined to its spans",
+        "Finalizing a trace for a run that never began a workflow (reason=%s, session=%s)",
         reason,
         session_id[:8],
     )
-    return f"unknown-{session_id}"
+    return str(uuid.uuid4())
+
+
+async def _finalize_ws_crash(
+    websocket: WebSocket,
+    *,
+    workflow_id: str,
+    project_id: str,
+    user_id: str,
+    session_id: str,
+    message_id: str | None,
+    question: str,
+    error: str,
+) -> None:
+    """Attach a WebSocket run's crash to its trace.
+
+    No ``try`` of its own: ``finalize_trace`` catches and logs everything it can raise,
+    which is the contract the other two transports already lean on.
+    """
+    trace_svc = getattr(websocket.app.state, "trace_persistence_service", None)
+    if trace_svc is None:
+        return
+    await trace_svc.finalize_trace(
+        workflow_id,
+        project_id=project_id,
+        user_id=user_id,
+        session_id=session_id,
+        message_id=message_id,
+        question=question,
+        response_type="error",
+        status="failed",
+        error_message=error,
+        meta=TraceMeta.aborted(fk.kind_for_terminal_detail(error)),
+    )
 
 
 _rag_feedback_svc = RAGFeedbackService()
@@ -433,7 +468,7 @@ async def ask(
                 trace_svc = getattr(request.app.state, "trace_persistence_service", None)
                 if trace_svc is not None:
                     await trace_svc.finalize_trace(
-                        _abnormal_trace_id(session_id, "timeout"),
+                        _abnormal_trace_id(session_id, "timeout", extra),
                         project_id=body.project_id,
                         user_id=user["user_id"],
                         session_id=session_id,
@@ -457,7 +492,7 @@ async def ask(
                 trace_svc = getattr(request.app.state, "trace_persistence_service", None)
                 if trace_svc is not None:
                     await trace_svc.finalize_trace(
-                        _abnormal_trace_id(session_id, "crash"),
+                        _abnormal_trace_id(session_id, "crash", extra),
                         project_id=body.project_id,
                         user_id=user["user_id"],
                         session_id=session_id,
@@ -466,7 +501,9 @@ async def ask(
                         response_type="error",
                         status="failed",
                         error_message=_exc_msg,
-                        meta=TraceMeta.aborted(fk.FATAL),
+                        meta=TraceMeta.aborted(
+                            fk.kind_for_terminal_detail(type(agent_exc).__name__)
+                        ),
                     )
             except Exception:
                 logger.warning("Failed to finalize trace after agent crash", exc_info=True)
@@ -1123,12 +1160,9 @@ async def ask_stream(
             task = asyncio.create_task(_process())
 
             async def _finalize_on_error(workflow_id: str | None, error_msg: str) -> None:
-                effective_wf_id = workflow_id or f"stream-error-{session_id}"
-                if not workflow_id:
-                    logger.warning(
-                        "Stream error but wf_id is None; using fallback ID %s",
-                        effective_wf_id[:16],
-                    )
+                effective_wf_id = workflow_id or _abnormal_trace_id(
+                    session_id, "stream-error", stream_extra
+                )
                 try:
                     trace_svc = getattr(request.app.state, "trace_persistence_service", None)
                     if trace_svc is not None:
@@ -1141,7 +1175,7 @@ async def ask_stream(
                             question=body.message,
                             # A stream that errored has no response to read routing
                             # from: the failure may predate the router entirely.
-                            meta=TraceMeta.aborted(fk.FATAL),
+                            meta=TraceMeta.aborted(fk.kind_for_terminal_detail(error_msg)),
                             response_type="error",
                             status="failed",
                             error_message=error_msg[:500],
@@ -1868,26 +1902,43 @@ async def chat_websocket(
                 ws_sql_model = _proj_sql_mdl or ws_agent_model
 
                 _account_key = await bind_account_key(db, user_id)
-                result = await _run_with_account_key(
-                    _account_key,
-                    _agent.run,
-                    question=message,
-                    project_id=project_id,
-                    connection_config=config,
-                    chat_history=history[:-1],
-                    preferred_provider=ws_agent_provider,
-                    model=ws_agent_model,
-                    sql_provider=ws_sql_provider,
-                    sql_model=ws_sql_model,
-                    project_name=ws_project.name if ws_project else None,
-                    user_id=user_id,
-                    # R5-5: the HTTP/stream paths thread session_id through ``extra``
-                    # so session-scoped features (pipeline state, continuation,
-                    # session notes) work; the WS path silently omitted it.
-                    # L5: also thread the pipeline-control fields so checkpoint
-                    # Continue / Modify / Retry work over the WebSocket transport.
-                    extra=_ws_pipeline_extra(session_id, ws_msg),
-                )
+                ws_extra = _ws_pipeline_extra(session_id, ws_msg)
+                try:
+                    result = await _run_with_account_key(
+                        _account_key,
+                        _agent.run,
+                        question=message,
+                        project_id=project_id,
+                        connection_config=config,
+                        chat_history=history[:-1],
+                        preferred_provider=ws_agent_provider,
+                        model=ws_agent_model,
+                        sql_provider=ws_sql_provider,
+                        sql_model=ws_sql_model,
+                        project_name=ws_project.name if ws_project else None,
+                        user_id=user_id,
+                        # R5-5: the HTTP/stream paths thread session_id through ``extra``
+                        # so session-scoped features (pipeline state, continuation,
+                        # session notes) work; the WS path silently omitted it.
+                        # L5: also thread the pipeline-control fields so checkpoint
+                        # Continue / Modify / Retry work over the WebSocket transport.
+                        extra=ws_extra,
+                    )
+                except Exception as ws_agent_exc:
+                    # PRJ-04: REST and SSE finalize a crashed run's trace; WS did not,
+                    # so a raise over WebSocket left the buffer row with no session,
+                    # no message and nothing a user-scoped log view could join.
+                    await _finalize_ws_crash(
+                        websocket,
+                        workflow_id=_abnormal_trace_id(session_id, "ws-crash", ws_extra),
+                        project_id=project_id,
+                        user_id=user_id,
+                        session_id=session_id,
+                        message_id=ws_user_message_id,
+                        question=message,
+                        error=type(ws_agent_exc).__name__,
+                    )
+                    raise
 
                 viz_data = None
                 if result.results and not result.error:

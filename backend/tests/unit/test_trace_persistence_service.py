@@ -525,7 +525,8 @@ class TestStaleBufferPersistence:
 
         source = inspect.getsource(tps_mod.TracePersistenceService._cleanup_stale_buffers)
         assert "_persist_workflow" in source
-        assert "Stale: pipeline_end never received" in source
+        assert "STALE_DETAIL" in source
+        assert tps_mod.STALE_DETAIL == "Stale: pipeline_end never received"
 
 
 class TestPersistTaskReference:

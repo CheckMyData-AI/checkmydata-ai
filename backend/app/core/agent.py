@@ -69,6 +69,15 @@ class ConversationalAgent:
             },
         )
 
+        # PRJ-04: the caller's own dict learns the workflow id, before anything can
+        # fail. A route that times the run out (`asyncio.wait_for`) or catches its
+        # crash holds no response to read it from, and used to finalize the trace
+        # under a synthetic `unknown-{session}` id — 44 characters for a 36-character
+        # column, so on Postgres that row was never written at all.
+        if extra is None:
+            extra = {}
+        extra["_workflow_id"] = wf_id
+
         context = AgentContext(
             project_id=project_id,
             connection_config=connection_config,
@@ -84,7 +93,7 @@ class ConversationalAgent:
             sql_model=sql_model,
             project_name=project_name,
             max_orchestrator_steps=max_steps,
-            extra=extra or {},
+            extra=extra,
         )
 
         try:

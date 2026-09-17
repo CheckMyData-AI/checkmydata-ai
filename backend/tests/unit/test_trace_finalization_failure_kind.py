@@ -48,14 +48,21 @@ def test_both_abnormal_rest_paths_pass_a_kind_from_the_shared_vocabulary():
 
     source = inspect.getsource(chat)
     assert "meta=TraceMeta.aborted(fk.TRANSIENT)" in source, "the timeout path must say transient"
-    assert "meta=TraceMeta.aborted(fk.FATAL)" in source, "the crash path must say fatal"
+    # PRJ-04: a crash is classified from its exception type rather than always
+    # `fatal` — `LLMAllProvidersFailedError` is an overloaded provider, not a defect.
+    # The classifier lives in the vocabulary module, so this still names one place.
+    flat = "".join(source.split())
+    assert "meta=TraceMeta.aborted(fk.kind_for_terminal_detail(type(agent_exc).__name__))" in (
+        flat
+    ), "the crash path must classify through the shared vocabulary"
     assert 'failure_kind="' not in source, (
         "a literal at the call site is what let the two vocabularies drift"
     )
     assert set(FAILURE_KINDS) == {"transient", "configuration", "data_missing", "fatal"}
-    assert 'f"unknown-{session_id}"' not in source.replace('return f"unknown-{session_id}"', ""), (
-        "the synthetic id must only be produced by the logged fallback helper"
-    )
+    # PRJ-04: no synthetic id at all. `unknown-{session}` was 44 characters for a
+    # String(36) column, so Postgres refused the row and the failure went unrecorded.
+    assert "unknown-{session_id}" not in source
+    assert "stream-error-{session_id}" not in source
 
 
 async def test_finalize_does_not_overwrite_real_values_with_its_own_defaults(monkeypatch):

@@ -6,6 +6,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — one trace row per request, and the row says what happened (PRJ-04)
+
+Measured on production 2026-09-17, before the change:
+
+- **242 `request_traces` rows for 177 workflows.** Two writers produce a trace — the
+  buffer flush at `pipeline_end` (duration, spans) and the chat route's
+  `finalize_trace` (session, tokens, cost). The second looked the first up with
+  `SELECT … LIMIT 1` and inserted when the flush, a fire-and-forget task, had not
+  committed yet.
+- **10 of 12 failed traces in 30 days read `route='unknown'`**, and `failure_kind`
+  was NULL on 59 of 60 failed unknown-route rows. Routing reached the trace only
+  through a returned response, and a crash or a timeout has none.
+- **26 `Stale: pipeline_end never received` rows**, one of them on a run the chat
+  path reported completed. A buffer was evicted at 300 s — below the 360 s REST/SSE
+  ceiling and the 900 s WebSocket relay a live request runs under.
+- **REST timeouts were not recorded at all.** They finalized under the synthetic id
+  `unknown-{session}` — 44 characters for a `String(36)` column — so Postgres refused
+  the row. Production held zero of them.
+
+Now:
+
+- `workflow_id` is **unique**. Migration `d6e7f8a9b0c1` merges the existing duplicates
+  rather than dropping them — the row with the measured spans is kept and takes
+  session, tokens, cost and routing from its twin; a run either row says completed is
+  completed, and loses its `Stale:` note. `finalize_trace` waits (bounded, 10 s) for
+  its own workflow's flush, and a writer that still loses the race turns its
+  `IntegrityError` into an update.
+- The orchestrator puts the router's verdict **on the run's own event stream**, under
+  the same condition that fills `pop_routing` (ORCH-07: first verdict wins), and the
+  flush reads it from the buffer — the one record every exit path reaches.
+- `failure_kind` is classified from the terminal detail by
+  `failure_kind.kind_for_terminal_detail`: timeouts, `WallClockExceeded` and
+  overloaded providers are `transient`, auth, billing and spent budgets
+  `configuration`, anything else `fatal`. The REST and SSE crash paths use the same
+  function instead of always writing `fatal`.
+- `ConversationalAgent.run` writes `_workflow_id` into the caller's `extra` before
+  anything can fail, so REST timeouts, SSE errors and — newly — **WebSocket crashes**
+  finalize the run's real row. A run that never began a workflow gets a fresh UUID,
+  never a synthetic string.
+- An evicted buffer is `provisional`, not `failed`, and eviction waits for the longest
+  transport ceiling plus 60 s. `checkpoint` is its own status instead of `failed`.
+- Every terminal logs one `request_summary wf=… status=… route=… failure_kind=…
+  duration_ms=…` line.
+
+20 new tests run the real service against SQLite; each fix was verified by planting
+its defect back (8 plants, 8 failures).
+
+**Not in this change:** splitting the `db_query` span from the LLM repair and
+learning-analyzer spans, and router attempt/backoff events. Both change the span
+taxonomy the Logs screen renders and are queued as their own task.
+
 ### Fixed — one request deadline, and it interrupts rather than advises (PRJ-03)
 
 Measured on production over 30 days: **6 of 23 traces** ran past 1.2x the 180 s

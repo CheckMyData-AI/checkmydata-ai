@@ -954,12 +954,24 @@ class OrchestratorAgent(BaseAgent):
             # the field #267 existed to make honest after 222 traces of 222 read
             # "unknown"; the docstring on `_fallback_to_unified` already claims the
             # original complexity is preserved, and until now nothing preserved it.
+            routing_extra: dict[str, Any] = {}
             if not is_continuation and wf_id not in self._wf_routing:
                 self._wf_routing[wf_id] = (
                     route_result.route,
                     route_result.complexity,
                     route_result.estimated_queries,
                 )
+                # PRJ-04: and a third home, on the run's own event stream, under the
+                # same condition. `pop_routing` reaches the trace only when the agent
+                # RETURNS; a crash, a timeout or a stale eviction never drains it, which
+                # is why 10 of 12 failed traces in 30 days read `route='unknown'`. The
+                # trace buffer sees every event, and `routing_from_events` takes the
+                # first — so ORCH-07's bounce rule holds there too.
+                routing_extra = {
+                    "route": route_result.route,
+                    "complexity": route_result.complexity,
+                    "estimated_queries": route_result.estimated_queries,
+                }
 
             logger.info(
                 "Router: route=%s complexity=%s (wf=%s)",
@@ -972,6 +984,7 @@ class OrchestratorAgent(BaseAgent):
                 "thinking",
                 "in_progress",
                 f"Route: {route_result.route} ({route_result.complexity})",
+                **routing_extra,
             )
 
             # --- Direct response: no tools needed ---
