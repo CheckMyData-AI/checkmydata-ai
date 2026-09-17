@@ -227,7 +227,7 @@ export function InviteManager({ projectId, onClose }: Props) {
   const pendingInvites = invites.filter((i) => i.status === "pending");
 
   return (
-    <div className="space-y-3 p-4 bg-surface-1 rounded-lg border border-border-default shadow-(--shadow-1)">
+    <div className="space-y-3 p-4 bg-surface-1 rounded-lg border border-border-default">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-medium text-text-primary uppercase tracking-wider">
           Manage Access

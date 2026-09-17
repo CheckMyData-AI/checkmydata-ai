@@ -150,7 +150,7 @@ function AccessModal({ projectId, onClose }: { projectId: string; onClose: () =>
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="w-full max-w-md mx-4 animate-in fade-in zoom-in-95 duration-150 outline-none"
+        className="w-full max-w-md mx-4 rounded-lg shadow-(--shadow-1) animate-in fade-in zoom-in-95 duration-150 outline-none"
       >
         <InviteManager projectId={projectId} onClose={onClose} />
       </div>

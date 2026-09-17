@@ -12,7 +12,7 @@ human review moves them to `validated`.
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-09-12 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-09-17 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -23,11 +23,11 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 |---|---|
 | Scenarios | **153** |
 | Status | draft × 12, implemented × 141 |
-| Last verdict | PARTIAL × 2, PASS × 139, no verdict × 12 |
-| Verified when | 2026-07-19 × 95, 2026-08-16 × 5, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, undated × 12 |
-| **Verified >30 days ago** | **95 of 153** (oldest 55 days) |
+| Last verdict | PARTIAL × 1, PASS × 140, no verdict × 12 |
+| Verified when | 2026-07-19 × 95, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, undated × 12 |
+| **Verified >30 days ago** | **95 of 153** (oldest 60 days) |
 | Never verified (no date) | 12 |
-| Referenced from code or tests | **37 of 153** |
+| Referenced from code or tests | **38 of 153** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -149,7 +149,7 @@ it is what moves it.
 | SCN-104 | Revoke an MCP token | mcp-tokens | api-consumer | implemented | 2026-07-19 PASS |
 | SCN-105 | Background tasks — view/cancel/retry/dismiss | tasks | analyst | implemented | 2026-07-19 PASS |
 | SCN-106 | Request history & trace detail | logs | owner | implemented | 2026-08-31 PASS |
-| SCN-107 | Runs & Errors log tabs | logs | owner | implemented | 2026-08-16 PASS |
+| SCN-107 | Runs & Errors log tabs | logs | owner | implemented | 2026-09-17 PASS |
 | SCN-108 | Live activity log stream | logs | analyst | implemented | 2026-07-19 PASS |
 | SCN-109 | Landing page → Get Started | marketing | visitor | implemented | 2026-07-19 PASS |
 | SCN-110 | Pricing CTA (logged out) | marketing | visitor | implemented | 2026-07-19 PASS |
@@ -165,10 +165,10 @@ it is what moves it.
 | SCN-128 | One question across analytics and the database in a single answer | analytics-sources | analyst | implemented | 2026-09-03 PASS |
 | SCN-120 | Database does not answer — honest stop instead of a silent grind | chat | analyst | implemented | 2026-08-19 PASS |
 | SCN-121 | Attaching an SSH key you do not own is refused | connections | owner | implemented | 2026-08-19 PASS |
-| SCN-122 | Every answer says how it is known — the seal | chat | analyst | implemented | 2026-08-16 PARTIAL → fixed |
-| SCN-123 | The interface reads as one design in light and in dark | settings | analyst | implemented | 2026-08-16 PASS |
-| SCN-124 | A result reads as a ledger — aligned, labelled, and the same in both themes | chat | analyst | implemented | 2026-08-16 PASS |
-| SCN-125 | The answer is the page, not a speech bubble | chat | analyst | implemented | 2026-08-16 PARTIAL → fixed |
+| SCN-122 | Every answer says how it is known — the seal | chat | analyst | implemented | 2026-09-17 PASS |
+| SCN-123 | The interface reads as one design in light and in dark | settings | analyst | implemented | 2026-09-17 PARTIAL → fixed |
+| SCN-124 | A result reads as a ledger — aligned, labelled, and the same in both themes | chat | analyst | implemented | 2026-09-17 PASS |
+| SCN-125 | The answer is the page, not a speech bubble | chat | analyst | implemented | 2026-09-17 PASS |
 | SCN-126 | Transfer project ownership | members | owner | implemented | 2026-08-21 PASS |
 | SCN-127 | Leave a project | analyst | members | implemented | 2026-08-21 PASS |
 | SCN-129 | Data workspace — every source managed on one screen | workspace | owner | implemented | 2026-09-08 PASS |
@@ -2380,7 +2380,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** light, dark, system
 - **Errors & recovery:** the theme is applied as **both** a `.dark` class and a `data-theme` attribute, because Tailwind's dark variant keys off the class while the pack's token layer switches on the attribute. Setting only one leaves half the app in the other theme, which reads as a rendering bug rather than a missing line — `theme-store.test.ts` fails if either stops being set
 - **Status:** implemented
-- **Coverage:** frontend/src/app/globals.css; frontend/src/stores/theme-store.ts; frontend/src/__tests__/theme-tokens.test.ts; frontend/src/__tests__/pack-bans.test.ts
+- **Coverage:** frontend/src/app/globals.css; frontend/src/stores/theme-store.ts; frontend/src/__tests__/theme-tokens.test.ts; frontend/src/__tests__/pack-bans.test.ts; frontend/src/__tests__/pack-bans.test.ts (`puts the shadow token only on surfaces that float`)
+- **Audit note (2026-09-17):** PARTIAL on re-audit — the Manage Access card (`InviteManager.tsx`) carried `shadow-(--shadow-1)` on itself and is mounted flat inside the settings panel (`SettingsPanel.tsx:182`), so a card was raised in one place while the same card inside the project dialog was a true overlay. The shadow moved to the dialog panel (`ProjectSelector.tsx`); a test now lists every file allowed the token with the floating surface it draws, and failed when the card's shadow was planted back
 
 ### SCN-124: A result reads as a ledger — aligned, labelled, and the same in both themes
 - **Persona:** analyst
