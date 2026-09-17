@@ -148,6 +148,14 @@ Chat request arrives (any path)
       → TraceSpan.output_preview — LLM response / query results / tool output
       → TraceSpan.token_usage_json — model, prompt/completion/total tokens
   → finalize_trace() enriches with message IDs and metadata
+    → ONE row per workflow_id (unique index, PRJ-04): finalize waits for its own
+      workflow's flush, and either writer that loses the race updates instead of inserting
+    → route/complexity come from the router's event in the buffer, so a crashed or
+      timed-out run still carries them; failure_kind is classified from the terminal detail
+    → status is completed | failed | checkpoint | provisional — `provisional` is a buffer
+      evicted without pipeline_end (after the longest transport ceiling + 60 s), and a
+      later finalize replaces it
+    → every terminal logs one `request_summary wf=… status=… route=… failure_kind=…` line
   → Owner opens Logs screen → GET /api/logs/ queries request_traces + trace_spans
 
 Error trace guarantees:

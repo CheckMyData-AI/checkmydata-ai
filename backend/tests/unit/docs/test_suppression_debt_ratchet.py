@@ -39,6 +39,10 @@ APP = Path(__file__).resolve().parents[4] / "backend" / "app"
 #: Counts measured 2026-08-25 over `backend/app/`. Lower them as suppressions go; raise
 #: one only in the same commit as the suppression it admits, so the increase is reviewed.
 CEILINGS: dict[str, int] = {
+    # 660 → 661 on 2026-09-17 (PRJ-04). One: the WebSocket transport now finalizes a
+    # crashed run's trace, which needs the exception in hand — and it RE-RAISES, so
+    # nothing is swallowed. REST and SSE already had the same handler; WS was the one
+    # transport whose crashes left a trace with no session to join it to.
     # 618 → 621 on 2026-08-31. Three, all on the Stripe seam, and all three swallow a
     # failure whose propagation would cost more than the thing it was reporting:
     #
@@ -325,7 +329,7 @@ CEILINGS: dict[str, int] = {
     # The json parse in `stale_run_reaper._requeue_attempts` added in the same change is
     # NOT here: `json.loads` raises `ValueError` or `TypeError` and nothing else can, so
     # it is caught narrowly rather than spending this budget.
-    "except Exception": 660,
+    "except Exception": 661,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

@@ -14,6 +14,10 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
+
+from app.core.failure_kind import kind_for_terminal_detail
 from app.core.trace_meta import TraceMeta
 from app.core.workflow_tracker import WorkflowEvent, WorkflowTracker
 from app.models.base import async_session_factory
@@ -22,7 +26,95 @@ from app.models.request_trace import RequestTrace, TraceSpan
 logger = logging.getLogger(__name__)
 
 _PREVIEW_MAX_LEN = 1000
-_STALE_BUFFER_SECONDS = 300  # 5 minutes
+
+#: What a buffer evicted without a ``pipeline_end`` is recorded as. NOT ``failed``:
+#: the eviction is a guess that the run is dead, and until PRJ-04 the guess fired at
+#: 300 s — below every transport ceiling a live request runs under (REST/SSE 360 s,
+#: WS relay 900 s). Production held 26 ``Stale: …`` rows, one of them on a run the
+#: chat path later reported ``completed``. A later ``finalize_trace`` replaces it.
+PROVISIONAL_STATUS = "provisional"
+STALE_DETAIL = "Stale: pipeline_end never received"
+
+#: Terminal ``pipeline_end`` status -> trace status. ``checkpoint`` is a pause that
+#: waits for a person, not a failure, and was stored as ``failed`` (O-16).
+_END_STATUS_TO_TRACE_STATUS = {
+    "completed": "completed",
+    "clarification": "completed",
+    "checkpoint": "checkpoint",
+    PROVISIONAL_STATUS: PROVISIONAL_STATUS,
+}
+
+#: How long ``finalize_trace`` waits for the buffer flush of the same workflow before
+#: writing on its own. The two used to race, and 65 of 242 production rows were a
+#: second row for a workflow that already had one (measured 2026-09-17).
+_FLUSH_WAIT_SECONDS = 10.0
+
+
+def stale_buffer_seconds() -> float:
+    """Evict a buffer only after every ceiling a live request can run under.
+
+    Derived rather than typed: a constant beside three configurable ceilings is
+    right on the day it is written and wrong the day one of them moves.
+    """
+    from app.config import settings
+
+    return (
+        max(
+            float(settings.stream_timeout_seconds),
+            float(settings.ws_event_relay_timeout_seconds),
+            float(settings.agent_wall_clock_timeout_seconds) * 1.2,
+        )
+        + 60.0
+    )
+
+
+def routing_from_events(events: list[WorkflowEvent]) -> tuple[str, str, int] | None:
+    """The router's verdict, read from the run's own events (PRJ-04).
+
+    The orchestrator emits it once per workflow, beside the ``Route: …`` line; the
+    FIRST one wins, which is the rule ``_wf_routing`` applies (ORCH-07: a
+    pipeline→loop bounce re-enters with a synthetic route that must not replace the
+    router's). Read here because the buffer is the one record every exit path
+    reaches — a crash, a timeout and a stale eviction included — while the
+    response-borne copy exists only when the agent returned. 10 of 12 failed traces
+    in 30 days read ``route='unknown'`` for that reason.
+    """
+    for evt in events:
+        extra = evt.extra or {}
+        route = extra.get("route")
+        if isinstance(route, str) and route:
+            complexity = extra.get("complexity")
+            try:
+                estimated = int(extra.get("estimated_queries") or 0)
+            except (TypeError, ValueError):
+                estimated = 0
+            return route, complexity if isinstance(complexity, str) else "unknown", estimated
+    return None
+
+
+async def _find_trace(session: Any, workflow_id: str) -> RequestTrace | None:
+    """The one row for a workflow — ``workflow_id`` is unique since PRJ-04."""
+    result = await session.execute(
+        select(RequestTrace).where(RequestTrace.workflow_id == workflow_id)
+    )
+    return result.scalar_one_or_none()
+
+
+def log_request_summary(trace: dict[str, Any], *, writer: str) -> None:
+    """One line per terminal, so "why did this take 90 s" starts from a log search."""
+    logger.info(
+        "request_summary wf=%s status=%s route=%s complexity=%s failure_kind=%s "
+        "duration_ms=%s llm_calls=%s db_queries=%s writer=%s",
+        str(trace.get("workflow_id", ""))[:8],
+        trace.get("status"),
+        trace.get("route"),
+        trace.get("complexity"),
+        trace.get("failure_kind"),
+        trace.get("total_duration_ms"),
+        trace.get("total_llm_calls"),
+        trace.get("total_db_queries"),
+        writer,
+    )
 
 
 SPAN_TYPE_MAP: dict[str, str] = {
@@ -142,6 +234,9 @@ class TracePersistenceService:
         # weak reference to a bare create_task(), so without this the trace
         # write can be garbage-collected mid-flight and silently lost.
         self._persist_tasks: set[asyncio.Task[None]] = set()
+        # The same tasks by workflow, so ``finalize_trace`` can wait for its own
+        # workflow's flush instead of racing it into a second row.
+        self._persist_by_wf: dict[str, asyncio.Task[None]] = {}
 
     async def start(self) -> None:
         self._tracker.add_persistence_hook(self._on_event)
@@ -199,15 +294,41 @@ class TracePersistenceService:
                     self._buffers.pop(event.workflow_id, None)
 
             if event.step == "pipeline_end":
-                task = asyncio.create_task(self._persist_workflow(buf, event))
-                self._persist_tasks.add(task)
-                task.add_done_callback(self._persist_tasks.discard)
+                self._schedule_persist(buf, event)
 
         except Exception:
             logger.warning(
                 "TracePersistence: failed to process event for wf=%s",
                 event.workflow_id[:8],
                 exc_info=True,
+            )
+
+    def _schedule_persist(self, buf: _WorkflowBuffer, event: WorkflowEvent) -> None:
+        task = asyncio.create_task(self._persist_workflow(buf, event))
+        self._persist_tasks.add(task)
+        self._persist_by_wf[buf.workflow_id] = task
+
+        def _done(t: asyncio.Task[None], wf: str = buf.workflow_id) -> None:
+            self._persist_tasks.discard(t)
+            if self._persist_by_wf.get(wf) is t:
+                self._persist_by_wf.pop(wf, None)
+
+        task.add_done_callback(_done)
+
+    async def _await_flush(self, workflow_id: str) -> None:
+        """Let this workflow's buffer flush land first, bounded and never raising."""
+        task = self._persist_by_wf.get(workflow_id)
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=_FLUSH_WAIT_SECONDS)
+        except TimeoutError:
+            # The flush itself never raises (`_persist_workflow` logs and returns), so
+            # the only way out of this wait other than success is the bound.
+            logger.warning(
+                "TracePersistence: flush for wf=%s did not finish in %.0fs; finalizing anyway",
+                workflow_id[:8],
+                _FLUSH_WAIT_SECONDS,
             )
 
     async def finalize_trace(
@@ -249,100 +370,135 @@ class TracePersistenceService:
         failure_kind = meta.failure_kind
         estimated_cost_usd = meta.cost_usd
         plan_json = meta.plan_json
+        await self._await_flush(workflow_id)
+
+        async def _update_existing(session: Any, trace: RequestTrace) -> dict[str, Any]:
+            # The buffer flush at ``pipeline_end`` already wrote this row with real
+            # numbers (duration, LLM/DB call counts). This UPDATE used to overwrite
+            # every column unconditionally, so the *defaults of this function's own
+            # parameters* clobbered them: a run that had taken 323 s came out with
+            # total_duration_ms=NULL, steps 0/0 and route/complexity "unknown" --
+            # exactly the production trace of 2026-08-06 11:39:24. Only write what
+            # the caller actually supplied.
+            values: dict[str, Any] = {
+                "project_id": project_id,
+                "user_id": user_id,
+                "response_type": response_type,
+                "status": status,
+            }
+            optional: dict[str, Any] = {
+                "session_id": session_id,
+                "message_id": message_id,
+                "assistant_message_id": assistant_message_id,
+                # Additive like its neighbours: a clean run's ``None`` must not
+                # erase a kind the buffer flush already wrote. It sat in the
+                # unconditional dict above, which is the same shape that erased
+                # 323 s of duration once.
+                "failure_kind": failure_kind,
+                "plan_json": plan_json,
+                "error_message": _truncate(error_message),
+                "total_duration_ms": total_duration_ms,
+                "estimated_cost_usd": estimated_cost_usd,
+            }
+            values.update({k: v for k, v in optional.items() if v is not None})
+            if status == "completed":
+                # ...except where the earlier writer's statement is now false. A run
+                # the chat path completed has no failure, and a ``Stale: …`` note
+                # written by a provisional eviction describes a death that did not
+                # happen. Production carried one such row.
+                values["failure_kind"] = None
+                if (trace.error_message or "").startswith("Stale:") and not error_message:
+                    values["error_message"] = None
+            if question:
+                values["question"] = _truncate(question, 500)
+            if total_tokens:
+                values["total_tokens"] = total_tokens
+            if steps_used or steps_total:
+                values["steps_used"] = steps_used
+                values["steps_total"] = steps_total
+            if estimated_queries:
+                values["estimated_queries"] = estimated_queries
+            for name, supplied in (
+                ("llm_provider", llm_provider),
+                ("llm_model", llm_model),
+                ("route", route),
+                ("complexity", complexity),
+            ):
+                if supplied and supplied != "unknown":
+                    values[name] = supplied
+
+            upd = update(RequestTrace).where(RequestTrace.id == trace.id).values(**values)
+            await session.execute(upd)
+            await session.commit()
+            return values
+
         try:
             async with async_session_factory() as session:
-                from sqlalchemy import select, update
-
-                stmt = select(RequestTrace).where(RequestTrace.workflow_id == workflow_id).limit(1)
-                result = await session.execute(stmt)
-                trace = result.scalar_one_or_none()
-
+                trace = await _find_trace(session, workflow_id)
                 if trace is not None:
-                    # The buffer flush at ``pipeline_end`` already wrote this row with
-                    # real numbers (duration, LLM/DB call counts). This UPDATE used to
-                    # overwrite every column unconditionally, so the *defaults of this
-                    # function's own parameters* clobbered them: a run that had taken
-                    # 323 s came out with total_duration_ms=NULL, steps 0/0 and
-                    # route/complexity "unknown" -- exactly the production trace of
-                    # 2026-08-06 11:39:24. Only write what the caller actually supplied.
-                    values: dict[str, Any] = {
-                        "project_id": project_id,
-                        "user_id": user_id,
-                        "response_type": response_type,
-                        "status": status,
-                    }
-                    optional: dict[str, Any] = {
-                        "session_id": session_id,
-                        "message_id": message_id,
-                        "assistant_message_id": assistant_message_id,
-                        # Additive like its neighbours: a clean run's ``None``
-                        # must not erase a kind the buffer flush already wrote.
-                        # It sat in the unconditional dict above, which is the
-                        # same shape that erased 323 s of duration once.
-                        "failure_kind": failure_kind,
-                        "plan_json": plan_json,
-                        "error_message": _truncate(error_message),
-                        "total_duration_ms": total_duration_ms,
-                        "estimated_cost_usd": estimated_cost_usd,
-                    }
-                    values.update({k: v for k, v in optional.items() if v is not None})
-                    if question:
-                        values["question"] = _truncate(question, 500)
-                    if total_tokens:
-                        values["total_tokens"] = total_tokens
-                    if steps_used or steps_total:
-                        values["steps_used"] = steps_used
-                        values["steps_total"] = steps_total
-                    if estimated_queries:
-                        values["estimated_queries"] = estimated_queries
-                    for name, supplied in (
-                        ("llm_provider", llm_provider),
-                        ("llm_model", llm_model),
-                        ("route", route),
-                        ("complexity", complexity),
-                    ):
-                        if supplied and supplied != "unknown":
-                            values[name] = supplied
-
-                    upd = update(RequestTrace).where(RequestTrace.id == trace.id).values(**values)
-                    await session.execute(upd)
-                    await session.commit()
-                else:
-                    spans = self._build_spans_from_tool_log(tool_call_log or [])
-                    llm_count = sum(1 for s in spans if s["span_type"] == "llm_call")
-                    db_count = sum(1 for s in spans if s["span_type"] == "db_query")
-
-                    trace = RequestTrace(
-                        project_id=project_id,
-                        user_id=user_id,
-                        session_id=session_id,
-                        message_id=message_id,
-                        assistant_message_id=assistant_message_id,
-                        workflow_id=workflow_id,
-                        question=_truncate(question, 500) or "",
-                        response_type=response_type,
-                        status=status,
-                        error_message=_truncate(error_message),
-                        failure_kind=failure_kind,
-                        total_duration_ms=total_duration_ms,
-                        total_llm_calls=llm_count,
-                        total_db_queries=db_count,
-                        total_tokens=total_tokens,
-                        estimated_cost_usd=estimated_cost_usd,
-                        llm_provider=llm_provider,
-                        llm_model=llm_model,
-                        steps_used=steps_used,
-                        steps_total=steps_total,
-                        route=route,
-                        complexity=complexity,
-                        estimated_queries=estimated_queries,
-                        plan_json=plan_json,
+                    values = await _update_existing(session, trace)
+                    log_request_summary(
+                        {
+                            "workflow_id": workflow_id,
+                            "route": trace.route,
+                            "complexity": trace.complexity,
+                            "failure_kind": trace.failure_kind,
+                            "total_duration_ms": trace.total_duration_ms,
+                            "total_llm_calls": trace.total_llm_calls,
+                            "total_db_queries": trace.total_db_queries,
+                            **values,
+                        },
+                        writer="finalize",
                     )
-                    session.add(trace)
-                    await session.flush()
+                    return
 
-                    for i, sd in enumerate(spans):
-                        span = TraceSpan(
+                spans = self._build_spans_from_tool_log(tool_call_log or [])
+                llm_count = sum(1 for s in spans if s["span_type"] == "llm_call")
+                db_count = sum(1 for s in spans if s["span_type"] == "db_query")
+
+                trace = RequestTrace(
+                    project_id=project_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    message_id=message_id,
+                    assistant_message_id=assistant_message_id,
+                    workflow_id=workflow_id,
+                    question=_truncate(question, 500) or "",
+                    response_type=response_type,
+                    status=status,
+                    error_message=_truncate(error_message),
+                    failure_kind=failure_kind,
+                    total_duration_ms=total_duration_ms,
+                    total_llm_calls=llm_count,
+                    total_db_queries=db_count,
+                    total_tokens=total_tokens,
+                    estimated_cost_usd=estimated_cost_usd,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                    steps_used=steps_used,
+                    steps_total=steps_total,
+                    route=route,
+                    complexity=complexity,
+                    estimated_queries=estimated_queries,
+                    plan_json=plan_json,
+                )
+                session.add(trace)
+                try:
+                    await session.flush()
+                except IntegrityError:
+                    # The other writer inserted between our read and our write. The
+                    # unique index on ``workflow_id`` is what makes this visible; the
+                    # row it protects is updated rather than duplicated.
+                    await session.rollback()
+                    existing = await _find_trace(session, workflow_id)
+                    if existing is None:
+                        raise
+                    await _update_existing(session, existing)
+                    return
+
+                for i, sd in enumerate(spans):
+                    session.add(
+                        TraceSpan(
                             trace_id=trace.id,
                             span_type=sd["span_type"],
                             name=sd["name"],
@@ -354,8 +510,21 @@ class TracePersistenceService:
                             metadata_json=sd.get("metadata_json"),
                             order_index=i,
                         )
-                        session.add(span)
-                    await session.commit()
+                    )
+                await session.commit()
+                log_request_summary(
+                    {
+                        "workflow_id": workflow_id,
+                        "status": status,
+                        "route": route,
+                        "complexity": complexity,
+                        "failure_kind": failure_kind,
+                        "total_duration_ms": total_duration_ms,
+                        "total_llm_calls": llm_count,
+                        "total_db_queries": db_count,
+                    },
+                    writer="finalize",
+                )
 
         except Exception:
             logger.warning(
@@ -477,12 +646,17 @@ class TracePersistenceService:
                 order += 1
 
             end_status = end_event.status
-            if end_status == "completed":
-                trace_status = "completed"
-            elif end_status == "clarification":
-                trace_status = "completed"
-            else:
-                trace_status = "failed"
+            trace_status = _END_STATUS_TO_TRACE_STATUS.get(end_status, "failed")
+            routing = routing_from_events(events)
+            route, complexity, estimated_queries = routing or ("unknown", "unknown", 0)
+            failure_kind = (
+                kind_for_terminal_detail(end_event.detail) if trace_status == "failed" else None
+            )
+            error_message = (
+                _truncate(end_event.detail)
+                if trace_status in ("failed", PROVISIONAL_STATUS)
+                else None
+            )
 
             context = buf.context
             project_id = context.get("project_id") or ""
@@ -501,40 +675,69 @@ class TracePersistenceService:
                 )
                 return
 
-            async with async_session_factory() as session:
-                trace = RequestTrace(
-                    project_id=project_id,
-                    user_id=user_id,
-                    workflow_id=buf.workflow_id,
-                    question=_truncate(context.get("question", ""), 500) or "",
-                    status=trace_status,
-                    error_message=_truncate(end_event.detail) if trace_status == "failed" else None,
-                    total_duration_ms=round(total_duration_ms, 1),
-                    total_llm_calls=llm_count,
-                    total_db_queries=db_count,
-                    llm_provider="unknown",
-                    llm_model="unknown",
-                )
-                session.add(trace)
-                await session.flush()
+            summary = {
+                "workflow_id": buf.workflow_id,
+                "status": trace_status,
+                "route": route,
+                "complexity": complexity,
+                "failure_kind": failure_kind,
+                "total_duration_ms": round(total_duration_ms, 1),
+                "total_llm_calls": llm_count,
+                "total_db_queries": db_count,
+            }
 
-                for sd in span_dicts:
-                    span = TraceSpan(
-                        trace_id=trace.id,
-                        span_type=sd["span_type"],
-                        name=sd["name"],
-                        status=sd["status"],
-                        detail=sd["detail"],
-                        started_at=sd["started_at"],
-                        ended_at=sd["ended_at"],
-                        duration_ms=sd["duration_ms"],
-                        input_preview=sd.get("input_preview"),
-                        output_preview=sd.get("output_preview"),
-                        token_usage_json=sd.get("token_usage_json"),
-                        metadata_json=sd.get("metadata_json"),
-                        order_index=sd["order_index"],
+            async with async_session_factory() as session:
+                existing = await _find_trace(session, buf.workflow_id)
+                trace: RequestTrace | None = None
+                if existing is None:
+                    trace = RequestTrace(
+                        project_id=project_id,
+                        user_id=user_id,
+                        workflow_id=buf.workflow_id,
+                        question=_truncate(context.get("question", ""), 500) or "",
+                        status=trace_status,
+                        error_message=error_message,
+                        failure_kind=failure_kind,
+                        total_duration_ms=round(total_duration_ms, 1),
+                        total_llm_calls=llm_count,
+                        total_db_queries=db_count,
+                        llm_provider="unknown",
+                        llm_model="unknown",
+                        route=route,
+                        complexity=complexity,
+                        estimated_queries=estimated_queries,
                     )
-                    session.add(span)
+                    session.add(trace)
+                    try:
+                        await session.flush()
+                    except IntegrityError:
+                        await session.rollback()
+                        existing = await _find_trace(session, buf.workflow_id)
+                        if existing is None:
+                            raise
+                        trace = None
+
+                if existing is not None:
+                    # ``finalize_trace`` got here first. Its status and message are
+                    # the caller's statement and stand; what only the buffer
+                    # measured is filled in where the row lacks it.
+                    await self._merge_measurements(
+                        session,
+                        existing,
+                        duration_ms=round(total_duration_ms, 1),
+                        llm_count=llm_count,
+                        db_count=db_count,
+                        routing=routing,
+                        failure_kind=failure_kind,
+                        span_dicts=span_dicts,
+                    )
+                    await session.commit()
+                    log_request_summary(summary, writer="flush-merge")
+                    return
+
+                assert trace is not None
+                for sd in span_dicts:
+                    session.add(self._span_row(trace.id, sd))
 
                 await session.commit()
                 if trace_status == "failed":
@@ -544,11 +747,7 @@ class TracePersistenceService:
                         await ErrorLogService().upsert_from_trace(session, trace)
                     except Exception:
                         logger.debug("error_log upsert from trace failed", exc_info=True)
-                logger.debug(
-                    "TracePersistence: saved trace wf=%s with %d spans",
-                    buf.workflow_id[:8],
-                    len(span_dicts),
-                )
+                log_request_summary(summary, writer="flush")
 
         except Exception:
             logger.warning(
@@ -557,18 +756,71 @@ class TracePersistenceService:
                 exc_info=True,
             )
 
+    @staticmethod
+    def _span_row(trace_id: str, sd: dict[str, Any]) -> TraceSpan:
+        return TraceSpan(
+            trace_id=trace_id,
+            span_type=sd["span_type"],
+            name=sd["name"],
+            status=sd["status"],
+            detail=sd["detail"],
+            started_at=sd["started_at"],
+            ended_at=sd["ended_at"],
+            duration_ms=sd["duration_ms"],
+            input_preview=sd.get("input_preview"),
+            output_preview=sd.get("output_preview"),
+            token_usage_json=sd.get("token_usage_json"),
+            metadata_json=sd.get("metadata_json"),
+            order_index=sd["order_index"],
+        )
+
+    async def _merge_measurements(
+        self,
+        session: Any,
+        trace: RequestTrace,
+        *,
+        duration_ms: float,
+        llm_count: int,
+        db_count: int,
+        routing: tuple[str, str, int] | None,
+        failure_kind: str | None,
+        span_dicts: list[dict[str, Any]],
+    ) -> None:
+        values: dict[str, Any] = {}
+        if trace.total_duration_ms is None:
+            values["total_duration_ms"] = duration_ms
+        if span_dicts:
+            # The buffer's spans are the measured ones; a fallback row built from
+            # the tool log is replaced by them rather than doubled.
+            from sqlalchemy import delete
+
+            await session.execute(delete(TraceSpan).where(TraceSpan.trace_id == trace.id))
+            for sd in span_dicts:
+                session.add(self._span_row(trace.id, sd))
+            values["total_llm_calls"] = llm_count
+            values["total_db_queries"] = db_count
+        if routing is not None and (trace.route or "unknown") == "unknown":
+            values["route"], values["complexity"], values["estimated_queries"] = routing
+        if failure_kind and trace.failure_kind is None and trace.status == "failed":
+            values["failure_kind"] = failure_kind
+        if values:
+            await session.execute(
+                update(RequestTrace).where(RequestTrace.id == trace.id).values(**values)
+            )
+
     async def _cleanup_stale_buffers(self) -> None:
         """Periodically persist stale buffers that never received pipeline_end."""
         while True:
             await asyncio.sleep(60)
             try:
                 now = time.time()
+                horizon = stale_buffer_seconds()
                 stale_bufs: list[_WorkflowBuffer] = []
                 async with self._lock:
                     stale_ids = [
                         wf_id
                         for wf_id, buf in self._buffers.items()
-                        if now - buf.started_at > _STALE_BUFFER_SECONDS
+                        if now - buf.started_at > horizon
                     ]
                     for wf_id in stale_ids:
                         buf = self._buffers.pop(wf_id, None)
@@ -578,8 +830,8 @@ class TracePersistenceService:
                     synthetic_end = WorkflowEvent(
                         workflow_id=buf.workflow_id,
                         step="pipeline_end",
-                        status="failed",
-                        detail="Stale: pipeline_end never received",
+                        status=PROVISIONAL_STATUS,
+                        detail=STALE_DETAIL,
                         pipeline=buf.pipeline,
                     )
                     try:
@@ -592,7 +844,7 @@ class TracePersistenceService:
                         )
                 if stale_bufs:
                     logger.info(
-                        "TracePersistence: persisted %d stale buffer(s) as failed traces",
+                        "TracePersistence: persisted %d stale buffer(s) as provisional traces",
                         len(stale_bufs),
                     )
             except asyncio.CancelledError:

@@ -325,7 +325,7 @@ Per-connection agent memory. Learnings are **not** shared across connections by 
 | GET | `/api/logs/{project_id}/errors` | Filterable, deduplicated error catalog. A run killed by the stale-run reaper is catalogued here, its message naming the step that died |
 | GET | `/api/logs/{project_id}/runs` | Background-run history for the observability screen |
 
-All logs endpoints require **owner** role. Query parameters: `days`, `user_id`, `status`, `date_from`, `date_to`, `page`, `page_size`.
+All logs endpoints require **owner** role. Query parameters: `days`, `user_id`, `status`, `date_from`, `date_to`, `page`, `page_size`. `status` is one of `completed`, `failed`, `checkpoint` (a pipeline paused for review) or `provisional` (the trace buffer was evicted before the run reported its end; replaced when the chat route finalizes it).
 
 ## SSH Keys
 

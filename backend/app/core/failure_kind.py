@@ -96,3 +96,47 @@ def normalise_failure_kind(kind: str | None) -> FailureKind | None:
         # and one was written here first — the type checker was right.
         return cleaned
     return "fatal"
+
+
+#: Exception type names whose same attempt could succeed later. Names, not classes,
+#: because this module imports nothing (see the module docstring) and because a
+#: terminal ``pipeline_end`` carries the failure as TEXT — the type name, or
+#: ``str(exc)`` — by the time the trace writer sees it.
+_TRANSIENT_NAMES: tuple[str, ...] = (
+    "WallClockExceeded",
+    "CancelledError",
+    "TimeoutError",
+    "LLMRateLimitError",
+    "LLMServerError",
+    "LLMTimeoutError",
+    "LLMConnectionError",
+    # "Non-retryable" to the router means "do not walk the chain again right now";
+    # every provider being overloaded is still an attempt that can succeed later.
+    "LLMAllProvidersFailedError",
+)
+_CONFIGURATION_NAMES: tuple[str, ...] = ("LLMAuthError", "LLMBillingError")
+#: A spent budget is a resource that is absent, not a defect: retrying cannot make
+#: it appear, which is exactly ``configuration``.
+_CONFIGURATION_PHRASES: tuple[str, ...] = ("budget", "token limit", "spend limit")
+
+
+def kind_for_terminal_detail(detail: str | None) -> FailureKind:
+    """Classify a failed run from the text its terminal event carried (PRJ-04).
+
+    Production, measured 2026-09-17: ``failure_kind`` was NULL on **59 of 60** failed
+    traces whose route was ``unknown`` — ``LLMAllProvidersFailedError`` six times,
+    timeouts ten, each one groupable by name and grouped by nothing.
+
+    Always returns a kind, because this is only called for a run that DID fail, and
+    NULL there is the state this module exists to leave. Unrecognised text is
+    ``fatal``, the same rule :func:`normalise_failure_kind` applies.
+    """
+    text = detail or ""
+    lowered = text.lower()
+    if any(name in text for name in _TRANSIENT_NAMES) or "timed out" in lowered:
+        return TRANSIENT
+    if any(name in text for name in _CONFIGURATION_NAMES) or any(
+        phrase in lowered for phrase in _CONFIGURATION_PHRASES
+    ):
+        return CONFIGURATION
+    return FATAL
