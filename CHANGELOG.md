@@ -6,6 +6,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a span's type says what the time was spent on (PRJ-04 remainder)
+
+One production trace (2026-09-16: 337 s, "12 DB queries", "11 LLM calls") read wrong in
+three ways, each fixed here:
+
+- **Every query counted twice.** `sql:tool:execute_query` — the tool-call envelope — was
+  typed `db_query`, and so was the `execute_query` span inside it. The envelope took
+  **60 s** around a **22 s** query, because it also held an LLM repair and the learning
+  extraction. Envelopes (`sql:tool:execute_query`, `sql:tool:get_schema_info`) are now
+  `tool_call`; the query and `sql:get_schema` are the only `db_query` spans.
+- **The query repair was not an LLM call.** `query_repair` — 20 s in that trace — was
+  typed `validation`, so `total_llm_calls` missed it. It is `llm_call`.
+- **The learning extraction and provider retries were invisible.** Extraction runs after
+  nearly every answer and had no span; `orchestrator:llm_retry` was dropped as noise and
+  `sql:llm_retry` fell to a prefix rule. Extraction now has its own
+  `sql:learning_analysis` span (`llm_call`, or `tool_call` under the heuristic analyzer),
+  and each failed attempt is an `llm_call` span carrying `error_type` and
+  `backoff_seconds`.
+
+No new span type and no UI change: the Logs screen renders by type, and the vocabulary is
+unchanged. SCN-106 now states what each type means. 5 planted defects, 5 failures.
+
+### Fixed — the request deadline reaches the pipeline, and nothing swallows it (PRJ-03 remainder)
+
+T02 made the flat tool loop's deadline an interrupt. Three gaps named in the audit stayed:
+
+- **O-05 — pipeline batches ran past the limit.** `StageExecutor` checked the deadline
+  only *between* batches, so one SQL stage whose agent retries, or three parallel
+  stages, could outlast the limit by their whole duration. Each batch now runs under
+  the same `bounded()` interrupt the tool loop uses, from the same request clock (moved
+  to `app/agents/request_clock.py` so the executor can import it); on expiry every
+  running stage is cancelled and the executor returns the honest partial result the
+  between-batch check already returned, not replan-eligible.
+- **O-08 — cancellation was swallowed.** Chart selection caught
+  `(Exception, asyncio.CancelledError)` and `localize` caught
+  `(TimeoutError, asyncio.CancelledError)`, so a run cancelled by its deadline — or by
+  REST's `wait_for` — kept going and returned. Both now catch only what they mean;
+  `wait_for`'s own timeout still falls back to a table or to English.
+- **O-07 — live requests lost their state.** The per-workflow cache sweep evicted
+  anything first seen 300 s ago, below the 360 s REST/SSE ceiling and the 900 s
+  WebSocket relay, so a slow request's SQL results vanished when another request
+  arrived and `process_data` answered "no query results available". The horizon is now
+  `request_lifetime.longest_request_seconds()` — the longest ceiling plus 60 s — shared
+  with the trace buffer's eviction (PRJ-04) instead of two typed numbers.
+
+A structural test fails if any handler in `app/agents` names `CancelledError` without
+re-raising. Every fix was verified by planting its defect back (4 plants, 4 failures).
+
+**Decided, not changed:** an SSE or WebSocket client that disconnects does **not**
+cancel its run. The product continues a question after the user navigates away and the
+chat polls for it (`CLAUDE.md`, *Frontend architecture*); cancelling would lose answers
+people come back for. The run is bounded by its own deadline instead. The audit's
+"three dead retry wrappers" were looked for and not found — `llm_call_with_retry`,
+`LLMRouter._call_with_retry`, `RetryStrategy` and `core.retry` all have live callers.
+
+
 ### Fixed — one trace row per request, and the row says what happened (PRJ-04)
 
 Measured on production 2026-09-17, before the change:
@@ -52,6 +108,12 @@ Now:
 
 20 new tests run the real service against SQLite; each fix was verified by planting
 its defect back (8 plants, 8 failures).
+
+**Verified on production (v434):** 242 rows → **177 rows for 177 workflows**, and
+`ix_request_traces_workflow_id` is `UNIQUE`. Failed `route='unknown'` traces in the last
+30 days went 10 → 3 as merged twins contributed their routing. One completed row still
+said `Stale:` — a single row the merge never saw — and migration `4030521071d4` clears
+it; a failed row keeps the note as evidence.
 
 **Not in this change:** splitting the `db_query` span from the LLM repair and
 learning-analyzer spans, and router attempt/backoff events. Both change the span

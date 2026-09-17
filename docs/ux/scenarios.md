@@ -2080,12 +2080,12 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User filters by date range and status, paginates the request list
   2. User clicks a request to open its trace detail (expandable spans)
-- **Expected result:** requests listed; trace spans with input/output/token detail
+- **Expected result:** requests listed — one row per request (PRJ-04), with a status of `completed`, `failed`, `checkpoint` (paused for the user's review) or `provisional` (the run did not report its end; replaced when the chat finalizes it); trace spans with input/output/token detail, where a span's type says what the time was spent on: the query itself is the only **DB** span and counts once, an LLM query repair, a learning extraction and a failed provider attempt (with its backoff) are **LLM** spans, and the `sql:tool:*` envelope around them is a tool span
 - **UI elements:** date filter, tabs, request list + status filter + pagination, LogsTraceDetail span tree
 - **States covered:** loading, empty, error, success
 - **Errors & recovery:** queries load fails → banner "Failed to load logs" + Retry, visible on all three tabs (not only Queries — audit L6; `LogsScreen.tsx:76,147-154`); trace fails → inline "Failed to load trace" (set `LogsTraceDetail.tsx:45`, rendered `:63-66`)
 - **Status:** implemented
-- **Coverage:** components/logs/LogsScreen.tsx:104-216; components/logs/LogsTraceDetail.tsx:44-141; tests frontend/src/__tests__/components/LogsScreenTabs.test.tsx
+- **Coverage:** components/logs/LogsScreen.tsx:104-216; components/logs/LogsTraceDetail.tsx:44-141; tests frontend/src/__tests__/components/LogsScreenTabs.test.tsx; backend/app/services/trace_persistence_service.py (one row per workflow, span typing); tests backend/tests/unit/services/test_trace_truth.py, backend/tests/unit/services/test_spans_say_what_took_the_time.py
 
 ### SCN-107: Runs & Errors log tabs
 - **Persona:** owner

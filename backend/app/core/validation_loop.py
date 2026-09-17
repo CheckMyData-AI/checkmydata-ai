@@ -512,7 +512,10 @@ class ValidationLoop:
             workflow_id,
             "query_repair",
             f"Repairing query (attempt {current_attempt}/{self._config.max_retries})",
-            span_type="validation",
+            # PRJ-04: an LLM call, and the most expensive one a failing query makes —
+            # 20 s in one production trace — counted as `validation` and so absent
+            # from `total_llm_calls`.
+            span_type="llm_call",
         ):
             repair_context = await self._enricher.build_repair_context(
                 error=error,

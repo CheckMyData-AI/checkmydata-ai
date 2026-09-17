@@ -784,6 +784,9 @@ class TestWallClockTimeout:
             ),
             patch("app.agents.orchestrator.settings") as mock_settings,
             patch("app.agents.orchestrator.time") as mock_time,
+            # The request clock lives in its own module (PRJ-03); it must read the
+            # same ticks, from the same mock, as the loop does.
+            patch("app.agents.request_clock.time") as _clock_time,
         ):
             mock_settings.max_orchestrator_iterations = 10
             mock_settings.max_simple_query_steps = 4
@@ -802,6 +805,7 @@ class TestWallClockTimeout:
 
             _tick = iter([0.0] + [35.0] * 30)
             mock_time.monotonic = MagicMock(side_effect=_tick)
+            _clock_time.monotonic = mock_time.monotonic
 
             await agent.run(ctx)
 
@@ -879,6 +883,9 @@ class TestWallClockTimeout:
             ),
             patch("app.agents.orchestrator.settings") as mock_settings,
             patch("app.agents.orchestrator.time") as mock_time,
+            # The request clock lives in its own module (PRJ-03); it must read the
+            # same ticks, from the same mock, as the loop does.
+            patch("app.agents.request_clock.time") as _clock_time,
         ):
             mock_settings.max_orchestrator_iterations = 100
             mock_settings.max_simple_query_steps = 4
@@ -897,6 +904,7 @@ class TestWallClockTimeout:
 
             _tick = iter([0.0] + [50.0] * 30)
             mock_time.monotonic = MagicMock(side_effect=_tick)
+            _clock_time.monotonic = mock_time.monotonic
 
             resp = await agent.run(ctx)
 
@@ -2088,6 +2096,9 @@ class TestSynthesisPhaseToolStrip:
             ),
             patch("app.agents.orchestrator.settings") as mock_settings,
             patch("app.agents.orchestrator.time") as mock_time,
+            # The request clock lives in its own module (PRJ-03); it must read the
+            # same ticks, from the same mock, as the loop does.
+            patch("app.agents.request_clock.time") as _clock_time,
         ):
             mock_settings.max_orchestrator_iterations = 10
             mock_settings.max_parallel_tool_calls = 1
@@ -2104,6 +2115,7 @@ class TestSynthesisPhaseToolStrip:
 
             _tick = iter([0.0] + [95.0] * 30)
             mock_time.monotonic = MagicMock(side_effect=_tick)
+            _clock_time.monotonic = mock_time.monotonic
 
             await agent.run(ctx)
 
@@ -2474,6 +2486,9 @@ class TestToolLoopMessageRoles:
             patch.object(agent._ctx_loader, "has_mcp_sources", new=AsyncMock(return_value=False)),
             patch("app.agents.orchestrator.settings") as mock_settings,
             patch("app.agents.orchestrator.time") as mock_time,
+            # The request clock lives in its own module (PRJ-03); it must read the
+            # same ticks, from the same mock, as the loop does.
+            patch("app.agents.request_clock.time") as _clock_time,
         ):
             mock_settings.max_orchestrator_iterations = 10
             mock_settings.max_simple_query_steps = 4
@@ -2491,6 +2506,8 @@ class TestToolLoopMessageRoles:
             mock_settings.answer_validator_min_chars = 80
 
             mock_time.monotonic = MagicMock(return_value=0.0)
+
+            _clock_time.monotonic = mock_time.monotonic
 
             await agent.run(ctx)
 

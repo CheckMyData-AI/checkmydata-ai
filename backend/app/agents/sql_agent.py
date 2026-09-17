@@ -332,7 +332,11 @@ class SQLAgent(BaseAgent):
                         wf_id,
                         "sql:llm_retry",
                         "retrying",
-                        f"Attempt {_attempt} failed ({type(_exc).__name__}), retrying…",
+                        f"Attempt {_attempt} failed ({type(_exc).__name__}), "
+                        f"retrying in {_wait:.1f}s…",
+                        span_type="llm_call",
+                        error_type=type(_exc).__name__,
+                        backoff_seconds=round(_wait, 2),
                     )
 
                 llm_resp: LLMResponse = await llm_call_with_retry(
@@ -389,15 +393,14 @@ class SQLAgent(BaseAgent):
                     _sd_tool["input_preview"] = (_tc_args.get("query", ""))[:1000]
                 else:
                     _sd_tool["input_preview"] = str(_tc_args)[: settings.tool_preview_max_chars]
-                _tool_span_type = (
-                    "db_query"
-                    if tc.name
-                    in (
-                        "execute_query",
-                        "get_schema_info",
-                    )
-                    else "tool_call"
-                )
+                # PRJ-04: the ENVELOPE of a tool call, never the database work inside it.
+                # `execute_query` and `get_schema_info` were typed `db_query` here while
+                # the validation loop's own `execute_query` and `sql:get_schema` spans were
+                # too — so every query counted twice in `total_db_queries`, and the
+                # envelope's duration (LLM repair and learning extraction included: one
+                # production trace shows 60 s of "DB" around 22 s of query) was read as
+                # time spent in the customer's database.
+                _tool_span_type = "tool_call"
                 async with tracker.step(
                     wf_id,
                     f"sql:tool:{tc.name}",
@@ -597,12 +600,21 @@ class SQLAgent(BaseAgent):
             model=ctx.sql_model or ctx.model,
         )
 
-        await self._extract_learnings(
-            loop_result.attempts,
-            loop_result.success,
-            ctx.user_question or query,
-            cfg,
-        )
+        # PRJ-04: its own span. It ran inside the `sql:tool:execute_query` envelope with
+        # no span of its own, so an LLM call after nearly every answer was invisible in
+        # the trace and its seconds were attributed to the query.
+        async with ctx.tracker.step(
+            wf_id,
+            "sql:learning_analysis",
+            "Extracting learnings from this query",
+            span_type="tool_call" if settings.learning_analyzer_mode == "heuristic" else "llm_call",
+        ):
+            await self._extract_learnings(
+                loop_result.attempts,
+                loop_result.success,
+                ctx.user_question or query,
+                cfg,
+            )
 
         # Best-effort diagnostics capture: persist the full failing-SQL / raw-error /
         # repair-attempt history for any errored execution. The recorder no-ops on a
