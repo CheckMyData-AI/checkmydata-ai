@@ -86,6 +86,12 @@ Now:
 20 new tests run the real service against SQLite; each fix was verified by planting
 its defect back (8 plants, 8 failures).
 
+**Verified on production (v434):** 242 rows → **177 rows for 177 workflows**, and
+`ix_request_traces_workflow_id` is `UNIQUE`. Failed `route='unknown'` traces in the last
+30 days went 10 → 3 as merged twins contributed their routing. One completed row still
+said `Stale:` — a single row the merge never saw — and migration `4030521071d4` clears
+it; a failed row keeps the note as evidence.
+
 **Not in this change:** splitting the `db_query` span from the LLM repair and
 learning-analyzer spans, and router attempt/backoff events. Both change the span
 taxonomy the Logs screen renders and are queued as their own task.

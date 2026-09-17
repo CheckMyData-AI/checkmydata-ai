@@ -433,3 +433,48 @@ def test_the_migration_merges_duplicates_into_the_row_with_spans(tmp_path):
         assert row["response_type"] == "sql_result"
         assert row["total_duration_ms"] == 305_000.0
         assert conn.execute(sa.select(sa.func.count()).select_from(spans)).scalar_one() == 3
+
+
+def test_the_follow_up_migration_clears_stale_from_a_single_completed_row(tmp_path):
+    """v434 left one completed, never-duplicated row saying `Stale:`; the merge never saw it."""
+    import importlib.util
+    from pathlib import Path
+
+    path = next(
+        Path(__file__)
+        .resolve()
+        .parents[3]
+        .glob("alembic/versions/4030521071d4_completed_traces_do_not_say_stale.py")
+    )
+    spec = importlib.util.spec_from_file_location("mig_e7f8", path)
+    assert spec and spec.loader
+    mig = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mig)
+
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'stale.db'}")
+    with engine.begin() as conn:
+        RequestTrace.__table__.metadata.create_all(conn, tables=[RequestTrace.__table__])
+        for wf, status in (("a" * 36, "completed"), ("b" * 36, "failed")):
+            conn.execute(
+                RequestTrace.__table__.insert().values(
+                    id=wf,
+                    project_id=PROJECT,
+                    user_id=USER,
+                    workflow_id=wf,
+                    status=status,
+                    error_message=tps.STALE_DETAIL,
+                )
+            )
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+
+        with Operations.context(MigrationContext.configure(conn)):
+            mig.upgrade()
+        rows = dict(
+            conn.execute(
+                sa.select(RequestTrace.__table__.c.status, RequestTrace.__table__.c.error_message)
+            ).all()
+        )
+    assert rows == {"completed": None, "failed": tps.STALE_DETAIL}, (
+        "only a completed run sheds the note; a failed one keeps its evidence"
+    )
