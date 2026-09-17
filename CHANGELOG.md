@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — V1 verification: two things found broken, both fixed
+
+The first verification pass of the loop (T01–T03b) checked the product rather than the
+diffs, and found two defects neither PR had touched:
+
+- **Every multi-stage question over MCP failed before its first stage.** A request with
+  no chat session inserted `pipeline_runs.session_id = ""`; the foreign key to
+  `chat_sessions` refused it and `_run_complex_pipeline` raised
+  `AgentFatalError("Pipeline initialisation failed")` — production log `c8d6726d`,
+  2026-09-17 11:52. `pipeline_runs` is a resume buffer for a chat session, so a
+  session-less run now has an id and no record (stage-result updates match no row), and
+  its checkpoints are removed, because a pause no request can continue is a dead end.
+- **SCN-123 — a card was raised.** The Manage Access card carried the shadow token on
+  itself and is mounted flat inside the settings panel. The shadow moved to the dialog
+  that also hosts it, and `pack-bans` now lists every file allowed the token with the
+  floating surface it draws.
+
+Re-audited against code and tests: SCN-107, 122, 124 and 125 PASS; SCN-123 PARTIAL →
+fixed. The five were last verified 2026-08-16 and would have aged past 30 days.
+
 ### Fixed — a span's type says what the time was spent on (PRJ-04 remainder)
 
 One production trace (2026-09-16: 337 s, "12 DB queries", "11 LLM calls") read wrong in

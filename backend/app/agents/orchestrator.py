@@ -13,7 +13,9 @@ import asyncio
 import hashlib
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field, replace
+from types import SimpleNamespace
 from typing import Any, Protocol, runtime_checkable
 
 from app.agents.adaptive_planner import AdaptivePlanner
@@ -3329,12 +3331,36 @@ class OrchestratorAgent(BaseAgent):
         context: AgentContext,
         plan: ExecutionPlan,
     ) -> Any:
-        """Create a PipelineRun DB record."""
+        """Create a PipelineRun DB record — or, with no chat session, run without one.
+
+        ``pipeline_runs`` is a RESUME BUFFER for a chat session (``session_id`` is a
+        non-null foreign key to ``chat_sessions``). A request with no session — every
+        MCP ``query_database`` call — used to insert ``session_id=""``, which the
+        foreign key refuses, and ``_run_complex_pipeline`` turned that into
+        ``AgentFatalError``: **every multi-stage question over MCP failed** before its
+        first stage (production, 2026-09-17 11:52, found by the V1 verification pass).
+
+        Nothing can resume such a run, so none is stored. It gets an id of the same
+        shape — the stage context, the trace and the response all carry one — and the
+        stage-result UPDATEs that follow match no row, which is a no-op. Checkpoints
+        are removed from the plan for the same reason: a pause that no request can
+        continue is a dead end, not a review step.
+        """
         from app.models.base import async_session_factory
         from app.models.pipeline_run import PipelineRun
 
+        session_id = context.extra.get("session_id") or None
+        if session_id is None:
+            for stage in plan.stages:
+                stage.checkpoint = False
+            logger.info(
+                "Pipeline run for wf=%s has no chat session; running without a resume record",
+                context.workflow_id,
+            )
+            return SimpleNamespace(id=str(uuid.uuid4()), persisted=False)
+
         run = PipelineRun(
-            session_id=context.extra.get("session_id", ""),
+            session_id=session_id,
             user_question=context.user_question,
             plan_json=plan.to_json(),
             status="executing",
