@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Decided — the background model stays on flash, by production A/B (B-14)
+
+A probe over fourteen tables had ranked `deepseek/deepseek-v3.2` first and B-14 recommended
+it. Switched on production and run through the real pipeline on all 368 tables, it
+**returned no tool call on 88 analyses and lost 4 of 5 tables in 17 batches**. Reverted
+to `deepseek/deepseek-v4-flash-0731` and ran the same sync: **0 and 0**, one truncation.
+
+The probe was the wrong instrument: it built its context from stored `db_index` notes
+rather than from the pipeline, and never exercised `analyze_table_batch`, so it measured
+a workload production does not run. And after B-06's cap fix the verdicts are dominated
+by `resolve_sync_status` — 2 of 368 contradict structure — so the model's remaining job is
+the prose, and a model that declines the tool writes none.
+
+`scripts/config_drift.py` records both the kept model and `MAX_AGENT_CALLS_PER_HOUR=600`,
+which was found deployed and unrecorded (set by the operator's account on 2026-09-14,
+release v412; no reason is written anywhere, so none is invented). `make config-drift` is
+green again.
+
 ### Fixed — a partial run erased a true warning
 
 Read back from production on 2026-09-16, and it is the flip side of *rebuild, never
