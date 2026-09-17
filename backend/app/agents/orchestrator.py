@@ -3494,7 +3494,13 @@ class OrchestratorAgent(BaseAgent):
                     wf_id,
                     "orchestrator:llm_retry",
                     "retrying",
-                    f"Attempt {attempt} failed, retrying…",
+                    f"Attempt {attempt} failed ({type(exc).__name__}), retrying in {wait:.1f}s…",
+                    # PRJ-04: a failed attempt is an LLM call that was paid for and
+                    # waited on. The trace dropped this event outright, so a request
+                    # that spent a minute in provider backoff showed no trace of it.
+                    span_type="llm_call",
+                    error_type=type(exc).__name__,
+                    backoff_seconds=round(wait, 2),
                 )
                 await self._tracker.emit(
                     wf_id,

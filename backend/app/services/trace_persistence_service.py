@@ -116,8 +116,14 @@ SPAN_TYPE_MAP: dict[str, str] = {
     "orchestrator:viz": "viz",
     # SQL agent
     "sql:llm_call": "llm_call",
-    "sql:tool:execute_query": "db_query",
-    "sql:tool:get_schema_info": "db_query",
+    # Envelopes, not the work (PRJ-04): the query itself is `execute_query` and
+    # `sql:get_schema`, and typing both levels `db_query` counted each query twice.
+    "sql:tool:execute_query": "tool_call",
+    "sql:tool:get_schema_info": "tool_call",
+    "sql:get_schema": "db_query",
+    "sql:learning_analysis": "llm_call",
+    "sql:llm_retry": "llm_call",
+    "orchestrator:llm_retry": "llm_call",
     "sql:tool:get_db_index": "rag",
     "sql:tool:get_query_context": "rag",
     "sql:tool:get_sync_context": "rag",
@@ -135,7 +141,7 @@ SPAN_TYPE_MAP: dict[str, str] = {
     "post_validate": "validation",
     "explain_check": "validation",
     "error_classify": "validation",
-    "query_repair": "validation",
+    "query_repair": "llm_call",
     "data_gate": "validation",
     "answer_validate": "validation",
     "answer": "validation",
@@ -551,7 +557,6 @@ class TracePersistenceService:
             "thinking",
             "token",
             "orchestrator:warning",
-            "orchestrator:llm_retry",
         }
     )
 
