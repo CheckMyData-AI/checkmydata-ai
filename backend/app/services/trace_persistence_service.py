@@ -18,6 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.failure_kind import kind_for_terminal_detail
+from app.core.request_lifetime import longest_request_seconds
 from app.core.trace_meta import TraceMeta
 from app.core.workflow_tracker import WorkflowEvent, WorkflowTracker
 from app.models.base import async_session_factory
@@ -51,21 +52,8 @@ _FLUSH_WAIT_SECONDS = 10.0
 
 
 def stale_buffer_seconds() -> float:
-    """Evict a buffer only after every ceiling a live request can run under.
-
-    Derived rather than typed: a constant beside three configurable ceilings is
-    right on the day it is written and wrong the day one of them moves.
-    """
-    from app.config import settings
-
-    return (
-        max(
-            float(settings.stream_timeout_seconds),
-            float(settings.ws_event_relay_timeout_seconds),
-            float(settings.agent_wall_clock_timeout_seconds) * 1.2,
-        )
-        + 60.0
-    )
+    """Evict a buffer only after the longest a live request can run."""
+    return longest_request_seconds()
 
 
 def routing_from_events(events: list[WorkflowEvent]) -> tuple[str, str, int] | None:

@@ -96,7 +96,9 @@ async def localize(
             complete(messages, temperature=0.0, max_tokens=400, model=model),
             timeout=min(TIMEOUT_SECONDS, timeout) if timeout is not None else TIMEOUT_SECONDS,
         )
-    except (TimeoutError, asyncio.CancelledError):
+    # O-08: a cancellation is not a slow translator. Swallowing it here kept a request
+    # running after its deadline cancelled it.
+    except TimeoutError:
         logger.info("Static-answer localisation timed out; delivering the English text")
         return text
     except Exception:
