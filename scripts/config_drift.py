@@ -46,6 +46,22 @@ DELIBERATE: dict[str, str] = {
         "Production is the paid deployment. The default is off so a self-hosted "
         "install does not surface Stripe routes it has no keys for."
     ),
+    "DEFAULT_LLM_MODEL": (
+        "The model every unpinned LLM call runs on — code<->DB sync, validators, the "
+        "learning analyzer. `deepseek/deepseek-v4-flash-0731`, KEPT on 2026-09-17 after a "
+        "controlled A/B on the production pipeline, same 368 tables: "
+        "`deepseek/deepseek-v3.2` returned no tool call on 88 single-table analyses and "
+        "lost 4 of 5 tables in 17 batches; flash returned 0 and 0 (1 truncation). An "
+        "isolated probe had ranked v3.2 first (13/14 matched) — it built its context "
+        "differently from the pipeline and never exercised the batch path, so it measured "
+        "a workload production does not run. B-14."
+    ),
+    "MAX_AGENT_CALLS_PER_HOUR": (
+        "Per-user hourly ceiling on agent calls, raised 100 -> 600. Set by the operator's "
+        "account on 2026-09-14 13:11 (Heroku release v412). No written reason exists "
+        "anywhere in the repository, so none is invented here; recorded because it was "
+        "found deployed and unrecorded, which is the state this map exists to prevent."
+    ),
     "DAILY_KNOWLEDGE_SYNC_ENABLED": (
         "The 03:00 repo-index → DB-index → code↔DB refresh. Off by default under the "
         "ingestion-automation house rule (nothing calls out on a schedule unasked); on "
