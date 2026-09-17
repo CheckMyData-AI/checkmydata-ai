@@ -14,6 +14,7 @@ from app.agents.base import AgentContext, BaseAgent
 from app.agents.data_gate import DataGate, DataGateOutcome
 from app.agents.errors import AgentError, AgentFatalError, AgentRetryableError
 from app.agents.layer_checker import LayerChecker, LayerVerdict
+from app.agents.request_clock import WallClockExceeded, bounded
 from app.agents.result_validation import ResultValidation
 from app.agents.sql_result_reconciliation import build_reconciliation_note
 from app.agents.stage_context import (
@@ -305,21 +306,41 @@ class StageExecutor:
                 await self._emit_stage_start(wf_id, s, stage_idx_map[s.stage_id], n_stages)
 
             if len(batch) == 1:
-                outcomes: list[_StageExecutorResult | None] = [
-                    await self._process_one_stage(batch[0], stage_ctx, context, deadline=deadline)
-                ]
+                try:
+                    outcomes: list[_StageExecutorResult | None] = [
+                        await self._bounded_stage(
+                            self._process_one_stage(
+                                batch[0], stage_ctx, context, deadline=deadline
+                            ),
+                            context,
+                            budget_seconds,
+                        )
+                    ]
+                except WallClockExceeded:
+                    return await self._deadline_cut(
+                        wf_id, batch, stage_ctx, budget_seconds, completed_ids, plan
+                    )
             else:
                 # return_exceptions=True so one stage raising does NOT propagate
                 # immediately and orphan its siblings (which keep running with
                 # dangling sessions). Wait for all, then convert any raised
                 # exception into a graceful stage_failed outcome.
-                gathered = await _asyncio.gather(
-                    *(
-                        self._process_one_stage(s, stage_ctx, context, deadline=deadline)
-                        for s in batch
-                    ),
-                    return_exceptions=True,
-                )
+                try:
+                    gathered = await self._bounded_stage(
+                        _asyncio.gather(
+                            *(
+                                self._process_one_stage(s, stage_ctx, context, deadline=deadline)
+                                for s in batch
+                            ),
+                            return_exceptions=True,
+                        ),
+                        context,
+                        budget_seconds,
+                    )
+                except WallClockExceeded:
+                    return await self._deadline_cut(
+                        wf_id, batch, stage_ctx, budget_seconds, completed_ids, plan
+                    )
                 outcomes = []
                 for stage, res in zip(batch, gathered):
                     if isinstance(res, BaseException):
@@ -406,6 +427,53 @@ class StageExecutor:
             # `pipeline_complete` with `error=None` whenever the plan did not end
             # in a `synthesize` stage, which the planner's own prompt sanctions.
             degraded_reason=synthesis_degraded,
+        )
+
+    @staticmethod
+    async def _bounded_stage(awaitable: Any, context: AgentContext, budget_seconds: float) -> Any:
+        """Await a batch of stages under the request's hard deadline (PRJ-03, O-05).
+
+        The deadline was checked only BETWEEN batches, so one batch — an SQL stage whose
+        agent retries, or three parallel stages — could run past the limit by its whole
+        duration. This is the same interrupt the tool loop uses: at ``limit x 1.2`` from
+        the request's start the batch is cancelled. A disabled budget bounds nothing.
+        """
+        if budget_seconds <= 0:
+            return await awaitable
+        return await bounded(awaitable, context, float(budget_seconds))
+
+    async def _deadline_cut(
+        self,
+        wf_id: str,
+        batch: list[PlanStage],
+        stage_ctx: StageContext,
+        budget_seconds: float,
+        completed_ids: set[str],
+        plan: ExecutionPlan,
+    ) -> _StageExecutorResult:
+        """The batch was cancelled at the hard deadline: the same honest partial result
+        the between-batch check returns, naming every stage that did not finish."""
+        remaining = [s for s in plan.stages if s.stage_id not in completed_ids]
+        logger.warning(
+            "Pipeline hard deadline (%ss x 1.2) cut %d running stage(s); %d not finished",
+            budget_seconds,
+            len(batch),
+            len(remaining),
+        )
+        await self._tracker.emit(
+            wf_id,
+            "stage_failed",
+            "failed",
+            f"Pipeline time budget exhausted ({budget_seconds}s) — "
+            f"{len(remaining)} stage(s) not finished",
+            stage_id=batch[0].stage_id,
+            remaining_stage_ids=[s.stage_id for s in remaining],
+        )
+        return _StageExecutorResult(
+            status="stage_failed",
+            stage_ctx=stage_ctx,
+            failed_stage=batch[0],
+            replan_eligible=False,
         )
 
     async def _process_one_stage(
