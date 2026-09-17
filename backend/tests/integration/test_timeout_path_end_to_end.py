@@ -74,7 +74,7 @@ def _tracker() -> MagicMock:
     t = MagicMock()
     t.step = MagicMock()
     t.step.return_value.__aenter__ = AsyncMock()
-    t.step.return_value.__aexit__ = AsyncMock()
+    t.step.return_value.__aexit__ = AsyncMock(return_value=False)
     t.emit = AsyncMock()
     return t
 

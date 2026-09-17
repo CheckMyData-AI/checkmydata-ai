@@ -83,7 +83,77 @@ from app.services.connection_service import is_queryable_database
 logger = logging.getLogger(__name__)
 
 
-def _new_pipeline_deadline() -> float | None:
+#: Where a request's clock is kept. On `context.extra`, mutated in place and never
+#: rebuilt, because `dataclasses.replace` copies the dict's REFERENCE and every
+#: sub-agent copy downstream therefore reads the same start (the B-04 lesson).
+_REQUEST_START_KEY = "_request_started_at"
+
+
+def request_started_at(context: AgentContext) -> float:
+    """When this request began, established once, at the first reader.
+
+    PRJ-03. The tool loop measured its wall clock from the loop's own first line, so the
+    router call, context loading and capability probes that precede it were free — and
+    the pipeline path computed a fresh deadline at the start of its stages, so the same
+    pre-work was free there too. Measured on production over 30 days: 6 of 23 traces
+    exceeded 1.2x the 180 s limit, and failed requests ran a median of 283 s. One start,
+    set once, is the precondition for the limit meaning what it says.
+    """
+    started = context.extra.get(_REQUEST_START_KEY)
+    if not isinstance(started, int | float):
+        started = time.monotonic()
+        context.extra[_REQUEST_START_KEY] = started
+    return float(started)
+
+
+def hard_remaining_seconds(context: AgentContext, limit: float) -> float:
+    """Seconds left before the hard cutoff, ``limit x 1.2`` from the request's start.
+
+    The 1.2 is the tool loop's existing hard cutoff, kept rather than reinvented: it is
+    the margin between "enter wrap-up" and "stop regardless" that the loop already
+    documents, and a second, different margin here would make the two disagree.
+    """
+    return max(0.0, request_started_at(context) + limit * 1.2 - time.monotonic())
+
+
+#: How long a fallback answer may still spend becoming the reader's language once the
+#: request's deadline is spent. Short and explicit rather than the translator's own 12 s:
+#: a readable answer is worth a moment, not another request's worth of waiting.
+LOCALIZE_GRACE_SECONDS = 3.0
+
+
+class WallClockExceeded(BaseException):  # noqa: N818 - control flow, like CancelledError
+    """A bounded await ran past the request's hard deadline.
+
+    A ``BaseException`` for the reason ``asyncio.CancelledError`` is one: the tool loop
+    wraps its dispatches in ``except Exception`` to turn tool failures into directives
+    for the model, and a deadline caught there becomes "the tool failed, try again" —
+    which spends the time the deadline exists to stop spending.
+    """
+
+
+async def bounded(awaitable: Any, context: AgentContext, limit: float) -> Any:
+    """Await *awaitable*, cutting it off at the request's hard deadline.
+
+    The tool loop checked its wall clock only BETWEEN iterations, so one iteration — a
+    single orchestrator LLM call, or one dispatch that runs the whole SQL agent — could
+    run past the limit by its entire duration, and nothing could interrupt it. This is
+    the interrupt. On expiry the awaitable is cancelled (``asyncio.wait_for`` does that)
+    and `WallClockExceeded` is raised for the loop to turn into its timeout answer.
+    """
+    remaining = hard_remaining_seconds(context, limit)
+    if remaining <= 0:
+        close = getattr(awaitable, "close", None)
+        if callable(close):
+            close()  # never awaited: close it so no "was never awaited" warning leaks
+        raise WallClockExceeded
+    try:
+        return await asyncio.wait_for(awaitable, timeout=remaining)
+    except TimeoutError as exc:
+        raise WallClockExceeded from exc
+
+
+def _new_pipeline_deadline(context: AgentContext | None = None) -> float | None:
     """One wall-clock deadline for one request's pipeline (F-SQL-03).
 
     ``StageExecutor.execute`` used to compute this on every entry, and
@@ -93,7 +163,12 @@ def _new_pipeline_deadline() -> float | None:
     what makes the limit mean what it says. ``None`` when the budget is disabled.
     """
     budget = settings.pipeline_max_wall_seconds or settings.agent_wall_clock_timeout_seconds
-    return time.monotonic() + budget if budget > 0 else None
+    if budget <= 0:
+        return None
+    # PRJ-03: anchored on the REQUEST's start when there is one, so routing and context
+    # loading count against the budget instead of being free before the stages begin.
+    start = request_started_at(context) if context is not None else time.monotonic()
+    return start + budget
 
 
 # L2: upper bound on the number of "token" streaming events emitted for one
@@ -774,6 +849,9 @@ class OrchestratorAgent(BaseAgent):
         **_kwargs: Any,
     ) -> AgentResponse:
         wf_id = context.workflow_id
+        # PRJ-03: the request's clock starts here, before cleanup, resume, routing or
+        # context loading — every one of which used to be outside the limit.
+        request_started_at(context)
 
         # B4: wf_id is minted fresh per request, so the old "reuse an enriched
         # result from a previous turn under the same wf_id" block always missed
@@ -1449,7 +1527,9 @@ class OrchestratorAgent(BaseAgent):
         synthesis_phase = False
         step_limit_hit = False
         wall_clock_timeout_hit = False
-        wall_clock_start = time.monotonic()
+        # PRJ-03: from the REQUEST's start. Measured from here, the router call and
+        # context loading that precede the loop were outside the limit altogether.
+        wall_clock_start = request_started_at(context)
         wall_clock_limit = settings.agent_wall_clock_timeout_seconds
 
         is_continuation = bool(context.extra.get("_continuation_summary"))
@@ -1494,236 +1574,533 @@ class OrchestratorAgent(BaseAgent):
 
         iteration = 0
         for iteration in range(max_iter):
-            mid_stop = await self._budget_terminal_response(
-                wf_id=wf_id,
-                total_usage=total_usage,
-                used_provider=used_provider,
-                used_model=used_model,
-            )
-            if mid_stop is not None:
-                return mid_stop
-
-            messages, did_trim = trim_loop_messages(
-                messages, loop_budget, history_budget_tokens=history_budget
-            )
-            if did_trim:
-                await self._tracker.emit(
-                    wf_id,
-                    "thinking",
-                    "in_progress",
-                    "Compacting earlier analysis to free context space…",
-                )
-
-            elapsed_wall = time.monotonic() - wall_clock_start
-
-            step_pct = (iteration + 1) / max_iter
-            time_pct = elapsed_wall / wall_clock_limit if wall_clock_limit else 1.0
-            budget_pct = max(step_pct, time_pct)
-
-            # ORCH-T02: gate the context-fill soft wrap-up.
-            # - Hard branch (budget_pct >= emergency_pct) is the honest-degradation
-            #   valve and fires unconditionally (even at iter 0 with no data).
-            # - Soft branch (should_wrap_up) is gated on data_ready: we only enter
-            #   synthesis when at least one successful data-retrieval has happened AND
-            #   the dynamic content (excluding the static system prompt) is truly large.
-            data_ready = iteration > 0 and successful_data_retrievals >= 1
-            dynamic_tokens = max(0, estimate_messages_tokens(messages) - static_prompt_tokens)
-            soft_wrap = should_wrap_up(messages, loop_budget) and dynamic_tokens > int(
-                loop_budget * 0.30
-            )
-            if not synthesis_phase and (budget_pct >= emergency_pct or (data_ready and soft_wrap)):
-                synthesis_phase = True
-                reason = (
-                    "emergency budget limit" if budget_pct >= emergency_pct else "context budget"
-                )
-                messages.append(
-                    Message(
-                        role="system",
-                        content=(
-                            "EMERGENCY: You have used most of your analysis budget "
-                            f"({reason}, {budget_pct:.0%} used). You MUST compose "
-                            "your complete final answer NOW using the data you have "
-                            "gathered so far. Do NOT make any more tool calls. "
-                            "If multiple SQL queries sum to the same total, do NOT "
-                            "claim an earlier query was wrong or under-counted. "
-                            "Write the answer in the SAME language as the user's "
-                            "most recent message."
-                        ),
-                    )
-                )
-                logger.info(
-                    "Emergency synthesis (%s, step %d/%d, %.1fs/%.0fs, wf=%s)",
-                    reason,
-                    iteration + 1,
-                    max_iter,
-                    elapsed_wall,
-                    wall_clock_limit,
-                    wf_id,
-                )
-            elif not synthesis_phase and iteration > 0:
-                budget_status = (
-                    f"[Budget: step {iteration + 1}/{max_iter}, "
-                    f"time {int(elapsed_wall)}s/{int(wall_clock_limit)}s, "
-                    f"queries: {query_db_count}]"
-                )
-                # I4/B3: replace the previous budget marker instead of appending
-                # one per iteration. The native Anthropic adapter folds all
-                # system messages together, so without this stale budget lines
-                # pile up. Search by prefix — indices are unstable because
-                # ``trim_loop_messages`` mutates the list.
-                messages = [
-                    m
-                    for m in messages
-                    if not (m.role == "system" and (m.content or "").startswith("[Budget:"))
-                ]
-                messages.append(Message(role="system", content=budget_status))
-
-            pct = int(estimate_messages_tokens(messages) / max(loop_budget, 1) * 100)
-            if pct > 50:
-                logger.debug("Context usage: ~%d%% of model limit (wf=%s)", pct, wf_id)
-
-            phase_label = "synthesis" if synthesis_phase else f"step {iteration + 1}/{max_iter}"
-            await self._tracker.emit(
-                wf_id,
-                "thinking",
-                "in_progress",
-                f"Analyzing request ({phase_label})…",
-            )
-            effective_tools = None if synthesis_phase else (tools if tools else None)
             try:
-                _sd: dict[str, Any] = {}
-                async with self._tracker.step(
-                    wf_id,
-                    "orchestrator:llm_call",
-                    f"Orchestrator LLM ({phase_label})",
-                    step_data=_sd,
-                    span_type="llm_call",
-                ):
-                    llm_resp = await self._llm_call_with_retry(
-                        messages=messages,
-                        tools=effective_tools,
-                        preferred_provider=context.preferred_provider,
-                        model=context.model,
-                        wf_id=wf_id,
-                    )
-                    _sd.update(_llm_step_data(messages, llm_resp))
-            except (LLMAllProvidersFailedError, LLMTokenLimitError) as exc:
-                if _is_token_limit_error(exc):
-                    logger.info(
-                        "Hit context limit (wf=%s), retrying with compressed context",
-                        wf_id,
-                    )
-                    aggressive = int(loop_budget * 0.6)
-                    messages, _ = trim_loop_messages(
-                        messages, aggressive, history_budget_tokens=history_budget
-                    )
-                    try:
-                        _sd_r: dict[str, Any] = {}
-                        async with self._tracker.step(
-                            wf_id,
-                            "orchestrator:llm_call",
-                            "Orchestrator LLM (recovery)",
-                            step_data=_sd_r,
-                            span_type="llm_call",
-                        ):
-                            llm_resp = await self._llm_call_with_retry(
-                                messages=messages,
-                                tools=effective_tools,
-                                preferred_provider=context.preferred_provider,
-                                model=context.model,
-                                wf_id=wf_id,
-                            )
-                            _sd_r.update(_llm_step_data(messages, llm_resp))
-                    except LLMError:
-                        partial = [
-                            "Note: This answer is based on partial analysis. "
-                            "The conversation context was too large to "
-                            "analyze everything."
-                        ]
-                        if last_sql_result and last_sql_result.results:
-                            rc = last_sql_result.results.row_count
-                            partial.append(f"I found {rc} rows from the database.")
-                        if knowledge_sources:
-                            partial.append(
-                                f"I found {len(knowledge_sources)} relevant document(s)."
-                            )
-                        partial.append(
-                            "Consider starting a new conversation for further questions."
-                        )
-                        final_text = await self._localize_static(" ".join(partial), context)
-                        break
-                else:
-                    raise
-
-            if not used_provider:
-                used_provider = llm_resp.provider or ""
-                used_model = llm_resp.model or ""
-            self.accum_usage(total_usage, llm_resp.usage)
-
-            if not llm_resp.tool_calls:
-                # ORCH-T03: on a data route, if the model emitted a "let me think…"
-                # planning turn (no tool calls, no prior tool iterations, no data
-                # gathered) re-prompt exactly once to keep the loop alive.
-                # Guards:
-                #  - any_tools_called: tool calls happened in an earlier iteration
-                #    (even if they produced empty results) → accept the answer.
-                #  - reprompted_no_data: bounded one-shot re-prompt, no infinite loop.
-                #  - synthesis_phase: emergency valve is active — don't fight it.
-                is_data_route = route_result is None or not route_result.is_direct
-                no_data_yet = (
-                    not any_tools_called
-                    and successful_data_retrievals == 0
-                    and not all_sql_results
-                    and not knowledge_sources
-                    and not has_mcp_result
+                mid_stop = await self._budget_terminal_response(
+                    wf_id=wf_id,
+                    total_usage=total_usage,
+                    used_provider=used_provider,
+                    used_model=used_model,
                 )
-                if is_data_route and no_data_yet and not reprompted_no_data and not synthesis_phase:
-                    reprompted_no_data = True
+                if mid_stop is not None:
+                    return mid_stop
+
+                messages, did_trim = trim_loop_messages(
+                    messages, loop_budget, history_budget_tokens=history_budget
+                )
+                if did_trim:
                     await self._tracker.emit(
                         wf_id,
                         "thinking",
                         "in_progress",
-                        "No data gathered yet — asking the agent to use a tool…",
+                        "Compacting earlier analysis to free context space…",
+                    )
+
+                elapsed_wall = time.monotonic() - wall_clock_start
+
+                step_pct = (iteration + 1) / max_iter
+                time_pct = elapsed_wall / wall_clock_limit if wall_clock_limit else 1.0
+                budget_pct = max(step_pct, time_pct)
+
+                # ORCH-T02: gate the context-fill soft wrap-up.
+                # - Hard branch (budget_pct >= emergency_pct) is the honest-degradation
+                #   valve and fires unconditionally (even at iter 0 with no data).
+                # - Soft branch (should_wrap_up) is gated on data_ready: we only enter
+                #   synthesis when at least one successful data-retrieval has happened AND
+                #   the dynamic content (excluding the static system prompt) is truly large.
+                data_ready = iteration > 0 and successful_data_retrievals >= 1
+                dynamic_tokens = max(0, estimate_messages_tokens(messages) - static_prompt_tokens)
+                soft_wrap = should_wrap_up(messages, loop_budget) and dynamic_tokens > int(
+                    loop_budget * 0.30
+                )
+                if not synthesis_phase and (
+                    budget_pct >= emergency_pct or (data_ready and soft_wrap)
+                ):
+                    synthesis_phase = True
+                    reason = (
+                        "emergency budget limit"
+                        if budget_pct >= emergency_pct
+                        else "context budget"
                     )
                     messages.append(
                         Message(
                             role="system",
                             content=(
-                                "You have not gathered any data yet, but this question needs "
-                                "data from your sources. Call the appropriate tool now (do not "
-                                "answer from prior knowledge). If the question truly needs no "
-                                "data, say so explicitly."
+                                "EMERGENCY: You have used most of your analysis budget "
+                                f"({reason}, {budget_pct:.0%} used). You MUST compose "
+                                "your complete final answer NOW using the data you have "
+                                "gathered so far. Do NOT make any more tool calls. "
+                                "If multiple SQL queries sum to the same total, do NOT "
+                                "claim an earlier query was wrong or under-counted. "
+                                "Write the answer in the SAME language as the user's "
+                                "most recent message."
                             ),
                         )
                     )
-                    continue
+                    logger.info(
+                        "Emergency synthesis (%s, step %d/%d, %.1fs/%.0fs, wf=%s)",
+                        reason,
+                        iteration + 1,
+                        max_iter,
+                        elapsed_wall,
+                        wall_clock_limit,
+                        wf_id,
+                    )
+                elif not synthesis_phase and iteration > 0:
+                    budget_status = (
+                        f"[Budget: step {iteration + 1}/{max_iter}, "
+                        f"time {int(elapsed_wall)}s/{int(wall_clock_limit)}s, "
+                        f"queries: {query_db_count}]"
+                    )
+                    # I4/B3: replace the previous budget marker instead of appending
+                    # one per iteration. The native Anthropic adapter folds all
+                    # system messages together, so without this stale budget lines
+                    # pile up. Search by prefix — indices are unstable because
+                    # ``trim_loop_messages`` mutates the list.
+                    messages = [
+                        m
+                        for m in messages
+                        if not (m.role == "system" and (m.content or "").startswith("[Budget:"))
+                    ]
+                    messages.append(Message(role="system", content=budget_status))
 
+                pct = int(estimate_messages_tokens(messages) / max(loop_budget, 1) * 100)
+                if pct > 50:
+                    logger.debug("Context usage: ~%d%% of model limit (wf=%s)", pct, wf_id)
+
+                phase_label = "synthesis" if synthesis_phase else f"step {iteration + 1}/{max_iter}"
                 await self._tracker.emit(
                     wf_id,
                     "thinking",
                     "in_progress",
-                    "Composing final answer…",
+                    f"Analyzing request ({phase_label})…",
                 )
-                final_text = llm_resp.content or ""
-                if not final_text.strip() and all_sql_results:
-                    final_text = await self._localize_static(
-                        ResponseBuilder.build_partial_text(last_sql_result, knowledge_sources),
+                effective_tools = None if synthesis_phase else (tools if tools else None)
+                try:
+                    _sd: dict[str, Any] = {}
+                    async with self._tracker.step(
+                        wf_id,
+                        "orchestrator:llm_call",
+                        f"Orchestrator LLM ({phase_label})",
+                        step_data=_sd,
+                        span_type="llm_call",
+                    ):
+                        llm_resp = await self._bounded_llm_call(
+                            context,
+                            wall_clock_limit,
+                            messages=messages,
+                            tools=effective_tools,
+                            preferred_provider=context.preferred_provider,
+                            model=context.model,
+                            wf_id=wf_id,
+                        )
+                        _sd.update(_llm_step_data(messages, llm_resp))
+                except (LLMAllProvidersFailedError, LLMTokenLimitError) as exc:
+                    if _is_token_limit_error(exc):
+                        logger.info(
+                            "Hit context limit (wf=%s), retrying with compressed context",
+                            wf_id,
+                        )
+                        aggressive = int(loop_budget * 0.6)
+                        messages, _ = trim_loop_messages(
+                            messages, aggressive, history_budget_tokens=history_budget
+                        )
+                        try:
+                            _sd_r: dict[str, Any] = {}
+                            async with self._tracker.step(
+                                wf_id,
+                                "orchestrator:llm_call",
+                                "Orchestrator LLM (recovery)",
+                                step_data=_sd_r,
+                                span_type="llm_call",
+                            ):
+                                llm_resp = await self._bounded_llm_call(
+                                    context,
+                                    wall_clock_limit,
+                                    messages=messages,
+                                    tools=effective_tools,
+                                    preferred_provider=context.preferred_provider,
+                                    model=context.model,
+                                    wf_id=wf_id,
+                                )
+                                _sd_r.update(_llm_step_data(messages, llm_resp))
+                        except LLMError:
+                            partial = [
+                                "Note: This answer is based on partial analysis. "
+                                "The conversation context was too large to "
+                                "analyze everything."
+                            ]
+                            if last_sql_result and last_sql_result.results:
+                                rc = last_sql_result.results.row_count
+                                partial.append(f"I found {rc} rows from the database.")
+                            if knowledge_sources:
+                                partial.append(
+                                    f"I found {len(knowledge_sources)} relevant document(s)."
+                                )
+                            partial.append(
+                                "Consider starting a new conversation for further questions."
+                            )
+                            final_text = await self._localize_static(" ".join(partial), context)
+                            break
+                    else:
+                        raise
+
+                if not used_provider:
+                    used_provider = llm_resp.provider or ""
+                    used_model = llm_resp.model or ""
+                self.accum_usage(total_usage, llm_resp.usage)
+
+                if not llm_resp.tool_calls:
+                    # ORCH-T03: on a data route, if the model emitted a "let me think…"
+                    # planning turn (no tool calls, no prior tool iterations, no data
+                    # gathered) re-prompt exactly once to keep the loop alive.
+                    # Guards:
+                    #  - any_tools_called: tool calls happened in an earlier iteration
+                    #    (even if they produced empty results) → accept the answer.
+                    #  - reprompted_no_data: bounded one-shot re-prompt, no infinite loop.
+                    #  - synthesis_phase: emergency valve is active — don't fight it.
+                    is_data_route = route_result is None or not route_result.is_direct
+                    no_data_yet = (
+                        not any_tools_called
+                        and successful_data_retrievals == 0
+                        and not all_sql_results
+                        and not knowledge_sources
+                        and not has_mcp_result
+                    )
+                    if (
+                        is_data_route
+                        and no_data_yet
+                        and not reprompted_no_data
+                        and not synthesis_phase
+                    ):
+                        reprompted_no_data = True
+                        await self._tracker.emit(
+                            wf_id,
+                            "thinking",
+                            "in_progress",
+                            "No data gathered yet — asking the agent to use a tool…",
+                        )
+                        messages.append(
+                            Message(
+                                role="system",
+                                content=(
+                                    "You have not gathered any data yet, but this question needs "
+                                    "data from your sources. Call the appropriate tool now (do not "
+                                    "answer from prior knowledge). If the question truly needs no "
+                                    "data, say so explicitly."
+                                ),
+                            )
+                        )
+                        continue
+
+                    await self._tracker.emit(
+                        wf_id,
+                        "thinking",
+                        "in_progress",
+                        "Composing final answer…",
+                    )
+                    final_text = llm_resp.content or ""
+                    if not final_text.strip() and all_sql_results:
+                        final_text = await self._localize_static(
+                            ResponseBuilder.build_partial_text(last_sql_result, knowledge_sources),
+                            context,
+                        )
+                    final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
+                    await self._stream_tokens(wf_id, final_text)
+                    break
+
+                hard_elapsed = time.monotonic() - wall_clock_start
+                if hard_elapsed > wall_clock_limit * 1.2:
+                    logger.warning(
+                        "Hard wall-clock cutoff (%.1fs > %.1fs, wf=%s), "
+                        "LLM returned tool calls despite wrap-up — forcing break",
+                        hard_elapsed,
+                        wall_clock_limit * 1.2,
+                        wf_id,
+                    )
+                    final_text = llm_resp.content or await self._localize_static(
+                        ResponseBuilder.build_timeout_text(last_sql_result, knowledge_sources),
                         context,
                     )
-                final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
-                await self._stream_tokens(wf_id, final_text)
-                break
+                    final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
+                    wall_clock_timeout_hit = True
+                    await self._stream_tokens(wf_id, final_text)
+                    break
 
-            hard_elapsed = time.monotonic() - wall_clock_start
-            if hard_elapsed > wall_clock_limit * 1.2:
+                # ORCH-T03: mark that at least one tool-call iteration has occurred so
+                # the zero-data re-prompt guard is not triggered after a failed or
+                # non-data-returning tool dispatch.
+                any_tools_called = True
+
+                tool_names = ", ".join(tc.name for tc in llm_resp.tool_calls)
+                thinking_detail = f"Decided to use: {tool_names}"
+                if llm_resp.content:
+                    snippet = llm_resp.content[:120].replace("\n", " ")
+                    thinking_detail += f" — {snippet}"
+                await self._tracker.emit(
+                    wf_id,
+                    "thinking",
+                    "in_progress",
+                    thinking_detail,
+                )
+
+                messages.append(
+                    Message(
+                        role="assistant",
+                        content=llm_resp.content or "",
+                        tool_calls=llm_resp.tool_calls,
+                    )
+                )
+
+                active_calls, skipped_map = ToolDispatcher.dedup_tool_calls(llm_resp.tool_calls)
+
+                # Per-turn safety net: skip data-retrieval calls that repeat a query
+                # already SUCCESSFULLY executed in an earlier iteration of this turn.
+                # Gate-flagged / failed calls are never recorded in executed_questions,
+                # so legitimate corrective re-queries are preserved.
+                active_calls, turn_skipped = ToolDispatcher.filter_already_executed(
+                    active_calls, executed_questions
+                )
+                if turn_skipped:
+                    skipped_map.update(turn_skipped)
+
+                # A1: a process_data call batched with a fresh query_database would
+                # read the PREVIOUS turn's result (the SQL bucket is only committed
+                # in the post-dispatch loop below). Defer it so it re-runs next turn
+                # against the freshly retrieved rows.
+                active_calls, deferred_pd = ToolDispatcher.defer_premature_process_data(
+                    active_calls
+                )
+                if deferred_pd:
+                    skipped_map.update(deferred_pd)
+
+                has_process_data = any(tc.name == "process_data" for tc in active_calls)
+
+                _dispatch_wall = max(0.0, wall_clock_limit - (time.monotonic() - wall_clock_start))
+
+                if len(active_calls) > 1 and not has_process_data:
+
+                    async def _throttled_meta_tool(
+                        _tc: ToolCall,
+                    ) -> tuple[str, Any]:
+                        async with self._parallel_tool_sem:
+                            return await self._bounded_dispatch(
+                                context,
+                                wall_clock_limit,
+                                _tc,
+                                context,
+                                wf_id,
+                                total_usage,
+                                remaining_wall_seconds=_dispatch_wall,
+                            )
+
+                    gather_results = await asyncio.gather(
+                        *(_throttled_meta_tool(tc) for tc in active_calls),
+                        return_exceptions=True,
+                    )
+                    if any(isinstance(r, WallClockExceeded) for r in gather_results):
+                        raise WallClockExceeded
+                    executed_pairs: dict[str, tuple[str, Any]] = {}
+                    for i, res in enumerate(gather_results):
+                        tc_id = active_calls[i].id
+                        if isinstance(res, _ClarificationRequestError):
+                            raise res
+                        if isinstance(res, Exception):
+                            # R5-8: the dispatcher already exhausted its internal
+                            # retries before re-raising. Fold the failure into a
+                            # targeted directive (retry transient / adjust fatal)
+                            # instead of a bland "tool failed" the LLM treats as
+                            # terminal. Shared with the single-call branch (B2).
+                            err_msg, directive = self._tool_exc_to_directive(
+                                res, active_calls[i].name
+                            )
+                            logger.warning(
+                                "Parallel tool call %s failed (%s): %s",
+                                active_calls[i].name,
+                                type(res).__name__,
+                                res,
+                                exc_info=res,
+                            )
+                            await self._tracker.emit(
+                                wf_id,
+                                "tool_call:error",
+                                "error",
+                                f"{active_calls[i].name} failed: {err_msg}",
+                                tool=active_calls[i].name,
+                                error=err_msg,
+                                error_type=type(res).__name__,
+                            )
+                            executed_pairs[tc_id] = (
+                                f"Tool '{active_calls[i].name}' failed: {err_msg}.{directive}",
+                                None,
+                            )
+                        else:
+                            executed_pairs[tc_id] = res  # type: ignore[assignment]
+                else:
+                    # B2: the single-call branch is the most common path (the
+                    # parallel branch only triggers for >1 non-process_data call).
+                    # It previously had no safety net, so an unexpected exception in
+                    # a handler (search_codebase / analyze_git / get_release_timeline
+                    # / write_code_note) crashed the whole turn and discarded all
+                    # gathered data. Mirror the parallel branch's graceful handling.
+                    executed_pairs = {}
+                    for single_tc in active_calls:
+                        try:
+                            executed_pairs[single_tc.id] = await self._bounded_dispatch(
+                                context,
+                                wall_clock_limit,
+                                single_tc,
+                                context,
+                                wf_id,
+                                total_usage,
+                                remaining_wall_seconds=_dispatch_wall,
+                            )
+                        except _ClarificationRequestError:
+                            raise
+                        except Exception as exc:
+                            err_msg, directive = self._tool_exc_to_directive(exc, single_tc.name)
+                            logger.warning(
+                                "Single tool call %s failed (%s): %s",
+                                single_tc.name,
+                                type(exc).__name__,
+                                exc,
+                                exc_info=exc,
+                            )
+                            await self._tracker.emit(
+                                wf_id,
+                                "tool_call:error",
+                                "error",
+                                f"{single_tc.name} failed: {err_msg}",
+                                tool=single_tc.name,
+                                error=err_msg,
+                                error_type=type(exc).__name__,
+                            )
+                            executed_pairs[single_tc.id] = (
+                                f"Tool '{single_tc.name}' failed: {err_msg}.{directive}",
+                                None,
+                            )
+
+                tool_pairs: list[tuple[str, Any]] = []
+                for tc in llm_resp.tool_calls:
+                    if tc.id in skipped_map:
+                        tool_pairs.append((skipped_map[tc.id], None))
+                    else:
+                        # Defensive: ``executed_pairs`` is keyed by the deduplicated
+                        # ``active_calls`` ids, but we iterate the original
+                        # ``llm_resp.tool_calls`` here. A duplicate/missing id (an
+                        # internal dedup↔dispatch mismatch) used to raise ``KeyError``
+                        # that bubbled to ``run()``'s catch-all and discarded every
+                        # gathered result for the turn. Fall back to a neutral tool
+                        # message so the turn still completes with its other results.
+                        pair = executed_pairs.get(tc.id)
+                        if pair is None:
+                            logger.warning(
+                                "Tool-call id %r missing from executed_pairs "
+                                "(dedup/dispatch mismatch, tool=%s, wf=%s) — using fallback",
+                                tc.id,
+                                tc.name,
+                                wf_id,
+                            )
+                            pair = ("Tool result unavailable (internal dispatch mismatch).", None)
+                        tool_pairs.append(pair)
+
+                for tc, (result_text, sub_result) in zip(llm_resp.tool_calls, tool_pairs):
+                    tool_call_log.append(
+                        {
+                            "tool": tc.name,
+                            "arguments": tc.arguments,
+                            "result_preview": result_text[:200],
+                        }
+                    )
+
+                    gate_flagged = False
+                    if tc.name == "query_database":
+                        query_db_count += 1
+                    if isinstance(sub_result, SQLAgentResult):
+                        last_sql_result = sub_result
+                        bucket = self._wf_sql_results.setdefault(wf_id, [])
+                        if tc.name == "process_data" and bucket:
+                            bucket[-1] = sub_result
+                        else:
+                            bucket.append(sub_result)
+                        if tc.name == "process_data" and all_sql_results:
+                            all_sql_results[-1] = sub_result
+                        else:
+                            all_sql_results.append(sub_result)
+                        # R5-3: gate the result quality and nudge a re-query when
+                        # the query_database result looks wrong (bounded per wf).
+                        if tc.name == "query_database":
+                            gate_directive = self._result_gate_directive(wf_id, sub_result)
+                            if gate_directive:
+                                gate_flagged = True
+                                result_text = f"{result_text}\n\n{gate_directive}"
+                                await self._tracker.emit(
+                                    wf_id,
+                                    "result_gate",
+                                    "retrying",
+                                    "Result quality check flagged the query result; "
+                                    "asking the agent to re-query.",
+                                    tool=tc.name,
+                                )
+                            recon_note = build_reconciliation_note(all_sql_results)
+                            if recon_note and recon_note not in result_text:
+                                result_text = f"{result_text}\n\n{recon_note}"
+                    elif isinstance(sub_result, KnowledgeResult):
+                        knowledge_sources.extend(sub_result.sources)
+                    elif isinstance(sub_result, MCPSourceResult):
+                        has_mcp_result = True
+
+                    # REQ-011: anything that came back carrying a table feeds the
+                    # visualization pipeline, whichever sub-agent produced it.
+                    # Deliberately its own check rather than another arm of the
+                    # chain above: a result can both be classified by its agent
+                    # (knowledge, MCP, …) *and* carry a chartable table, and the
+                    # SQL branch keeps its own richer path (query text, insights,
+                    # process_data replacement), so it is excluded here rather
+                    # than left to depend on which attributes it happens to have.
+                    if not isinstance(sub_result, SQLAgentResult) and isinstance(
+                        sub_result, TabularSubResult
+                    ):
+                        tabular_candidate = _tabular_chart_candidate(sub_result, tool_name=tc.name)
+                        if tabular_candidate is not None:
+                            tabular_candidates.append(tabular_candidate)
+
+                    # Record successful data-retrieval questions for the per-turn
+                    # dedup safety net. Skip gate-flagged / failed / deduped calls so
+                    # corrective re-queries are never blocked on the next iteration.
+                    # ORCH-T02: also track count for the wrap-up gate.
+                    if (
+                        tc.name in ToolDispatcher._DEDUP_TOOL_NAMES
+                        and tc.id not in skipped_map
+                        and sub_result is not None
+                        and not gate_flagged
+                    ):
+                        successful_data_retrievals += 1
+                        recorded_q = ((tc.arguments or {}).get("question") or "").strip()
+                        if recorded_q:
+                            executed_questions.append((tc.name, recorded_q))
+
+                    messages.append(
+                        Message(
+                            role="tool",
+                            # B6: hard per-result ceiling at insertion so a single
+                            # oversized result can't dominate/blow the context
+                            # before the next trim (which only condenses OLD results).
+                            content=cap_tool_result_text(
+                                result_text, settings.tool_result_insert_max_chars
+                            ),
+                            tool_call_id=tc.id,
+                            name=tc.name,
+                        )
+                    )
+            except WallClockExceeded:
+                # PRJ-03: a single LLM call or dispatch ran past the hard deadline and was
+                # cancelled. Same answer the between-iterations cutoff builds, from what was
+                # gathered so far — the difference is that this one can actually interrupt.
                 logger.warning(
-                    "Hard wall-clock cutoff (%.1fs > %.1fs, wf=%s), "
-                    "LLM returned tool calls despite wrap-up — forcing break",
-                    hard_elapsed,
-                    wall_clock_limit * 1.2,
+                    "Wall-clock deadline reached inside an iteration (wf=%s) — cancelled",
                     wf_id,
                 )
-                final_text = llm_resp.content or await self._localize_static(
+                final_text = await self._localize_static(
                     ResponseBuilder.build_timeout_text(last_sql_result, knowledge_sources),
                     context,
                 )
@@ -1731,263 +2108,6 @@ class OrchestratorAgent(BaseAgent):
                 wall_clock_timeout_hit = True
                 await self._stream_tokens(wf_id, final_text)
                 break
-
-            # ORCH-T03: mark that at least one tool-call iteration has occurred so
-            # the zero-data re-prompt guard is not triggered after a failed or
-            # non-data-returning tool dispatch.
-            any_tools_called = True
-
-            tool_names = ", ".join(tc.name for tc in llm_resp.tool_calls)
-            thinking_detail = f"Decided to use: {tool_names}"
-            if llm_resp.content:
-                snippet = llm_resp.content[:120].replace("\n", " ")
-                thinking_detail += f" — {snippet}"
-            await self._tracker.emit(
-                wf_id,
-                "thinking",
-                "in_progress",
-                thinking_detail,
-            )
-
-            messages.append(
-                Message(
-                    role="assistant",
-                    content=llm_resp.content or "",
-                    tool_calls=llm_resp.tool_calls,
-                )
-            )
-
-            active_calls, skipped_map = ToolDispatcher.dedup_tool_calls(llm_resp.tool_calls)
-
-            # Per-turn safety net: skip data-retrieval calls that repeat a query
-            # already SUCCESSFULLY executed in an earlier iteration of this turn.
-            # Gate-flagged / failed calls are never recorded in executed_questions,
-            # so legitimate corrective re-queries are preserved.
-            active_calls, turn_skipped = ToolDispatcher.filter_already_executed(
-                active_calls, executed_questions
-            )
-            if turn_skipped:
-                skipped_map.update(turn_skipped)
-
-            # A1: a process_data call batched with a fresh query_database would
-            # read the PREVIOUS turn's result (the SQL bucket is only committed
-            # in the post-dispatch loop below). Defer it so it re-runs next turn
-            # against the freshly retrieved rows.
-            active_calls, deferred_pd = ToolDispatcher.defer_premature_process_data(active_calls)
-            if deferred_pd:
-                skipped_map.update(deferred_pd)
-
-            has_process_data = any(tc.name == "process_data" for tc in active_calls)
-
-            _dispatch_wall = max(0.0, wall_clock_limit - (time.monotonic() - wall_clock_start))
-
-            if len(active_calls) > 1 and not has_process_data:
-
-                async def _throttled_meta_tool(
-                    _tc: ToolCall,
-                ) -> tuple[str, Any]:
-                    async with self._parallel_tool_sem:
-                        return await self._dispatcher.dispatch(
-                            _tc,
-                            context,
-                            wf_id,
-                            total_usage,
-                            remaining_wall_seconds=_dispatch_wall,
-                        )
-
-                gather_results = await asyncio.gather(
-                    *(_throttled_meta_tool(tc) for tc in active_calls),
-                    return_exceptions=True,
-                )
-                executed_pairs: dict[str, tuple[str, Any]] = {}
-                for i, res in enumerate(gather_results):
-                    tc_id = active_calls[i].id
-                    if isinstance(res, _ClarificationRequestError):
-                        raise res
-                    if isinstance(res, Exception):
-                        # R5-8: the dispatcher already exhausted its internal
-                        # retries before re-raising. Fold the failure into a
-                        # targeted directive (retry transient / adjust fatal)
-                        # instead of a bland "tool failed" the LLM treats as
-                        # terminal. Shared with the single-call branch (B2).
-                        err_msg, directive = self._tool_exc_to_directive(res, active_calls[i].name)
-                        logger.warning(
-                            "Parallel tool call %s failed (%s): %s",
-                            active_calls[i].name,
-                            type(res).__name__,
-                            res,
-                            exc_info=res,
-                        )
-                        await self._tracker.emit(
-                            wf_id,
-                            "tool_call:error",
-                            "error",
-                            f"{active_calls[i].name} failed: {err_msg}",
-                            tool=active_calls[i].name,
-                            error=err_msg,
-                            error_type=type(res).__name__,
-                        )
-                        executed_pairs[tc_id] = (
-                            f"Tool '{active_calls[i].name}' failed: {err_msg}.{directive}",
-                            None,
-                        )
-                    else:
-                        executed_pairs[tc_id] = res  # type: ignore[assignment]
-            else:
-                # B2: the single-call branch is the most common path (the
-                # parallel branch only triggers for >1 non-process_data call).
-                # It previously had no safety net, so an unexpected exception in
-                # a handler (search_codebase / analyze_git / get_release_timeline
-                # / write_code_note) crashed the whole turn and discarded all
-                # gathered data. Mirror the parallel branch's graceful handling.
-                executed_pairs = {}
-                for single_tc in active_calls:
-                    try:
-                        executed_pairs[single_tc.id] = await self._dispatcher.dispatch(
-                            single_tc,
-                            context,
-                            wf_id,
-                            total_usage,
-                            remaining_wall_seconds=_dispatch_wall,
-                        )
-                    except _ClarificationRequestError:
-                        raise
-                    except Exception as exc:
-                        err_msg, directive = self._tool_exc_to_directive(exc, single_tc.name)
-                        logger.warning(
-                            "Single tool call %s failed (%s): %s",
-                            single_tc.name,
-                            type(exc).__name__,
-                            exc,
-                            exc_info=exc,
-                        )
-                        await self._tracker.emit(
-                            wf_id,
-                            "tool_call:error",
-                            "error",
-                            f"{single_tc.name} failed: {err_msg}",
-                            tool=single_tc.name,
-                            error=err_msg,
-                            error_type=type(exc).__name__,
-                        )
-                        executed_pairs[single_tc.id] = (
-                            f"Tool '{single_tc.name}' failed: {err_msg}.{directive}",
-                            None,
-                        )
-
-            tool_pairs: list[tuple[str, Any]] = []
-            for tc in llm_resp.tool_calls:
-                if tc.id in skipped_map:
-                    tool_pairs.append((skipped_map[tc.id], None))
-                else:
-                    # Defensive: ``executed_pairs`` is keyed by the deduplicated
-                    # ``active_calls`` ids, but we iterate the original
-                    # ``llm_resp.tool_calls`` here. A duplicate/missing id (an
-                    # internal dedup↔dispatch mismatch) used to raise ``KeyError``
-                    # that bubbled to ``run()``'s catch-all and discarded every
-                    # gathered result for the turn. Fall back to a neutral tool
-                    # message so the turn still completes with its other results.
-                    pair = executed_pairs.get(tc.id)
-                    if pair is None:
-                        logger.warning(
-                            "Tool-call id %r missing from executed_pairs "
-                            "(dedup/dispatch mismatch, tool=%s, wf=%s) — using fallback",
-                            tc.id,
-                            tc.name,
-                            wf_id,
-                        )
-                        pair = ("Tool result unavailable (internal dispatch mismatch).", None)
-                    tool_pairs.append(pair)
-
-            for tc, (result_text, sub_result) in zip(llm_resp.tool_calls, tool_pairs):
-                tool_call_log.append(
-                    {
-                        "tool": tc.name,
-                        "arguments": tc.arguments,
-                        "result_preview": result_text[:200],
-                    }
-                )
-
-                gate_flagged = False
-                if tc.name == "query_database":
-                    query_db_count += 1
-                if isinstance(sub_result, SQLAgentResult):
-                    last_sql_result = sub_result
-                    bucket = self._wf_sql_results.setdefault(wf_id, [])
-                    if tc.name == "process_data" and bucket:
-                        bucket[-1] = sub_result
-                    else:
-                        bucket.append(sub_result)
-                    if tc.name == "process_data" and all_sql_results:
-                        all_sql_results[-1] = sub_result
-                    else:
-                        all_sql_results.append(sub_result)
-                    # R5-3: gate the result quality and nudge a re-query when
-                    # the query_database result looks wrong (bounded per wf).
-                    if tc.name == "query_database":
-                        gate_directive = self._result_gate_directive(wf_id, sub_result)
-                        if gate_directive:
-                            gate_flagged = True
-                            result_text = f"{result_text}\n\n{gate_directive}"
-                            await self._tracker.emit(
-                                wf_id,
-                                "result_gate",
-                                "retrying",
-                                "Result quality check flagged the query result; "
-                                "asking the agent to re-query.",
-                                tool=tc.name,
-                            )
-                        recon_note = build_reconciliation_note(all_sql_results)
-                        if recon_note and recon_note not in result_text:
-                            result_text = f"{result_text}\n\n{recon_note}"
-                elif isinstance(sub_result, KnowledgeResult):
-                    knowledge_sources.extend(sub_result.sources)
-                elif isinstance(sub_result, MCPSourceResult):
-                    has_mcp_result = True
-
-                # REQ-011: anything that came back carrying a table feeds the
-                # visualization pipeline, whichever sub-agent produced it.
-                # Deliberately its own check rather than another arm of the
-                # chain above: a result can both be classified by its agent
-                # (knowledge, MCP, …) *and* carry a chartable table, and the
-                # SQL branch keeps its own richer path (query text, insights,
-                # process_data replacement), so it is excluded here rather
-                # than left to depend on which attributes it happens to have.
-                if not isinstance(sub_result, SQLAgentResult) and isinstance(
-                    sub_result, TabularSubResult
-                ):
-                    tabular_candidate = _tabular_chart_candidate(sub_result, tool_name=tc.name)
-                    if tabular_candidate is not None:
-                        tabular_candidates.append(tabular_candidate)
-
-                # Record successful data-retrieval questions for the per-turn
-                # dedup safety net. Skip gate-flagged / failed / deduped calls so
-                # corrective re-queries are never blocked on the next iteration.
-                # ORCH-T02: also track count for the wrap-up gate.
-                if (
-                    tc.name in ToolDispatcher._DEDUP_TOOL_NAMES
-                    and tc.id not in skipped_map
-                    and sub_result is not None
-                    and not gate_flagged
-                ):
-                    successful_data_retrievals += 1
-                    recorded_q = ((tc.arguments or {}).get("question") or "").strip()
-                    if recorded_q:
-                        executed_questions.append((tc.name, recorded_q))
-
-                messages.append(
-                    Message(
-                        role="tool",
-                        # B6: hard per-result ceiling at insertion so a single
-                        # oversized result can't dominate/blow the context
-                        # before the next trim (which only condenses OLD results).
-                        content=cap_tool_result_text(
-                            result_text, settings.tool_result_insert_max_chars
-                        ),
-                        tool_call_id=tc.id,
-                        name=tc.name,
-                    )
-                )
         else:
             await self._tracker.emit(
                 wf_id,
@@ -2012,7 +2132,9 @@ class OrchestratorAgent(BaseAgent):
                         step_data=_sd_s,
                         span_type="llm_call",
                     ):
-                        synth_resp = await self._llm_call_with_retry(
+                        synth_resp = await self._bounded_llm_call(
+                            context,
+                            wall_clock_limit,
                             messages=synthesis_messages,
                             tools=None,
                             preferred_provider=context.preferred_provider,
@@ -2029,9 +2151,10 @@ class OrchestratorAgent(BaseAgent):
                         )
                     final_text = self._finalize_tool_loop_answer(final_text, all_sql_results)
                     await self._stream_tokens(wf_id, final_text)
-                except LLMError:
+                except (LLMError, WallClockExceeded):
                     logger.warning(
-                        "Final synthesis LLM call failed (wf=%s), using partial text",
+                        "Final synthesis LLM call failed or ran out of time (wf=%s), "
+                        "using partial text",
                         wf_id,
                         exc_info=True,
                     )
@@ -2065,16 +2188,25 @@ class OrchestratorAgent(BaseAgent):
             # does not address the question it catalogs a validation failure to the
             # errors screen (`_validate_partial_answer` -> `upsert_validation_failure`).
             # Dropping the call would remove that signal silently.
-            await self._validate_partial_answer(
-                final_text,
-                question=question,
-                sql_results=all_sql_results,
-                preferred_provider=context.preferred_provider,
-                model=context.model,
-                wf_id=wf_id,
-                row_count=_step_row_count,
-                truncated=_step_truncated,
-            )
+            try:
+                await bounded(
+                    self._validate_partial_answer(
+                        final_text,
+                        question=question,
+                        sql_results=all_sql_results,
+                        preferred_provider=context.preferred_provider,
+                        model=context.model,
+                        wf_id=wf_id,
+                        row_count=_step_row_count,
+                        truncated=_step_truncated,
+                    ),
+                    context,
+                    wall_clock_limit,
+                )
+            except WallClockExceeded:
+                # PRJ-03: the call only catalogues a validation failure; out of time, a
+                # skipped catalogue entry costs less than a request past its deadline.
+                logger.info("partial-answer validation skipped: deadline spent (wf=%s)", wf_id)
             # Row 1.7. This branch used to return the ORDINARY type whenever the
             # partial answer had rows and the validator approved it — so a run the
             # budget cut short was typed `sql_result`, and `sealStateFor`
@@ -2114,16 +2246,26 @@ class OrchestratorAgent(BaseAgent):
                     _susp_truncated = bool(
                         last_sql_result.results is not None and last_sql_result.results.truncated
                     )
-                    addresses = await self._validate_partial_answer(
-                        final_text,
-                        question=question,
-                        sql_results=all_sql_results,
-                        preferred_provider=context.preferred_provider,
-                        model=context.model,
-                        wf_id=wf_id,
-                        row_count=row_count,
-                        truncated=_susp_truncated,
-                    )
+                    try:
+                        addresses = await bounded(
+                            self._validate_partial_answer(
+                                final_text,
+                                question=question,
+                                sql_results=all_sql_results,
+                                preferred_provider=context.preferred_provider,
+                                model=context.model,
+                                wf_id=wf_id,
+                                row_count=row_count,
+                                truncated=_susp_truncated,
+                            ),
+                            context,
+                            wall_clock_limit,
+                        )
+                    except WallClockExceeded:
+                        # PRJ-03: an answer already judged suspicious and then NOT
+                        # verified is not sealed as ordinary. Same direction the validator
+                        # fails in on its own errors (R5-6: fail closed).
+                        addresses = False
                     if not addresses:
                         response_type = "step_limit_reached"
 
@@ -2602,7 +2744,7 @@ class OrchestratorAgent(BaseAgent):
             # F-SQL-03: established once, here, and shared with every replan below.
             # Computed inside `execute()` it restarted per entry, so the replan
             # count multiplied the request's documented wall-clock limit.
-            pipeline_deadline = _new_pipeline_deadline()
+            pipeline_deadline = _new_pipeline_deadline(context)
 
             exec_result = await executor.execute(
                 plan,
@@ -3130,7 +3272,7 @@ class OrchestratorAgent(BaseAgent):
                     else []
                 ),
             )
-            resume_deadline = _new_pipeline_deadline()
+            resume_deadline = _new_pipeline_deadline(context)
             # ORCH-06: `_execute_resume` is a second implementation of the
             # pipeline tail and had drifted from the fresh path in two places.
             # This is the first: with no `staleness_warning`, neither
@@ -3334,6 +3476,25 @@ class OrchestratorAgent(BaseAgent):
                 )
         except Exception:
             logger.debug("Pipeline learning extraction failed", exc_info=True)
+
+    async def _bounded_llm_call(
+        self, context: AgentContext, limit: float, **kwargs: Any
+    ) -> LLMResponse:
+        """`_llm_call_with_retry`, cut off at the request's hard deadline (PRJ-03)."""
+        result: LLMResponse = await bounded(self._llm_call_with_retry(**kwargs), context, limit)
+        return result
+
+    async def _bounded_dispatch(
+        self, context: AgentContext, limit: float, *args: Any, **kwargs: Any
+    ) -> Any:
+        """One tool dispatch, cut off at the request's hard deadline (PRJ-03).
+
+        The dispatcher already receives ``remaining_wall_seconds`` and the SQL agent
+        honours it — but that is the tool being asked to stop, and a tool that does not
+        (an MCP source, a connector stuck in a socket read) held the whole request. This
+        is the request stopping it.
+        """
+        return await bounded(self._dispatcher.dispatch(*args, **kwargs), context, limit)
 
     async def _llm_call_with_retry(
         self,
@@ -3721,11 +3882,17 @@ class OrchestratorAgent(BaseAgent):
         """
         from app.agents.localize import localize
 
+        # PRJ-03: bounded by what is left of the request, with a short grace so a reader
+        # who asked in Russian still gets a Russian answer when the deadline is already
+        # spent. Uncapped, this was 12 s past a limit the loop had just enforced — the
+        # tool-loop test measured 13 s for a 1 s budget until this line existed.
+        remaining = hard_remaining_seconds(context, settings.agent_wall_clock_timeout_seconds)
         return await localize(
             text,
             getattr(context, "user_question", None),
             self._llm,
             model=getattr(context, "model", None),
+            timeout=max(LOCALIZE_GRACE_SECONDS, remaining),
         )
 
     @staticmethod

@@ -67,8 +67,14 @@ async def localize(
     llm: object | None,
     *,
     model: str | None = None,
+    timeout: float | None = None,
 ) -> str:
-    """Return *text* in the language of *user_question*, or *text* unchanged."""
+    """Return *text* in the language of *user_question*, or *text* unchanged.
+
+    *timeout* caps the call below `TIMEOUT_SECONDS`. PRJ-03: this runs on the paths where
+    a request has already hit its deadline, so an uncapped 12 s here was 12 s past a limit
+    that had just been enforced.
+    """
     if not text or not user_question or llm is None:
         return text
     complete = getattr(llm, "complete", None)
@@ -88,7 +94,7 @@ async def localize(
     try:
         response = await asyncio.wait_for(
             complete(messages, temperature=0.0, max_tokens=400, model=model),
-            timeout=TIMEOUT_SECONDS,
+            timeout=min(TIMEOUT_SECONDS, timeout) if timeout is not None else TIMEOUT_SECONDS,
         )
     except (TimeoutError, asyncio.CancelledError):
         logger.info("Static-answer localisation timed out; delivering the English text")

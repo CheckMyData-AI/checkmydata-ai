@@ -721,7 +721,11 @@ class TestWallClockTimeout:
         mock_tracker.emit = AsyncMock()
         mock_tracker.step = MagicMock()
         mock_tracker.step.return_value.__aenter__ = AsyncMock()
-        mock_tracker.step.return_value.__aexit__ = AsyncMock()
+        # `return_value=False`: an AsyncMock returns a truthy MagicMock, and a truthy
+        # `__aexit__` SUPPRESSES whatever was raised inside the step. The real tracker
+        # re-raises; this mock swallowed every exception in every step it wrapped,
+        # which PRJ-03's deadline exposed as `UnboundLocalError: llm_resp`.
+        mock_tracker.step.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_tracker.start = AsyncMock(return_value="wf-test")
         mock_tracker.end = AsyncMock()
 
@@ -827,7 +831,11 @@ class TestWallClockTimeout:
         mock_tracker.emit = AsyncMock()
         mock_tracker.step = MagicMock()
         mock_tracker.step.return_value.__aenter__ = AsyncMock()
-        mock_tracker.step.return_value.__aexit__ = AsyncMock()
+        # `return_value=False`: an AsyncMock returns a truthy MagicMock, and a truthy
+        # `__aexit__` SUPPRESSES whatever was raised inside the step. The real tracker
+        # re-raises; this mock swallowed every exception in every step it wrapped,
+        # which PRJ-03's deadline exposed as `UnboundLocalError: llm_resp`.
+        mock_tracker.step.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_tracker.start = AsyncMock(return_value="wf-test")
         mock_tracker.end = AsyncMock()
 
@@ -2017,7 +2025,11 @@ class TestSynthesisPhaseToolStrip:
         mock_tracker.emit = AsyncMock()
         mock_tracker.step = MagicMock()
         mock_tracker.step.return_value.__aenter__ = AsyncMock()
-        mock_tracker.step.return_value.__aexit__ = AsyncMock()
+        # `return_value=False`: an AsyncMock returns a truthy MagicMock, and a truthy
+        # `__aexit__` SUPPRESSES whatever was raised inside the step. The real tracker
+        # re-raises; this mock swallowed every exception in every step it wrapped,
+        # which PRJ-03's deadline exposed as `UnboundLocalError: llm_resp`.
+        mock_tracker.step.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_tracker.start = AsyncMock(return_value="wf-test")
         mock_tracker.end = AsyncMock()
 
@@ -2231,7 +2243,11 @@ class TestDispatcherRemainingWall:
         mock_tracker.emit = AsyncMock()
         mock_tracker.step = MagicMock()
         mock_tracker.step.return_value.__aenter__ = AsyncMock()
-        mock_tracker.step.return_value.__aexit__ = AsyncMock()
+        # `return_value=False`: an AsyncMock returns a truthy MagicMock, and a truthy
+        # `__aexit__` SUPPRESSES whatever was raised inside the step. The real tracker
+        # re-raises; this mock swallowed every exception in every step it wrapped,
+        # which PRJ-03's deadline exposed as `UnboundLocalError: llm_resp`.
+        mock_tracker.step.return_value.__aexit__ = AsyncMock(return_value=False)
 
         mock_validator = MagicMock(spec=AgentResultValidator)
         mock_validator.validate_sql_result = MagicMock(
@@ -2304,7 +2320,11 @@ class TestDispatcherErrorContextRetry:
         mock_tracker.emit = AsyncMock()
         mock_tracker.step = MagicMock()
         mock_tracker.step.return_value.__aenter__ = AsyncMock()
-        mock_tracker.step.return_value.__aexit__ = AsyncMock()
+        # `return_value=False`: an AsyncMock returns a truthy MagicMock, and a truthy
+        # `__aexit__` SUPPRESSES whatever was raised inside the step. The real tracker
+        # re-raises; this mock swallowed every exception in every step it wrapped,
+        # which PRJ-03's deadline exposed as `UnboundLocalError: llm_resp`.
+        mock_tracker.step.return_value.__aexit__ = AsyncMock(return_value=False)
 
         mock_validator = MagicMock(spec=AgentResultValidator)
         mock_validator.validate_sql_result = MagicMock(
@@ -2398,7 +2418,11 @@ class TestToolLoopMessageRoles:
         mock_tracker.emit = AsyncMock()
         mock_tracker.step = MagicMock()
         mock_tracker.step.return_value.__aenter__ = AsyncMock()
-        mock_tracker.step.return_value.__aexit__ = AsyncMock()
+        # `return_value=False`: an AsyncMock returns a truthy MagicMock, and a truthy
+        # `__aexit__` SUPPRESSES whatever was raised inside the step. The real tracker
+        # re-raises; this mock swallowed every exception in every step it wrapped,
+        # which PRJ-03's deadline exposed as `UnboundLocalError: llm_resp`.
+        mock_tracker.step.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_tracker.start = AsyncMock(return_value="wf-roles")
         mock_tracker.end = AsyncMock()
 

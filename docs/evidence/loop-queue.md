@@ -21,7 +21,7 @@ Standing rules the loop inherits (from `docs/evidence/retro.md`):
 | # | Kind | Task | Source | Status | Proof |
 |---|---|---|---|---|---|
 | T01 | deliver | B-14 — background model on measured evidence, map quality measured on production before and after | `docs/evidence/backlog.md` B-14 | done | Prod A/B on 368 tables: v3.2 88 no-tool-call + 17 batches lost 4/5; flash 0/0. Flash kept (#392). Unplanned: PyMySQL 1.2.1 broke aiomysql import — pinned `<1.2.1` (#393), verified on v431 `import ok`. |
-| T02 | deliver | PRJ-03 — one request deadline, honoured everywhere | audit §PRJ-03 | todo | |
+| T02 | deliver | PRJ-03 — one request deadline, honoured everywhere | audit §PRJ-03 | in review | Baseline 30d: 6/23 traces >216 s, failed p50 283 s. |
 | T03 | deliver | PRJ-04 — trace truth and failure taxonomy | audit §PRJ-04 | todo | |
 | V1 | verify | T01–T03 landed: full suites, production health, nightly, chat answers a question end to end | — | todo | |
 | T04 | deliver | Track D1 — `WrongDataModal` on the thumbs-down path | plan Track D | todo | |
