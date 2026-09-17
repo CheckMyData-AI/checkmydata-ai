@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — one request deadline, and it interrupts rather than advises (PRJ-03)
+
+Measured on production over 30 days: **6 of 23 traces** ran past 1.2x the 180 s
+`agent_wall_clock_timeout_seconds`, and failed requests ran a **median of 283 s**. Two
+structural causes:
+
+- the tool loop checked its wall clock only **between** iterations, so one iteration — a
+  single orchestrator LLM call, or one dispatch that runs the whole SQL agent — could
+  outlast the limit by its entire duration with nothing able to stop it;
+- the clock started at the loop's first line, and the pipeline path computed a fresh
+  deadline when its stages began, so routing, context loading and capability probes were
+  **outside** the limit on both paths.
+
+Now one start is stamped at the top of `OrchestratorAgent.run`, on `context.extra` so every
+sub-agent copy shares it, and both paths measure from it. Every LLM call and every dispatch
+in the tool loop is awaited through `bounded()`, which cancels at `limit x 1.2` — the loop's
+existing hard cutoff, kept rather than reinvented — and raises `WallClockExceeded` for the
+loop to turn into its timeout answer. It is a `BaseException`, like `CancelledError`, because
+the loop turns dispatch failures into retry directives inside `except Exception`, and a
+deadline caught there reads as "the tool failed, try again".
+
+Writing the tests found three more places the time leaked:
+
+- **after** the loop, the final synthesis and both partial-answer validations were
+  unbounded. The synthesis falls back to partial text; the cataloguing validation is
+  skipped; the validation that decides the response type fails closed — an answer already
+  judged suspicious and then not verified is not sealed as ordinary;
+- the fallback answer's **translation** had its own 12 s timeout, on exactly the path where
+  the model is already slow: a hanging LLM with a 1 s budget measured **13 s** until
+  `localize` took a cap. It gets what is left of the request, or an explicit 3 s grace so a
+  reader who asked in Russian still gets a Russian answer;
+- **ten test mocks in four files swallowed every exception.** `__aexit__ = AsyncMock()`
+  returns a truthy `MagicMock`, and a truthy `__aexit__` suppresses whatever was raised
+  inside the block. The deadline surfaced it as `UnboundLocalError: llm_resp` in a test
+  written for the timeout path. All ten return `False` now, and a guard fails the next one.
+
+An AST guard fails if any LLM call, dispatch or partial-answer validation in the tool loop
+is awaited without the deadline. Verified by unbounding the loop's LLM call: both the guard
+and the hanging-LLM test fail.
+
+**Not in this change, and deliberately:** SSE/WS disconnect cancelling the agent task, and
+the REST `wait_for` timeout cancelling it. Those are how a *client* stops a request; this is
+how the request stops itself, and the production figures above are the second kind.
+
 ### Decided — the background model stays on flash, by production A/B (B-14)
 
 A probe over fourteen tables had ranked `deepseek/deepseek-v3.2` first and B-14 recommended

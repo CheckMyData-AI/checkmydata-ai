@@ -146,7 +146,7 @@ class TestEarlyExitNoChanges:
         with patch("app.core.workflow_tracker.tracker") as mock_tracker:
             mock_tracker.step = MagicMock()
             mock_tracker.step.return_value.__aenter__ = AsyncMock()
-            mock_tracker.step.return_value.__aexit__ = AsyncMock()
+            mock_tracker.step.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_tracker.emit = AsyncMock()
 
             result = await runner._run_steps(
@@ -190,7 +190,7 @@ class TestEarlyExitNoChanges:
         with patch("app.core.workflow_tracker.tracker") as mock_tracker:
             mock_ctx = MagicMock()
             mock_ctx.__aenter__ = AsyncMock()
-            mock_ctx.__aexit__ = AsyncMock()
+            mock_ctx.__aexit__ = AsyncMock(return_value=False)
             mock_tracker.step = MagicMock(return_value=mock_ctx)
             mock_tracker.emit = AsyncMock()
 
