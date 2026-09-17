@@ -158,6 +158,41 @@ describe("ledger pack bans", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("puts the shadow token only on surfaces that float", () => {
+    // SCN-123: "no shadow on any card". The ramp ban above cannot see this — the one
+    // token is allowed, the question is WHERE. Re-audited 2026-09-17: the Manage
+    // Access card carried it while mounted flat inside the settings panel, so a
+    // card read as raised in one place and as a dialog in another. Every file that
+    // may use it is listed with the kind of floating surface it draws; a new one
+    // has to be added here, which is where the question gets asked.
+    const FLOATING: Record<string, string> = {
+      "components/auth/AccountMenu.tsx": "dropdown menu",
+      "components/batch/BatchResults.tsx": "modal dialog",
+      "components/batch/BatchRunner.tsx": "modal dialog",
+      "components/chat/ChatSearch.tsx": "results popover",
+      "components/chat/ContextBudgetIndicator.tsx": "tooltip",
+      "components/chat/CostEstimator.tsx": "tooltip",
+      "components/chat/WrongDataModal.tsx": "modal dialog",
+      "components/log/LogPanel.tsx": "floating control over the log",
+      "components/onboarding/OnboardingWizard.tsx": "modal dialog",
+      "components/projects/ProjectSelector.tsx": "access dialog panel",
+      "components/shadcn/chart.tsx": "chart tooltip",
+      "components/shadcn/dialog.tsx": "dialog",
+      "components/shadcn/dropdown-menu.tsx": "dropdown menu",
+      "components/shadcn/popover.tsx": "popover",
+      "components/shadcn/select.tsx": "select listbox",
+      "components/shadcn/sheet.tsx": "sheet",
+      "components/shadcn/tabs.tsx": "active tab lifted off its track (vendor)",
+      "components/tasks/ActiveTasksWidget.tsx": "dropdown panel",
+      "components/ui/NotificationBell.tsx": "dropdown panel",
+      "components/ui/ToastContainer.tsx": "toast",
+    };
+    const users = FILES.filter(({ lines }) =>
+      lines.some((line) => /shadow-\(--shadow/.test(line)),
+    ).map(({ path }) => path);
+    expect(users.filter((p) => !(p in FLOATING))).toEqual([]);
+  });
+
   it("styles every native select through the one field class", () => {
     // Twelve files had twelve slightly different select styles. A `<select>`
     // stays native on purpose — it is what the pack's reference does, and it
