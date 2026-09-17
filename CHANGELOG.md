@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a span's type says what the time was spent on (PRJ-04 remainder)
+
+One production trace (2026-09-16: 337 s, "12 DB queries", "11 LLM calls") read wrong in
+three ways, each fixed here:
+
+- **Every query counted twice.** `sql:tool:execute_query` — the tool-call envelope — was
+  typed `db_query`, and so was the `execute_query` span inside it. The envelope took
+  **60 s** around a **22 s** query, because it also held an LLM repair and the learning
+  extraction. Envelopes (`sql:tool:execute_query`, `sql:tool:get_schema_info`) are now
+  `tool_call`; the query and `sql:get_schema` are the only `db_query` spans.
+- **The query repair was not an LLM call.** `query_repair` — 20 s in that trace — was
+  typed `validation`, so `total_llm_calls` missed it. It is `llm_call`.
+- **The learning extraction and provider retries were invisible.** Extraction runs after
+  nearly every answer and had no span; `orchestrator:llm_retry` was dropped as noise and
+  `sql:llm_retry` fell to a prefix rule. Extraction now has its own
+  `sql:learning_analysis` span (`llm_call`, or `tool_call` under the heuristic analyzer),
+  and each failed attempt is an `llm_call` span carrying `error_type` and
+  `backoff_seconds`.
+
+No new span type and no UI change: the Logs screen renders by type, and the vocabulary is
+unchanged. SCN-106 now states what each type means. 5 planted defects, 5 failures.
+
 ### Fixed — one trace row per request, and the row says what happened (PRJ-04)
 
 Measured on production 2026-09-17, before the change:

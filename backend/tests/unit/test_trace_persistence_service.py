@@ -40,10 +40,13 @@ class TestClassifySpanType:
         assert classify_span_type("sql:llm_call") == "llm_call"
 
     def test_sql_tool_execute_query(self):
-        assert classify_span_type("sql:tool:execute_query") == "db_query"
+        # PRJ-04: the envelope, not the query — `execute_query` inside it is the DB span.
+        assert classify_span_type("sql:tool:execute_query") == "tool_call"
+        assert classify_span_type("execute_query") == "db_query"
 
     def test_sql_tool_get_schema_info(self):
-        assert classify_span_type("sql:tool:get_schema_info") == "db_query"
+        assert classify_span_type("sql:tool:get_schema_info") == "tool_call"
+        assert classify_span_type("sql:get_schema") == "db_query"
 
     def test_sql_tool_get_db_index(self):
         assert classify_span_type("sql:tool:get_db_index") == "rag"
@@ -201,7 +204,8 @@ class TestNoiseFiltering:
         assert "token" in skip
         assert "thinking" in skip
         assert "orchestrator:warning" in skip
-        assert "orchestrator:llm_retry" in skip
+        # PRJ-04: a failed LLM attempt is recorded, not filtered as noise.
+        assert "orchestrator:llm_retry" not in skip
         assert "pipeline_start" in skip
         assert "pipeline_end" in skip
 

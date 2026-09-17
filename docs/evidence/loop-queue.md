@@ -24,8 +24,8 @@ Standing rules the loop inherits (from `docs/evidence/retro.md`):
 | T02 | deliver | PRJ-03 — one request deadline, honoured everywhere | audit §PRJ-03 | done | #394 on v433. In the production runtime `bounded(asyncio.sleep(3600))` with limit 1.0 raised `WallClockExceeded` after **1.20 s**; `localize` takes `timeout`. Baseline 30d: 6/23 traces >216 s, failed p50 283 s — the 30-day duration figure is re-read at V1. |
 | T03 | deliver | PRJ-04 — trace truth and failure taxonomy | audit §PRJ-04 | in review | Baseline: 242 rows / 177 workflows; 10 of 12 failed traces (30 d) `route='unknown'`; 26 `Stale:` rows; 0 REST-timeout rows (id overflowed `String(36)`). |
 | T02b | deliver | PRJ-03 remainder — client disconnect (SSE/WS) and REST `wait_for` cancel the agent task; `CancelledError` swallows in viz/localize; sub-agent deadline into `LLMRouter.complete`; dead retry wrappers | audit §PRJ-03, T02 out-of-scope | todo | |
-| T03b | deliver | PRJ-04 remainder — split `db_query` spans from LLM repair and learning-analyzer spans; router attempt/backoff events as spans; Logs screen renders both | audit §PRJ-04, T03 out-of-scope | todo | |
-| V1 | verify | T01–T03b landed: full suites, production health, nightly, chat answers a question end to end | — | todo | |
+| T03b | deliver | PRJ-04 remainder — split `db_query` spans from LLM repair and learning-analyzer spans; router attempt/backoff events as spans; Logs screen renders both | audit §PRJ-04, T03 out-of-scope | in review | |
+| V1 | verify | T01–T03b landed: full suites, production health, nightly, chat answers a question end to end; re-audit the 5 scenarios verified 2026-08-16 that pass 30 days on regenerating the UX block (ceiling 95, would be 100); confirm no completed trace says `Stale:` after `4030521071d4` | — | todo | |
 | T04 | deliver | Track D1 — `WrongDataModal` on the thumbs-down path | plan Track D | todo | |
 | T05 | deliver | PRJ-08 — connection layer correctness | audit §PRJ-08 | todo | |
 | T06 | deliver | PRJ-10 — GA4 tells the truth | audit §PRJ-10 | todo | |
