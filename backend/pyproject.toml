@@ -24,6 +24,16 @@ dependencies = [
     "psycopg[binary,pool]>=3.2.0",
     "pgvector>=0.3.6",
     "aiomysql>=0.2.0",
+    # PyMySQL 1.2.1 (released 2026-09-17 08:32 UTC) removed
+    # `pymysql.converters.escape_bytes_prefixed`, which aiomysql 0.3.2 — the current
+    # release — still imports at module load. 1.2.2 (10:24 UTC) did not restore it.
+    # Unpinned, the next image build resolves 1.2.2 and `import aiomysql` fails: every
+    # MySQL connection, which is the one production customer's database, stops working
+    # at the first question. Production was running 1.2.0 when this was found, and CI
+    # failed with 900-odd collection errors on an unrelated change. Lift the ceiling
+    # when aiomysql ships a release that no longer imports the name;
+    # `test_the_mysql_driver_imports.py` fails the day that changes either way.
+    "PyMySQL>=1.0,<1.2.1",
     "motor>=3.6.0",
     "clickhouse-connect>=0.8.0",
     "gitpython>=3.1.51",
