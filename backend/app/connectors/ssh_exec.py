@@ -325,6 +325,22 @@ class SSHExecConnector(BaseConnector):
         timeout_seconds: float | None = None,
     ) -> QueryResult:
         start = time.monotonic()
+        if params:
+            # C-15: `params` was accepted and dropped. The query then went to the client
+            # with its placeholders intact and failed there as a syntax error, which sent
+            # the agent to repair SQL that was correct. Binding cannot be done here
+            # honestly — this connector hands one string to a CLI, and interpolating the
+            # values would be the string-building that parameters exist to avoid — so the
+            # caller is told, in the one place that knows.
+            return QueryResult(
+                error=(
+                    "This connection runs queries through a command-line client, which "
+                    "cannot bind parameters. Send the query with its values already in "
+                    "it, or use a direct or tunnelled connection."
+                ),
+                error_type=QueryErrorType.SYNTAX_ERROR,
+                execution_time_ms=0.0,
+            )
         # B2: honor a dynamic per-query budget, capped at the SSH command
         # ceiling (the remote CLI's own timeout governs the rest).
         if timeout_seconds is not None and timeout_seconds > 0:
@@ -667,12 +683,6 @@ class SSHExecConnector(BaseConnector):
             return {"success": ok, "hostname": hostname}
         except Exception as e:
             return {"success": False, "error": safe_error(e)}
-
-    def _quote_identifier(self, name: str) -> str:
-        """Quote a SQL identifier based on the DB type."""
-        if self.db_type == "mysql":
-            return f"`{name.replace('`', '``')}`"
-        return f'"{name.replace(chr(34), chr(34) + chr(34))}"'
 
     async def sample_data(
         self, table_name: str, limit: int = 3, schema: str | None = None

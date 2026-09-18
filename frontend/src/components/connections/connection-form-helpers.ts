@@ -82,6 +82,18 @@ export function safePort(raw: string, fallback: number): number {
   return n;
 }
 
+/**
+ * The port an empty field means for THIS engine (C-15).
+ *
+ * Callers passed a literal `5432` whatever the engine was, so clearing the port on a
+ * MySQL connection saved PostgreSQL's — a connection that then failed to connect for a
+ * reason the form had just invented. The defaults already live in `DEFAULT_PORTS`; this
+ * reads them instead of repeating one of them.
+ */
+export function portForEngine(raw: string, dbType: string): number {
+  return safePort(raw, safePort(DEFAULT_PORTS[dbType] ?? "", 5432));
+}
+
 export function connToForm(c: Connection): FormState {
   let preCommands = "";
   if (c.ssh_pre_commands) {

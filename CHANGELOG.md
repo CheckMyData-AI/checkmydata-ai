@@ -61,7 +61,32 @@ the wrong thing.
   passphrase went round the reconnect loop three times and the real cause appeared
   nowhere. `SSHKeyUnusableError` now, immediately, saying it is the key and not the host.
 
-Nineteen new tests across four files, each fix verified by planting its defect back.
+**C-13 — a PATCH accepted what a POST refuses.** `ConnectionUpdate.db_type` was a free
+`str`, so an engine the create route rejects could be written by updating an existing
+row; and the caps disagreed (name 200 vs 255, `ssh_user` 100 vs 255, `ssh_key_id` 64 vs
+255, the command template 2000 vs 2048) — a connection that can be created and then fails
+to save again unchanged. The models are compared field by field now, and the comparison
+found six more the audit had not named: the connection string, the password and four MCP
+fields.
+
+**C-15 — the form and the server disagreed in three more places.** An empty port saved
+**5432 whatever the engine was**, so clearing it on a MySQL connection invented a failure;
+it saves that engine's own default now. A connection string plus an SSH host was accepted
+silently and the tunnel then never dialled — the form says so where it can still be
+undone. And SSH-exec `execute_query` accepted `params` and dropped them, so the
+placeholders reached the CLI and failed there as a syntax error the agent tried to repair;
+it refuses with a sentence naming why, because binding would mean building the string that
+parameters exist to avoid.
+
+**C-16 — four pieces of code nothing called.** The connector cache asked
+`getattr(existing, "_closed", False)` and no connector has ever set that attribute; a
+byte-identical `_quote_identifier` sat beside the inherited one; `_sample_query` and
+`_build_distinct_query` were kept "as public, tested utilities" after the pipeline stopped
+calling them, with their own docstring deferring the cleanup — and the reason they were
+replaced (a SQL string handed to MongoDB's `execute_query`, silently empty) is a reason
+not to leave them reachable; `parse_psql_csv` and `parse_psql_tuples` had no callers.
+
+Twenty-eight new tests, each fix verified by planting its defect back.
 
 ### Security — the shell a connection runs is the owner's, and the form stops writing one (C-02, C-12)
 

@@ -505,30 +505,42 @@ class ConnectionCreate(_ConnectionFieldRules):
 
 
 class ConnectionUpdate(_ConnectionFieldRules):
-    name: str | None = Field(None, max_length=200)
+    """What a PATCH may say — the same vocabulary `ConnectionCreate` accepts (C-13).
+
+    It used to be looser in two ways, and the looser one is the one that matters:
+    `db_type` was a free `str`, so a value the create route refuses could be written by
+    updating an existing row. The caps also disagreed (name 200 vs 255, `ssh_user` 100 vs
+    255, `ssh_key_id` 64 vs 255, the command template 2000 vs 2048), which is a
+    connection that can be created and then not saved again unchanged.
+    `test_the_two_connection_models_agree.py` compares them field by field.
+    """
+
+    name: str | None = Field(None, max_length=255)
     # Same cap as ConnectionCreate. Guarded on create and free on PATCH is the
     # exact shape that let an unvalidated branch reach `git checkout` as argv.
     purpose: str | None = Field(None, max_length=2000)
-    db_type: str | None = Field(None, max_length=50)
+    db_type: Literal["postgres", "mysql", "mongodb", "clickhouse", "mcp"] | None = Field(
+        default=None, max_length=50
+    )
     source_type: str | None = Field(None, max_length=50)
     ssh_host: str | None = Field(None, max_length=255)
     ssh_port: int | None = Field(None, ge=1, le=65535)
-    ssh_user: str | None = Field(None, max_length=100)
-    ssh_key_id: str | None = Field(None, max_length=64)
+    ssh_user: str | None = Field(None, max_length=255)
+    ssh_key_id: str | None = Field(None, max_length=255)
     db_host: str | None = Field(None, max_length=255)
     db_port: int | None = Field(None, ge=1, le=65535)
-    db_name: str | None = Field(None, max_length=200)
-    db_user: str | None = Field(None, max_length=100)
-    db_password: str | None = Field(None, max_length=500)
-    connection_string: str | None = Field(None, max_length=2000)
+    db_name: str | None = Field(None, max_length=255)
+    db_user: str | None = Field(None, max_length=255)
+    db_password: str | None = Field(None, max_length=1024)
+    connection_string: str | None = Field(None, max_length=2048)
     is_read_only: bool | None = None
     ssh_exec_mode: bool | None = None
-    ssh_command_template: str | None = Field(None, max_length=2000)
+    ssh_command_template: str | None = Field(None, max_length=2048)
     ssh_pre_commands: list[str] | None = Field(None, max_length=20)
-    mcp_server_command: str | None = Field(None, max_length=500)
-    mcp_server_args: list[str] | None = None
-    mcp_server_url: str | None = Field(None, max_length=2000)
-    mcp_transport_type: str | None = Field(None, max_length=50)
+    mcp_server_command: str | None = Field(None, max_length=1024)
+    mcp_server_args: list[str] | None = Field(None, max_length=50)
+    mcp_server_url: str | None = Field(None, max_length=1024)
+    mcp_transport_type: Literal["stdio", "sse"] | None = None
     mcp_env: dict[str, str] | None = None
     # Analytics-source fields (spec §1.2).
     vendor_credential_id: str | None = Field(None, max_length=36)

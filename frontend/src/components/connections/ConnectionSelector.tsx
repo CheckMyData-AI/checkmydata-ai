@@ -44,6 +44,7 @@ import {
   formatAge,
   halfInputCls,
   inputCls,
+  portForEngine,
   safePort,
 } from "./connection-form-helpers";
 import { selectBaseCls } from "@/components/ui/Input";
@@ -596,7 +597,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         db_type: form.db_type,
         ...(isMCP ? { source_type: "mcp" } : {}),
         db_host: isMCP ? "mcp" : form.db_host,
-        db_port: isMCP ? 0 : safePort(form.db_port, 5432),
+        db_port: isMCP ? 0 : portForEngine(form.db_port, form.db_type),
         db_name: isMCP ? form.name : form.db_name,
         db_user: isMCP ? null : form.db_user || null,
         db_password: isMCP ? null : form.db_password || null,
@@ -740,7 +741,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
     for (const f of fields) {
       updates[f] = form[f] !== "" ? form[f] : null;
     }
-    updates.db_port = safePort(form.db_port, 5432);
+    updates.db_port = portForEngine(form.db_port, form.db_type);
     updates.ssh_port = safePort(form.ssh_port, 22);
     if (form.db_password) updates.db_password = form.db_password;
     if (useConnString && form.connection_string) {
@@ -1198,16 +1199,29 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
           </label>
 
           {useConnString ? (
-            <input
-              value={form.connection_string}
-              onChange={(e) =>
-                setForm({ ...form, connection_string: e.target.value })
-              }
-              placeholder="postgresql://user:pass@host:5432/dbname"
-              aria-label="Connection string"
-              className={inputCls}
-              maxLength={500}
-            />
+            <>
+              <input
+                value={form.connection_string}
+                onChange={(e) =>
+                  setForm({ ...form, connection_string: e.target.value })
+                }
+                placeholder="postgresql://user:pass@host:5432/dbname"
+                aria-label="Connection string"
+                className={inputCls}
+                maxLength={2048}
+              />
+              {/* C-15: the form accepted both and the server uses only the string —
+                  the connectors open the DSN directly, so the bastion is never dialled
+                  and the connection fails as if the database were unreachable. Said
+                  here, where it can still be undone. */}
+              {form.ssh_host.trim() !== "" && (
+                <p className="text-kicker text-warning px-1" role="alert">
+                  A connection string is used as written: the SSH tunnel below is not
+                  dialled. Clear the SSH host, or describe the database with the fields
+                  instead.
+                </p>
+              )}
+            </>
           ) : (
             <>
               <div className="space-y-1">

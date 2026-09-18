@@ -49,3 +49,29 @@ describe("C-02: the form ships no exec templates of its own", () => {
     expect(commandTemplateError("   ")).toBeNull();
   });
 });
+
+describe("C-15: the form saves what the engine means", () => {
+  it("an empty port means THIS engine's port, not PostgreSQL's", async () => {
+    const { portForEngine } = await import(
+      "@/components/connections/connection-form-helpers"
+    );
+
+    // Clearing the port on a MySQL connection used to save 5432 — a failure the form
+    // invented, on a field the reader had left blank on purpose.
+    expect(portForEngine("", "mysql")).toBe(3306);
+    expect(portForEngine("", "mongodb")).toBe(27017);
+    expect(portForEngine("", "clickhouse")).toBe(9000);
+    expect(portForEngine("", "postgres")).toBe(5432);
+    expect(portForEngine("", "something-new")).toBe(5432);
+  });
+
+  it("a real port is kept whatever the engine", async () => {
+    const { portForEngine } = await import(
+      "@/components/connections/connection-form-helpers"
+    );
+
+    expect(portForEngine("6543", "postgres")).toBe(6543);
+    expect(portForEngine("0", "mysql")).toBe(3306);
+    expect(portForEngine("99999", "mysql")).toBe(3306);
+  });
+});

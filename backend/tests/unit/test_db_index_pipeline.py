@@ -10,11 +10,9 @@ import pytest
 from app.connectors.base import ColumnInfo, QueryResult, SchemaInfo, TableInfo
 from app.knowledge.db_index_pipeline import (
     DbIndexPipeline,
-    _build_distinct_query,
     _detect_latest_record,
     _find_ordering_column,
     _is_enum_candidate,
-    _sample_query,
     _sample_to_json,
 )
 from app.knowledge.db_index_validator import TableAnalysis
@@ -71,67 +69,6 @@ class TestFindOrderingColumn:
             ],
         )
         assert _find_ordering_column(table) == "timestamp"
-
-
-class TestSampleQuery:
-    def test_postgres_with_ordering(self):
-        table = TableInfo(
-            name="users",
-            schema="public",
-            columns=[
-                ColumnInfo(name="id", data_type="int", is_primary_key=True),
-                ColumnInfo(name="created_at", data_type="timestamp"),
-            ],
-        )
-        query, col = _sample_query(table, "postgres")
-        assert '"users"' in query
-        assert "ORDER BY" in query
-        assert '"created_at"' in query
-        assert "DESC LIMIT 3" in query
-        assert col == "created_at"
-
-    def test_mysql_with_ordering(self):
-        table = TableInfo(
-            name="orders",
-            columns=[
-                ColumnInfo(name="id", data_type="int", is_primary_key=True),
-                ColumnInfo(name="created_at", data_type="datetime"),
-            ],
-        )
-        query, col = _sample_query(table, "mysql")
-        assert "`orders`" in query
-        assert "`created_at`" in query
-        assert col == "created_at"
-
-    def test_no_ordering_column(self):
-        table = TableInfo(
-            name="pivot",
-            columns=[
-                ColumnInfo(name="a_id", data_type="int"),
-                ColumnInfo(name="b_id", data_type="int"),
-            ],
-        )
-        query, col = _sample_query(table, "postgres")
-        assert "ORDER BY" not in query
-        assert "LIMIT 3" in query
-        assert col is None
-
-    def test_custom_limit(self):
-        table = TableInfo(
-            name="logs",
-            columns=[ColumnInfo(name="id", data_type="int", is_primary_key=True)],
-        )
-        query, _ = _sample_query(table, "postgres", limit=5)
-        assert "LIMIT 5" in query
-
-    def test_non_public_schema(self):
-        table = TableInfo(
-            name="events",
-            schema="analytics",
-            columns=[ColumnInfo(name="id", data_type="int", is_primary_key=True)],
-        )
-        query, _ = _sample_query(table, "postgres")
-        assert '"analytics"."events"' in query
 
 
 class TestSampleToJson:
@@ -251,52 +188,6 @@ class TestIsEnumCandidateExtended:
 
     def test_description_column_excluded(self):
         assert _is_enum_candidate("description", "text", 500) is False
-
-
-class TestBuildDistinctQuerySqlite:
-    def test_sqlite_no_quoting(self):
-        table = TableInfo(
-            name="events",
-            columns=[ColumnInfo(name="type", data_type="text")],
-        )
-        q = _build_distinct_query(table, "type", "sqlite")
-        assert "events" in q
-        assert "type" in q
-        assert "DISTINCT" in q
-        assert "`" not in q
-        assert '"' not in q
-
-
-class TestBuildDistinctQuery:
-    def test_postgres(self):
-        table = TableInfo(
-            name="orders",
-            schema="public",
-            columns=[ColumnInfo(name="status", data_type="varchar")],
-        )
-        q = _build_distinct_query(table, "status", "postgres")
-        assert '"orders"' in q
-        assert '"status"' in q
-        assert "DISTINCT" in q
-        assert "IS NOT NULL" in q
-
-    def test_mysql(self):
-        table = TableInfo(
-            name="orders",
-            columns=[ColumnInfo(name="status", data_type="varchar")],
-        )
-        q = _build_distinct_query(table, "status", "mysql")
-        assert "`orders`" in q
-        assert "`status`" in q
-
-    def test_non_public_schema_postgres(self):
-        table = TableInfo(
-            name="events",
-            schema="analytics",
-            columns=[ColumnInfo(name="type", data_type="varchar")],
-        )
-        q = _build_distinct_query(table, "type", "postgres")
-        assert '"analytics"."events"' in q
 
 
 def _make_db_index_entry(table_name: str, schema: str = "public", **kw):

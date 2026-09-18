@@ -158,3 +158,30 @@ class TestExecModeQualifiesTablesWithTheirDatabase:
         )
 
         assert [t.schema for t in schema.tables] == ["shop"]
+
+
+@pytest.mark.asyncio
+async def test_exec_mode_says_it_cannot_bind_parameters():
+    """C-15: `params` were accepted and dropped, so the placeholders reached the client.
+
+    The query then failed there as a syntax error and the agent repaired SQL that was
+    correct. This connector hands one string to a CLI; interpolating the values would be
+    the string-building that parameters exist to avoid, so the caller is told instead.
+    """
+    from app.connectors.ssh_exec import SSHExecConnector
+
+    connector = SSHExecConnector()
+    connector._config = ConnectionConfig(
+        db_type="mysql",
+        db_host="10.0.0.5",
+        db_port=3306,
+        db_name="shop",
+        db_user="u",
+        ssh_host="bastion.example.com",
+        ssh_user="deploy",
+    )
+
+    result = await connector.execute_query("SELECT * FROM orders WHERE id = :id", {"id": 7})
+
+    assert "cannot bind parameters" in (result.error or "")
+    assert result.rows == []

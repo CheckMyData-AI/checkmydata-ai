@@ -3,16 +3,14 @@
 Introspects a live database connection, fetches sample data from each table,
 validates against project knowledge via LLM, and persists a rich index.
 
-Implementation note — ``_sample_query`` and ``_build_distinct_query``:
-  These SQL-builder helpers are kept as public, tested utilities but are no
-  longer used by the pipeline itself (T8 / DBIDX-D1/D2 remediation).  The
-  pipeline now routes all sample and distinct-value fetches through the
-  dialect-agnostic connector methods ``connector.sample_data(table, limit)``
-  and ``connector.distinct_values(table, column, limit)``, which have native
-  overrides for MongoDB and ClickHouse.  The old SQL-string path caused
-  MongoDB's ``execute_query`` to receive a SQL string it tried to
-  ``json.loads``, silently producing empty results.  Cleanup of these
-  legacy helpers is deferred to the T15 maintenance pass.
+Removed 2026-09-18 (C-16) — ``_sample_query`` and ``_build_distinct_query``:
+  two SQL builders the pipeline stopped calling in T8/DBIDX-D1/D2, kept "as public,
+  tested utilities" with their cleanup deferred. Nothing but their own tests ever
+  called them again, and the reason they were replaced is a reason not to keep them
+  reachable: the SQL-string path handed MongoDB's ``execute_query`` a string it tried
+  to ``json.loads``, producing empty results silently. Sampling and distinct values go
+  through ``connector.sample_data`` and ``connector.distinct_values``, which have
+  native overrides for MongoDB and ClickHouse.
 """
 
 from __future__ import annotations
@@ -144,35 +142,6 @@ def _find_ordering_column(table: TableInfo) -> str | None:
             return col.name
 
     return None
-
-
-def _sample_query(table: TableInfo, db_type: str, limit: int = 3) -> tuple[str, str | None]:
-    """Return (query, ordering_column) for fetching recent rows."""
-    ordering_col = _find_ordering_column(table)
-
-    tbl_name = table.name
-    if table.schema and table.schema not in ("public", ""):
-        tbl_name = f"{table.schema}.{table.name}"
-
-    if db_type == "mysql":
-        tbl_name_q = f"`{table.name}`"
-    elif db_type in ("postgres", "postgresql"):
-        tbl_name_q = f'"{table.name}"'
-        if table.schema and table.schema != "public":
-            tbl_name_q = f'"{table.schema}"."{table.name}"'
-    else:
-        tbl_name_q = tbl_name
-
-    if ordering_col:
-        if db_type == "mysql":
-            col_q = f"`{ordering_col}`"
-        elif db_type in ("postgres", "postgresql"):
-            col_q = f'"{ordering_col}"'
-        else:
-            col_q = ordering_col
-        return f"SELECT * FROM {tbl_name_q} ORDER BY {col_q} DESC LIMIT {limit}", ordering_col
-
-    return f"SELECT * FROM {tbl_name_q} LIMIT {limit}", None
 
 
 def _sample_to_json(result: QueryResult) -> str:
@@ -318,30 +287,6 @@ def _detect_low_cardinality_columns(
         if 1 <= len(values) <= 3:
             extra_cols.append(col_name)
     return extra_cols
-
-
-def _build_distinct_query(
-    table: TableInfo,
-    col_name: str,
-    db_type: str,
-) -> str:
-    tbl_q = table.name
-    col_q = col_name
-    if db_type == "mysql":
-        tbl_q = f"`{table.name}`"
-        col_q = f"`{col_name}`"
-    elif db_type in ("postgres", "postgresql"):
-        tbl_q = f'"{table.name}"'
-        col_q = f'"{col_name}"'
-        if table.schema and table.schema != "public":
-            tbl_q = f'"{table.schema}"."{table.name}"'
-
-    return (
-        f"SELECT DISTINCT {col_q} FROM {tbl_q} "
-        f"WHERE {col_q} IS NOT NULL "
-        f"ORDER BY {col_q} "
-        f"LIMIT {MAX_DISTINCT_CARDINALITY}"
-    )
 
 
 def _detect_latest_record(

@@ -54,19 +54,6 @@ class TestParseTsvWithHeaders:
         assert rows == [["1", "alice"]]
 
 
-class TestParsePsqlTuples:
-    def test_basic(self):
-        stdout = "1\talice\n2\tbob\n"
-        columns, rows = CLIOutputParser.parse_psql_tuples(stdout)
-        assert columns == ["col0", "col1"]
-        assert rows == [["1", "alice"], ["2", "bob"]]
-
-    def test_empty(self):
-        columns, rows = CLIOutputParser.parse_psql_tuples("")
-        assert columns == []
-        assert rows == []
-
-
 class TestParseGeneric:
     def test_comma_delimiter(self):
         stdout = "a,b,c\n1,2,3\n"
@@ -105,32 +92,6 @@ class TestDetectAndParse:
         columns, rows = CLIOutputParser.detect_and_parse(stdout, "somedb")
         assert columns == ["a", "b"]
         assert rows == [["1", "2"]]
-
-
-class TestParsePsqlCsv:
-    def test_basic(self):
-        stdout = "id,name\n1,alice\n2,bob\n"
-        columns, rows = CLIOutputParser.parse_psql_csv(stdout)
-        assert columns == ["id", "name"]
-        assert rows == [["1", "alice"], ["2", "bob"]]
-
-    def test_empty(self):
-        columns, rows = CLIOutputParser.parse_psql_csv("")
-        assert columns == []
-        assert rows == []
-
-    def test_quoted_fields(self):
-        stdout = 'id,name\n1,"alice, jr"\n'
-        columns, rows = CLIOutputParser.parse_psql_csv(stdout)
-        assert columns == ["id", "name"]
-        assert rows == [["1", "alice, jr"]]
-
-    def test_headers_only_no_data_rows(self):
-        """CSV with only a header line."""
-        stdout = "id,name\n"
-        columns, rows = CLIOutputParser.parse_psql_csv(stdout)
-        assert columns == ["id", "name"]
-        assert rows == []
 
 
 class TestParseGenericEdgeCases:
