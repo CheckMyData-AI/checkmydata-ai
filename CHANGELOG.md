@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — reading an investigation back needs the project (Track D1 follow-up)
+
+Found by running one against production the hour Track D1 shipped. `POST /investigate`
+answered 200 and every poll after it was a **422**: the read route takes `project_id` as
+a required query parameter — it re-scopes the id to a project the caller belongs to, and
+answers 404 rather than confirming another tenant's investigation exists — and the client
+sent the id alone. The dialog would have opened, started a real investigation, and then
+sat on its progress view until it gave up.
+
+This is what mounting dead code is for. The component, its three endpoints and their
+tests all passed in isolation for months, because nothing had ever called the read route
+from the client that was written against it.
+
+`getInvestigation(id, projectId)` now carries it, and two tests hold the contract: one at
+the client (the URL must name the project) and one on the dialog (the poll must pass the
+project it is running in). Planting the id-only URL back fails the first.
+
 ### Added — "this data is wrong" opens the investigation (Track D1)
 
 `WrongDataModal`, `InvestigationProgress`, `ResultDiffView` and three endpoints

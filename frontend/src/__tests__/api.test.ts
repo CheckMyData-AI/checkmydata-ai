@@ -257,3 +257,36 @@ describe("plan paywall (402) — AUD-0819-11", () => {
     await expect(api.projects.list()).rejects.toThrow("Plan limit reached.");
   });
 });
+
+describe("api.dataValidation", () => {
+  it("reads an investigation within the project that owns it", async () => {
+    // The route takes `project_id` as a REQUIRED query parameter — it re-scopes the id
+    // to a project the caller belongs to and answers 404 rather than confirming another
+    // tenant's investigation exists. The client omitted it, so every poll was a 422;
+    // invisible until Track D1 mounted the component that polls (2026-09-18).
+    mockOk({ id: "inv1", status: "presenting_fix" });
+    await api.dataValidation.getInvestigation("inv1", "proj1");
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain("/data-validation/investigate/inv1");
+    expect(url).toContain("project_id=proj1");
+  });
+
+  it("names the project on the calls that carry it in the body", async () => {
+    mockOk({ ok: true, investigation_id: "inv1", status: "collecting_info" });
+    await api.dataValidation.startInvestigation({
+      project_id: "proj1",
+      connection_id: "conn1",
+      session_id: "sess1",
+      message_id: "msg1",
+      complaint_type: "numbers_too_high",
+    });
+    const [, opts] = fetchMock.mock.calls[0];
+    expect(JSON.parse(opts.body).project_id).toBe("proj1");
+
+    fetchMock.mockReset();
+    mockOk({ ok: true, status: "confirmed" });
+    await api.dataValidation.confirmFix("inv1", { accepted: true, project_id: "proj1" });
+    const [, confirmOpts] = fetchMock.mock.calls[0];
+    expect(JSON.parse(confirmOpts.body).project_id).toBe("proj1");
+  });
+});

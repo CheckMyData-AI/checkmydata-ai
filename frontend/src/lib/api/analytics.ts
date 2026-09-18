@@ -117,8 +117,15 @@ export const dataValidation = {
       { method: "POST", body: JSON.stringify(body) },
     ),
 
-  getInvestigation: (investigationId: string) =>
-    request<Record<string, unknown>>(`/data-validation/investigate/${investigationId}`),
+  // `project_id` is a REQUIRED query parameter: the route re-scopes the investigation
+  // to a project the caller is a member of, and answers 404 rather than confirming that
+  // another tenant's investigation exists. Without it the request is a 422, which is
+  // what the modal's polling did on production until Track D1 mounted it and the first
+  // real investigation could not be read back (2026-09-18).
+  getInvestigation: (investigationId: string, projectId: string) =>
+    request<Record<string, unknown>>(
+      `/data-validation/investigate/${investigationId}?project_id=${encodeURIComponent(projectId)}`,
+    ),
 
   confirmFix: (
     investigationId: string,

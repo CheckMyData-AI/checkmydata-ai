@@ -78,13 +78,13 @@ export function WrongDataModal({
     dialogRef.current?.focus();
   }, []);
 
-  const pollInvestigation = useCallback(async (id: string) => {
+  const pollInvestigation = useCallback(async (id: string, projectId: string) => {
     const maxAttempts = 30;
     for (let i = 0; i < maxAttempts; i++) {
       await new Promise((r) => setTimeout(r, 2000));
       if (!mountedRef.current) return;
       try {
-        const inv = await api.dataValidation.getInvestigation(id);
+        const inv = await api.dataValidation.getInvestigation(id, projectId);
         if (!mountedRef.current) return;
         setInvestigation(inv);
         if (inv.status === "presenting_fix" || inv.status === "resolved" || inv.status === "failed") {
@@ -120,7 +120,7 @@ export function WrongDataModal({
       if (!mountedRef.current) return;
       setInvestigationId(res.investigation_id);
       setStep("investigating");
-      pollInvestigation(res.investigation_id);
+      pollInvestigation(res.investigation_id, activeProject.id);
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to start investigation", "error");
     } finally {
