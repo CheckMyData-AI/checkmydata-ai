@@ -2,13 +2,36 @@ import asyncio
 import hashlib
 import logging
 import time
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import asyncssh
 
 from app.connectors.base import ConnectionConfig
 from app.connectors.ssh_known_hosts import connect_with_policy
+from app.connectors.transient_errors import TRANSIENT_CONNECT_ERRORS
 
 logger = logging.getLogger(__name__)
+
+
+class SSHKeyUnusableError(ValueError):
+    """The private key cannot be read — wrong passphrase, wrong format, truncated (C-14).
+
+    `asyncssh.KeyImportError` is a `ValueError`, not an `asyncssh.Error`, so it fell
+    through the reconnect loop's generic handler and was retried three times with a
+    backoff, as if the bastion were flapping. Three identical failures later the caller
+    was told the tunnel could not be established, and the actual cause — a key this
+    process will never be able to read — appeared nowhere.
+    """
+
+
+class TunnelledConnectError(ConnectionError):
+    """A connect that failed on the far side of a tunnel, named as such (C-10).
+
+    A `ConnectionError` so the retry policy treats it as the transient it is, and a
+    distinct type so a caller can tell "the database refused us" from "the bastion did".
+    """
+
 
 SSH_CONNECT_TIMEOUT = 45
 SSH_KEEPALIVE_INTERVAL = 15
@@ -54,10 +77,19 @@ class SSHTunnel:
             "keepalive_interval": SSH_KEEPALIVE_INTERVAL,
         }
         if config.ssh_key_content:
-            key = asyncssh.import_private_key(
-                config.ssh_key_content.strip(),
-                config.ssh_key_passphrase,
-            )
+            try:
+                key = asyncssh.import_private_key(
+                    config.ssh_key_content.strip(),
+                    config.ssh_key_passphrase,
+                )
+            except asyncssh.KeyImportError as exc:
+                # C-14: immediate and named. Retrying cannot make an unreadable key
+                # readable, and the retries hid what was wrong.
+                raise SSHKeyUnusableError(
+                    f"The SSH key for this connection cannot be read ({exc}). Check the "
+                    "key's format and its passphrase — this is not a problem with the "
+                    "bastion."
+                ) from exc
 
             connect_kwargs["client_keys"] = [key]
 
@@ -322,6 +354,9 @@ class SSHTunnelManager:
                     if attempt > 1:
                         logger.info("SSH tunnel reconnected on attempt %d for %s", attempt, key)
                     return host, port
+                except SSHKeyUnusableError:
+                    # C-14: not a flapping bastion. Straight out, with its own message.
+                    raise
                 except Exception as exc:
                     last_exc = exc
                     logger.warning(
@@ -372,6 +407,71 @@ class SSHTunnelManager:
             return True
         self._release_lock(key)
         return False
+
+    async def open_through(
+        self,
+        config: ConnectionConfig,
+        opener: "Callable[[str, int], Awaitable[Any]]",
+    ) -> Any:
+        """Open something through the tunnel, once more after rebuilding it (C-10).
+
+        `is_alive` proves the SSH **transport** — a shell command answers — and says
+        nothing about the forward, which is a separate channel the bastion can refuse
+        (a closed `AllowTcpForwarding`, a firewall between bastion and database, a
+        database that stopped listening). So a retry re-entered the same "alive" tunnel
+        and failed the same way, and the error named `127.0.0.1:<local port>`: the one
+        address in the story that is never the problem.
+
+        On the second failure the error is re-raised with the route in it, because
+        "connection refused" about a loopback port sends a reader to the wrong machine.
+
+        Only the drivers' TRANSPORT failures trigger the rebuild: a rejected password is
+        not a broken forward, and rebuilding the tunnel for it would spend a handshake to
+        be refused the same way.
+        """
+        host, port = await self.get_or_create(config)
+        if not config.ssh_host:
+            return await opener(host, port)
+        try:
+            return await opener(host, port)
+        except TRANSIENT_CONNECT_ERRORS as first:
+            logger.warning(
+                "Connect through the tunnel failed (%s -> %s:%s): %s; rebuilding it once",
+                config.ssh_host,
+                config.db_host,
+                config.db_port,
+                first,
+            )
+            await self.close_for_config(config, force=True)
+            host, port = await self.get_or_create(config)
+            try:
+                return await opener(host, port)
+            except TRANSIENT_CONNECT_ERRORS as second:
+                raise TunnelledConnectError(
+                    f"{second} — via SSH tunnel {config.ssh_host} -> "
+                    f"{config.db_host}:{config.db_port}"
+                ) from second
+
+    def note_activity(self, config: ConnectionConfig) -> bool:
+        """Mark this config's tunnel as in use, and say whether there was one (C-03).
+
+        ``touch()`` used to run only in :meth:`get_or_create`, which a caller reaches
+        ONCE — a pool then keeps its sockets and queries through them for as long as it
+        likes. So a `db_index` with a 1800 s budget, or the chat's cached connector,
+        looked idle to the 30-minute sweep, which closed the SSH connection under a live
+        pool; `execute_query` has no reconnect path, so every remaining table came back
+        `sample_failed`.
+
+        Idleness is now measured where the work happens: the connectors call this as
+        they query and as they introspect.
+        """
+        if not config.ssh_host:
+            return False
+        tunnel = self._tunnels.get(self._key(config))
+        if tunnel is None:
+            return False
+        tunnel.touch()
+        return True
 
     async def cleanup_idle(self, max_idle: float = IDLE_TUNNEL_TTL) -> int:
         """Close tunnels that have been idle longer than *max_idle* seconds."""

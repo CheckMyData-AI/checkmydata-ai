@@ -530,6 +530,14 @@ class Settings(BaseSettings):
     #: eight hours against a live database is not.
     db_index_fetch_samples_budget_seconds: int = 1800
 
+    #: Ceiling on `POST /connections/{id}/test` (C-05). The handshakes behind it used to
+    #: multiply — tunnel 2 x manager 3 x service 3, at 45 s each — so a test against an
+    #: unreachable bastion held the request, and its concurrency slot, for about fourteen
+    #: minutes before answering. The retries are one policy at one layer now; this is the
+    #: bound that does not depend on getting that arithmetic right. Non-positive raises at
+    #: boot: "0" would read as configured and behave as absent.
+    connection_test_timeout_seconds: int = 90
+
     #: Whole-job ceiling for `run_db_index` and `run_code_db_sync` (OPS-06). It used to be
     #: the worker-wide `job_timeout` of 1800 s — **exactly** the value of
     #: `db_index_fetch_samples_budget_seconds`,
@@ -1318,6 +1326,13 @@ class Settings(BaseSettings):
                 f"{self.db_index_fetch_samples_budget_seconds}). Not clamped: a `0` that "
                 "reads as configured and behaves as absent is how this step came to be "
                 "unbounded in the first place."
+            )
+        if self.connection_test_timeout_seconds <= 0:
+            raise ValueError(
+                "CONNECTION_TEST_TIMEOUT_SECONDS must be positive (got "
+                f"{self.connection_test_timeout_seconds}). A non-positive value reads as "
+                "configured and behaves as absent, which is the state C-05 measured at "
+                "roughly fourteen minutes per test."
             )
         if self.sql_timeout_breaker_threshold < 1:
             raise ValueError(

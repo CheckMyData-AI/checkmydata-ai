@@ -127,18 +127,22 @@ class PostgresConnector(BaseConnector):
                 server_settings=server_settings,
             )
         else:
-            host, port = await _tunnel_mgr.get_or_create(config)
-            self._pool = await asyncpg.create_pool(
-                host=host,
-                port=port,
-                database=config.db_name,
-                user=config.db_user,
-                password=config.db_password,
-                min_size=1,
-                max_size=5,
-                command_timeout=settings.query_timeout_seconds,
-                server_settings=server_settings,
-            )
+            # C-10: the manager rebuilds the tunnel once and names the route if the far
+            # side still refuses — `is_alive` proves the SSH transport, never the forward.
+            async def _open(host: str, port: int):
+                return await asyncpg.create_pool(
+                    host=host,
+                    port=port,
+                    database=config.db_name,
+                    user=config.db_user,
+                    password=config.db_password,
+                    min_size=1,
+                    max_size=5,
+                    command_timeout=settings.query_timeout_seconds,
+                    server_settings=server_settings,
+                )
+
+            self._pool = await _tunnel_mgr.open_through(config, _open)
 
     async def disconnect(self) -> None:
         if self._pool:
@@ -154,6 +158,10 @@ class PostgresConnector(BaseConnector):
         *,
         timeout_seconds: float | None = None,
     ) -> QueryResult:
+        # C-03: idleness is measured where the work happens, not where the tunnel
+        # was opened — a pool queries for hours through one `get_or_create`.
+        if self._config is not None:
+            _tunnel_mgr.note_activity(self._config)
         if not self._pool:
             return QueryResult(error="Not connected")
 
@@ -269,6 +277,10 @@ class PostgresConnector(BaseConnector):
             await self.connect(self._config)
 
     async def introspect_schema(self) -> SchemaInfo:
+        # C-03: idleness is measured where the work happens, not where the tunnel
+        # was opened — a pool queries for hours through one `get_or_create`.
+        if self._config is not None:
+            _tunnel_mgr.note_activity(self._config)
         if not self._pool:
             return SchemaInfo(db_type=self.db_type)
 

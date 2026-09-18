@@ -924,9 +924,12 @@ async def update_connection(
 
     # Same invariant for the SSH key, on the merged row for the same reason: a
     # per-branch check is beaten by splitting the write across two PATCHes.
-    merged_ssh_key_id = updates["ssh_key_id"] if "ssh_key_id" in updates else conn.ssh_key_id
-    if merged_ssh_key_id:
-        await _require_owned_ssh_key(db, merged_ssh_key_id, user["user_id"])
+    # C-04: verify only the key being ATTACHED. Verifying the merged value meant that
+    # renaming a connection whose key somebody else uploaded answered 404 — a member
+    # could not edit a connection they are allowed to edit, and the error named a key
+    # they had not mentioned.
+    if "ssh_key_id" in updates and updates["ssh_key_id"]:
+        await _require_owned_ssh_key(db, updates["ssh_key_id"], user["user_id"])
 
     # An analytics source has no host or database to require; every other kind
     # must still end up reachable.
@@ -1011,7 +1014,32 @@ async def test_connection(
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
-    result = await _svc.test_connection(db, connection_id)
+    # C-05: a bound that does not depend on counting handshakes correctly. A test against
+    # an unreachable bastion used to hold the request — and its concurrency slot — for
+    # about fourteen minutes, and answered with the same failure it could have reported
+    # in one. The failure is REPORTED, not raised: "we could not reach it in 90 s" is the
+    # answer this endpoint exists to give.
+    from app.config import settings as _test_settings
+
+    try:
+        result = await asyncio.wait_for(
+            _svc.test_connection(db, connection_id),
+            timeout=_test_settings.connection_test_timeout_seconds,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Connection test timed out after %ss (connection=%s)",
+            _test_settings.connection_test_timeout_seconds,
+            connection_id[:8],
+        )
+        return {
+            "success": False,
+            "error": (
+                f"Could not reach this connection within "
+                f"{_test_settings.connection_test_timeout_seconds}s. Check the host, the "
+                "port, and — if it goes through a bastion — that the bastion is reachable."
+            ),
+        }
 
     # Only a database source has a schema to index; an analytics source's
     # "index" is a collection run, which the collect endpoint and the cron own.

@@ -231,6 +231,10 @@ class MongoDBConnector(BaseConnector):
         For MongoDB, 'query' is expected to be a JSON string with:
         {"collection": "name", "operation": "find", "filter": {}, ...}
         """
+        # C-03: idleness is measured where the work happens, not where the tunnel
+        # was opened — a pool queries for hours through one `get_or_create`.
+        if self._config is not None:
+            _tunnel_mgr.note_activity(self._config)
         if self._db is None:
             return QueryResult(error="Not connected")
 
@@ -339,6 +343,10 @@ class MongoDBConnector(BaseConnector):
             return QueryResult(error=safe_error(e), execution_time_ms=elapsed)
 
     async def introspect_schema(self) -> SchemaInfo:
+        # C-03: idleness is measured where the work happens, not where the tunnel
+        # was opened — a pool queries for hours through one `get_or_create`.
+        if self._config is not None:
+            _tunnel_mgr.note_activity(self._config)
         if self._db is None:
             return SchemaInfo(db_type=self.db_type)
 
@@ -349,57 +357,78 @@ class MongoDBConnector(BaseConnector):
         tables: list[TableInfo] = []
         collection_names = await self._db.list_collection_names()
 
+        unreadable: dict[str, str] = {}
         for cname in collection_names:
-            coll = self._db[cname]
-
-            # DBIDX-D11: sample up to mongo_schema_sample_size docs (default 100)
-            # and infer field types with union detection and nested path expansion.
-            samples = await coll.find().limit(sample_size).to_list(length=sample_size)
-            all_fields = _infer_fields(samples)
-
-            columns = [
-                ColumnInfo(
-                    name=key,
-                    data_type=dtype,
-                    # PK detection: only the un-dotted top-level "_id" field.
-                    is_primary_key=(key == "_id"),
-                )
-                for key, dtype in all_fields.items()
-            ]
-
-            count = await coll.estimated_document_count()
-
-            indexes: list[IndexInfo] = []
+            # C-11: one collection is one failure. `list_collection_names` may name a
+            # view the user cannot read, or a collection whose permissions differ — and
+            # a single exception used to abort the whole schema, so a database with
+            # forty readable collections was indexed as none. What could not be read is
+            # NAMED rather than dropped: a silently shorter schema reads as a database
+            # that does not have those collections.
             try:
-                async for idx in coll.list_indexes():
-                    idx_name = idx.get("name", "")
-                    idx_keys = list(idx.get("key", {}).keys())
-                    is_unique = idx.get("unique", False)
-                    indexes.append(
-                        IndexInfo(
-                            name=idx_name,
-                            columns=idx_keys,
-                            is_unique=is_unique,
-                        )
+                coll = self._db[cname]
+
+                # DBIDX-D11: sample up to mongo_schema_sample_size docs (default 100)
+                # and infer field types with union detection and nested path expansion.
+                samples = await coll.find().limit(sample_size).to_list(length=sample_size)
+                all_fields = _infer_fields(samples)
+
+                columns = [
+                    ColumnInfo(
+                        name=key,
+                        data_type=dtype,
+                        # PK detection: only the un-dotted top-level "_id" field.
+                        is_primary_key=(key == "_id"),
                     )
-            except Exception as exc:
-                import logging as _logging
+                    for key, dtype in all_fields.items()
+                ]
 
-                _logging.getLogger(__name__).debug("Failed to list indexes for %s: %s", cname, exc)
+                count = await coll.estimated_document_count()
 
-            tables.append(
-                TableInfo(
-                    name=cname,
-                    columns=columns,
-                    row_count=count,
-                    indexes=indexes,
+                indexes: list[IndexInfo] = []
+                try:
+                    async for idx in coll.list_indexes():
+                        idx_name = idx.get("name", "")
+                        idx_keys = list(idx.get("key", {}).keys())
+                        is_unique = idx.get("unique", False)
+                        indexes.append(
+                            IndexInfo(
+                                name=idx_name,
+                                columns=idx_keys,
+                                is_unique=is_unique,
+                            )
+                        )
+                except Exception as exc:
+                    import logging as _logging
+
+                    _logging.getLogger(__name__).debug(
+                        "Failed to list indexes for %s: %s", cname, exc
+                    )
+
+                tables.append(
+                    TableInfo(
+                        name=cname,
+                        columns=columns,
+                        row_count=count,
+                        indexes=indexes,
+                    )
                 )
-            )
 
+            except Exception as exc:
+                unreadable[cname] = str(exc)[:200]
+                logger.warning("MongoDB: collection %r could not be read: %s", cname, exc)
+        if unreadable:
+            logger.warning(
+                "MongoDB: %d of %d collection(s) could not be read: %s",
+                len(unreadable),
+                len(collection_names),
+                ", ".join(sorted(unreadable)),
+            )
         return SchemaInfo(
             tables=tables,
             db_type=self.db_type,
             db_name=self._config.db_name if self._config else "",
+            unreadable=unreadable,
         )
 
     async def sample_data(

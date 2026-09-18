@@ -35,6 +35,7 @@ from app.connectors.exec_templates import (
 )
 from app.connectors.ssh_known_hosts import connect_with_policy
 from app.connectors.ssh_pre_commands import validate_pre_commands
+from app.core.error_types import QueryErrorType
 from app.core.redaction import safe_error
 from app.core.safety import is_read_only_statement
 
@@ -368,7 +369,15 @@ class SSHExecConnector(BaseConnector):
         except asyncssh.TimeoutError:
             elapsed = (time.monotonic() - start) * 1000
             logger.warning("SSH exec query timed out after %.0fms", elapsed)
-            return QueryResult(error="SSH command timed out", execution_time_ms=elapsed)
+            # C-09: say WHICH failure this is. Without the type the classifier reads the
+            # prose, lands on UNKNOWN, and the agent spends an LLM "repair" on a query
+            # that was not wrong — it was too big. The other connectors have said
+            # `TIMEOUT` here since the timeout ladder was built; this path did not.
+            return QueryResult(
+                error="SSH command timed out",
+                error_type=QueryErrorType.TIMEOUT,
+                execution_time_ms=elapsed,
+            )
         except Exception as e:
             elapsed = (time.monotonic() - start) * 1000
             logger.warning("SSH exec execute_query error: %s", e)
@@ -462,6 +471,13 @@ class SSHExecConnector(BaseConnector):
             tables.append(
                 TableInfo(
                     name=tname,
+                    # C-08: the DATABASE, not `TableInfo.schema`'s PostgreSQL default of
+                    # "public". MySQL has no schema beside the database, and every
+                    # statistics query qualifies its table — so the default produced
+                    # `` `public`.`t` ``, a table nobody has, and each `distinct_values`
+                    # and `approx_stats` failed and was swallowed to `[]`. The index then
+                    # described a database with no column statistics at all.
+                    schema=db_name,
                     columns=col_map.get(tname, []),
                     foreign_keys=fk_map.get(tname, []),
                     row_count=approx_rows,
@@ -590,7 +606,11 @@ class SSHExecConnector(BaseConnector):
                 tname = c[0]
                 col_map.setdefault(tname, []).append(ColumnInfo(name=c[1], data_type=c[2]))
 
-        tables = [TableInfo(name=t, columns=col_map.get(t, [])) for t in table_names]
+        # C-08: same as MySQL — ClickHouse's "schema" is the database, and the
+        # PostgreSQL default silently qualified every statistics query with `public`.
+        tables = [
+            TableInfo(name=t, schema=db_name, columns=col_map.get(t, [])) for t in table_names
+        ]
         return SchemaInfo(tables=tables, db_type="clickhouse", db_name=db_name)
 
     async def _introspect_via_query(self, db_name: str, db_type: str) -> SchemaInfo:
@@ -602,7 +622,10 @@ class SSHExecConnector(BaseConnector):
         tables: list[TableInfo] = []
         for row in result.rows:
             if row:
-                tables.append(TableInfo(name=row[0]))
+                # C-08: the fallback path qualifies the same way the engines above do.
+                tables.append(
+                    TableInfo(name=row[0], schema=db_name if db_type != "postgres" else "public")
+                )
         return SchemaInfo(tables=tables, db_type=db_type, db_name=db_name)
 
     async def test_connection(self) -> bool:

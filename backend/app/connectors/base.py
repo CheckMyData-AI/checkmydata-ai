@@ -212,6 +212,11 @@ class SchemaInfo:
     db_type: str = ""
     db_name: str = ""
     object_kind: Literal["table", "view", "matview"] = "table"
+    #: Names the introspection could not read, and why (C-11). A schema that quietly
+    #: omits a collection is indistinguishable from a database that does not have it,
+    #: and the index stores the second reading. MongoDB is where this bites: one view
+    #: or one collection the user may list but not read used to abort the whole schema.
+    unreadable: dict[str, str] = field(default_factory=dict)
 
     def fingerprint(self) -> dict[str, str]:
         """Return a table-name -> column-signature map for incremental diff.

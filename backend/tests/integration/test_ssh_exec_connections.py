@@ -26,8 +26,10 @@ class TestSSHExecConnectionCrud:
                 "ssh_port": 22,
                 "ssh_user": "deploy",
                 "ssh_exec_mode": True,
+                # C-02: the password no longer travels in the command. The client
+                # reads it from its environment, which the server fills from stdin.
                 "ssh_command_template": (
-                    'MYSQL_PWD="{db_password}" mysql -h {db_host}'
+                    'MYSQL_PWD="$DBPASS" mysql -h {db_host}'
                     " -P {db_port} -u {db_user} {db_name} --batch"
                 ),
                 "ssh_pre_commands": ["source ~/.bashrc", "export PATH=/opt/mysql/bin:$PATH"],

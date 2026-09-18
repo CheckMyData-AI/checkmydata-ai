@@ -3,7 +3,6 @@ import logging
 import re
 import time
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 import clickhouse_connect
 
@@ -17,6 +16,7 @@ from app.connectors.base import (
     SchemaInfo,
     TableInfo,
 )
+from app.connectors.dsn import parse_dsn
 from app.connectors.ssh_tunnel import shared_tunnel_manager
 from app.core.error_types import QueryErrorType
 from app.core.redaction import safe_error
@@ -97,12 +97,14 @@ class ClickHouseConnector(BaseConnector):
         self._config = config
 
         if config.connection_string:
-            parsed = urlparse(config.connection_string)
-            host = parsed.hostname or config.db_host
+            # C-06: percent-decoded like the form's own parser, and a string with no user
+            # is refused rather than becoming a login as `default`.
+            parsed = parse_dsn(config.connection_string, default_port=config.db_port)
+            host = parsed.host
             port = parsed.port or config.db_port
-            database = (parsed.path or "").lstrip("/") or config.db_name
-            username = parsed.username or config.db_user or "default"
-            password = parsed.password or config.db_password or ""
+            database = parsed.database or config.db_name
+            username = parsed.user
+            password = parsed.password
         else:
             host, port = await _tunnel_mgr.get_or_create(config)
             database = config.db_name
@@ -172,6 +174,10 @@ class ClickHouseConnector(BaseConnector):
         *,
         timeout_seconds: float | None = None,
     ) -> QueryResult:
+        # C-03: idleness is measured where the work happens, not where the tunnel
+        # was opened — a pool queries for hours through one `get_or_create`.
+        if self._config is not None:
+            _tunnel_mgr.note_activity(self._config)
         client = await self._get_client()
         if client is None:
             return QueryResult(error="Not connected")
@@ -241,11 +247,21 @@ class ClickHouseConnector(BaseConnector):
             return QueryResult(error=safe_error(e), execution_time_ms=elapsed)
 
     async def introspect_schema(self) -> SchemaInfo:
-        if not self._client:
+        # C-03: idleness is measured where the work happens, not where the tunnel
+        # was opened — a pool queries for hours through one `get_or_create`.
+        if self._config is not None:
+            _tunnel_mgr.note_activity(self._config)
+        # C-07: through `_get_client`, so a session poisoned by one timed-out query is
+        # recreated instead of reported as an empty database. It used to read
+        # `self._client` directly: after a single timeout the reset left it None, and this
+        # returned a schema with no tables at all — which the pipeline stored as
+        # `completed, tables: 0`, a claim about the customer's database that nothing else
+        # could contradict.
+        client = await self._get_client()
+        if client is None:
             return SchemaInfo(db_type=self.db_type)
 
         db_name = self._config.db_name if self._config else "default"
-        client = self._client
 
         def _introspect():
             """Introspect all tables / columns / indexes in three queries (T17).
@@ -356,14 +372,19 @@ class ClickHouseConnector(BaseConnector):
         return SchemaInfo(tables=tables, db_type=self.db_type, db_name=db_name)
 
     async def test_connection(self) -> bool:
-        if not self._client:
+        # C-07: the health probe recreates the session too. Reading `self._client`
+        # directly meant that one timed-out query left this reporting the connection
+        # down for ever — the loop whose job is to notice recovery could not see it.
+        client = await self._get_client()
+        if client is None:
             logger.warning("ClickHouse test_connection: no client available")
             return False
         try:
-            await asyncio.to_thread(self._client.query, "SELECT 1")
+            await asyncio.to_thread(client.query, "SELECT 1")
             return True
         except Exception as exc:
             logger.warning("ClickHouse test_connection failed: %s", exc)
+            await self._reset_client()
             return False
 
     async def approx_stats(self, table: str, column: str, schema: str | None = None) -> ColumnStats:

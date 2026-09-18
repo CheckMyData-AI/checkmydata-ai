@@ -6,6 +6,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the connection layer stops failing for reasons the user cannot see (C-03…C-11, C-14)
+
+Eight rows of the 2026-09-13 audit's connection findings, each one a failure that named
+the wrong thing.
+
+- **C-03 — a tunnel closed under a live pool.** `touch()` ran only in
+  `get_or_create`, which a caller reaches once; a pool then queries through it for hours.
+  So a `db_index` (budget 1800 s) looked idle to the 30-minute sweep, the SSH connection
+  was closed mid-run, and every remaining table came back `sample_failed`. Idleness is
+  measured where the work happens now — the connectors mark each query and each
+  introspection — and a structural test fails if one of them stops.
+- **C-04 — the SSH key was resolved as the requester.** Every project member except the
+  person who uploaded it got a tunnel with **no `client_keys`**, reported as a problem
+  with the bastion. And `PATCH` verified the *merged* key id, so renaming a connection
+  whose key somebody else uploaded answered 404 about a key the caller never mentioned.
+  The rule, decided once: reaching a connection is authorised by project membership and
+  the key is material it already references; **attaching** one still requires it be yours.
+- **C-05 — `POST /{id}/test` could hold a request for about fourteen minutes.** Tunnel 2 ×
+  manager 3 × service 3, at a 45 s handshake. And the service retried
+  `(TimeoutError, ConnectionError, OSError)` — PyMySQL raises `OperationalError`, which is
+  none of them, so the engine most often reached through a bastion was the one never
+  retried. One policy at one layer (through a tunnel the retry belongs to the tunnel), the
+  drivers' own transport errors in `transient_errors.py`, and a
+  `CONNECTION_TEST_TIMEOUT_SECONDS` (90 s) the answer does not depend on getting that
+  arithmetic right.
+- **C-06 — the form and the server read a DSN differently.** `urlparse` leaves the
+  userinfo percent-encoded and the form decodes it, so a password containing `@`, `/` or
+  `:` worked in the browser's preview and failed at the server. A user-less DSN became a
+  login as `root` (MySQL) or `default` (ClickHouse) — a successful login as somebody else
+  where a refusal was the honest answer. One reading, in `connectors/dsn.py`.
+- **C-07 — one ClickHouse timeout poisoned everything after it.** `introspect_schema` and
+  `test_connection` read `self._client` directly; a timeout resets it to `None`, so the
+  schema came back **empty** (stored as `completed, tables: 0` — a claim about the
+  customer's database) and the health probe reported the connection down for ever,
+  because the loop meant to notice recovery could not make a session either.
+- **C-08 — every column statistic was thrown away in SSH-exec mode.** `TableInfo.schema`
+  defaults to PostgreSQL's `public`; MySQL and ClickHouse have no such schema, so each
+  `distinct_values` and `approx_stats` asked about `` `public`.`t` ``, failed, and was
+  swallowed to `[]`. The database is the schema for those engines now.
+- **C-09 — an SSH-exec timeout carried no `error_type`**, so the classifier answered
+  `UNKNOWN` and the agent spent an LLM repair on a query that was not wrong, only too big.
+- **C-10 — a refused forward was reported as a failure of `127.0.0.1`.** `is_alive` proves
+  the SSH transport; the forward is a separate channel the bastion can refuse on its own,
+  so the retry re-entered the same "alive" tunnel. It is rebuilt once now, and a second
+  failure says `via SSH tunnel <bastion> -> <db_host>:<port>`. Only the drivers' transport
+  errors trigger that — a rejected password is not a broken forward.
+- **C-11 — one collection aborted a whole MongoDB schema.** A view the caller may list and
+  not read cost every other collection. The failure costs that collection now, and
+  `SchemaInfo.unreadable` names it: a silently shorter schema reads as a database that
+  does not have those collections.
+- **C-14 — an unreadable key was retried as a flapping bastion.**
+  `asyncssh.KeyImportError` is a `ValueError`, not an `asyncssh.Error`, so a wrong
+  passphrase went round the reconnect loop three times and the real cause appeared
+  nowhere. `SSHKeyUnusableError` now, immediately, saying it is the key and not the host.
+
+Nineteen new tests across four files, each fix verified by planting its defect back.
+
 ### Security — the shell a connection runs is the owner's, and the form stops writing one (C-02, C-12)
 
 Two halves of the same surface, from the 2026-09-13 audit's connection rows.

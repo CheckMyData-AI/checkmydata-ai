@@ -12,6 +12,7 @@ from app.connectors.base import ConnectionConfig
 from app.connectors.host_guard import check_connection_targets
 from app.connectors.registry import get_connector
 from app.connectors.ssh_known_hosts import connect_with_policy
+from app.connectors.transient_errors import TRANSIENT_CONNECT_ERRORS
 from app.core.redaction import safe_error
 from app.core.retry import retry
 from app.models.connection import Connection
@@ -524,11 +525,19 @@ class ConnectionService:
         config = await self.to_config(session, conn)
         connector = get_connector(db_type, ssh_exec_mode=config.ssh_exec_mode)
         try:
+            # C-05: one retry policy, at one layer, on the errors the drivers really
+            # raise. This used to be three attempts on `(TimeoutError, ConnectionError,
+            # OSError)` — which pymysql's `OperationalError` is not, so MySQL was never
+            # retried — stacked on the tunnel manager's three and the tunnel's own two:
+            # 18 handshakes at 45 s, so `POST /{id}/test` against an unreachable bastion
+            # held the request for about fourteen minutes. Through a tunnel the retry
+            # lives in the tunnel; here it covers the direct connect only.
+            attempts = 1 if config.ssh_host else 3
 
             @retry(
-                max_attempts=3,
+                max_attempts=attempts,
                 backoff_seconds=1.0,
-                retryable_exceptions=(TimeoutError, ConnectionError, OSError),
+                retryable_exceptions=TRANSIENT_CONNECT_ERRORS,
             )
             async def _connect_with_retry():
                 await connector.connect(config)
@@ -624,7 +633,14 @@ class ConnectionService:
         ssh_key_content = None
         ssh_key_passphrase = None
         if conn.ssh_key_id:
-            decrypted = await _ssh_key_svc.get_decrypted(session, conn.ssh_key_id, user_id=user_id)
+            # C-04: by id, NOT scoped to the caller. The key belongs to whoever uploaded
+            # it and the connection belongs to the project, so scoping the lookup to the
+            # requester silently dropped the key for every member except the uploader —
+            # the tunnel then started with no `client_keys` and the failure read as a
+            # problem with the bastion. Reaching this connection was authorised by
+            # project membership at the route; attaching a key is the other direction,
+            # and that still verifies ownership (`_require_owned_ssh_key`).
+            decrypted = await _ssh_key_svc.get_decrypted(session, conn.ssh_key_id)
             if decrypted:
                 ssh_key_content, ssh_key_passphrase = decrypted
 
@@ -744,7 +760,14 @@ class ConnectionService:
         ssh_key_content = None
         ssh_key_passphrase = None
         if conn.ssh_key_id:
-            decrypted = await _ssh_key_svc.get_decrypted(session, conn.ssh_key_id, user_id=user_id)
+            # C-04: by id, NOT scoped to the caller. The key belongs to whoever uploaded
+            # it and the connection belongs to the project, so scoping the lookup to the
+            # requester silently dropped the key for every member except the uploader —
+            # the tunnel then started with no `client_keys` and the failure read as a
+            # problem with the bastion. Reaching this connection was authorised by
+            # project membership at the route; attaching a key is the other direction,
+            # and that still verifies ownership (`_require_owned_ssh_key`).
+            decrypted = await _ssh_key_svc.get_decrypted(session, conn.ssh_key_id)
             if decrypted:
                 ssh_key_content, ssh_key_passphrase = decrypted
 
