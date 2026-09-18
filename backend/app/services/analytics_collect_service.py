@@ -38,6 +38,7 @@ without a credential or a socket.
 
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 import json
 import logging
@@ -131,6 +132,12 @@ class _QuotaWallError(Exception):
 #: its own dimensions; the revised-away sweep (ANA-12) deletes inside one of
 #: these scopes and never across them.
 _SWEEP_SCOPE_COLUMNS: tuple[str, ...] = ("property_id", "date")
+
+#: How long one connection's collection may hold its turn (A-05). Above the job's own
+#: ceiling (`analytics_collect_job_timeout_seconds`, 1800 s) so a run that is still
+#: working never loses the lock to a second caller, and finite so a killed process
+#: cannot lock a connection out for ever.
+_COLLECT_LOCK_TTL_SECONDS = 2400
 
 #: GA4 report name -> fact table (spec §1.4). Keys must match
 #: :data:`app.analytics.ga4.reports.GA4_REPORTS`;
@@ -277,11 +284,34 @@ class AnalyticsCollectService:
     # -- entry points -----------------------------------------------------
 
     async def collect(self, connection_id: str) -> CollectOutcome:
-        """Collect one connection, owning the session. The worker job's entry point."""
+        """Collect one connection, owning the session and the connection's turn (A-05).
+
+        `POST /connections/{id}/collect` and the hourly wave could run the same
+        connection at the same time — the route allows ten a minute and mints a task id
+        per second — and each spends the property's full daily quota on the same periods.
+        The route's own docstring said the opposite. One at a time per connection now;
+        a second caller is told so rather than queued, because the work it wanted is
+        already being done.
+
+        Without Redis (dev, single process) `redis_lock` yields True and this is a
+        no-op, which is the right answer there: there is one process to collide with.
+        """
+        from app.core.distributed_lock import redis_lock
         from app.models.base import async_session_factory
 
-        async with async_session_factory() as session:
-            return await self.collect_in_session(session, connection_id)
+        async with redis_lock(
+            f"analytics:collect:{connection_id}", ttl_seconds=_COLLECT_LOCK_TTL_SECONDS
+        ) as acquired:
+            if not acquired:
+                logger.info(
+                    "Analytics collect: connection %s is already being collected; skipping",
+                    connection_id[:8],
+                )
+                outcome = CollectOutcome()
+                outcome.errors.append("this connection is already being collected")
+                return outcome
+            async with async_session_factory() as session:
+                return await self.collect_in_session(session, connection_id)
 
     async def collect_in_session(self, session: AsyncSession, connection_id: str) -> CollectOutcome:
         """Collect one connection using *session*.
@@ -520,6 +550,19 @@ class AnalyticsCollectService:
             try:
                 fetched = await adapter.fetch(report, period)
             except AnalyticsEmpty as exc:
+                # A-09: a period that comes back empty on a REFETCH has been revised to
+                # nothing, and the rows already stored for it are no longer true. The
+                # sweep that handles revisions lives inside `_upsert`, which an empty
+                # fetch never reaches, so those rows survived and kept counting into
+                # totals published as real measurements.
+                removed = await self._delete_period_rows(session, conn.id, table, grain, period)
+                if removed:
+                    logger.info(
+                        "Analytics collect: %s %s came back empty; removed %d stale row(s)",
+                        report,
+                        period,
+                        removed,
+                    )
                 await journal.record(
                     session,
                     connection_id=conn.id,
@@ -621,15 +664,22 @@ class AnalyticsCollectService:
             # A ``degraded`` sentence rides along in ``error`` on an otherwise
             # ``ok`` row: the status is the verdict, the text is the caveat the
             # agent has to repeat when it quotes this period.
+            # A-01: `partial` when a source this period should have covered did not
+            # answer. The rows written are kept — they are real — and the period stays
+            # pending, so the next run fetches the rest instead of leaving a hole below
+            # the high-water mark that only the two-period tail could ever have filled.
             await journal.record(
                 session,
                 connection_id=conn.id,
                 report=report,
                 period=period,
-                status="ok",
+                status="partial" if fetched.incomplete else "ok",
                 rows_written=written,
                 error=fetched.degraded,
             )
+            if fetched.incomplete:
+                reason = fetched.degraded or "a source did not answer"
+                outcome.errors.append(f"{conn.name}/{report} {period}: {reason}")
             outcome.periods_ok += 1
             outcome.rows_written += written
 
@@ -679,6 +729,48 @@ class AnalyticsCollectService:
         await self._sweep_revised_away(session, connection_id, table, values)
         await session.flush()
         return len(values)
+
+    @staticmethod
+    async def _delete_period_rows(
+        session: AsyncSession,
+        connection_id: str,
+        table: FactTable,
+        grain: Grain,
+        period: str,
+    ) -> int:
+        """Remove one period's rows for one connection (A-09). Returns how many.
+
+        Only called when the vendor has just said the period has no data at all: a
+        per-property failure raises its own error and never lands here, so this cannot
+        turn one property's outage into data loss.
+        """
+        from sqlalchemy import and_, delete
+
+        model = table.model
+        date_column = getattr(model, "date", None)
+        if date_column is None:  # pragma: no cover - every fact table has one today
+            return 0
+        try:
+            if grain == "monthly":
+                year, month = (int(part) for part in period.split("-", 1))
+                first = dt.date(year, month, 1)
+                last = dt.date(year, month, calendar.monthrange(year, month)[1])
+            else:
+                first = last = dt.date.fromisoformat(period)
+        except (TypeError, ValueError):
+            return 0
+        result = await session.execute(
+            delete(model).where(
+                and_(
+                    model.connection_id == connection_id,
+                    date_column >= first,
+                    date_column <= last,
+                )
+            )
+        )
+        await session.flush()
+        # `rowcount` is on the DBAPI cursor result; the typed `Result` does not declare it.
+        return int(getattr(result, "rowcount", 0) or 0)
 
     @staticmethod
     async def _sweep_revised_away(

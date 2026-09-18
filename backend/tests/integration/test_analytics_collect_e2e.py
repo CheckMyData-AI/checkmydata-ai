@@ -547,10 +547,12 @@ async def test_collected_vendor_rows_become_the_number_in_the_answer(
     assert "NOT COLLECTED" not in result.answer
     assert "real measurements" in result.answer
     assert result.report == "overview"
+    # A-06: grouped by property across three days, `active_users` is absent — GA4 counts
+    # distinct users WITHIN each period, so adding three daily values would count a
+    # returning visitor three times. Everything additive is still summed.
     assert result.rows == [
         [
             PROPERTY_ID,
-            TOTAL_SESSIONS,
             TOTAL_SESSIONS,
             sum(v // 2 for v in SESSIONS_BY_DAY.values()),
             TOTAL_SESSIONS * 2,
@@ -558,6 +560,19 @@ async def test_collected_vendor_rows_become_the_number_in_the_answer(
             pytest.approx(sum(v + 0.5 for v in SESSIONS_BY_DAY.values())),
         ]
     ]
+
+    # And asked per day — which is how a per-period metric is read — it is answered.
+    per_day = await _ask(
+        engine,
+        connection_id,
+        "How many active users did we have each day between 13 and 15 July 2026?",
+        [_overview_window_call(COLLECTED_DAYS[0], COLLECTED_DAYS[-1], group_by="date")],
+    )
+    assert per_day.status == "success", per_day.error
+    assert len(per_day.rows) == len(COLLECTED_DAYS)
+    assert [row[1] for row in per_day.rows] == [SESSIONS_BY_DAY[day] for day in COLLECTED_DAYS], (
+        "the per-day rows carry each day's own counts"
+    )
 
 
 # ---------------------------------------------------------------------------

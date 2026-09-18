@@ -39,6 +39,12 @@ APP = Path(__file__).resolve().parents[4] / "backend" / "app"
 #: Counts measured 2026-08-25 over `backend/app/`. Lower them as suppressions go; raise
 #: one only in the same commit as the suppression it admits, so the increase is reviewed.
 CEILINGS: dict[str, int] = {
+    # 663 → 664 on 2026-09-18 (A-02). One: `GA4Adapter._refresh_credentials` asks
+    # google-auth for a token so `test_connection` can tell a revoked key from a vendor
+    # hiccup. Anything the transport raises that is NOT an auth failure becomes
+    # `AnalyticsTransientError` — the caller needs a verdict, and an unclassified
+    # exception out of a health probe reads as "the probe is broken" rather than "the
+    # connection is". Nothing is swallowed: both branches raise.
     # 662 → 663 on 2026-09-18 (C-11). One: MongoDB's per-collection introspection. One
     # collection the caller may list but not read used to abort the whole schema, so a
     # database with forty readable collections was indexed as having none. The handler is
@@ -339,7 +345,7 @@ CEILINGS: dict[str, int] = {
     # The json parse in `stale_run_reaper._requeue_attempts` added in the same change is
     # NOT here: `json.loads` raises `ValueError` or `TypeError` and nothing else can, so
     # it is caught narrowly rather than spending this budget.
-    "except Exception": 663,
+    "except Exception": 664,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

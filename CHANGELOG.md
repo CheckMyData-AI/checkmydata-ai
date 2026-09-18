@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — GA4 tells the truth about what it collected (A-01, A-02, A-03, A-05, A-06, A-09)
+
+Six rows of the 2026-09-13 audit's analytics findings.
+
+- **A-02 — a revoked key was retried for ever and said nothing.** The token refresh runs
+  inside gRPC's metadata plugin, so a deleted or expired service-account key comes back
+  as `InternalServerError`: HTTP 500, which the status mapping reads as a vendor hiccup.
+  Three attempts per period, **~450 doomed refreshes per run, nightly** — and because it
+  never became an auth error the report was never stopped and the `_connect` sentinel
+  never written, so nothing on the rail ever said the key was gone. It is classified by
+  its cause now (the exception, its `__cause__` chain, or gRPC's own wording), and
+  `test_connection` performs one real `refresh()` first: a report request cannot tell a
+  dead key from a slow vendor, and a refresh can.
+- **A-01 — a period one property failed in was journalled `ok`.** `ok` is a *done*
+  status, so that property's data was permanently missing outside the two-period tail —
+  and the tail then overwrote the note that said so, while the agent read the caveat as
+  "the vendor truncated this period", which is a different cause. The journal has
+  `partial` now, deliberately **not** a done status: the rows that arrived are kept and
+  the period stays pending, so the next run fetches the rest.
+- **A-03 — the nightly sync indexed GA4 connections as databases.** `_active_connections`
+  filtered on `is_active` alone, so the DB-index pipeline ran against an analytics row:
+  the vendor secret was decrypted for nothing, `get_connector("ga4")` raised "Unsupported
+  adapter", and the row was left `indexing_status=failed` every night while its
+  collection was working.
+- **A-05 — two collections of one connection could run at once.** `POST /collect` (ten a
+  minute, its own task id since ANA-10) and the hourly wave each spent the property's
+  full daily quota on the same periods, with interleaved sweep `DELETE`s between them.
+  The route's docstring claimed the shared task id prevented this; it had stopped being
+  shared. A per-connection lock now holds for the length of a run.
+- **A-06 — "active users" was added up across days.** GA4 counts distinct users *within*
+  each period, so thirty daily values summed is "visits by a user on separate days", not
+  "users this month" — and the difference is every returning visitor. The tool's own
+  description promised "metrics are summed", so the model had no reason to doubt it.
+  Metrics now declare whether they may be added; a distinct-people metric asked for
+  across periods is **left out** and the answer says why and how to ask for it (by date,
+  or over one period).
+- **A-09 — a period refetched as empty kept its old rows.** The sweep that removes rows a
+  vendor has revised away lives inside `_upsert`, which an empty fetch never reaches, so
+  stale values went on counting into totals published as real measurements.
+
+Twenty-four tests, each fix verified by planting its defect back. **Not verifiable on
+production:** this deployment has no GA4 connection — the acceptance for these rows is
+the fixture-level end-to-end test, which now also asserts the per-day reading.
+
 ### Fixed — the connection layer stops failing for reasons the user cannot see (C-03…C-11, C-14)
 
 Eight rows of the 2026-09-13 audit's connection findings, each one a failure that named

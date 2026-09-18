@@ -122,6 +122,48 @@ def _vendor_retry_after(exc: BaseException) -> float | None:
     return None
 
 
+#: What a dead service-account key looks like once gRPC has wrapped it (A-02). The
+#: refresh happens inside the channel's metadata plugin, so the call comes back as
+#: `InternalServerError` — HTTP 500, which the status mapping reads as "the vendor is
+#: having a moment" and retries. Three attempts per period, ~450 doomed token refreshes
+#: per run, nightly, for ever; the report never stops and the `_connect` sentinel is
+#: never written, so nothing on the rail ever says the key is gone.
+_AUTH_FAILURE_MARKERS = (
+    "metadata plugin failed",
+    "invalid_grant",
+    "invalid_client",
+    "account not found",
+    "unauthorized_client",
+    "could not refresh",
+)
+
+
+def _is_auth_failure(exc: BaseException) -> bool:
+    """Is this a credential that will never work again, however it arrived?"""
+    auth_errors: tuple[type[BaseException], ...] = ()
+    try:
+        from google.auth import exceptions as google_auth_exceptions
+
+        auth_errors = (
+            google_auth_exceptions.RefreshError,
+            google_auth_exceptions.GoogleAuthError,
+        )
+    except ImportError:  # pragma: no cover - google-auth absent in a trimmed image
+        logger.debug("google-auth is not installed; classifying auth failures by text alone")
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if auth_errors and isinstance(current, auth_errors):
+            return True
+        text = str(current).lower()
+        if any(marker in text for marker in _AUTH_FAILURE_MARKERS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _map_client_error(exc: Exception) -> AnalyticsError | None:
     """Map a google-api-core exception onto the taxonomy, or ``None`` if unknown.
 
@@ -129,6 +171,10 @@ def _map_client_error(exc: Exception) -> AnalyticsError | None:
     status→error mapping is the one already written for the raw-HTTP path
     (:func:`app.analytics.http.classify_response`). One mapping, two transports.
     """
+    # A-02 first: the status says 500 and the cause says the key is revoked. Reading the
+    # status alone makes a permanent failure look like a temporary one.
+    if _is_auth_failure(exc):
+        return AnalyticsAuthError(f"GA4 rejected the service-account credential: {exc}")
     code = getattr(exc, "code", None)
     if isinstance(code, int) and code >= 300:
         return classify_response(Resp(status=code, headers={}, body=str(exc).encode()))
@@ -234,6 +280,7 @@ class GA4Adapter(AnalyticsSourceAdapter):
     ) -> None:
         self._client = client
         self._injected_client = client is not None
+        self._credentials: GA4Credentials | None = None
         self._page_size = max(1, min(int(page_size), MAX_PAGE_SIZE))
         self._max_rows = max(1, int(max_rows))
         # Read at construction, not import: the setting is validated at startup
@@ -276,6 +323,9 @@ class GA4Adapter(AnalyticsSourceAdapter):
                 "credential to this connection"
             )
         credentials = GA4Credentials.from_json(secret)
+        # Kept so `test_connection` can ask google-auth for a token directly (A-02): a
+        # report request cannot tell a revoked key from a vendor hiccup, and a refresh can.
+        self._credentials = credentials
         self._client = self._build_client(credentials)
         logger.info(
             "GA4 adapter connected: %d property(ies), service account %s",
@@ -289,6 +339,28 @@ class GA4Adapter(AnalyticsSourceAdapter):
         from google.analytics.data_v1beta import BetaAnalyticsDataAsyncClient
 
         return BetaAnalyticsDataAsyncClient(credentials=credentials.build_credentials())
+
+    async def _refresh_credentials(self) -> None:
+        """Ask google-auth for a token, and translate a refusal (A-02).
+
+        Runs off the loop: `refresh` is the library's blocking HTTP call.
+        """
+        credentials = self._credentials
+        if credentials is None:
+            return
+        try:
+            from google.auth.transport.requests import Request as AuthRequest
+
+            creds = credentials.build_credentials()
+            await asyncio.to_thread(creds.refresh, AuthRequest())
+        except ImportError:  # pragma: no cover - google-auth absent in a trimmed image
+            logger.debug("google-auth transport unavailable; skipping the refresh probe")
+        except Exception as exc:
+            if _is_auth_failure(exc):
+                raise AnalyticsAuthError(
+                    f"GA4 rejected the service-account credential: {exc}"
+                ) from exc
+            raise AnalyticsTransientError(f"GA4 token refresh failed: {exc}") from exc
 
     async def disconnect(self) -> None:
         """Drop the client. Idempotent — the collect service may call it twice."""
@@ -305,6 +377,11 @@ class GA4Adapter(AnalyticsSourceAdapter):
         """
         try:
             config = self._require_config()
+            # A-02: refresh the token first. A report request answers 500 when the key is
+            # revoked — indistinguishable from a vendor hiccup — while a refresh answers
+            # `RefreshError`, which is the fact the operator needs and the `_connect`
+            # sentinel needs to record.
+            await self._refresh_credentials()
             spec = GA4_REPORTS[0]
             today = dt.date.today().isoformat()
             request = self._build_request(
@@ -396,6 +473,11 @@ class GA4Adapter(AnalyticsSourceAdapter):
             columns=spec.columns,
             rows=rows,
             truncated=truncated,
+            # A-01: a period whose second property failed used to be journalled `ok`,
+            # and that property's data was then permanently missing outside the 2-period
+            # tail — while the agent read the caveat as "the vendor truncated this
+            # period", which is a different and wrong cause.
+            incomplete=bool(failures),
             degraded=degraded,
         )
 

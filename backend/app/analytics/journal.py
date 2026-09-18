@@ -42,15 +42,18 @@ from app.models.analytics_import import AnalyticsImport
 
 logger = logging.getLogger(__name__)
 
-JournalStatus = Literal["ok", "empty", "failed"]
+JournalStatus = Literal["ok", "empty", "partial", "failed"]
 
 #: Statuses that complete a period. ``empty`` belongs here: a period the vendor
-#: genuinely has no data for is finished, not broken.
+#: genuinely has no data for is finished, not broken. ``partial`` does NOT (A-01):
+#: some of the period's sources answered and some did not, so the rows are real and
+#: they are not all of them — the period is owed another attempt, and "pending" is
+#: exactly the state that arranges one.
 DONE_STATUSES: frozenset[str] = frozenset({"ok", "empty"})
 
 #: Every status the journal accepts. An unrecognised one would make the period
 #: look "not done" forever, so it is rejected at the door rather than stored.
-VALID_STATUSES: frozenset[str] = frozenset({"ok", "empty", "failed"})
+VALID_STATUSES: frozenset[str] = frozenset({"ok", "empty", "partial", "failed"})
 
 #: Columns the upsert refreshes on conflict — the natural key is never among them.
 _UPSERT_COLUMNS = ("status", "rows_written", "error", "fetched_at")
@@ -150,7 +153,8 @@ async def record(
         report: Report name (``overview`` | ``geo`` | ``platform`` | ``trend`` |
             ``events``).
         period: ``YYYY-MM-DD`` or ``YYYY-MM``.
-        status: ``ok`` | ``empty`` | ``failed``.
+        status: ``ok`` | ``empty`` | ``partial`` | ``failed``. Only the first two
+            complete a period; ``partial`` keeps the rows and keeps it pending.
         rows_written: Fact rows persisted for this period.
         error: Human-readable failure, safe to surface — never a credential.
 

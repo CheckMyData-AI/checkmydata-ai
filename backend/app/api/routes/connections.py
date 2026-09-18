@@ -1788,10 +1788,16 @@ async def collect_now(
 ):
     """Collect this analytics connection's reports now (spec §3.2, §5).
 
-    Enqueues exactly the job the hourly cron enqueues — same task name, same
-    day-scoped ``task_id``, same timeout — so "collect now" and the schedule can
-    never race into two concurrent runs for one connection on one day. The
-    upsert is idempotent regardless; the dedup key saves vendor quota.
+    Enqueues the same job the hourly cron enqueues, with the same timeout. It does
+    **not** share the wave's day-scoped ``task_id`` — ANA-10 gave this route its own,
+    because sharing it meant a manual collect was refused as a duplicate for the rest of
+    the day while this route answered "queued".
+
+    So the two CAN be enqueued at once, and A-05 is what stops them colliding: the
+    service takes a per-connection lock for the length of a run, and a second caller is
+    told the connection is already being collected rather than spending the property's
+    quota on the same periods a second time. This paragraph used to claim the task id
+    prevented that, which it had stopped doing.
 
     Deliberately does **not** check ``collection_enabled``: that flag pauses the
     *schedule*. A user who has paused a connection to stop the nightly wave must

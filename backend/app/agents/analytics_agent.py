@@ -171,6 +171,10 @@ class ReportBinding:
     dimension_columns: tuple[str, ...]
     metric_columns: tuple[str, ...]
     column_kinds: Mapping[str, str]
+    #: Metrics that cannot be added across periods (A-06). A distinct-user count is
+    #: per period by construction, so summing thirty days counts a returning visitor
+    #: thirty times — while the tool's own description promised "metrics are summed".
+    non_additive_metrics: tuple[str, ...] = ()
 
     @property
     def groupable_columns(self) -> tuple[str, ...]:
@@ -225,6 +229,7 @@ def _build_binding(spec: GA4ReportSpec) -> ReportBinding:
         model=model,
         dimension_columns=tuple(f.column for f in spec.dimensions),
         metric_columns=tuple(f.column for f in spec.metrics),
+        non_additive_metrics=tuple(f.column for f in spec.metrics if not f.additive),
         column_kinds=kinds,
     )
 
@@ -496,8 +501,10 @@ QUERY_REPORT_TOOL = Tool(
     name="query_report",
     description=(
         "Read one report over a date window. Metrics are summed over the window "
-        "and over the connection's properties. The result also states which "
-        "periods in the window are collected and which are not."
+        "and over the connection's properties — except distinct-people metrics such "
+        "as active_users, which are counted per period and cannot be added across "
+        "periods: ask for those grouped by date, or over a single period. The result "
+        "also states which periods in the window are collected and which are not."
     ),
     parameters=[
         ToolParameter(name="report", type="string", description="Report name"),
@@ -867,8 +874,19 @@ class AnalyticsAgent(BaseAgent):
             return f"Error: {exc}"
 
         async with self._session() as session:
+            # A-06: a distinct-user count may be read per period, never added across
+            # them. When the grouping has no date axis and the window is wider than one
+            # period, those metrics are left out of the query and said so — a number
+            # nobody can produce must not be produced.
+            spans_periods = len(periods) > 1 and "date" not in set(group_names)
+            dropped = (
+                [m for m in binding.metric_columns if m in binding.non_additive_metrics]
+                if spans_periods
+                else []
+            )
+            summable = [m for m in binding.metric_columns if m not in dropped]
             rows, truncated = await self._select_rows(
-                session, state, binding, group_columns, start, end, limit
+                session, state, binding, group_columns, start, end, limit, metrics=summable
             )
             statuses = await self._period_statuses(session, state, binding.name)
             unrecorded = [p for p in periods if p not in statuses]
@@ -884,7 +902,7 @@ class AnalyticsAgent(BaseAgent):
                 else set()
             )
 
-        columns = [*group_names, *binding.metric_columns]
+        columns = [*group_names, *summable]
         missing = [p for p in unrecorded if p not in with_rows]
         unjournalled = [p for p in unrecorded if p in with_rows]
         failed = [p for p in periods if statuses.get(p, ("", None))[0] == "failed"]
@@ -906,6 +924,14 @@ class AnalyticsAgent(BaseAgent):
             f"Report '{binding.name}' from {start.isoformat()} to {end.isoformat()}, "
             f"grouped by {', '.join(group_names)}."
         )
+        if dropped:
+            # A-06: said, not silently omitted. The agent has to be able to answer "why
+            # is active_users not here", and the answer is a property of the metric.
+            header += (
+                f" {', '.join(dropped)} is counted per {binding.grain[:-2]} and cannot be "
+                f"added across {len(periods)} periods — ask for it grouped by date, or "
+                f"over a single period."
+            )
         coverage_lines = self._window_coverage_lines(window, periods)
 
         if not gate_outcome.passed:
@@ -969,11 +995,12 @@ class AnalyticsAgent(BaseAgent):
         start: dt.date,
         end: dt.date,
         limit: int,
+        metrics: Sequence[str] | None = None,
     ) -> tuple[list[list[Any]], bool]:
         """Run the aggregate read. Every value below is a bound parameter."""
         metric_columns = [
             func.sum(getattr(binding.model, metric)).label(metric)
-            for metric in binding.metric_columns
+            for metric in (binding.metric_columns if metrics is None else metrics)
         ]
         stmt = (
             select(*group_columns, *metric_columns)
