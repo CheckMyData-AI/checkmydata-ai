@@ -478,9 +478,19 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
     (c) => c.id === analyticsForm.vendor_credential_id,
   );
   const formIsOpen = showCreate || editingId !== null;
-  // Suggestions only — a browser that cannot enumerate zones still lets the field be
-  // typed, and the server is what refuses a zone that names no place.
-  const timeZoneOptions = useMemo(() => Array.from(knownTimeZones() ?? []), []);
+  // Suggestions only, and **narrowed to what has been typed**: the browser knows ~420
+  // zones and rendering them all put that many nodes in the document on every keystroke,
+  // which was enough to slow the whole form past a sibling test's wait. The server is
+  // what refuses a zone that names no place, so this list never gates a save.
+  const timeZoneOptions = useMemo(() => {
+    const typed = analyticsForm.property_timezone.trim().toLowerCase();
+    const zones = knownTimeZones();
+    if (!zones) return [];
+    const matches = Array.from(zones).filter((zone) =>
+      typed ? zone.toLowerCase().includes(typed) : false,
+    );
+    return matches.slice(0, 8);
+  }, [analyticsForm.property_timezone]);
 
   /**
    * What the vendor last said about this key. A key nobody has asked about says so
@@ -577,16 +587,11 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
       toast("Currency must be a three-letter ISO-4217 code, such as USD.", "error");
       return null;
     }
+    // The zone is NOT checked here. A runtime built with trimmed ICU data knows a
+    // handful of zones, and refusing a valid one the user read off GA4 would be a
+    // refusal they cannot act on. The API validates it against the same helper the
+    // collector uses and answers 422 with the fix, which the catch below surfaces.
     const timeZone = analyticsForm.property_timezone.trim();
-    const zones = knownTimeZones();
-    if (timeZone && zones && !zones.has(timeZone)) {
-      toast(
-        `“${timeZone}” is not a timezone name. Use the property's zone from ` +
-          "Admin → Property details, such as America/Los_Angeles.",
-        "error",
-      );
-      return null;
-    }
     setCredentialInvalid(false);
     setPropertyInvalid(false);
     return {

@@ -174,6 +174,65 @@ describe("ConnectionSelector — Google Analytics 4 source (SCN-113)", () => {
     expect(screen.getByLabelText("Collect automatically")).toBeInTheDocument();
   });
 
+  it("suggests timezones only for what has been typed, never the whole tz database", async () => {
+    // ~420 <option> nodes on every render slowed the form enough to time out a
+    // sibling test in CI. Suggestions are an affordance, not a list.
+    await renderForm();
+    selectGa4();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Property timezone")).toBeInTheDocument(),
+    );
+
+    const datalist = () => document.getElementById("ga4-timezones");
+    expect(datalist()?.children.length ?? 0).toBe(0);
+
+    fireEvent.change(screen.getByLabelText("Property timezone"), {
+      target: { value: "Los_Ang" },
+    });
+
+    const options = Array.from(datalist()?.children ?? []).map((o) =>
+      (o as HTMLOptionElement).value,
+    );
+    expect(options.length).toBeGreaterThan(0);
+    expect(options.length).toBeLessThanOrEqual(8);
+    expect(options.some((o) => o.includes("Los_Angeles"))).toBe(true);
+  });
+
+  it("does not refuse a zone this runtime happens not to know", async () => {
+    // A trimmed-ICU runtime knows a handful of zones; refusing one the user read off
+    // GA4 would be a refusal they cannot act on. The API is the authority.
+    (api.connections.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "c-new",
+      name: "GA4 prod",
+      source_type: "ga4",
+    });
+    await renderForm();
+    selectGa4();
+    await waitFor(() =>
+      expect(screen.getByLabelText("GA4 vendor credential")).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("Connection name"), {
+      target: { value: "GA4 prod" },
+    });
+    fireEvent.change(screen.getByLabelText("GA4 vendor credential"), {
+      target: { value: "vc1" },
+    });
+    fireEvent.change(screen.getByLabelText("GA4 property IDs"), {
+      target: { value: "294380179" },
+    });
+    fireEvent.change(screen.getByLabelText("Property timezone"), {
+      target: { value: "Antarctica/Troll" },
+    });
+
+    fireEvent.click(screen.getByText("Create Connection"));
+
+    await waitFor(() => expect(api.connections.create).toHaveBeenCalledTimes(1));
+    const payload = (api.connections.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(
+      (payload.source_config as Record<string, unknown>).property_timezone,
+    ).toBe("Antarctica/Troll");
+  });
+
   it("says a key has never been checked rather than letting silence read as approval", async () => {
     await renderForm();
     selectGa4();
