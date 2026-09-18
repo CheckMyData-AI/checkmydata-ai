@@ -23,34 +23,6 @@ class CLIOutputParser:
         return columns, rows
 
     @staticmethod
-    def parse_psql_csv(stdout: str) -> tuple[list[str], list[list[str]]]:
-        """Parse psql --csv output (comma-separated, first line = headers)."""
-        import csv
-        import io
-
-        text = stdout.strip()
-        if not text:
-            return [], []
-
-        reader = csv.reader(io.StringIO(text))
-        all_rows = list(reader)
-        columns = all_rows[0]
-        rows = all_rows[1:]
-        return columns, rows
-
-    @staticmethod
-    def parse_psql_tuples(stdout: str) -> tuple[list[str], list[list[str]]]:
-        """Parse psql -t -A -F '\\t' output (no headers, tab-separated)."""
-        lines = _strip_lines(stdout)
-        if not lines:
-            return [], []
-
-        rows = [line.split("\t") for line in lines]
-        num_cols = len(rows[0]) if rows else 0
-        columns = [f"col{i}" for i in range(num_cols)]
-        return columns, rows
-
-    @staticmethod
     def parse_generic(stdout: str, delimiter: str = "\t") -> tuple[list[str], list[list[str]]]:
         """Generic delimiter-based parser, first line = headers."""
         lines = _strip_lines(stdout)

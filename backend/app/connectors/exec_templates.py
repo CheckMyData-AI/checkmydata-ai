@@ -242,6 +242,28 @@ def validate_command_template(template: str) -> str:
     return template
 
 
+def validate_new_command_template(template: str) -> str:
+    """Validate a template a caller is SAVING, which is stricter than running one (C-02).
+
+    A stored template carrying ``{db_password}`` keeps working — it is somebody's live
+    connection, and `_build_command` warns about it on every run. A NEW one does not get
+    written: `asyncssh.run` sends the command as argv and sshd runs it through the login
+    shell, so the password would sit in `/proc/<pid>/cmdline` for as long as the query
+    runs, readable by every user on the bastion. The built-in templates stopped doing
+    this (F-SSH-02) and the connection form kept a copy that did — and auto-filled it.
+
+    The asymmetry is the decision: refuse the next one, break none of the existing ones.
+    """
+    template = validate_command_template(template)
+    if "{db_password}" in template:
+        raise CommandTemplateValidationError(
+            "ssh_command_template must not contain {db_password}: the command line is "
+            "visible in the process list on the bastion. The password is supplied to the "
+            "client in its environment, and the query as an argument."
+        )
+    return template
+
+
 def get_default_template(db_type: str) -> str | None:
     """Return the default query template for a db type, or None if unsupported."""
     templates = EXEC_TEMPLATES.get(db_type)

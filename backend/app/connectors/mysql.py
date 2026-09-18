@@ -3,7 +3,6 @@ import logging
 import time
 import weakref
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 import aiomysql
 
@@ -17,6 +16,7 @@ from app.connectors.base import (
     SchemaInfo,
     TableInfo,
 )
+from app.connectors.dsn import parse_dsn
 from app.connectors.ssh_tunnel import shared_tunnel_manager
 from app.core.error_types import QueryErrorType
 from app.core.redaction import safe_error
@@ -133,13 +133,15 @@ class MySQLConnector(BaseConnector):
         init_command = "SET SESSION TRANSACTION READ ONLY" if config.is_read_only else None
 
         if config.connection_string:
-            parsed = urlparse(config.connection_string)
+            # C-06: the same reading the form uses — percent-decoded, and refusing a
+            # string with no user instead of logging in as `root`.
+            parsed = parse_dsn(config.connection_string, default_port=3306)
             self._pool = await aiomysql.create_pool(
-                host=parsed.hostname or "127.0.0.1",
+                host=parsed.host,
                 port=parsed.port or 3306,
-                db=parsed.path.lstrip("/") or config.db_name,
-                user=parsed.username or "root",
-                password=parsed.password or "",
+                db=parsed.database or config.db_name,
+                user=parsed.user,
+                password=parsed.password,
                 minsize=1,
                 maxsize=5,
                 autocommit=True,
@@ -147,19 +149,25 @@ class MySQLConnector(BaseConnector):
                 init_command=init_command,
             )
         else:
-            host, port = await _tunnel_mgr.get_or_create(config)
-            self._pool = await aiomysql.create_pool(
-                host=host,
-                port=port,
-                db=config.db_name,
-                user=config.db_user or "root",
-                password=config.db_password or "",
-                minsize=1,
-                maxsize=5,
-                autocommit=True,
-                connect_timeout=30,
-                init_command=init_command,
-            )
+            # C-10: through the manager, which rebuilds the tunnel once and names the
+            # route if the far side still refuses. `is_alive` proves the SSH transport;
+            # the FORWARD is a separate channel, so a plain retry re-entered the same
+            # "alive" tunnel and reported a failure of `127.0.0.1`.
+            async def _open(host: str, port: int):
+                return await aiomysql.create_pool(
+                    host=host,
+                    port=port,
+                    db=config.db_name,
+                    user=config.db_user or "root",
+                    password=config.db_password or "",
+                    minsize=1,
+                    maxsize=5,
+                    autocommit=True,
+                    connect_timeout=30,
+                    init_command=init_command,
+                )
+
+            self._pool = await _tunnel_mgr.open_through(config, _open)
 
     async def disconnect(self) -> None:
         if self._pool:
@@ -193,6 +201,10 @@ class MySQLConnector(BaseConnector):
         *,
         timeout_seconds: float | None = None,
     ) -> QueryResult:
+        # C-03: idleness is measured where the work happens, not where the tunnel
+        # was opened — a pool queries for hours through one `get_or_create`.
+        if self._config is not None:
+            _tunnel_mgr.note_activity(self._config)
         if not self._pool:
             return QueryResult(error="Not connected")
         pool = self._pool
@@ -312,6 +324,10 @@ class MySQLConnector(BaseConnector):
             await self.connect(self._config)
 
     async def introspect_schema(self) -> SchemaInfo:
+        # C-03: idleness is measured where the work happens, not where the tunnel
+        # was opened — a pool queries for hours through one `get_or_create`.
+        if self._config is not None:
+            _tunnel_mgr.note_activity(self._config)
         if not self._pool:
             return SchemaInfo(db_type=self.db_type)
 

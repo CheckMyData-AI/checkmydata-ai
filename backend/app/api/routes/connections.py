@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.analytics.source_types import clamp_backfill_days
 from app.api.deps import get_current_user, get_db
 from app.config import settings as app_config
-from app.connectors.exec_templates import validate_command_template
+from app.connectors.exec_templates import validate_new_command_template
 from app.connectors.host_guard import HostNotAllowedError, check_connection_targets
 from app.connectors.ssh_pre_commands import validate_pre_commands
 from app.core import task_queue
@@ -50,6 +50,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _svc = ConnectionService()
+#: What a non-owner sees instead of the shell a connection runs (C-12). A marker, not
+#: an empty string: "there is a custom template here, and it is not yours to read" is a
+#: different fact from "there is none", and the exec-mode UI needs the first one.
+_REDACTED = "••••••"
+
 _membership_svc = MembershipService()
 _db_index_svc = DbIndexService()
 _sync_svc = CodeDbSyncService()
@@ -382,7 +387,7 @@ class _ConnectionFieldRules(BaseModel):
         # SQL-06: the template is joined onto the same shell line as ssh_pre_commands,
         # which ARE screened. Screening one half of a shell line is screening neither.
         if v:
-            validate_command_template(v)
+            validate_new_command_template(v)
         return v
 
     @field_validator("name", "connection_string", mode="before", check_fields=False)
@@ -500,30 +505,42 @@ class ConnectionCreate(_ConnectionFieldRules):
 
 
 class ConnectionUpdate(_ConnectionFieldRules):
-    name: str | None = Field(None, max_length=200)
+    """What a PATCH may say — the same vocabulary `ConnectionCreate` accepts (C-13).
+
+    It used to be looser in two ways, and the looser one is the one that matters:
+    `db_type` was a free `str`, so a value the create route refuses could be written by
+    updating an existing row. The caps also disagreed (name 200 vs 255, `ssh_user` 100 vs
+    255, `ssh_key_id` 64 vs 255, the command template 2000 vs 2048), which is a
+    connection that can be created and then not saved again unchanged.
+    `test_the_two_connection_models_agree.py` compares them field by field.
+    """
+
+    name: str | None = Field(None, max_length=255)
     # Same cap as ConnectionCreate. Guarded on create and free on PATCH is the
     # exact shape that let an unvalidated branch reach `git checkout` as argv.
     purpose: str | None = Field(None, max_length=2000)
-    db_type: str | None = Field(None, max_length=50)
+    db_type: Literal["postgres", "mysql", "mongodb", "clickhouse", "mcp"] | None = Field(
+        default=None, max_length=50
+    )
     source_type: str | None = Field(None, max_length=50)
     ssh_host: str | None = Field(None, max_length=255)
     ssh_port: int | None = Field(None, ge=1, le=65535)
-    ssh_user: str | None = Field(None, max_length=100)
-    ssh_key_id: str | None = Field(None, max_length=64)
+    ssh_user: str | None = Field(None, max_length=255)
+    ssh_key_id: str | None = Field(None, max_length=255)
     db_host: str | None = Field(None, max_length=255)
     db_port: int | None = Field(None, ge=1, le=65535)
-    db_name: str | None = Field(None, max_length=200)
-    db_user: str | None = Field(None, max_length=100)
-    db_password: str | None = Field(None, max_length=500)
-    connection_string: str | None = Field(None, max_length=2000)
+    db_name: str | None = Field(None, max_length=255)
+    db_user: str | None = Field(None, max_length=255)
+    db_password: str | None = Field(None, max_length=1024)
+    connection_string: str | None = Field(None, max_length=2048)
     is_read_only: bool | None = None
     ssh_exec_mode: bool | None = None
-    ssh_command_template: str | None = Field(None, max_length=2000)
+    ssh_command_template: str | None = Field(None, max_length=2048)
     ssh_pre_commands: list[str] | None = Field(None, max_length=20)
-    mcp_server_command: str | None = Field(None, max_length=500)
-    mcp_server_args: list[str] | None = None
-    mcp_server_url: str | None = Field(None, max_length=2000)
-    mcp_transport_type: str | None = Field(None, max_length=50)
+    mcp_server_command: str | None = Field(None, max_length=1024)
+    mcp_server_args: list[str] | None = Field(None, max_length=50)
+    mcp_server_url: str | None = Field(None, max_length=1024)
+    mcp_transport_type: Literal["stdio", "sse"] | None = None
     mcp_env: dict[str, str] | None = None
     # Analytics-source fields (spec §1.2).
     vendor_credential_id: str | None = Field(None, max_length=36)
@@ -721,6 +738,54 @@ def _reject_analytics_source(conn: Connection, *, subject: str) -> None:
     )
 
 
+def redact_for_role(conn: Any, role: str) -> Any:
+    """Hide the shell a connection may carry from everyone but an owner (C-12).
+
+    ``ssh_command_template`` and ``ssh_pre_commands`` are free-form shell run on the
+    bastion, and the form invites a password into them. They reached every project
+    **viewer** through `GET /connections` and `GET /connections/{id}` — a role that
+    cannot change a connection could read the command line that connects to it.
+
+    Redacted rather than removed from the model: a client still learns THAT a custom
+    template exists (the exec-mode UI has to say so) without being told what it runs.
+    """
+    if role == "owner":
+        return conn
+    payload = ConnectionResponse.model_validate(conn).model_dump()
+    payload["ssh_command_template"] = _REDACTED if payload.get("ssh_command_template") else None
+    payload["ssh_pre_commands"] = _REDACTED if payload.get("ssh_pre_commands") else None
+    return ConnectionResponse.model_validate(payload)
+
+
+@router.get("/exec-templates")
+async def list_exec_templates(user: dict = Depends(get_current_user)):
+    r"""The commands the server itself runs in SSH-exec mode, read-only (C-02).
+
+    The form used to ship its own copies, and they were the hardened-away shapes: the
+    password on the remote argv (readable through `ps` by any user on the bastion), and
+    the SQL piped to the client's stdin, where `psql` reads `\!` as "run this shell
+    command" — the surface SQL-01 closed for the built-ins only. Enabling exec mode
+    auto-filled one, which made every exec connection a custom template by default and
+    so skipped the read-only decoration too.
+
+    There is nothing secret here — these are constants in the source — and that is the
+    point: one copy, on the server, shown rather than duplicated. A client may still
+    send its own template; what it may no longer do is start from a bad one.
+    """
+    from app.connectors.exec_templates import EXEC_TEMPLATES
+
+    return {
+        "templates": {
+            db_type: kinds["query"] for db_type, kinds in EXEC_TEMPLATES.items() if "query" in kinds
+        },
+        "note": (
+            "The password travels in the environment and the SQL as an argument. "
+            "A custom template replaces the query command only, and cannot be decorated "
+            "for read-only mode — the server cannot know which client it launches."
+        ),
+    }
+
+
 @router.post("", response_model=ConnectionResponse)
 @limiter.limit("10/minute")
 async def create_connection(
@@ -783,8 +848,9 @@ async def list_connections(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    return await _svc.list_by_project(db, project_id, skip=skip, limit=limit)
+    role = await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    rows = await _svc.list_by_project(db, project_id, skip=skip, limit=limit)
+    return [redact_for_role(row, role) for row in rows]
 
 
 @router.get("/{connection_id}", response_model=ConnectionResponse)
@@ -796,8 +862,8 @@ async def get_connection(
     conn = await _svc.get(db, connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
-    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
-    return conn
+    role = await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+    return redact_for_role(conn, role)
 
 
 @router.patch("/{connection_id}", response_model=ConnectionResponse)
@@ -870,9 +936,12 @@ async def update_connection(
 
     # Same invariant for the SSH key, on the merged row for the same reason: a
     # per-branch check is beaten by splitting the write across two PATCHes.
-    merged_ssh_key_id = updates["ssh_key_id"] if "ssh_key_id" in updates else conn.ssh_key_id
-    if merged_ssh_key_id:
-        await _require_owned_ssh_key(db, merged_ssh_key_id, user["user_id"])
+    # C-04: verify only the key being ATTACHED. Verifying the merged value meant that
+    # renaming a connection whose key somebody else uploaded answered 404 — a member
+    # could not edit a connection they are allowed to edit, and the error named a key
+    # they had not mentioned.
+    if "ssh_key_id" in updates and updates["ssh_key_id"]:
+        await _require_owned_ssh_key(db, updates["ssh_key_id"], user["user_id"])
 
     # An analytics source has no host or database to require; every other kind
     # must still end up reachable.
@@ -957,7 +1026,32 @@ async def test_connection(
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
-    result = await _svc.test_connection(db, connection_id)
+    # C-05: a bound that does not depend on counting handshakes correctly. A test against
+    # an unreachable bastion used to hold the request — and its concurrency slot — for
+    # about fourteen minutes, and answered with the same failure it could have reported
+    # in one. The failure is REPORTED, not raised: "we could not reach it in 90 s" is the
+    # answer this endpoint exists to give.
+    from app.config import settings as _test_settings
+
+    try:
+        result = await asyncio.wait_for(
+            _svc.test_connection(db, connection_id),
+            timeout=_test_settings.connection_test_timeout_seconds,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Connection test timed out after %ss (connection=%s)",
+            _test_settings.connection_test_timeout_seconds,
+            connection_id[:8],
+        )
+        return {
+            "success": False,
+            "error": (
+                f"Could not reach this connection within "
+                f"{_test_settings.connection_test_timeout_seconds}s. Check the host, the "
+                "port, and — if it goes through a bastion — that the bastion is reachable."
+            ),
+        }
 
     # Only a database source has a schema to index; an analytics source's
     # "index" is a collection run, which the collect endpoint and the cron own.

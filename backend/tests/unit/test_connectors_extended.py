@@ -1323,6 +1323,7 @@ class TestClickHouseSortKey:
         """is_sort_key=True on key columns, False on non-key columns."""
         from unittest.mock import MagicMock
 
+        from app.connectors.base import ConnectionConfig
         from app.connectors.clickhouse import ClickHouseConnector
 
         mock_client = MagicMock()
@@ -1356,7 +1357,12 @@ class TestClickHouseSortKey:
 
         connector = ClickHouseConnector()
         connector._client = mock_client
-        connector._config = MagicMock(db_name="mydb")
+        # A real config, not a MagicMock: the connector marks its tunnel as busy
+        # (C-03) and that derives a cache key from these fields, so a mock here tests
+        # the mock rather than the connector.
+        connector._config = ConnectionConfig(
+            db_type="clickhouse", db_host="127.0.0.1", db_port=9000, db_name="mydb"
+        )
 
         schema = await connector.introspect_schema()
         assert len(schema.tables) == 1
@@ -1370,6 +1376,7 @@ class TestClickHouseSortKey:
         """When sorting_key and primary_key are both empty, no column is marked."""
         from unittest.mock import MagicMock
 
+        from app.connectors.base import ConnectionConfig
         from app.connectors.clickhouse import ClickHouseConnector
 
         mock_client = MagicMock()
@@ -1398,7 +1405,12 @@ class TestClickHouseSortKey:
 
         connector = ClickHouseConnector()
         connector._client = mock_client
-        connector._config = MagicMock(db_name="mydb")
+        # A real config, not a MagicMock: the connector marks its tunnel as busy
+        # (C-03) and that derives a cache key from these fields, so a mock here tests
+        # the mock rather than the connector.
+        connector._config = ConnectionConfig(
+            db_type="clickhouse", db_host="127.0.0.1", db_port=9000, db_name="mydb"
+        )
 
         schema = await connector.introspect_schema()
         cols = schema.tables[0].columns
@@ -1408,6 +1420,7 @@ class TestClickHouseSortKey:
         """Older CH tables rows without sorting_key/primary_key don't crash."""
         from unittest.mock import MagicMock
 
+        from app.connectors.base import ConnectionConfig
         from app.connectors.clickhouse import ClickHouseConnector
 
         mock_client = MagicMock()
@@ -1435,7 +1448,12 @@ class TestClickHouseSortKey:
 
         connector = ClickHouseConnector()
         connector._client = mock_client
-        connector._config = MagicMock(db_name="mydb")
+        # A real config, not a MagicMock: the connector marks its tunnel as busy
+        # (C-03) and that derives a cache key from these fields, so a mock here tests
+        # the mock rather than the connector.
+        connector._config = ConnectionConfig(
+            db_type="clickhouse", db_host="127.0.0.1", db_port=9000, db_name="mydb"
+        )
 
         schema = await connector.introspect_schema()
         assert len(schema.tables) == 1

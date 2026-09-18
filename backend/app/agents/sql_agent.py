@@ -1570,9 +1570,13 @@ class SQLAgent(BaseAgent):
         async with self._connector_lock:
             existing = self._connectors.get(key)
             if existing is not None:
-                if not getattr(existing, "_closed", False):
-                    return existing
-                self._connectors.pop(key, None)
+                # C-16: this used to ask `getattr(existing, "_closed", False)`, and no
+                # connector has ever set that attribute — the check read "not False" on
+                # every hit, which is what the line below does without pretending to
+                # test anything. A connector that has actually lost its socket reports
+                # it where that can be known: `execute_query` returns "Not connected",
+                # and the tunnel rebuilds itself (C-10).
+                return existing
 
             if len(self._connectors) >= self._MAX_CONNECTORS:
                 oldest_key = next(iter(self._connectors))

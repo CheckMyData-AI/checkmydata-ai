@@ -6,6 +6,115 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the connection layer stops failing for reasons the user cannot see (C-03…C-11, C-14)
+
+Eight rows of the 2026-09-13 audit's connection findings, each one a failure that named
+the wrong thing.
+
+- **C-03 — a tunnel closed under a live pool.** `touch()` ran only in
+  `get_or_create`, which a caller reaches once; a pool then queries through it for hours.
+  So a `db_index` (budget 1800 s) looked idle to the 30-minute sweep, the SSH connection
+  was closed mid-run, and every remaining table came back `sample_failed`. Idleness is
+  measured where the work happens now — the connectors mark each query and each
+  introspection — and a structural test fails if one of them stops.
+- **C-04 — the SSH key was resolved as the requester.** Every project member except the
+  person who uploaded it got a tunnel with **no `client_keys`**, reported as a problem
+  with the bastion. And `PATCH` verified the *merged* key id, so renaming a connection
+  whose key somebody else uploaded answered 404 about a key the caller never mentioned.
+  The rule, decided once: reaching a connection is authorised by project membership and
+  the key is material it already references; **attaching** one still requires it be yours.
+- **C-05 — `POST /{id}/test` could hold a request for about fourteen minutes.** Tunnel 2 ×
+  manager 3 × service 3, at a 45 s handshake. And the service retried
+  `(TimeoutError, ConnectionError, OSError)` — PyMySQL raises `OperationalError`, which is
+  none of them, so the engine most often reached through a bastion was the one never
+  retried. One policy at one layer (through a tunnel the retry belongs to the tunnel), the
+  drivers' own transport errors in `transient_errors.py`, and a
+  `CONNECTION_TEST_TIMEOUT_SECONDS` (90 s) the answer does not depend on getting that
+  arithmetic right.
+- **C-06 — the form and the server read a DSN differently.** `urlparse` leaves the
+  userinfo percent-encoded and the form decodes it, so a password containing `@`, `/` or
+  `:` worked in the browser's preview and failed at the server. A user-less DSN became a
+  login as `root` (MySQL) or `default` (ClickHouse) — a successful login as somebody else
+  where a refusal was the honest answer. One reading, in `connectors/dsn.py`.
+- **C-07 — one ClickHouse timeout poisoned everything after it.** `introspect_schema` and
+  `test_connection` read `self._client` directly; a timeout resets it to `None`, so the
+  schema came back **empty** (stored as `completed, tables: 0` — a claim about the
+  customer's database) and the health probe reported the connection down for ever,
+  because the loop meant to notice recovery could not make a session either.
+- **C-08 — every column statistic was thrown away in SSH-exec mode.** `TableInfo.schema`
+  defaults to PostgreSQL's `public`; MySQL and ClickHouse have no such schema, so each
+  `distinct_values` and `approx_stats` asked about `` `public`.`t` ``, failed, and was
+  swallowed to `[]`. The database is the schema for those engines now.
+- **C-09 — an SSH-exec timeout carried no `error_type`**, so the classifier answered
+  `UNKNOWN` and the agent spent an LLM repair on a query that was not wrong, only too big.
+- **C-10 — a refused forward was reported as a failure of `127.0.0.1`.** `is_alive` proves
+  the SSH transport; the forward is a separate channel the bastion can refuse on its own,
+  so the retry re-entered the same "alive" tunnel. It is rebuilt once now, and a second
+  failure says `via SSH tunnel <bastion> -> <db_host>:<port>`. Only the drivers' transport
+  errors trigger that — a rejected password is not a broken forward.
+- **C-11 — one collection aborted a whole MongoDB schema.** A view the caller may list and
+  not read cost every other collection. The failure costs that collection now, and
+  `SchemaInfo.unreadable` names it: a silently shorter schema reads as a database that
+  does not have those collections.
+- **C-14 — an unreadable key was retried as a flapping bastion.**
+  `asyncssh.KeyImportError` is a `ValueError`, not an `asyncssh.Error`, so a wrong
+  passphrase went round the reconnect loop three times and the real cause appeared
+  nowhere. `SSHKeyUnusableError` now, immediately, saying it is the key and not the host.
+
+**C-13 — a PATCH accepted what a POST refuses.** `ConnectionUpdate.db_type` was a free
+`str`, so an engine the create route rejects could be written by updating an existing
+row; and the caps disagreed (name 200 vs 255, `ssh_user` 100 vs 255, `ssh_key_id` 64 vs
+255, the command template 2000 vs 2048) — a connection that can be created and then fails
+to save again unchanged. The models are compared field by field now, and the comparison
+found six more the audit had not named: the connection string, the password and four MCP
+fields.
+
+**C-15 — the form and the server disagreed in three more places.** An empty port saved
+**5432 whatever the engine was**, so clearing it on a MySQL connection invented a failure;
+it saves that engine's own default now. A connection string plus an SSH host was accepted
+silently and the tunnel then never dialled — the form says so where it can still be
+undone. And SSH-exec `execute_query` accepted `params` and dropped them, so the
+placeholders reached the CLI and failed there as a syntax error the agent tried to repair;
+it refuses with a sentence naming why, because binding would mean building the string that
+parameters exist to avoid.
+
+**C-16 — four pieces of code nothing called.** The connector cache asked
+`getattr(existing, "_closed", False)` and no connector has ever set that attribute; a
+byte-identical `_quote_identifier` sat beside the inherited one; `_sample_query` and
+`_build_distinct_query` were kept "as public, tested utilities" after the pipeline stopped
+calling them, with their own docstring deferring the cleanup — and the reason they were
+replaced (a SQL string handed to MongoDB's `execute_query`, silently empty) is a reason
+not to leave them reachable; `parse_psql_csv` and `parse_psql_tuples` had no callers.
+
+Twenty-eight new tests, each fix verified by planting its defect back.
+
+### Security — the shell a connection runs is the owner's, and the form stops writing one (C-02, C-12)
+
+Two halves of the same surface, from the 2026-09-13 audit's connection rows.
+
+**C-12 — a viewer could read the command line.** `ssh_command_template` and
+`ssh_pre_commands` are free-form shell run on the bastion, and both reached every project
+**viewer** through `GET /connections` and `GET /connections/{id}`. A role that cannot
+change a connection could read the command that reaches the database behind it. Non-owners
+now see a marker where a template exists and `null` where none does — *that* there is a
+custom command is a fact the exec-mode UI needs; *what it says* is not.
+
+**C-02 — the form shipped the two shapes the backend had already removed.** Its own
+`EXEC_TEMPLATE_PRESETS` put `{db_password}` on the remote argv, where `ps` on the bastion
+reads it for as long as the query runs (F-SSH-02 took it off), and piped the SQL to the
+client's stdin, where `psql` reads `\!` as "run this shell command" (SQL-01 closed that
+for the built-ins). Enabling exec mode auto-filled one, so every exec connection became a
+**custom** template — the one kind the server cannot decorate for read-only mode.
+
+The presets are deleted. `GET /connections/exec-templates` serves the server's own
+commands read-only (they are constants in the source, not secrets), the form shows the one
+for the chosen engine and fills nothing, and a custom command is refused at save if it
+carries `{db_password}` — with the error naming the process list. A template **already
+stored** with it keeps working and keeps warning on every run: refusing the next one
+breaks nobody's live connection, which is the asymmetry the decision rests on.
+
+Seven integration tests and two client tests; each fix verified by planting its defect.
+
 ### Fixed — reading an investigation back needs the project (Track D1 follow-up)
 
 Found by running one against production the hour Track D1 shipped. `POST /investigate`

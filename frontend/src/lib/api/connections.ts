@@ -71,6 +71,13 @@ export const connections = {
   listByProject: (projectId: string) =>
     request<Connection[]>(`/connections/project/${projectId}`),
   get: (id: string) => request<Connection>(`/connections/${id}`),
+  // C-02: the commands the server runs in SSH-exec mode, read-only. The form used to
+  // carry its own copies and auto-fill one, which put the password on the bastion's
+  // process list and made every exec connection a custom template.
+  execTemplates: () =>
+    request<{ templates: Record<string, string>; note: string }>(
+      "/connections/exec-templates",
+    ),
   create: (data: Record<string, unknown>) =>
     request<Connection>("/connections", { method: "POST", body: JSON.stringify(data) }),
   update: (id: string, data: Record<string, unknown>) =>

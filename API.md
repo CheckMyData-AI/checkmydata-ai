@@ -86,12 +86,20 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 | POST | `/api/connections/{id}/sync` | Trigger code-DB sync (202) |
 | POST | `/api/connections/{connection_id}/reconnect` | Re-run the health probe and reopen the connector. Analytics sources have no database to reach, so they are answered without one (editor) |
 | POST | `/api/connections/{connection_id}/test-ssh` | Test SSH reachability on its own, separately from the database behind it |
+| GET | `/api/connections/exec-templates` | The commands the server itself runs in SSH-exec mode, read-only. The form shows these instead of shipping copies: its own carried `{db_password}` on the remote argv and piped the SQL to the client's stdin (C-02) |
 | GET | `/api/connections/health` | Health of every connection the caller can see |
 | GET | `/api/connections/{connection_id}/health` | Health of one connection |
 | GET | `/api/connections/{connection_id}/index-db/status` | Schema-index status for a connection |
 | GET | `/api/connections/{connection_id}/sync/status` | Code↔DB sync status for a connection |
 
 ### Analytics-source fields on create / update
+
+**`ssh_command_template` and `ssh_pre_commands` are returned to project owners only**
+(C-12). They are free-form shell run on the bastion; a non-owner sees a redaction marker
+where one exists and `null` where none does, so a client can still tell that a custom
+command is configured without being able to read it. A **new** template carrying
+`{db_password}` is refused with 422 — the command line is visible in the process list on
+the bastion — while a stored one keeps working and warns on every run.
 
 `POST /api/connections` and `PATCH /api/connections/{id}` accept five additional
 fields used by analytics sources (Google Analytics 4 today — see
