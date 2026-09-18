@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 import app.models  # noqa: F401 — register every mapper
 from app.agents.analytics_agent import AnalyticsAgent, AnalyticsResult
 from app.agents.base import AgentContext
-from app.agents.context_loader import ContextLoader
+from app.agents.context_loader import _ANALYTICS_CACHE, ContextLoader
 from app.agents.tool_dispatcher import ToolDispatcher
 from app.agents.tools.analytics_tools import (
     ANALYTICS_SOURCE_TYPES,
@@ -42,6 +42,17 @@ from app.models.base import Base, enable_sqlite_fk
 from app.models.connection import Connection
 from app.models.project import Project
 from app.services.connection_service import ConnectionService
+
+
+@pytest.fixture(autouse=True)
+def _cold_capability_cache():
+    """A-12 made the capability cache process-wide, so a route can clear it when a
+    connection appears or goes. These tests each want a cold one: a leftover entry from
+    the previous test is not what any of them is about."""
+    _ANALYTICS_CACHE.clear()
+    yield
+    _ANALYTICS_CACHE.clear()
+
 
 # ---------------------------------------------------------------------------
 # get_orchestrator_tools

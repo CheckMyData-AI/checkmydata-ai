@@ -54,7 +54,18 @@ Six rows of the 2026-09-13 audit's analytics findings.
   refetch rewrites `fetched_at`; the period does not get younger), and the prune is handed
   the widest window any connection is actually configured for, which it never cuts into.
 
-Twenty-eight tests, each fix verified by planting its defect back. **Not verifiable on
+- **A-11 — a project-wide quota was recorded per property.**
+  `tokens_per_project_per_hour` is spent across every property in the Google Cloud
+  project and GA4 reports it on each property's response; remembering it under the
+  property that observed it left the others spending calls that could only be refused.
+- **A-12 — a new source was invisible to the agent for up to a minute.** "Does this
+  project have an analytics source" was cached for 60 s and nothing cleared it: adding a
+  connection and asking a question inside that minute got an agent with no analytics
+  tool, deleting one got a tool with nothing behind it. The cache is process-wide now
+  and the three routes that change what a project has clear it. Stated rather than
+  implied: `web` and `worker` keep their own, so the TTL is still what bounds the other.
+
+Forty-two tests, each fix verified by planting its defect back. **Not verifiable on
 production:** this deployment has no GA4 connection — the acceptance for these rows is
 the fixture-level end-to-end test, which now also asserts the per-day reading.
 

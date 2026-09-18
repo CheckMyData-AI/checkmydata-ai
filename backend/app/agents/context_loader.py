@@ -37,6 +37,23 @@ class ContextData:
     active_insights: str | None = None
 
 
+#: Shared by every :class:`ContextLoader` in the process (A-12), so
+#: :func:`invalidate_capability_cache` can reach it from a route.
+_ANALYTICS_CACHE: dict[str, tuple[bool, float]] = {}
+
+
+def invalidate_capability_cache(project_id: str) -> None:
+    """Forget what this project was known to have (A-12).
+
+    Called when a connection is created, deleted, or has its source type changed —
+    the three moments the answer changes. Only this process's cache: `web` and
+    `worker` keep their own, and the 60 s TTL is what bounds the other one. That is
+    the difference between "a minute of staleness somewhere else" and "the operator
+    adds a source and the agent cannot see it", which is what this fixes.
+    """
+    _ANALYTICS_CACHE.pop(project_id, None)
+
+
 class ContextLoader:
     """Loads orchestrator context lazily based on intent."""
 
@@ -60,7 +77,12 @@ class ContextLoader:
         # Deliberately NOT the MCP cache: the two probes answer different
         # questions about the same connection list, and sharing one entry would
         # let an MCP-only project be reported as having analytics (and back).
-        self._analytics_cache: dict[str, tuple[bool, float]] = {}
+        # A-12: process-wide, so the routes that change what a project HAS can clear it.
+        # A per-instance dict could only be cleared by the instance that filled it, and
+        # the orchestrator is built at module scope — so adding a GA4 connection and
+        # asking a question within the minute got an agent with no analytics tool, and
+        # deleting one got a tool with nothing behind it.
+        self._analytics_cache: dict[str, tuple[bool, float]] = _ANALYTICS_CACHE
         self._hybrid_retriever = None
         #: RET-05: one per loader, like the retriever above. This used to be a
         #: local variable in `build_context_pack`, so every question built a new

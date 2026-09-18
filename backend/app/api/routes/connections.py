@@ -25,6 +25,7 @@ from pydantic import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.context_loader import invalidate_capability_cache
 from app.analytics.source_types import clamp_backfill_days
 from app.api.deps import get_current_user, get_db
 from app.config import settings as app_config
@@ -824,6 +825,10 @@ async def create_connection(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     conn = await _svc.create(db, **body.model_dump())
+    # A-12: the agent's "does this project have an analytics source" answer is cached
+    # for 60 s. Adding one and asking a question inside that minute used to get an agent
+    # with no analytics tool at all.
+    invalidate_capability_cache(body.project_id)
     logger.info(
         "Connection created: name=%s type=%s project=%s",
         body.name,
@@ -980,6 +985,8 @@ async def update_connection(
     conn = await _svc.update(db, connection_id, **updates)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
+    # A-12: what this project HAS may have just changed (a source type, an activation).
+    invalidate_capability_cache(conn.project_id)
     audit_log(
         "connection.update",
         user_id=user["user_id"],
@@ -1003,6 +1010,7 @@ async def delete_connection(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
     await _svc.delete(db, connection_id)
+    invalidate_capability_cache(conn.project_id)
     logger.info("Connection deleted: id=%s name=%s", connection_id[:8], conn.name)
     audit_log(
         "connection.delete",

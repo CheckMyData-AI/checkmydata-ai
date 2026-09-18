@@ -90,6 +90,17 @@ _QUOTA_BUCKETS = (
     "concurrent_requests",
 )
 
+#: Buckets GA4 spends across the whole Google Cloud project rather than per property
+#: (A-11). Reported on each property's response, so recording one under the observing
+#: property left every other property spending calls that could only be refused.
+_PROJECT_QUOTA_BUCKETS = frozenset({"tokens_per_project_per_hour"})
+
+
+def _is_project_bucket(bucket: str) -> bool:
+    """Does this bucket belong to the project rather than to one property?"""
+    return bucket in _PROJECT_QUOTA_BUCKETS or "per_project" in bucket
+
+
 #: Network-level failures worth retrying. Anything else propagates unchanged —
 #: an unexpected exception is a bug and must not be laundered into a vendor error.
 _TRANSPORT_ERRORS = (TimeoutError, ConnectionError, OSError)
@@ -297,6 +308,11 @@ class GA4Adapter(AnalyticsSourceAdapter):
         #: refuse every other one, which is ANA-11 by another route. An adapter is
         #: built per collection run, so this never outlives the window it describes.
         self._quota_exhausted: dict[str, str] = {}
+        #: A-11: the project-wide buckets, which GA4 reports per response but spends
+        #: across every property in the Google Cloud project. Recorded under the
+        #: property that happened to observe it, the other properties went on spending
+        #: calls that could only be refused.
+        self._project_quota_exhausted: str | None = None
 
     # -- DataSourceAdapter ------------------------------------------------
 
@@ -596,6 +612,14 @@ class GA4Adapter(AnalyticsSourceAdapter):
             return response
 
         property_id = str(getattr(request, "property", "")).removeprefix("properties/")
+        if self._project_quota_exhausted:
+            # A-11: a project-wide bucket is spent for every property, not only for the
+            # one whose response reported it.
+            raise QuotaExhaustedError(
+                f"GA4 quota {self._project_quota_exhausted} is project-wide and was "
+                "reported exhausted earlier in this run; refusing to spend another "
+                "vendor call on any property"
+            )
         spent = self._quota_exhausted.get(property_id)
         if spent:
             # The bucket was already known spent when this call was made, so the
@@ -639,6 +663,16 @@ class GA4Adapter(AnalyticsSourceAdapter):
                 # an all-zero proto default must not read as exhaustion.
                 continue
             if remaining <= 0:
+                if _is_project_bucket(bucket):
+                    self._project_quota_exhausted = bucket
+                    logger.warning(
+                        "GA4 quota %s is project-wide and is exhausted (consumed=%d, "
+                        "remaining=0); this page is kept and the next vendor call for "
+                        "ANY property will be refused",
+                        bucket,
+                        consumed,
+                    )
+                    return
                 self._quota_exhausted[property_id] = bucket
                 logger.warning(
                     "GA4 quota %s for property %s is exhausted (consumed=%d, remaining=0); "
