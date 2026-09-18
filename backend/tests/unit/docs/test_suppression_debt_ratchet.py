@@ -39,6 +39,11 @@ APP = Path(__file__).resolve().parents[4] / "backend" / "app"
 #: Counts measured 2026-08-25 over `backend/app/`. Lower them as suppressions go; raise
 #: one only in the same commit as the suppression it admits, so the increase is reviewed.
 CEILINGS: dict[str, int] = {
+    # 662 → 663 on 2026-09-18 (T00-mem). One: `release_freed_memory` loads libc and
+    # calls `malloc_trim`. Every part of that is platform-dependent — the library name,
+    # the symbol, the calling convention — and none of it is worth failing a boot over,
+    # because the memory it returns was already unused. It logs at DEBUG and answers
+    # False, which is what "this allocator decides for itself" looks like.
     # 661 → 662 on 2026-09-17 (PRJ-03, O-08). Not a new suppression — a NARROWER one.
     # Chart selection caught `(Exception, asyncio.CancelledError)`, which this pattern
     # did not count, and so swallowed the cancellation a request's deadline sends.
@@ -333,7 +338,7 @@ CEILINGS: dict[str, int] = {
     # The json parse in `stale_run_reaper._requeue_attempts` added in the same change is
     # NOT here: `json.loads` raises `ValueError` or `TypeError` and nothing else can, so
     # it is caught narrowly rather than spending this budget.
-    "except Exception": 662,
+    "except Exception": 663,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:
