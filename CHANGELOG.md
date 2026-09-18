@@ -49,6 +49,18 @@ rebuild nothing reads them. They are now a local variable at build and load time
 to disk, handed to `BM25Okapi`, and freed. The on-disk format does not change, and a
 reload scores identically (asserted, not assumed).
 
+**And freeing it was not enough.** RSS did not fall by 59 MB, because glibc keeps the
+arena after Python frees the object — and the dyno quota counts RSS, not liveness.
+Measured after the change on the production corpus: **376 MB** after the boot rebuild,
+**353 MB** after one `malloc_trim(0)`. The boot rebuild now asks for its arenas back
+(`app/ops/memory.release_freed_memory`), at that seam only: trimming walks the arenas,
+and doing it per request would trade memory for latency on the path with neither to
+spare. On macOS and musl the library or the symbol is absent and the answer is `False`, which
+is not a failure — those allocators decide for themselves. The two ways a platform can
+say that are caught **by name** (`OSError`, `AttributeError`); a broad handler there
+would have hidden a real defect behind the same quiet `False`, which is what
+`test_silent_failure_ratchets` refuses.
+
 `google.analytics.data_v1beta` (**22 MB**) moves into the method that builds a report
 request. It was imported at boot through `PIPELINE_REGISTRY` on a deployment with no
 analytics connection at all.
