@@ -46,16 +46,10 @@ import datetime as dt
 import logging
 from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from google.analytics.data_v1beta.types import (
-    DateRange,
-    Dimension,
-    Filter,
-    FilterExpression,
-    Metric,
-    RunReportRequest,
-)
+if TYPE_CHECKING:
+    from google.analytics.data_v1beta.types import RunReportRequest
 
 from app.analytics.base import AnalyticsReport, AnalyticsSourceAdapter, ReportSpec
 from app.analytics.errors import (
@@ -450,6 +444,19 @@ class GA4Adapter(AnalyticsSourceAdapter):
         offset: int,
         limit: int,
     ) -> RunReportRequest:
+        # Imported here, not at module scope (T00-mem): `google.analytics` costs
+        # **22 MB** of RSS and this deployment has no analytics connection, while the
+        # module is imported at boot through `PIPELINE_REGISTRY`. A web dyno that
+        # needs 525 MB for one answer cannot carry a vendor client nobody calls.
+        from google.analytics.data_v1beta.types import (
+            DateRange,
+            Dimension,
+            Filter,
+            FilterExpression,
+            Metric,
+            RunReportRequest,
+        )
+
         config = self._require_config()
         request = RunReportRequest(
             property=f"properties/{property_id}",
