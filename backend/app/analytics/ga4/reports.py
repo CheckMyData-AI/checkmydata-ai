@@ -38,11 +38,19 @@ FieldKind = Literal["str", "date", "int", "decimal"]
 
 @dataclass(frozen=True)
 class GA4Field:
-    """One dimension or metric: vendor name, storage column, storage type."""
+    """One dimension or metric: vendor name, storage column, storage type.
+
+    ``additive`` says whether adding this metric across periods produces the same
+    quantity (A-06). Counts of events do; **counts of distinct people do not** —
+    ``activeUsers`` is a distinct-user count within each period, so thirty daily values
+    summed is "visits by a user each day", not "users this month", and the difference is
+    every returning visitor.
+    """
 
     api_name: str
     column: str
     kind: FieldKind
+    additive: bool = True
 
 
 @dataclass(frozen=True)
@@ -84,7 +92,7 @@ class GA4ReportSpec:
 
 _DATE = GA4Field("date", "date", "date")
 _SESSIONS = GA4Field("sessions", "sessions", "int")
-_ACTIVE_USERS = GA4Field("activeUsers", "active_users", "int")
+_ACTIVE_USERS = GA4Field("activeUsers", "active_users", "int", additive=False)
 
 
 OVERVIEW = GA4ReportSpec(
@@ -98,6 +106,8 @@ OVERVIEW = GA4ReportSpec(
     metrics=(
         _SESSIONS,
         _ACTIVE_USERS,
+        # New users are counted once, on the day they first appear, so a sum across days
+        # is a real total — unlike `activeUsers` above.
         GA4Field("newUsers", "new_users", "int"),
         GA4Field("screenPageViews", "screen_page_views", "int"),
         GA4Field("eventCount", "event_count", "int"),

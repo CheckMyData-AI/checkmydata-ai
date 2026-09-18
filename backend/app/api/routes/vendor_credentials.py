@@ -43,6 +43,11 @@ class VendorCredentialResponse(BaseModel):
     provider: str
     fingerprint: str
     meta: dict[str, Any] | None = None
+    # When the vendor was last asked about this key, and what it said. `error` is
+    # null exactly when the attempt at `last_verified_at` succeeded, so a refusal
+    # can never be read as "never checked".
+    last_verified_at: str | None = None
+    last_verify_error: str | None = None
     created_at: str
     updated_at: str
 
@@ -54,6 +59,10 @@ def _to_response(credential: VendorCredential) -> VendorCredentialResponse:
         provider=credential.provider,
         fingerprint=credential.fingerprint,
         meta=credential_meta(credential),
+        last_verified_at=(
+            credential.last_verified_at.isoformat() if credential.last_verified_at else None
+        ),
+        last_verify_error=credential.last_verify_error,
         created_at=credential.created_at.isoformat() if credential.created_at else "",
         updated_at=credential.updated_at.isoformat() if credential.updated_at else "",
     )
@@ -97,6 +106,56 @@ async def list_vendor_credentials(
 ) -> list[VendorCredentialResponse]:
     credentials = await _svc.list_all(db, user_id=user["user_id"])
     return [_to_response(c) for c in credentials]
+
+
+class VendorCredentialVerifyResponse(BaseModel):
+    """What the vendor said, and the credential as it now stands."""
+
+    verified: bool
+    error: str | None = None
+    credential: VendorCredentialResponse
+
+
+@router.post("/{credential_id}/verify", response_model=VendorCredentialVerifyResponse)
+@limiter.limit("10/minute")
+async def verify_vendor_credential(
+    request: Request,
+    credential_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> VendorCredentialVerifyResponse:
+    """Ask the vendor whether it still accepts this key (PRJ-10).
+
+    A credential is pasted once and used by a nightly job, so a revocation surfaces
+    as a report that stopped arriving. This makes the question askable, and stores
+    the answer on the row.
+
+    A **refused** key is a 200 carrying `verified: false` — the request worked and the
+    answer is bad news, which is different from the request failing. A vendor that
+    could not be reached is a 503: nothing was learned, and nothing is recorded.
+    """
+    from app.analytics.errors import AnalyticsTransientError
+
+    try:
+        credential, verified, error = await _svc.verify(db, credential_id, user_id=user["user_id"])
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Vendor credential not found") from exc
+    except AnalyticsTransientError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"The vendor could not be reached, so the key was not checked: {exc}",
+        ) from exc
+
+    audit_log(
+        "vendor_credential.verify",
+        user_id=user["user_id"],
+        resource_type="vendor_credential",
+        resource_id=credential.id,
+        detail=f"provider={credential.provider} verified={verified}",
+    )
+    return VendorCredentialVerifyResponse(
+        verified=verified, error=error, credential=_to_response(credential)
+    )
 
 
 @router.delete("/{credential_id}")

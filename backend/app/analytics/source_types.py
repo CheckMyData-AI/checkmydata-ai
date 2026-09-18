@@ -66,3 +66,51 @@ def clamp_backfill_days(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return max(MIN_BACKFILL_DAYS, min(MAX_BACKFILL_DAYS, days))
+
+
+def validated_timezone(value: object) -> str | None:
+    """The IANA zone in *value*, or ``None`` when it names none. Raises on a wrong one.
+
+    One definition, because the zone is written in two places and only one of them
+    used to check it: the connection form's `source_config` (a direct API call goes
+    nowhere near `GA4Config`) and the config parser the collector reads. A zone that
+    cannot be resolved must not be stored — it degrades to the scheduler's clock, which
+    is the A-04 defect the knob exists to close, and it does so silently.
+
+    Raises:
+        ValueError: *value* is a non-empty string that is not an IANA zone name.
+    """
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    if value is None:
+        return None
+    zone = str(value).strip()
+    if not zone:
+        return None
+    try:
+        ZoneInfo(zone)
+    except (ZoneInfoNotFoundError, ValueError, KeyError) as exc:
+        raise ValueError(
+            f"property_timezone {zone!r} is not an IANA timezone name "
+            "(e.g. 'America/Los_Angeles'). An abbreviation or a UTC offset names no "
+            "place, so it cannot say when a day ends there."
+        ) from exc
+    return zone
+
+
+def validated_currency_code(value: object) -> str | None:
+    """The upper-cased ISO-4217 code in *value*, or ``None``. Raises on a wrong one.
+
+    Shape only — the list of live codes belongs to the vendor, not to this repository.
+    Refused rather than dropped: GA4 answers a bad `currencyCode` with a 400, which the
+    taxonomy reads as *invalid-request* and does not retry, so the connection would fail
+    every period of every night with the cause three layers from where it was typed.
+    """
+    if value is None:
+        return None
+    code = str(value).strip().upper()
+    if not code:
+        return None
+    if len(code) != 3 or not code.isalpha():
+        raise ValueError(f"currency_code {code!r} is not a three-letter ISO-4217 code (e.g. 'USD')")
+    return code

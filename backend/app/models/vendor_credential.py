@@ -44,6 +44,15 @@ class VendorCredential(Base):
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     # Non-secret extras surfaced in the UI (e.g. a service account's client_email).
     meta_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # When the vendor was last ASKED about this key, and what it said. Two columns
+    # rather than one so "checked and refused" cannot read as "never checked":
+    # `last_verify_error` is NULL exactly when the attempt at `last_verified_at`
+    # succeeded. A transient failure records neither — an unreachable vendor is no
+    # evidence about a key (PRJ-10).
+    last_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_verify_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

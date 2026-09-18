@@ -63,7 +63,7 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 | GET | `/api/projects/{id}/readiness` | Check project setup readiness |
 | GET | `/api/projects/{id}/pipeline-status` | Unified repo/DB index/code-DB sync running state |
 | GET | `/api/projects/{id}/knowledge-health` | Knowledge freshness panel data |
-| GET | `/api/projects/{id}/sync-history?limit=N` | Recent scheduled daily-sync runs (viewer). Returns `{"runs": [{id, kind, status, trigger, started_at, finished_at, duration_seconds, error, progress_pct}]}`. `started_at` / `finished_at` are ISO-8601 strings or `null`; `error` is the failure message (or `null`); `duration_seconds` is `null` until the run finishes. `limit` clamped to 1–50, default 20. |
+| GET | `/api/projects/{id}/sync-history?limit=N` | Recent scheduled background runs (viewer) — the nightly knowledge sync (`kind: "daily_sync"`) and each analytics connection's collection (`kind: "analytics_collect"`, carrying `connection_id`), newest-first across both. Returns `{"runs": [{id, kind, connection_id, status, trigger, started_at, finished_at, duration_seconds, error, progress_pct}]}`. `started_at` / `finished_at` are ISO-8601 strings or `null`; `error` is the failure message (or `null`); `duration_seconds` is `null` until the run finishes. `limit` clamped to 1–50, default 20. |
 | POST | `/api/projects/access-requests` | Request the privilege to create projects |
 | POST | `/api/projects/{project_id}/sync-now` | Trigger a daily-sync run on demand (editor) |
 | GET | `/api/projects/{project_id}/sync-schedule` | Effective schedule for a project — its override, else the global setting |
@@ -355,6 +355,7 @@ lookups, Fernet-encrypted at rest, **write-only over HTTP**.
 |--------|----------|-------------|
 | POST | `/api/vendor-credentials` | Store a credential (10/min) |
 | GET | `/api/vendor-credentials` | List the caller's credentials |
+| POST | `/api/vendor-credentials/{credential_id}/verify` | Ask the vendor whether it still accepts this key (10/min). One real token refresh — the only probe that tells a revoked key from a vendor hiccup. Returns `{verified, error, credential}`; a **refused** key is a 200 with `verified: false` (the request worked, the answer is bad news), a vendor that could not be reached is **503** and records nothing. The verdict is stored on the credential as `last_verified_at` / `last_verify_error`, where `error` is `null` exactly when that attempt succeeded. |
 | DELETE | `/api/vendor-credentials/{credential_id}` | Delete (10/min); **409** if a connection still references it |
 
 **Create body:**
@@ -657,7 +658,7 @@ Common status codes:
 ## Rate Limiting
 
 Almost every mutating endpoint is rate-limited. Measured against the route tree on
-2026-09-12: **128 mutating routes, 125 carrying `@limiter.limit`, 3 without** —
+2026-09-18: **129 mutating routes, 126 carrying `@limiter.limit`, 3 without** —
 
 | Unthrottled | Why |
 |---|---|

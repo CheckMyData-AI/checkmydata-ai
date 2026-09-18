@@ -278,7 +278,12 @@ async def run_daily_project_knowledge_sync(ctx: dict, *, project_id: str) -> Non
     await DailyKnowledgeSyncService().run_for_project(project_id)
 
 
-async def run_analytics_collect(ctx: dict, *, connection_id: str) -> None:  # noqa: ARG001
+async def run_analytics_collect(
+    ctx: dict,  # noqa: ARG001
+    *,
+    connection_id: str,
+    trigger: str = "schedule",
+) -> None:
     """Collect one analytics connection's reports into its fact tables (spec §3.2).
 
     Dispatched hourly by ``_dispatch_analytics_collect_wave`` in ``app.main``
@@ -290,7 +295,7 @@ async def run_analytics_collect(ctx: dict, *, connection_id: str) -> None:  # no
     from app.services.analytics_collect_service import AnalyticsCollectService
 
     try:
-        outcome = await AnalyticsCollectService().collect(connection_id)
+        outcome = await AnalyticsCollectService().collect(connection_id, trigger=trigger)
     except Exception:
         logger.exception("run_analytics_collect failed for %s", connection_id[:8])
         return

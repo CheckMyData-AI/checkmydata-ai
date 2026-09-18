@@ -190,7 +190,14 @@ async def connection_id(db: AsyncSession) -> str:
         name="ga4-prod",
         source_type="ga4",
         source_config_json=json.dumps(
-            {"property_ids": [PROPERTY_ID], "backfill_days": BACKFILL_DAYS}
+            {
+                "property_ids": [PROPERTY_ID],
+                "backfill_days": BACKFILL_DAYS,
+                # A-04: with the property's timezone known, "yesterday" is the
+                # property's yesterday and the newest period is sealed as done. The
+                # connection WITHOUT one is its own test below.
+                "property_timezone": "Europe/Berlin",
+            }
         ),
     )
     db.add(conn)

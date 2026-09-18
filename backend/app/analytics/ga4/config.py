@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.analytics.errors import AnalyticsAuthError, AnalyticsError
+from app.analytics.source_types import validated_currency_code, validated_timezone
 from app.connectors.base import ConnectionConfig
 
 #: ``ConnectionConfig.extra`` key holding the parsed ``source_config_json`` dict.
@@ -70,12 +71,20 @@ class GA4Config:
             nudges users to name the ones they care about.
         currency_code: ISO-4217 code the vendor converts revenue into. ``None``
             leaves the property's own currency in place.
+        property_timezone: IANA name of the timezone the PROPERTY reports in (A-04).
+            GA4 evaluates a ``date`` in the property's zone, and the collector's
+            "yesterday" was the scheduler's — so a US property's still-running day was
+            collected at 03:00 Europe/Berlin and published as real measurements.
+            ``None`` means the zone is unknown, and the newest period of each run is
+            then journalled ``partial`` rather than done: it is collected, kept, and
+            collected again tomorrow when it is certainly complete.
     """
 
     property_ids: tuple[str, ...]
     backfill_days: int = DEFAULT_BACKFILL_DAYS
     event_names: tuple[str, ...] = ()
     currency_code: str | None = None
+    property_timezone: str | None = None
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> GA4Config:
@@ -116,14 +125,20 @@ class GA4Config:
             raw_events = [raw_events]
         event_names = tuple(str(name).strip() for name in raw_events if str(name).strip())
 
-        currency = data.get("currency_code")
-        currency_code = str(currency).strip().upper() if currency else None
+        # Shape checks shared with the connection route, so a config the API accepted
+        # cannot be one the collector refuses at 03:00 (A-04, A-08).
+        try:
+            currency_code = validated_currency_code(data.get("currency_code"))
+            property_timezone = validated_timezone(data.get("property_timezone"))
+        except ValueError as exc:
+            raise AnalyticsError(f"GA4 {exc}") from exc
 
         return cls(
             property_ids=property_ids,
             backfill_days=backfill_days,
             event_names=event_names,
             currency_code=currency_code,
+            property_timezone=property_timezone,
         )
 
     @classmethod

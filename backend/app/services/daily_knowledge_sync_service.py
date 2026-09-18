@@ -20,7 +20,7 @@ from app.models.connection import Connection
 from app.models.indexing_run import IndexingRun
 from app.models.project import Project
 from app.services.checkpoint_service import CheckpointService
-from app.services.connection_service import ConnectionService
+from app.services.connection_service import ConnectionService, is_analytics_source
 from app.services.project_service import ProjectService
 from app.services.run_coordinator import RunCoordinator, run_beat_by_workflow_or_id
 from app.services.stale_run_reaper import REAP_ERROR
@@ -407,7 +407,16 @@ class DailyKnowledgeSyncService:
         project_id: str,
     ) -> list[Connection]:
         connections = await self._conn_svc.list_by_project(session, project_id)
-        active = [c for c in connections if getattr(c, "is_active", True)]
+        # A-03: a DATABASE. This filtered on `is_active` alone, so the nightly sync ran
+        # the DB-index pipeline against GA4 connections: `to_config` decrypted the vendor
+        # secret for nothing, `get_connector("ga4")` raised "Unsupported adapter", and the
+        # analytics row was left `indexing_status=failed` — a red badge on a source whose
+        # collection had worked perfectly, every night.
+        active = [
+            c
+            for c in connections
+            if getattr(c, "is_active", True) and not is_analytics_source(c.source_type)
+        ]
         active.sort(key=lambda c: c.created_at)
         return active
 

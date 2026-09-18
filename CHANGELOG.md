@@ -6,6 +6,124 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — GA4 tells the truth about what it collected (A-01, A-02, A-03, A-05, A-06, A-09)
+
+Six rows of the 2026-09-13 audit's analytics findings.
+
+- **A-02 — a revoked key was retried for ever and said nothing.** The token refresh runs
+  inside gRPC's metadata plugin, so a deleted or expired service-account key comes back
+  as `InternalServerError`: HTTP 500, which the status mapping reads as a vendor hiccup.
+  Three attempts per period, **~450 doomed refreshes per run, nightly** — and because it
+  never became an auth error the report was never stopped and the `_connect` sentinel
+  never written, so nothing on the rail ever said the key was gone. It is classified by
+  its cause now (the exception, its `__cause__` chain, or gRPC's own wording), and
+  `test_connection` performs one real `refresh()` first: a report request cannot tell a
+  dead key from a slow vendor, and a refresh can.
+- **A-01 — a period one property failed in was journalled `ok`.** `ok` is a *done*
+  status, so that property's data was permanently missing outside the two-period tail —
+  and the tail then overwrote the note that said so, while the agent read the caveat as
+  "the vendor truncated this period", which is a different cause. The journal has
+  `partial` now, deliberately **not** a done status: the rows that arrived are kept and
+  the period stays pending, so the next run fetches the rest.
+- **A-03 — the nightly sync indexed GA4 connections as databases.** `_active_connections`
+  filtered on `is_active` alone, so the DB-index pipeline ran against an analytics row:
+  the vendor secret was decrypted for nothing, `get_connector("ga4")` raised "Unsupported
+  adapter", and the row was left `indexing_status=failed` every night while its
+  collection was working.
+- **A-05 — two collections of one connection could run at once.** `POST /collect` (ten a
+  minute, its own task id since ANA-10) and the hourly wave each spent the property's
+  full daily quota on the same periods, with interleaved sweep `DELETE`s between them.
+  The route's docstring claimed the shared task id prevented this; it had stopped being
+  shared. A per-connection lock now holds for the length of a run.
+- **A-06 — "active users" was added up across days.** GA4 counts distinct users *within*
+  each period, so thirty daily values summed is "visits by a user on separate days", not
+  "users this month" — and the difference is every returning visitor. The tool's own
+  description promised "metrics are summed", so the model had no reason to doubt it.
+  Metrics now declare whether they may be added; a distinct-people metric asked for
+  across periods is **left out** and the answer says why and how to ask for it (by date,
+  or over one period).
+- **A-09 — a period refetched as empty kept its old rows.** The sweep that removes rows a
+  vendor has revised away lives inside `_upsert`, which an empty fetch never reaches, so
+  stale values went on counting into totals published as real measurements.
+
+- **A-07 — the journal prune fought the backfill windows.** It deleted by `fetched_at` —
+  when the row was written — while a connection may ask for up to 3 650 days of history,
+  so a period inside a live window lost its journal row after 400 days, re-entered
+  `pending`, and was collected again: ~3 000 vendor calls at once, past the job's 1 800 s
+  ceiling, every ~400 days, for ever. The age that decides is the **period's** now (a tail
+  refetch rewrites `fetched_at`; the period does not get younger), and the prune is handed
+  the widest window any connection is actually configured for, which it never cuts into.
+
+- **A-11 — a project-wide quota was recorded per property.**
+  `tokens_per_project_per_hour` is spent across every property in the Google Cloud
+  project and GA4 reports it on each property's response; remembering it under the
+  property that observed it left the others spending calls that could only be refused.
+- **A-12 — a new source was invisible to the agent for up to a minute.** "Does this
+  project have an analytics source" was cached for 60 s and nothing cleared it: adding a
+  connection and asking a question inside that minute got an agent with no analytics
+  tool, deleting one got a tool with nothing behind it. The cache is process-wide now
+  and the three routes that change what a project has clear it. Stated rather than
+  implied: `web` and `worker` keep their own, so the TTL is still what bounds the other.
+
+- **A-04 — a day ended on the wrong clock.** GA4 evaluates a `date` in the **property's**
+  timezone; the collector's window ended "yesterday" on the scheduler's
+  (`Europe/Berlin`). A property in Los Angeles was therefore read at 18:00 its own time,
+  with six hours of the day still to happen, and journalled `ok` — a *done* status, so
+  those partial numbers were never collected again and the agent published them as a
+  measurement of a finished day. Self-healing depended entirely on the refetch tail, and
+  `analytics_refetch_tail_periods=0` made it permanent. `property_timezone` is a
+  connection knob now, checked where it is written; without one nothing is guessed — the
+  newest period of the run is journalled `partial`, keeping the rows and keeping the
+  period owed, with a caveat naming the missing knob rather than blaming the vendor. The
+  **refetch tail** is unsettled for its own reason — those periods are re-fetched every
+  run *because* the vendor revises them — and now says so in the note the agent repeats,
+  while keeping a done status: the tail refetches them whatever the status says, and
+  marking them owed would leave every healthy connection reading `partial` for ever. That
+  note is **marked**, not merely written: `error` on a done row already meant "the vendor
+  handed over part of this period", which the agent publishes as a LOWER BOUND, and a
+  number that is merely not final is a different claim. `PROVISIONAL_NOTE_PREFIX` lives
+  once in `app/analytics/journal.py` — the writer and the reader must agree byte for byte
+  — and the answer now carries *"STILL SETTLING … the number may change"* beside, not
+  instead of, the coverage sentence: every one of those periods is collected and counted.
+- **A-08 (GA4 half) — the form promised knobs it did not have.** `GA4Config`'s docstring
+  said the UI "nudges users to name the events they care about" while the form had no
+  such field, so every connection collected every event on the property; `currency_code`
+  was equally unreachable; and the property field edited the first id while carrying the
+  rest invisibly, so a connection collecting three properties looked like one collecting
+  a single property. All four are on the form now — every property id, events, currency,
+  and the timezone above — and the API checks them where they are written: the window is
+  **clamped** (a number has a nearest legal value) while a timezone that names no place
+  and a currency that is not a three-letter code are **refused**, because neither has
+  anything to be corrected to and both otherwise fail nightly in the collector, three
+  layers from the field they were typed into.
+
+### Added — a key can be asked whether it still works, and a collection is a run
+
+- **`POST /api/vendor-credentials/{id}/verify`.** A credential is pasted once and used by
+  a nightly job, so a revocation surfaces as a report that stopped arriving — days later,
+  in a log nobody reads. The probe is one real token refresh, the only thing that tells a
+  dead key from a vendor hiccup, and it asks about the **key** rather than a property, so
+  it answers before the credential is attached to anything. Three outcomes, deliberately
+  distinct: accepted (200, stored with its date), refused (200 `verified: false`, stored
+  **with** the refusal — the request worked and the answer is bad news), unreachable (503,
+  and **nothing** recorded, because an unreachable vendor is no evidence about a key).
+  `last_verified_at` / `last_verify_error` carry the verdict, the second being null
+  exactly when the attempt at the first succeeded — so "checked and refused" can never
+  read as "never checked". The GA4 connection form shows it beside the credential picker,
+  where a key nobody has asked about says so rather than looking approved.
+- **An analytics collection mints an `IndexingRun`.** A nightly call to a third-party API
+  on the project's behalf appeared nowhere a person could look: no heartbeat (so nothing
+  could tell a live collection from a dead one), no row in `/sync-history`, nothing in the
+  active-tasks widget. It is a run of kind `analytics_collect` now — three steps, a
+  heartbeat the reaper reads, its trigger recorded (`schedule` for the wave, `manual` for
+  the button) — and `/sync-history` answers for both kinds. Bookkeeping, never the work: a
+  run row that cannot be written is logged and the collection proceeds. A `partial`
+  outcome **completes** the run; only errors with nothing written fail it.
+
+Seventy-odd tests, each fix verified by planting its defect back. **Not verifiable on
+production:** this deployment has no GA4 connection — the acceptance for these rows is
+the fixture-level end-to-end test, which now also asserts the per-day reading.
+
 ### Fixed — the connection layer stops failing for reasons the user cannot see (C-03…C-11, C-14)
 
 Eight rows of the 2026-09-13 audit's connection findings, each one a failure that named

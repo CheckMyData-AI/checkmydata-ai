@@ -25,7 +25,12 @@ from pydantic import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.analytics.source_types import clamp_backfill_days
+from app.agents.context_loader import invalidate_capability_cache
+from app.analytics.source_types import (
+    clamp_backfill_days,
+    validated_currency_code,
+    validated_timezone,
+)
 from app.api.deps import get_current_user, get_db
 from app.config import settings as app_config
 from app.connectors.exec_templates import validate_new_command_template
@@ -409,6 +414,13 @@ def _validate_source_config(value: dict[str, Any] | None) -> dict[str, Any] | No
     credential, and a 422 on a number the browser would silently have corrected is a
     worse answer than the nearest legal window. A key that is not a window is left
     alone — this bounds what it understands and does not police the rest.
+
+    The other two keys are **refused**, not clamped, because neither has a nearest
+    legal value. A `property_timezone` that resolves to nothing falls back to the
+    scheduler's clock — the A-04 defect the knob exists to close, and silently; a
+    `currency_code` the vendor cannot parse answers 400 on every period of every night,
+    three layers from the form it was typed into. There is nothing to correct them to,
+    so they are rejected where the person can still see what they typed.
     """
     if not value:
         return value
@@ -416,6 +428,10 @@ def _validate_source_config(value: dict[str, Any] | None) -> dict[str, Any] | No
         clamped = clamp_backfill_days(value["backfill_days"])
         if clamped is not None:
             value = {**value, "backfill_days": clamped}
+    if value.get("property_timezone") is not None:
+        value = {**value, "property_timezone": validated_timezone(value["property_timezone"])}
+    if value.get("currency_code") is not None:
+        value = {**value, "currency_code": validated_currency_code(value["currency_code"])}
     return value
 
 
@@ -824,6 +840,10 @@ async def create_connection(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     conn = await _svc.create(db, **body.model_dump())
+    # A-12: the agent's "does this project have an analytics source" answer is cached
+    # for 60 s. Adding one and asking a question inside that minute used to get an agent
+    # with no analytics tool at all.
+    invalidate_capability_cache(body.project_id)
     logger.info(
         "Connection created: name=%s type=%s project=%s",
         body.name,
@@ -980,6 +1000,8 @@ async def update_connection(
     conn = await _svc.update(db, connection_id, **updates)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
+    # A-12: what this project HAS may have just changed (a source type, an activation).
+    invalidate_capability_cache(conn.project_id)
     audit_log(
         "connection.update",
         user_id=user["user_id"],
@@ -1003,6 +1025,7 @@ async def delete_connection(
         raise HTTPException(status_code=404, detail="Connection not found")
     await _membership_svc.require_role(db, conn.project_id, user["user_id"], "owner")
     await _svc.delete(db, connection_id)
+    invalidate_capability_cache(conn.project_id)
     logger.info("Connection deleted: id=%s name=%s", connection_id[:8], conn.name)
     audit_log(
         "connection.delete",
@@ -1788,10 +1811,16 @@ async def collect_now(
 ):
     """Collect this analytics connection's reports now (spec §3.2, §5).
 
-    Enqueues exactly the job the hourly cron enqueues — same task name, same
-    day-scoped ``task_id``, same timeout — so "collect now" and the schedule can
-    never race into two concurrent runs for one connection on one day. The
-    upsert is idempotent regardless; the dedup key saves vendor quota.
+    Enqueues the same job the hourly cron enqueues, with the same timeout. It does
+    **not** share the wave's day-scoped ``task_id`` — ANA-10 gave this route its own,
+    because sharing it meant a manual collect was refused as a duplicate for the rest of
+    the day while this route answered "queued".
+
+    So the two CAN be enqueued at once, and A-05 is what stops them colliding: the
+    service takes a per-connection lock for the length of a run, and a second caller is
+    told the connection is already being collected rather than spending the property's
+    quota on the same periods a second time. This paragraph used to claim the task id
+    prevented that, which it had stopped doing.
 
     Deliberately does **not** check ``collection_enabled``: that flag pauses the
     *schedule*. A user who has paused a connection to stop the nightly wave must
@@ -1819,12 +1848,14 @@ async def collect_now(
     now = datetime.now(ZoneInfo(app_config.daily_knowledge_sync_timezone))
     task_id = f"analytics_collect:manual:{connection_id}:{now.strftime('%Y-%m-%dT%H:%M:%S')}"
 
-    async def _run_in_process(*, connection_id: str = connection_id) -> None:
+    async def _run_in_process(
+        *, connection_id: str = connection_id, trigger: str = "manual"
+    ) -> None:
         # Imported at call time so this module never pulls in the vendor SDKs,
         # and so the in-process fallback resolves the current service class.
         from app.services.analytics_collect_service import AnalyticsCollectService
 
-        await AnalyticsCollectService().collect(connection_id)
+        await AnalyticsCollectService().collect(connection_id, trigger=trigger)
 
     await task_queue.enqueue_or_fail(
         "run_analytics_collect",
@@ -1832,6 +1863,7 @@ async def collect_now(
         task_id=task_id,
         _job_timeout=app_config.analytics_collect_job_timeout_seconds,
         connection_id=connection_id,
+        trigger="manual",
     )
 
     logger.info(

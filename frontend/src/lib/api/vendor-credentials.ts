@@ -17,8 +17,22 @@ export interface VendorCredential {
   provider: string;
   fingerprint: string;
   meta?: Record<string, unknown> | null;
+  /** When the vendor was last asked about this key — null if never. */
+  last_verified_at?: string | null;
+  /**
+   * What the vendor said then. Null exactly when that attempt succeeded, so a
+   * refusal can never be read as "never checked".
+   */
+  last_verify_error?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** The answer to "does the vendor still accept this key?" */
+export interface VendorCredentialVerifyResult {
+  verified: boolean;
+  error?: string | null;
+  credential: VendorCredential;
 }
 
 /** Create payload. `secret` is the only field that is never echoed back. */
@@ -111,6 +125,15 @@ export const vendorCredentials = {
     request<VendorCredential>("/vendor-credentials", {
       method: "POST",
       body: JSON.stringify(data),
+    }),
+  /**
+   * Ask the vendor whether it still accepts this key. A refused key resolves
+   * with `verified: false` — the request worked and the answer is bad news;
+   * only an unreachable vendor rejects.
+   */
+  verify: (id: string) =>
+    request<VendorCredentialVerifyResult>(`/vendor-credentials/${id}/verify`, {
+      method: "POST",
     }),
   delete: (id: string) =>
     request<{ ok: boolean }>(`/vendor-credentials/${id}`, { method: "DELETE" }),

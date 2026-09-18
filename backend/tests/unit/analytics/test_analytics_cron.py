@@ -254,11 +254,11 @@ class TestDispatch:
         monkeypatch.setattr(tq_mod, "_arq_pool", None)
         tq_mod._fallback_tasks.clear()
 
-        collected: list[str] = []
+        collected: list[tuple[str, str]] = []
 
         class FakeService:
-            async def collect(self, connection_id: str):
-                collected.append(connection_id)
+            async def collect(self, connection_id: str, *, trigger: str = "manual"):
+                collected.append((connection_id, trigger))
                 return collect_mod.CollectOutcome()
 
         monkeypatch.setattr(collect_mod, "AnalyticsCollectService", FakeService)
@@ -269,7 +269,9 @@ class TestDispatch:
                 break
             await asyncio.sleep(0.01)
 
-        assert collected == [conn_id]
+        # The trigger rides along because the run row it mints is read by a person:
+        # "the schedule did this" and "I pressed the button" are different answers.
+        assert collected == [(conn_id, "schedule")]
 
     async def test_same_day_double_dispatch_runs_one_job(
         self, session_factory, project_id: str, monkeypatch: pytest.MonkeyPatch
@@ -287,7 +289,7 @@ class TestDispatch:
         release = asyncio.Event()
 
         class SlowService:
-            async def collect(self, connection_id: str):
+            async def collect(self, connection_id: str, *, trigger: str = "manual"):
                 nonlocal started
                 started += 1
                 await release.wait()
@@ -414,18 +416,20 @@ class TestWorkerJob:
         import app.services.analytics_collect_service as collect_mod
 
         worker_mod = _worker_module(monkeypatch)
-        collected: list[str] = []
+        collected: list[tuple[str, str]] = []
 
         class FakeService:
-            async def collect(self, connection_id: str):
-                collected.append(connection_id)
+            async def collect(self, connection_id: str, *, trigger: str = "manual"):
+                collected.append((connection_id, trigger))
                 return collect_mod.CollectOutcome(rows_written=3, periods_ok=1)
 
         monkeypatch.setattr(collect_mod, "AnalyticsCollectService", FakeService)
 
         await worker_mod.run_analytics_collect({}, connection_id="conn-9")
 
-        assert collected == ["conn-9"]
+        assert collected == [("conn-9", "schedule")], (
+            "a job enqueued without a trigger came from the wave"
+        )
 
     async def test_job_never_raises_out_of_the_worker(self, monkeypatch: pytest.MonkeyPatch):
         """An unhandled exception would poison the ARQ worker's job slot."""
@@ -434,7 +438,7 @@ class TestWorkerJob:
         worker_mod = _worker_module(monkeypatch)
 
         class ExplodingService:
-            async def collect(self, connection_id: str):
+            async def collect(self, connection_id: str, *, trigger: str = "manual"):
                 raise RuntimeError("database is on fire")
 
         monkeypatch.setattr(collect_mod, "AnalyticsCollectService", ExplodingService)

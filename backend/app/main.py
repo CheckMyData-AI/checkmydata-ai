@@ -1183,13 +1183,15 @@ async def _dispatch_analytics_collect_wave(at: datetime | None = None) -> None:
             for conn_id in due_ids:
                 cid = conn_id
 
-                async def _run_in_process(*, connection_id: str = cid) -> None:
+                async def _run_in_process(
+                    *, connection_id: str = cid, trigger: str = "schedule"
+                ) -> None:
                     # Imported inside so the in-process fallback resolves the
                     # service at call time (and so importing main.py does not
                     # pull in the vendor SDKs).
                     from app.services.analytics_collect_service import AnalyticsCollectService
 
-                    await AnalyticsCollectService().collect(connection_id)
+                    await AnalyticsCollectService().collect(connection_id, trigger=trigger)
 
                 job_id = await task_queue.enqueue(
                     "run_analytics_collect",
@@ -1197,6 +1199,7 @@ async def _dispatch_analytics_collect_wave(at: datetime | None = None) -> None:
                     task_id=f"analytics_collect:{cid}:{run_date}",
                     _job_timeout=settings.analytics_collect_job_timeout_seconds,
                     connection_id=cid,
+                    trigger="schedule",
                 )
                 # OPS-17, same as the knowledge wave: a connection whose enqueue failed is
                 # not a connection that was collected, and this line is the only record.
@@ -1754,7 +1757,15 @@ async def _prune_analytics_journal() -> None:
 
     try:
         async with async_session_factory() as session:
-            await journal.prune(session, older_than_days=settings.analytics_journal_retention_days)
+            # A-07: never inside a window somebody is still collecting. A pruned
+            # period re-enters `pending` and is fetched again — ~3 000 vendor calls at
+            # once for a multi-year backfill, past the job's own ceiling.
+            protect = await journal.widest_live_window_days(session)
+            await journal.prune(
+                session,
+                older_than_days=settings.analytics_journal_retention_days,
+                protect_days=protect,
+            )
     except Exception:
         logger.warning("Analytics journal prune failed", exc_info=True)
 

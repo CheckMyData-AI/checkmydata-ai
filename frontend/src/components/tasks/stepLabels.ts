@@ -36,6 +36,9 @@ export const STEP_LABELS: Record<string, string> = {
   analyze_sync: "Analyze Code-DB",
   store_sync: "Store Results",
   generate_sync_summary: "Generate Summary",
+  // analytics_collect: one connection's nightly pull from a vendor API.
+  connect: "Connect to Vendor",
+  collect_reports: "Collect Reports",
   plan_targets: "Plan Targets",
   freshness_reconcile: "Freshness Reconcile",
   summarize: "Summarize",

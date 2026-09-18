@@ -68,12 +68,20 @@ class AnalyticsReport:
             only the fetch knows.
         degraded: Human-readable reason the data is partial, surfaced verbatim in
             the answer's caveat. ``None`` when the report is complete.
+        incomplete: One of the sources this report unions did not answer, so the
+            period owes another attempt. The journal records it as ``partial``,
+            which is deliberately NOT a done status.
     """
 
     columns: list[str] = field(default_factory=list)
     rows: list[list[Any]] = field(default_factory=list)
     truncated: bool = False
     degraded: str | None = None
+    #: A source the report should have covered did not answer (A-01). Distinct from
+    #: ``truncated``, which means "more rows exist behind a cap": this means one of the
+    #: properties is missing entirely, so the period is not finished and must be
+    #: collected again — the rows present are real, and they are not all of them.
+    incomplete: bool = False
 
 
 class AnalyticsSourceAdapter(DataSourceAdapter):

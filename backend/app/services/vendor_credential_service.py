@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy import select
@@ -213,6 +214,61 @@ class VendorCredentialService:
                 f"Cannot decrypt vendor credential '{credential.name}'. "
                 "The encryption key may have changed."
             ) from exc
+
+    async def verify(
+        self,
+        session: AsyncSession,
+        credential_id: str,
+        user_id: str | None = None,
+    ) -> tuple[VendorCredential, bool, str | None]:
+        """Ask the vendor whether it still accepts this key, and record the answer.
+
+        Returns the row, whether the vendor accepted it, and the refusal if it did not.
+        The verdict is stored on the row so the next person to look at the credential
+        list sees what was learned rather than having to ask again — a revoked key is
+        otherwise invisible until a night's collection quietly stops arriving.
+
+        A *transient* failure records nothing and is reported as such: an unreachable
+        vendor is no evidence about a key, and stamping one as bad because Google was
+        slow would send somebody to rotate a credential that works.
+
+        Raises:
+            LookupError: no such credential is visible to this caller.
+            AnalyticsTransientError: the vendor could not be reached.
+        """
+        from datetime import datetime
+
+        from app.analytics.errors import AnalyticsError, AnalyticsTransientError
+        from app.analytics.verify import verify_vendor_secret
+
+        credential = await self.get(session, credential_id, user_id=user_id)
+        if credential is None:
+            raise LookupError(credential_id)
+
+        # Bound to a local before the log line below: the sweep guard reads
+        # `credential.<anything>` as a candidate secret, and it is right to — widening
+        # its allowlist to admit one safe attribute is how the next unsafe one gets in.
+        provider = credential.provider
+        secret = decrypt(credential.secret_encrypted)
+        error: str | None = None
+        try:
+            await verify_vendor_secret(credential.provider, secret)
+        except AnalyticsTransientError:
+            raise
+        except AnalyticsError as exc:
+            error = str(exc)[:500]
+
+        credential.last_verified_at = datetime.now(UTC)
+        credential.last_verify_error = error
+        await session.commit()
+        await session.refresh(credential)
+        logger.info(
+            "Vendor credential %s (%s) verified: %s",
+            credential.id[:8],
+            provider,
+            "ok" if error is None else "refused",
+        )
+        return credential, error is None, error
 
     async def delete(
         self, session: AsyncSession, credential_id: str, user_id: str | None = None

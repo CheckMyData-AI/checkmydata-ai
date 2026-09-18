@@ -38,11 +38,13 @@ without a credential or a socket.
 
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 import json
 import logging
 import uuid
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -67,7 +69,7 @@ from app.analytics.outcome import CollectOutcome
 # ANALYTICS_SOURCE_TYPES from here. The definition moved to the import-light
 # ``app.analytics.source_types`` so the agent side can read it without paying
 # for the GA4 client libraries this module pulls in; the old path keeps working.
-from app.analytics.source_types import ANALYTICS_SOURCE_TYPES
+from app.analytics.source_types import ANALYTICS_SOURCE_TYPES, validated_timezone
 from app.config import settings
 from app.connectors.base import ConnectionConfig
 from app.models.analytics_ga4 import (
@@ -79,6 +81,7 @@ from app.models.analytics_ga4 import (
 )
 from app.models.analytics_import import AnalyticsImport
 from app.models.connection import Connection
+from app.models.indexing_run import IndexingRun
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +134,12 @@ class _QuotaWallError(Exception):
 #: its own dimensions; the revised-away sweep (ANA-12) deletes inside one of
 #: these scopes and never across them.
 _SWEEP_SCOPE_COLUMNS: tuple[str, ...] = ("property_id", "date")
+
+#: How long one connection's collection may hold its turn (A-05). Above the job's own
+#: ceiling (`analytics_collect_job_timeout_seconds`, 1800 s) so a run that is still
+#: working never loses the lock to a second caller, and finite so a killed process
+#: cannot lock a connection out for ever.
+_COLLECT_LOCK_TTL_SECONDS = 2400
 
 #: GA4 report name -> fact table (spec §1.4). Keys must match
 #: :data:`app.analytics.ga4.reports.GA4_REPORTS`;
@@ -254,7 +263,8 @@ class AnalyticsCollectService:
             tests so the whole loop runs against a fake vendor; production uses
             :func:`build_adapter`.
         today: Supplies the current date in the scheduler's timezone. Injected
-            so the expected-period window is deterministic in tests.
+            so the expected-period window is deterministic in tests, and an
+            injected clock answers for every property timezone (A-04).
         refetch_tail_periods: How many recent periods are refetched even when
             already ``ok``. Defaults to ``settings.analytics_refetch_tail_periods``.
     """
@@ -268,6 +278,11 @@ class AnalyticsCollectService:
     ) -> None:
         self._adapter_factory = adapter_factory or (lambda conn: build_adapter(conn.source_type))
         self._today = today or _today_in_schedule_timezone
+        #: An injected clock answers for every timezone. A caller that pins the date is
+        #: stating what day it is, and a date carries no time of day to convert — so
+        #: `_today_for` honours it rather than re-reading the real clock in the
+        #: property's zone. Production never injects one.
+        self._clock_is_pinned = today is not None
         self._tail = (
             refetch_tail_periods
             if refetch_tail_periods is not None
@@ -276,14 +291,64 @@ class AnalyticsCollectService:
 
     # -- entry points -----------------------------------------------------
 
-    async def collect(self, connection_id: str) -> CollectOutcome:
-        """Collect one connection, owning the session. The worker job's entry point."""
+    async def collect(self, connection_id: str, *, trigger: str = "manual") -> CollectOutcome:
+        """Collect one connection, owning the session and the connection's turn (A-05).
+
+        `POST /connections/{id}/collect` and the hourly wave could run the same
+        connection at the same time — the route allows ten a minute and mints a task id
+        per second — and each spends the property's full daily quota on the same periods.
+        The route's own docstring said the opposite. One at a time per connection now;
+        a second caller is told so rather than queued, because the work it wanted is
+        already being done.
+
+        Without Redis (dev, single process) `redis_lock` yields True and this is a
+        no-op, which is the right answer there: there is one process to collide with.
+        """
+        from app.core.distributed_lock import redis_lock
         from app.models.base import async_session_factory
 
-        async with async_session_factory() as session:
-            return await self.collect_in_session(session, connection_id)
+        async with redis_lock(
+            f"analytics:collect:{connection_id}", ttl_seconds=_COLLECT_LOCK_TTL_SECONDS
+        ) as acquired:
+            if not acquired:
+                logger.info(
+                    "Analytics collect: connection %s is already being collected; skipping",
+                    connection_id[:8],
+                )
+                outcome = CollectOutcome()
+                outcome.errors.append("this connection is already being collected")
+                return outcome
+            async with async_session_factory() as session:
+                # PRJ-10: the collection is a background run like any other, so it
+                # mints an `IndexingRun` — which is what makes it visible in
+                # `/sync-history` and to the active-tasks widget, and what gives it a
+                # heartbeat the reaper reads. Bookkeeping, never the work: a run row
+                # that cannot be written is logged and the collection proceeds.
+                run = await self._start_run(session, connection_id, trigger=trigger)
+                if run is None:
+                    return await self.collect_in_session(session, connection_id)
 
-    async def collect_in_session(self, session: AsyncSession, connection_id: str) -> CollectOutcome:
+                from app.core.heartbeat import heartbeat
+                from app.services.run_coordinator import run_beat_by_workflow_or_id
+
+                beat = run_beat_by_workflow_or_id(run.id)
+                try:
+                    async with heartbeat(
+                        beat, interval_seconds=settings.heartbeat_interval_seconds
+                    ):
+                        outcome = await self.collect_in_session(session, connection_id, run=run)
+                except Exception as exc:
+                    await self._finish_run(session, run, None, error=str(exc))
+                    raise
+                await self._finish_run(session, run, outcome)
+                return outcome
+
+    async def collect_in_session(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+        run: IndexingRun | None = None,
+    ) -> CollectOutcome:
         """Collect one connection using *session*.
 
         The session is committed repeatedly — once per period, by
@@ -335,21 +400,61 @@ class AnalyticsCollectService:
         except ValueError as exc:
             return await self._fail_connection(session, conn, outcome, str(exc))
 
-        try:
-            config = await self._build_config(session, conn)
-            await adapter.connect(config)
-        except AnalyticsError as exc:
+        connect_error: AnalyticsError | None = None
+        async with self._run_step(session, run, "connect"):
+            try:
+                config = await self._build_config(session, conn)
+                await adapter.connect(config)
+            except AnalyticsError as exc:
+                # Caught inside the step rather than raised through it: a bad
+                # credential is this run's ANSWER, not a crash, and it belongs on the
+                # connection (the `_connect` sentinel) where the UI reads it.
+                connect_error = exc
+        if connect_error is not None:
             # A bad credential or unusable knobs: nothing can be collected and no
             # period is at fault, so the verdict goes on the connection itself.
-            logger.warning("Analytics collect: connect failed for %s: %s", conn.id[:8], exc)
-            return await self._fail_connection(session, conn, outcome, f"{conn.name}: {exc}")
+            logger.warning(
+                "Analytics collect: connect failed for %s: %s", conn.id[:8], connect_error
+            )
+            return await self._fail_connection(
+                session, conn, outcome, f"{conn.name}: {connect_error}"
+            )
 
         # The connection works. Drop any sentinel a previous run left behind, so
         # a fixed credential stops showing yesterday's banner.
         await self._clear_connect_failure(session, conn.id)
 
+        async with self._run_step(session, run, "collect_reports"):
+            await self._collect_every_report(
+                session, adapter=adapter, conn=conn, tables=tables, outcome=outcome
+            )
+
+        async with self._run_step(session, run, "summarize"):
+            logger.info(
+                "Analytics collect finished: connection=%s status=%s rows=%d ok=%d "
+                "empty=%d errors=%d",
+                conn.id[:8],
+                outcome.status,
+                outcome.rows_written,
+                outcome.periods_ok,
+                outcome.periods_empty,
+                len(outcome.errors),
+            )
+        return outcome
+
+    async def _collect_every_report(
+        self,
+        session: AsyncSession,
+        *,
+        adapter: AnalyticsSourceAdapter,
+        conn: Connection,
+        tables: Mapping[str, FactTable],
+        outcome: CollectOutcome,
+    ) -> None:
+        """Walk this connection's reports, and always hand the adapter back."""
         try:
             backfill_days = self._backfill_days(conn)
+            today, timezone_known = self._today_for(conn)
             for spec in adapter.available_reports():
                 try:
                     await self._collect_report(
@@ -360,6 +465,8 @@ class AnalyticsCollectService:
                         grain=spec.grain,
                         table=tables.get(spec.name),
                         backfill_days=backfill_days,
+                        today=today,
+                        timezone_known=timezone_known,
                         outcome=outcome,
                     )
                 except _QuotaWallError:
@@ -377,17 +484,6 @@ class AnalyticsCollectService:
                     break
         finally:
             await adapter.disconnect()
-
-        logger.info(
-            "Analytics collect finished: connection=%s status=%s rows=%d ok=%d empty=%d errors=%d",
-            conn.id[:8],
-            outcome.status,
-            outcome.rows_written,
-            outcome.periods_ok,
-            outcome.periods_empty,
-            len(outcome.errors),
-        )
-        return outcome
 
     # -- connection-level verdicts (H3) ------------------------------------
 
@@ -477,6 +573,8 @@ class AnalyticsCollectService:
         grain: Grain,
         table: FactTable | None,
         backfill_days: int,
+        today: dt.date,
+        timezone_known: bool,
         outcome: CollectOutcome,
     ) -> None:
         """Fetch and store every pending period of one report.
@@ -505,7 +603,7 @@ class AnalyticsCollectService:
             outcome.errors.append(message)
             return
 
-        expected = period_range(grain, backfill_days=backfill_days, today=self._today())
+        expected = period_range(grain, backfill_days=backfill_days, today=today)
         pending = await journal.pending_periods(
             session,
             connection_id=conn.id,
@@ -520,6 +618,19 @@ class AnalyticsCollectService:
             try:
                 fetched = await adapter.fetch(report, period)
             except AnalyticsEmpty as exc:
+                # A-09: a period that comes back empty on a REFETCH has been revised to
+                # nothing, and the rows already stored for it are no longer true. The
+                # sweep that handles revisions lives inside `_upsert`, which an empty
+                # fetch never reaches, so those rows survived and kept counting into
+                # totals published as real measurements.
+                removed = await self._delete_period_rows(session, conn.id, table, grain, period)
+                if removed:
+                    logger.info(
+                        "Analytics collect: %s %s came back empty; removed %d stale row(s)",
+                        report,
+                        period,
+                        removed,
+                    )
                 await journal.record(
                     session,
                     connection_id=conn.id,
@@ -621,15 +732,50 @@ class AnalyticsCollectService:
             # A ``degraded`` sentence rides along in ``error`` on an otherwise
             # ``ok`` row: the status is the verdict, the text is the caveat the
             # agent has to repeat when it quotes this period.
+            # A-04: the newest period of a run whose property timezone is unknown is
+            # provisional. "Yesterday" was computed on the scheduler's clock, and a
+            # property further west may still be living in it — so the rows are kept and
+            # the period is collected again tomorrow rather than sealed as done today.
+            provisional = not timezone_known and period == expected[-1]
+            # And the refetch tail is provisional by construction: those periods are
+            # re-fetched on every run BECAUSE the vendor revises them (GA4 settles within
+            # ~48 h), so a number quoted from one may change tomorrow. The status stays a
+            # done one — the period was collected in full and the tail refetches it
+            # regardless of status, so marking it owed would leave every connection
+            # permanently `partial` — and the caveat rides in the note, which is what the
+            # agent repeats when it quotes the period.
+            in_tail = self._tail > 0 and period in expected[-self._tail :]
+            # A-01: `partial` when a source this period should have covered did not
+            # answer. The rows written are kept — they are real — and the period stays
+            # pending, so the next run fetches the rest instead of leaving a hole below
+            # the high-water mark that only the two-period tail could ever have filled.
             await journal.record(
                 session,
                 connection_id=conn.id,
                 report=report,
                 period=period,
-                status="ok",
+                status="partial" if (fetched.incomplete or provisional) else "ok",
                 rows_written=written,
-                error=fetched.degraded,
+                error=(
+                    fetched.degraded
+                    or (
+                        "collected before this period was certainly over: this "
+                        "connection has no property_timezone, so the day was judged on "
+                        "the scheduler's clock. It will be collected again."
+                        if provisional
+                        else (
+                            f"{journal.PROVISIONAL_NOTE_PREFIX} the vendor still "
+                            "revises this period, and it is re-collected on every run "
+                            "until it leaves the refetch tail."
+                            if in_tail
+                            else None
+                        )
+                    )
+                ),
             )
+            if fetched.incomplete:
+                reason = fetched.degraded or "a source did not answer"
+                outcome.errors.append(f"{conn.name}/{report} {period}: {reason}")
             outcome.periods_ok += 1
             outcome.rows_written += written
 
@@ -679,6 +825,48 @@ class AnalyticsCollectService:
         await self._sweep_revised_away(session, connection_id, table, values)
         await session.flush()
         return len(values)
+
+    @staticmethod
+    async def _delete_period_rows(
+        session: AsyncSession,
+        connection_id: str,
+        table: FactTable,
+        grain: Grain,
+        period: str,
+    ) -> int:
+        """Remove one period's rows for one connection (A-09). Returns how many.
+
+        Only called when the vendor has just said the period has no data at all: a
+        per-property failure raises its own error and never lands here, so this cannot
+        turn one property's outage into data loss.
+        """
+        from sqlalchemy import and_, delete
+
+        model = table.model
+        date_column = getattr(model, "date", None)
+        if date_column is None:  # pragma: no cover - every fact table has one today
+            return 0
+        try:
+            if grain == "monthly":
+                year, month = (int(part) for part in period.split("-", 1))
+                first = dt.date(year, month, 1)
+                last = dt.date(year, month, calendar.monthrange(year, month)[1])
+            else:
+                first = last = dt.date.fromisoformat(period)
+        except (TypeError, ValueError):
+            return 0
+        result = await session.execute(
+            delete(model).where(
+                and_(
+                    model.connection_id == connection_id,
+                    date_column >= first,
+                    date_column <= last,
+                )
+            )
+        )
+        await session.flush()
+        # `rowcount` is on the DBAPI cursor result; the typed `Result` does not declare it.
+        return int(getattr(result, "rowcount", 0) or 0)
 
     @staticmethod
     async def _sweep_revised_away(
@@ -791,6 +979,185 @@ class AnalyticsCollectService:
         from app.services.vendor_credential_service import VendorCredentialService
 
         return await VendorCredentialService().get_decrypted(session, credential_id, user_id=None)
+
+    # -- run bookkeeping ---------------------------------------------------
+
+    async def _start_run(
+        self, session: AsyncSession, connection_id: str, *, trigger: str
+    ) -> IndexingRun | None:
+        """Mint the run row for this collection, or ``None`` when it cannot be minted.
+
+        Returns ``None`` for every failure, deliberately: a collection that cannot be
+        journalled as a run is still a collection worth doing, and refusing to collect
+        because the bookkeeping failed is the worse outcome. A run already active for
+        this connection gets the same answer — the A-05 lock has let only one caller
+        through, and a second row would violate `uq_indexing_runs_active_one` anyway.
+        """
+        from app.services.run_coordinator import RunAlreadyActiveError, RunCoordinator
+
+        conn = await session.get(Connection, connection_id)
+        if conn is None:
+            return None
+        try:
+            return await RunCoordinator().start(
+                session,
+                kind="analytics_collect",
+                project_id=conn.project_id,
+                connection_id=connection_id,
+                trigger=trigger,
+            )
+        except RunAlreadyActiveError:
+            logger.info(
+                "Analytics collect: connection %s already has an active run; "
+                "collecting without a second one",
+                connection_id[:8],
+            )
+            return None
+        except Exception:
+            logger.warning(
+                "Analytics collect: could not mint a run row for connection %s; "
+                "collecting anyway (invisible to sync-history)",
+                connection_id[:8],
+                exc_info=True,
+            )
+            return None
+
+    async def _finish_run(
+        self,
+        session: AsyncSession,
+        run: IndexingRun,
+        outcome: CollectOutcome | None,
+        *,
+        error: str | None = None,
+    ) -> None:
+        """Close the run with the outcome's own verdict.
+
+        `partial` is **completed**: rows were written, and the periods still owed are
+        owed in the journal, which is where pending is computed from. Only `failed` —
+        errors with nothing written — fails the run, because that is the one a person
+        has to do something about.
+        """
+        from app.services.run_coordinator import RunCoordinator
+
+        status = "failed" if outcome is None or outcome.status == "failed" else "completed"
+        detail = error
+        if detail is None and outcome is not None and outcome.errors:
+            detail = "; ".join(outcome.errors)[:1000]
+        try:
+            run.meta_json = json.dumps(
+                {
+                    "status": outcome.status if outcome else "failed",
+                    "rows_written": outcome.rows_written if outcome else 0,
+                    "periods_ok": outcome.periods_ok if outcome else 0,
+                    "periods_empty": outcome.periods_empty if outcome else 0,
+                    "errors": (outcome.errors if outcome else [])[:20],
+                },
+                default=str,
+            )
+            await RunCoordinator().finish(
+                session,
+                run,
+                status,
+                error=detail,
+                failure_kind="fatal" if status == "failed" else None,
+            )
+        except Exception:
+            logger.warning("Analytics collect: could not close run %s", run.id[:8], exc_info=True)
+
+    @asynccontextmanager
+    async def _run_step(
+        self, session: AsyncSession, run: IndexingRun | None, step_key: str
+    ) -> AsyncIterator[None]:
+        """Run the body as one journalled step of *run*, or plainly when there is none.
+
+        The coordinator's `step` is a context manager because it times the body and
+        beats the heartbeat while it runs — which is what keeps a long collection from
+        being reaped. Bookkeeping that fails must not take the collection with it, so
+        entering and leaving are both guarded; the body's own exceptions are not.
+        """
+        if run is None:
+            yield
+            return
+        from app.services.run_coordinator import RunCoordinator
+
+        step = RunCoordinator().step(session, run, step_key)
+        try:
+            await step.__aenter__()
+        except Exception:
+            # WARNING, not debug: the collection proceeds, but this step will never
+            # appear on the run, so somebody reading the run's progress is looking at a
+            # gap that has a cause. A quiet fallback the reader cannot tell from
+            # "nothing happened" is the shape the silent-failure ratchet exists to stop.
+            logger.warning(
+                "Analytics collect: step %s could not be opened; the collection "
+                "continues but this step is missing from the run",
+                step_key,
+                exc_info=True,
+            )
+            yield
+            return
+
+        async def _close(exc: BaseException | None) -> bool:
+            """Leave the step, and never let the leaving be the thing that fails."""
+            try:
+                if exc is None:
+                    await step.__aexit__(None, None, None)
+                    return False
+                return bool(await step.__aexit__(type(exc), exc, exc.__traceback__))
+            except Exception:
+                logger.warning(
+                    "Analytics collect: step %s could not be closed; the run's progress "
+                    "will read as stuck on it",
+                    step_key,
+                    exc_info=True,
+                )
+                return False
+
+        try:
+            yield
+        except BaseException as exc:
+            if not await _close(exc):
+                raise
+        else:
+            await _close(None)
+
+    def _today_for(self, conn: Connection) -> tuple[dt.date, bool]:
+        """Today in the PROPERTY's timezone, and whether that zone is known (A-04).
+
+        GA4 evaluates a `date` in the property's own timezone. The window ended
+        "yesterday" in the scheduler's (`Europe/Berlin`), so a US property's day was
+        collected at 03:00 Berlin — 18:00 the previous day in Los Angeles, with six
+        hours of it still to happen — and journalled `ok`: published as a real
+        measurement of a day that had not finished.
+
+        Returns the date and whether it can be trusted. An unknown zone is not guessed:
+        the caller marks that run's newest period `partial`, so it is kept and collected
+        again tomorrow, when it is complete wherever the property lives. A pinned clock
+        (tests) wins over the zone — it states the date outright, and a date has no time
+        of day to convert.
+        """
+        from zoneinfo import ZoneInfo
+
+        raw = _decode_source_config(conn).get("property_timezone")
+        try:
+            # The same check the API and the config parser run, so a zone that would be
+            # refused at the form cannot quietly survive in a row written before it.
+            zone = validated_timezone(raw)
+        except ValueError:
+            # A stored row can predate that validation. An unusable zone is not trusted —
+            # it degrades exactly like an absent one rather than taking the run down.
+            logger.warning(
+                "Connection %s has an unusable property_timezone (%r); "
+                "falling back to the scheduler's clock",
+                conn.id[:8],
+                raw,
+            )
+            return self._today(), False
+        if not zone:
+            return self._today(), False
+        if self._clock_is_pinned:
+            return self._today(), True
+        return dt.datetime.now(ZoneInfo(zone)).date(), True
 
     def _backfill_days(self, conn: Connection) -> int:
         """The connection's backfill window, falling back to the global default."""

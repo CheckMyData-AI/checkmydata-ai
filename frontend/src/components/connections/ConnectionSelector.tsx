@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type Connection, type ConnectionSourceConfig } from "@/lib/api";
 import { useAppStore } from "@/stores/app-store";
 import { confirmAction } from "@/components/ui/ConfirmModal";
@@ -56,7 +56,10 @@ interface ConnectionSelectorProps {
 
 const EMPTY_ANALYTICS_FORM = {
   vendor_credential_id: "",
-  property_id: "",
+  property_ids: "",
+  property_timezone: "",
+  event_names: "",
+  currency_code: "",
   backfill_days: "30",
   collection_hour: "3",
   collection_enabled: true,
@@ -64,27 +67,54 @@ const EMPTY_ANALYTICS_FORM = {
 
 type AnalyticsFormState = typeof EMPTY_ANALYTICS_FORM;
 
+/**
+ * A comma- or newline-separated list as a list. Blanks dropped, order kept,
+ * duplicates collapsed — the same id twice would collect the same property twice.
+ */
+function splitList(raw: string): string[] {
+  const seen = new Set<string>();
+  return raw
+    .split(/[\s,;]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0 && !seen.has(token) && seen.add(token) !== undefined);
+}
+
+function joinList(value: unknown): string {
+  return Array.isArray(value)
+    ? value.filter((v) => typeof v === "string" && v).join(", ")
+    : "";
+}
+
 function analyticsFormFromConnection(c: Connection): AnalyticsFormState {
+  const config = c.source_config ?? null;
   return {
     vendor_credential_id: c.vendor_credential_id ?? "",
-    property_id: c.source_config?.property_ids?.[0] ?? "",
-    backfill_days: String(c.source_config?.backfill_days ?? 30),
+    // Every property, not the first: the form used to show one and carry the rest
+    // invisibly, so a connection collecting three looked like a connection
+    // collecting one (A-08).
+    property_ids: joinList(config?.property_ids),
+    property_timezone:
+      typeof config?.property_timezone === "string" ? config.property_timezone : "",
+    event_names: joinList(config?.event_names),
+    currency_code:
+      typeof config?.currency_code === "string" ? config.currency_code : "",
+    backfill_days: String(config?.backfill_days ?? 30),
     collection_hour: String(c.collection_hour ?? 3),
     collection_enabled: c.collection_enabled ?? true,
   };
 }
 
-/**
- * Property ids the form does not show. The form edits one property; a
- * connection may collect several, and a save must not delete the rest.
- */
-function trailingPropertyIds(
-  config: ConnectionSourceConfig | null,
-  edited: string,
-): string[] {
-  const ids = config?.property_ids;
-  if (!Array.isArray(ids)) return [];
-  return ids.slice(1).filter((id) => typeof id === "string" && id && id !== edited);
+/** IANA zone names this browser knows, or null where it cannot say. */
+function knownTimeZones(): Set<string> | null {
+  const supported = (
+    Intl as unknown as { supportedValuesOf?: (key: string) => string[] }
+  ).supportedValuesOf;
+  if (typeof supported !== "function") return null;
+  try {
+    return new Set(supported.call(Intl, "timeZone"));
+  } catch {
+    return null;
+  }
 }
 
 function safeInt(raw: string, fallback: number, min: number, max: number): number {
@@ -143,6 +173,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const [ga4Credentials, setGa4Credentials] = useState<VendorCredential[]>([]);
   const [credentialsLoading, setCredentialsLoading] = useState(false);
   const [credentialsError, setCredentialsError] = useState<string | null>(null);
+  const [verifyingCredential, setVerifyingCredential] = useState(false);
   const [showNewCredential, setShowNewCredential] = useState(false);
   const [credentialInvalid, setCredentialInvalid] = useState(false);
   const [propertyInvalid, setPropertyInvalid] = useState(false);
@@ -447,12 +478,55 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
     (c) => c.id === analyticsForm.vendor_credential_id,
   );
   const formIsOpen = showCreate || editingId !== null;
-  // Properties this connection collects that the single property field cannot
-  // show. They survive a save, and saying so beats a silent hidden value.
-  const carriedPropertyIds = trailingPropertyIds(
-    sourceConfigBase,
-    analyticsForm.property_id.trim(),
-  );
+  // Suggestions only, and **narrowed to what has been typed**: the browser knows ~420
+  // zones and rendering them all put that many nodes in the document on every keystroke,
+  // which was enough to slow the whole form past a sibling test's wait. The server is
+  // what refuses a zone that names no place, so this list never gates a save.
+  const timeZoneOptions = useMemo(() => {
+    const typed = analyticsForm.property_timezone.trim().toLowerCase();
+    const zones = knownTimeZones();
+    if (!zones) return [];
+    const matches = Array.from(zones).filter((zone) =>
+      typed ? zone.toLowerCase().includes(typed) : false,
+    );
+    return matches.slice(0, 8);
+  }, [analyticsForm.property_timezone]);
+
+  /**
+   * What the vendor last said about this key. A key nobody has asked about says so
+   * rather than looking approved — "no news" and "good news" must not render alike.
+   */
+  const credentialVerdict = (credential: VendorCredential): string => {
+    if (!credential.last_verified_at) return "Never checked with Google.";
+    const when = new Date(credential.last_verified_at).toLocaleString();
+    return credential.last_verify_error
+      ? `Google refused this key on ${when}: ${credential.last_verify_error}`
+      : `Google accepted this key on ${when}.`;
+  };
+
+  const handleVerifyCredential = async (credentialId: string) => {
+    setVerifyingCredential(true);
+    try {
+      const result = await vendorCredentials.verify(credentialId);
+      if (!mountedRef.current) return;
+      setGa4Credentials((prev) =>
+        prev.map((c) => (c.id === credentialId ? result.credential : c)),
+      );
+      toast(
+        result.verified
+          ? "Google accepted this key."
+          : `Google refused this key: ${result.error ?? "no reason given"}`,
+        result.verified ? "success" : "error",
+      );
+    } catch (err) {
+      if (!mountedRef.current) return;
+      // A 503: the vendor could not be reached, so nothing was learned — and the
+      // stored verdict is deliberately left as it was.
+      toast(err instanceof Error ? err.message : "Could not check the key", "error");
+    } finally {
+      if (mountedRef.current) setVerifyingCredential(false);
+    }
+  };
 
   const loadGa4Credentials = useCallback(async () => {
     setCredentialsLoading(true);
@@ -496,8 +570,8 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
       );
       return null;
     }
-    const propertyId = analyticsForm.property_id.trim();
-    if (!propertyId) {
+    const propertyIds = splitList(analyticsForm.property_ids);
+    if (propertyIds.length === 0) {
       setPropertyInvalid(true);
       toast(
         "Enter the GA4 property ID (the numeric id in Admin → Property details).",
@@ -505,19 +579,34 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
       );
       return null;
     }
+    const currencyCode = analyticsForm.currency_code.trim().toUpperCase();
+    if (currencyCode && !/^[A-Z]{3}$/.test(currencyCode)) {
+      // GA4 answers an unknown currency with a 400, which the collector classifies as
+      // invalid-request and never retries — every period, every night, three layers
+      // from the field it was typed into.
+      toast("Currency must be a three-letter ISO-4217 code, such as USD.", "error");
+      return null;
+    }
+    // The zone is NOT checked here. A runtime built with trimmed ICU data knows a
+    // handful of zones, and refusing a valid one the user read off GA4 would be a
+    // refusal they cannot act on. The API validates it against the same helper the
+    // collector uses and answers 422 with the fix, which the catch below surfaces.
+    const timeZone = analyticsForm.property_timezone.trim();
     setCredentialInvalid(false);
     setPropertyInvalid(false);
     return {
       source_type: editingSourceType ?? GA4_PROVIDER,
       vendor_credential_id: analyticsForm.vendor_credential_id,
-      // The form owns exactly two keys. Everything else the connection already
-      // carries — event filters, currency, anything a later milestone adds —
-      // rides underneath, because the PATCH replaces the whole document and
-      // dropping `event_names` would un-filter the next collection.
+      // Anything a later milestone adds still rides underneath: the PATCH replaces
+      // the whole document, so a key this form does not know about would be deleted
+      // by saving. The four the collector reads are now the form's own (A-08).
       source_config: {
         ...(sourceConfigBase ?? {}),
-        property_ids: [propertyId, ...trailingPropertyIds(sourceConfigBase, propertyId)],
+        property_ids: propertyIds,
         backfill_days: safeInt(analyticsForm.backfill_days, 30, 1, 3650),
+        event_names: splitList(analyticsForm.event_names),
+        currency_code: currencyCode || null,
+        property_timezone: timeZone || null,
       },
       collection_enabled: analyticsForm.collection_enabled,
       collection_hour: safeInt(analyticsForm.collection_hour, 3, 0, 23),
@@ -1071,8 +1160,29 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
           </select>
 
           {selectedCredential && (
-            <p className="text-kicker text-text-muted px-1 font-mono">
-              Fingerprint {shortFingerprint(selectedCredential.fingerprint)}
+            <div className="flex items-center justify-between gap-2 px-1">
+              <p className="text-kicker text-text-muted font-mono">
+                Fingerprint {shortFingerprint(selectedCredential.fingerprint)}
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleVerifyCredential(selectedCredential.id)}
+                disabled={verifyingCredential}
+                className="text-meta text-accent hover:text-accent-hover transition-colors disabled:opacity-50"
+              >
+                {verifyingCredential ? "Checking…" : "Check key"}
+              </button>
+            </div>
+          )}
+
+          {selectedCredential && (
+            <p
+              className={`text-kicker px-1 ${
+                selectedCredential.last_verify_error ? "text-warning" : "text-text-muted"
+              }`}
+              data-testid="credential-verdict"
+            >
+              {credentialVerdict(selectedCredential)}
             </p>
           )}
 
@@ -1111,25 +1221,62 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
           )}
 
           <input
-            value={analyticsForm.property_id}
+            value={analyticsForm.property_ids}
             onChange={(e) => {
               setPropertyInvalid(false);
-              setAnalyticsForm({ ...analyticsForm, property_id: e.target.value });
+              setAnalyticsForm({ ...analyticsForm, property_ids: e.target.value });
             }}
-            placeholder="GA4 property ID (e.g. 294380179)"
-            aria-label="GA4 property ID"
+            placeholder="GA4 property IDs, comma-separated (e.g. 294380179)"
+            aria-label="GA4 property IDs"
             aria-required="true"
             aria-invalid={propertyInvalid ? "true" : undefined}
-            inputMode="numeric"
             className={inputCls}
-            maxLength={32}
+            maxLength={512}
           />
 
-          {carriedPropertyIds.length > 0 && (
-            <p className="text-kicker text-text-muted px-1">
-              Also collecting {carriedPropertyIds.join(", ")} — kept on save.
-            </p>
-          )}
+          <input
+            value={analyticsForm.property_timezone}
+            onChange={(e) =>
+              setAnalyticsForm({ ...analyticsForm, property_timezone: e.target.value })
+            }
+            placeholder="Property timezone (e.g. America/Los_Angeles)"
+            aria-label="Property timezone"
+            list="ga4-timezones"
+            className={inputCls}
+            maxLength={64}
+          />
+          <datalist id="ga4-timezones">
+            {timeZoneOptions.map((zone) => (
+              <option key={zone} value={zone} />
+            ))}
+          </datalist>
+          <p className="text-kicker text-text-muted px-1">
+            Without it a day is judged on the server&apos;s clock, so the newest day is
+            kept but marked provisional and collected again.
+          </p>
+
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              value={analyticsForm.event_names}
+              onChange={(e) =>
+                setAnalyticsForm({ ...analyticsForm, event_names: e.target.value })
+              }
+              placeholder="Events (blank = all)"
+              aria-label="Event names"
+              className={halfInputCls}
+              maxLength={512}
+            />
+            <input
+              value={analyticsForm.currency_code}
+              onChange={(e) =>
+                setAnalyticsForm({ ...analyticsForm, currency_code: e.target.value })
+              }
+              placeholder="Currency (e.g. USD)"
+              aria-label="Currency code"
+              className={halfInputCls}
+              maxLength={3}
+            />
+          </div>
 
           <div className="grid grid-cols-2 gap-2">
             <input
