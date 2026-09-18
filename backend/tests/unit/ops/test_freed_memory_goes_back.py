@@ -27,7 +27,7 @@ def test_a_broken_libc_is_survivable(monkeypatch):
     import ctypes
 
     def boom(_name):
-        raise OSError("no such library")
+        raise OSError("no such library")  # how a platform without glibc answers
 
     monkeypatch.setattr(ctypes, "CDLL", boom)
     assert release_freed_memory("a broken libc") is False

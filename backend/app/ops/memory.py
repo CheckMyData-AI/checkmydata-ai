@@ -28,10 +28,13 @@ def release_freed_memory(reason: str) -> bool:
     which is where the tests run. That is not a failure: those allocators make their
     own decisions, and a boot that cannot trim is exactly as correct as one that can.
     """
+    # Named failures, not a broad handler: the library is absent (`OSError`) or it has
+    # no such symbol (`AttributeError`), and those are the two ways a platform says it
+    # manages its own arenas. Anything else here is a defect and should be seen.
     try:
         libc = ctypes.CDLL("libc.so.6")
         trimmed = bool(libc.malloc_trim(0))
-    except Exception:
+    except (OSError, AttributeError):
         logger.debug("malloc_trim unavailable (%s)", reason, exc_info=True)
         return False
     logger.info("released freed memory after %s (trimmed=%s)", reason, trimmed)
