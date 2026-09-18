@@ -217,6 +217,11 @@ async def lifespan(app: FastAPI):
 
         async def _bm25_boot_rebuild() -> None:
             out = await reconcile_local_bm25()
+            # The rebuild tokenises the whole corpus and drops it (T00-mem). The
+            # objects are gone; the arenas are not, and the quota counts arenas.
+            from app.ops.memory import release_freed_memory
+
+            release_freed_memory("bm25 boot rebuild")
             logger.info(
                 "BM25 local reconcile: %s (rebuilt=%d present=%d no_docs=%d failed=%d)",
                 out.status,
