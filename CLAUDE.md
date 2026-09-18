@@ -124,6 +124,21 @@ Embedding-config changes (`CHROMA_EMBEDDING_MODEL` / `EMBEDDER_MAX_TOKENS`) are 
 **2. `code_graph_enabled` + `lineage_enabled` now default-on — ensure ≥2 worker cores**
 Both flags flip to `True` in this release. Code-graph indexing is CPU-intensive. To defer: set env `CODE_GRAPH_ENABLED=false` and `LINEAGE_ENABLED=false`.
 
+**0a. Web memory — one chat answer needs ~525 MB, and `web` is Standard-2X since 2026-09-17**
+Measured by stages on a Standard-1X one-off dyno: imports `app.main` **294 MB**, the boot
+BM25 rebuild (32 531 docs, held in the process) **+93 MB**, one chat answer **+138 MB** —
+525 MB against a 512 MB quota, so the FIRST answer on a fresh dyno crosses it. The live
+process was at 712–737 MB (R14) and swapping, its log lines 0.42 s apart; a stream then
+emitted no bytes for 55 s and the router killed it with `H15`, which reads as a transport
+fault and is not one. `log-runtime-metrics` is enabled, so memory is in the log now. The
+scale-up buys headroom, not a fix: `T00-mem` in `docs/evidence/loop-queue.md` carries the
+reduction (BM25 out of process, one embedder, import cost).
+
+**And REST `/api/chat/ask` cannot answer a slow question at all**: Heroku's router cuts
+any request at 30 s (`H12`). The UI streams (`/api/chat/ask/stream`) and the agent keeps
+running after the cut — the REST run measured above completed 186 s later and wrote its
+trace. Use the stream for anything that thinks.
+
 **0. Worker memory — `EMBEDDING_UPSERT_BATCH_SIZE` defaults to 8, and that is the fix**
 Before 2026-08-19 the production worker was SIGKILLed at `code_symbol_embed` (R15,
 1053 MiB against a 512 MiB quota) and **no repo-index run reached `pipeline_end`** —
