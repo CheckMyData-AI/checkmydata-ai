@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ChatMessage as ChatMessageType } from "@/stores/app-store";
 
@@ -331,7 +331,7 @@ describe("ChatMessage", () => {
     expect(answer?.className).not.toContain("bg-primary");
   });
 
-  it("thumbs down on SQL result auto-sends investigation message", async () => {
+  it("thumbs down on a SQL result opens the investigation instead of writing for the reader", async () => {
     const { api } = await import("@/lib/api");
     const onSend = vi.fn();
     await renderMessage(
@@ -349,9 +349,46 @@ describe("ChatMessage", () => {
     expect(api.dataValidation.validateData).toHaveBeenCalledWith(
       expect.objectContaining({ verdict: "rejected", message_id: "msg1" }),
     );
-    expect(onSend).toHaveBeenCalledWith(
-      "I flagged the previous query result as incorrect. Please investigate what might be wrong and suggest a corrected query.",
+    // Track D1: the canned sentence asked the agent to guess what was wrong. The
+    // modal asks the person who knows — which column, what they expected.
+    expect(onSend).not.toHaveBeenCalled();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Numbers too high")).toBeInTheDocument();
+  });
+
+  it("closes the investigation without sending anything", async () => {
+    const onSend = vi.fn();
+    await renderMessage(
+      { role: "assistant", content: "Result", query: "SELECT 1", responseType: "sql_result" },
+      null,
+      undefined,
+      onSend,
+      "session-1",
     );
+
+    await userEvent.click(screen.getByTitle("Not helpful"));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("a thumbs-down on a text answer opens nothing — there is no query to investigate", async () => {
+    const onSend = vi.fn();
+    await renderMessage(
+      { role: "assistant", content: "A thought.", responseType: "text" },
+      null,
+      undefined,
+      onSend,
+      "session-1",
+    );
+
+    await userEvent.click(screen.getByTitle("Not helpful"));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it("thumbs up on SQL result records data validation as confirmed", async () => {

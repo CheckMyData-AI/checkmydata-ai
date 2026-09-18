@@ -12,7 +12,7 @@ human review moves them to `validated`.
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-09-17 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-09-18 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -24,8 +24,8 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 | Scenarios | **153** |
 | Status | draft × 12, implemented × 141 |
 | Last verdict | PARTIAL × 1, PASS × 140, no verdict × 12 |
-| Verified when | 2026-07-19 × 95, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, undated × 12 |
-| **Verified >30 days ago** | **95 of 153** (oldest 60 days) |
+| Verified when | 2026-07-19 × 94, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 1, undated × 12 |
+| **Verified >30 days ago** | **94 of 153** (oldest 61 days) |
 | Never verified (no date) | 12 |
 | Referenced from code or tests | **38 of 153** |
 
@@ -93,7 +93,7 @@ it is what moves it.
 | SCN-049 | Resume in-progress session after leaving | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-050 | Pipeline checkpoint — continue/modify/retry | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-051 | Answer a clarification request | chat | analyst | implemented | 2026-07-19 PASS |
-| SCN-052 | Rate an answer & report wrong data | chat | analyst | implemented | 2026-07-19 PASS |
+| SCN-052 | Rate an answer & report wrong data | chat | analyst | implemented | 2026-09-18 PASS |
 | SCN-053 | Save an answer to notes | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-054 | View the agent reasoning panel | chat | analyst | implemented | 2026-08-31 PASS |
 | SCN-055 | Step-limit reached → continue analysis | chat | analyst | implemented | 2026-07-19 PASS |
@@ -1125,14 +1125,17 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Preconditions:** an assistant answer exists
 - **Steps:**
   1. User clicks thumbs up or thumbs down
-  2. On thumbs-down for a SQL result, an investigation prompt is auto-sent
-- **Expected result:** the rating is recorded; a thumbs-down on a SQL answer **auto-sends a canned investigation prompt as the user's next message** ("I flagged the previous query result as incorrect…"), and the agent answers it like any other question. Two further effects carry the invariant and are the reason this scenario is not merely a rating: the backend **rolls back the learnings that answer exposed** (`exposed_learning_ids`), so a wrong answer does not keep teaching, and the client writes a **parallel `validate-data` verdict** for the connection
-- **UI elements:** thumbs up/down buttons (disabled while submitting)
+  2. On thumbs-down for a SQL result, the investigation opens: the reader picks what is wrong (numbers too high / too low, wrong time period, missing data, wrong categories, completely wrong), and may name the column and the value they expected
+  3. The investigation runs, reports the cause it found, and shows the original result beside the corrected one
+  4. The reader accepts the fix (it is remembered for this connection) or rejects it and starts again
+- **Expected result:** the rating is recorded; a thumbs-down on a SQL answer **opens the investigation** rather than writing a sentence on the reader's behalf — the canned prompt asked the agent to guess what was wrong, and the person clicking is the one who knows. Two further effects carry the invariant and are the reason this scenario is not merely a rating: the backend **rolls back the learnings that answer exposed** (`exposed_learning_ids`), so a wrong answer does not keep teaching, and the client writes a **parallel `validate-data` verdict** for the connection. Both happen on the click, before the investigation starts, so closing the dialog still records the rating
+- **UI elements:** thumbs up/down buttons (disabled while submitting); the investigation dialog (`role="dialog"`, `aria-modal`, focus trap, Escape closes) with its six complaint types, expected value, problematic column, a progress view while it runs, and the original-vs-corrected result diff with Accept / Reject
 - **States covered:** loading, error, success
 - **Errors & recovery:** submit fails → toast "Failed to submit feedback" (`ChatMessage.tsx:243`). The `validate-data` write is deliberately fire-and-forget (`.catch(() => {})`): it is a second opinion on the same click, and failing it must not lose the rating
-- **Not built:** the richer `WrongDataModal` investigation flow. The Expected result above describes what ships — this line says what does not, which is the distinction the previous wording collapsed: its Expected result promised the modal flow while its own note said a canned prompt, so a reader taking the Expected result as the contract got the opposite of what ships (BIZ-14)
+- **A thumbs-down on a text answer opens nothing**, and that is the rule rather than an omission: there is no query to investigate, so the rating and the learning rollback are the whole effect
+- **History:** the component and its three endpoints shipped and nothing imported them — Track D1 in `docs/evidence/plan-2026-09-14.md`, the largest block of finished-but-unreachable product in the repository. Mounted 2026-09-18 after the product decision that investigation, not a canned message, is the answer to "this data is wrong"
 - **Status:** implemented
-- **Coverage:** components/chat/ChatMessage.tsx:216-245 (handler), :223-235 (the parallel validate-data write), :243 (the failure toast), :637-668 (the two buttons); backend/app/api/routes/chat_feedback.py:77-94 (the learning rollback)
+- **Coverage:** components/chat/ChatMessage.tsx:216-248 (handler, opens the dialog), :223-235 (the parallel validate-data write), :243 (the failure toast); components/chat/WrongDataModal.tsx; components/chat/InvestigationProgress.tsx; components/chat/ResultDiffView.tsx; backend/app/api/routes/data_investigations.py (start / read / confirm-fix); backend/app/api/routes/chat_feedback.py:77-94 (the learning rollback); tests frontend/src/__tests__/components/ChatMessage.test.tsx, frontend/src/__tests__/components/WrongDataModal.test.tsx
 
 ### SCN-053: Save an answer to notes
 - **Persona:** analyst
