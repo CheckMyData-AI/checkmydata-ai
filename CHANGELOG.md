@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — "this data is wrong" opens the investigation (Track D1)
+
+`WrongDataModal`, `InvestigationProgress`, `ResultDiffView` and three endpoints
+(`/data-validation/investigate`, its read, its `confirm-fix`) have been finished and
+unreachable: nothing in the repository imported them. That is Track D1 in
+`docs/evidence/plan-2026-09-14.md`, and it was queued behind one product question —
+*is investigation the answer to "wrong data", or is the canned chat message?* The
+operator answered **investigation** on 2026-09-18.
+
+A thumbs-down on a SQL answer now opens the dialog instead of sending
+*"I flagged the previous query result as incorrect…"* as the reader's own next message.
+The canned sentence asked the agent to guess what was wrong; the dialog asks the person
+who knows — which of six things is wrong, in which column, and what they expected — and
+the investigation answers with the cause it found and the corrected result **beside** the
+original one, to accept or reject.
+
+Unchanged, and deliberately so: the rating, the rollback of the learnings that answer
+exposed, and the parallel `validate-data` verdict all still happen **on the click**, so
+closing the dialog without investigating still records everything the old path recorded.
+A thumbs-down on a text answer opens nothing — there is no query to investigate.
+
+The component's first tests ship with it (it could not be reached to break before), and
+the old test that asserted the canned message now asserts its absence: planting the
+sentence back fails two tests. SCN-052 describes the flow it actually has.
+
 ### Fixed — the web process stops carrying a corpus nobody reads (T00-mem)
 
 Measured per object on the production corpus (32 571 documents, a Standard-1X dyno):

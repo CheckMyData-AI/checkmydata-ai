@@ -12,6 +12,7 @@ import { rerenderViz, type VizTypeKey } from "@/lib/viz-utils";
 import { api } from "@/lib/api";
 import { toast } from "@/stores/toast-store";
 import { useNotesStore } from "@/stores/notes-store";
+import { WrongDataModal } from "./WrongDataModal";
 import { Icon } from "@/components/ui/Icon";
 import { ClarificationCard } from "./ClarificationCard";
 import { InsightCards, type Insight } from "./InsightCards";
@@ -130,6 +131,7 @@ function ReasoningButton({ messageId }: { messageId: string }) {
 }
 
 export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onContinueAnalysis, sessionId }: ChatMessageProps) {
+  const [wrongDataOpen, setWrongDataOpen] = useState(false);
   const isUser = message.role === "user";
   const [showDetails, setShowDetails] = useState(false);
   const [showSources, setShowSources] = useState(false);
@@ -234,10 +236,14 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
         }
       }
 
-      if (rating === -1 && isSqlResult && onSendMessage) {
-        onSendMessage(
-          "I flagged the previous query result as incorrect. Please investigate what might be wrong and suggest a corrected query."
-        );
+      // Track D1: a thumbs-down on a SQL answer opens the investigation rather than
+      // sending a sentence on the reader's behalf. The canned message asked the agent
+      // to guess what was wrong; the modal asks the person who can say — which number
+      // is wrong, in which column, and what they expected — and the investigation
+      // compares the old result with the new one. The rating, the learning rollback
+      // and the `validate-data` verdict above are unchanged: they happen on the click.
+      if (rating === -1 && isSqlResult && message.query && sessionId) {
+        setWrongDataOpen(true);
       }
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to submit feedback", "error");
@@ -699,6 +705,17 @@ export function ChatMessage({ message, metadataJson, onRetry, onSendMessage, onC
               </>
             )}
           </div>
+        )}
+
+        {/* Track D1: the "this data is wrong" investigation, opened by thumbs-down */}
+        {wrongDataOpen && message.query && sessionId && (
+          <WrongDataModal
+            messageId={message.id}
+            query={message.query}
+            sessionId={sessionId}
+            resultColumns={message.rawResult?.columns ?? []}
+            onClose={() => setWrongDataOpen(false)}
+          />
         )}
 
         {/* Executive summary */}
