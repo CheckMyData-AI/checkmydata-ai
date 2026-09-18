@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.analytics.source_types import clamp_backfill_days
 from app.api.deps import get_current_user, get_db
 from app.config import settings as app_config
-from app.connectors.exec_templates import validate_command_template
+from app.connectors.exec_templates import validate_new_command_template
 from app.connectors.host_guard import HostNotAllowedError, check_connection_targets
 from app.connectors.ssh_pre_commands import validate_pre_commands
 from app.core import task_queue
@@ -50,6 +50,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _svc = ConnectionService()
+#: What a non-owner sees instead of the shell a connection runs (C-12). A marker, not
+#: an empty string: "there is a custom template here, and it is not yours to read" is a
+#: different fact from "there is none", and the exec-mode UI needs the first one.
+_REDACTED = "••••••"
+
 _membership_svc = MembershipService()
 _db_index_svc = DbIndexService()
 _sync_svc = CodeDbSyncService()
@@ -382,7 +387,7 @@ class _ConnectionFieldRules(BaseModel):
         # SQL-06: the template is joined onto the same shell line as ssh_pre_commands,
         # which ARE screened. Screening one half of a shell line is screening neither.
         if v:
-            validate_command_template(v)
+            validate_new_command_template(v)
         return v
 
     @field_validator("name", "connection_string", mode="before", check_fields=False)
@@ -721,6 +726,54 @@ def _reject_analytics_source(conn: Connection, *, subject: str) -> None:
     )
 
 
+def redact_for_role(conn: Any, role: str) -> Any:
+    """Hide the shell a connection may carry from everyone but an owner (C-12).
+
+    ``ssh_command_template`` and ``ssh_pre_commands`` are free-form shell run on the
+    bastion, and the form invites a password into them. They reached every project
+    **viewer** through `GET /connections` and `GET /connections/{id}` — a role that
+    cannot change a connection could read the command line that connects to it.
+
+    Redacted rather than removed from the model: a client still learns THAT a custom
+    template exists (the exec-mode UI has to say so) without being told what it runs.
+    """
+    if role == "owner":
+        return conn
+    payload = ConnectionResponse.model_validate(conn).model_dump()
+    payload["ssh_command_template"] = _REDACTED if payload.get("ssh_command_template") else None
+    payload["ssh_pre_commands"] = _REDACTED if payload.get("ssh_pre_commands") else None
+    return ConnectionResponse.model_validate(payload)
+
+
+@router.get("/exec-templates")
+async def list_exec_templates(user: dict = Depends(get_current_user)):
+    r"""The commands the server itself runs in SSH-exec mode, read-only (C-02).
+
+    The form used to ship its own copies, and they were the hardened-away shapes: the
+    password on the remote argv (readable through `ps` by any user on the bastion), and
+    the SQL piped to the client's stdin, where `psql` reads `\!` as "run this shell
+    command" — the surface SQL-01 closed for the built-ins only. Enabling exec mode
+    auto-filled one, which made every exec connection a custom template by default and
+    so skipped the read-only decoration too.
+
+    There is nothing secret here — these are constants in the source — and that is the
+    point: one copy, on the server, shown rather than duplicated. A client may still
+    send its own template; what it may no longer do is start from a bad one.
+    """
+    from app.connectors.exec_templates import EXEC_TEMPLATES
+
+    return {
+        "templates": {
+            db_type: kinds["query"] for db_type, kinds in EXEC_TEMPLATES.items() if "query" in kinds
+        },
+        "note": (
+            "The password travels in the environment and the SQL as an argument. "
+            "A custom template replaces the query command only, and cannot be decorated "
+            "for read-only mode — the server cannot know which client it launches."
+        ),
+    }
+
+
 @router.post("", response_model=ConnectionResponse)
 @limiter.limit("10/minute")
 async def create_connection(
@@ -783,8 +836,9 @@ async def list_connections(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
-    return await _svc.list_by_project(db, project_id, skip=skip, limit=limit)
+    role = await _membership_svc.require_role(db, project_id, user["user_id"], "viewer")
+    rows = await _svc.list_by_project(db, project_id, skip=skip, limit=limit)
+    return [redact_for_role(row, role) for row in rows]
 
 
 @router.get("/{connection_id}", response_model=ConnectionResponse)
@@ -796,8 +850,8 @@ async def get_connection(
     conn = await _svc.get(db, connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
-    await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
-    return conn
+    role = await _membership_svc.require_role(db, conn.project_id, user["user_id"], "viewer")
+    return redact_for_role(conn, role)
 
 
 @router.patch("/{connection_id}", response_model=ConnectionResponse)

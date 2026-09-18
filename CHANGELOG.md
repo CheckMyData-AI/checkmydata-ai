@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — the shell a connection runs is the owner's, and the form stops writing one (C-02, C-12)
+
+Two halves of the same surface, from the 2026-09-13 audit's connection rows.
+
+**C-12 — a viewer could read the command line.** `ssh_command_template` and
+`ssh_pre_commands` are free-form shell run on the bastion, and both reached every project
+**viewer** through `GET /connections` and `GET /connections/{id}`. A role that cannot
+change a connection could read the command that reaches the database behind it. Non-owners
+now see a marker where a template exists and `null` where none does — *that* there is a
+custom command is a fact the exec-mode UI needs; *what it says* is not.
+
+**C-02 — the form shipped the two shapes the backend had already removed.** Its own
+`EXEC_TEMPLATE_PRESETS` put `{db_password}` on the remote argv, where `ps` on the bastion
+reads it for as long as the query runs (F-SSH-02 took it off), and piped the SQL to the
+client's stdin, where `psql` reads `\!` as "run this shell command" (SQL-01 closed that
+for the built-ins). Enabling exec mode auto-filled one, so every exec connection became a
+**custom** template — the one kind the server cannot decorate for read-only mode.
+
+The presets are deleted. `GET /connections/exec-templates` serves the server's own
+commands read-only (they are constants in the source, not secrets), the form shows the one
+for the chosen engine and fills nothing, and a custom command is refused at save if it
+carries `{db_password}` — with the error naming the process list. A template **already
+stored** with it keeps working and keeps warning on every run: refusing the next one
+breaks nobody's live connection, which is the asymmetry the decision rests on.
+
+Seven integration tests and two client tests; each fix verified by planting its defect.
+
 ### Fixed — reading an investigation back needs the project (Track D1 follow-up)
 
 Found by running one against production the hour Track D1 shipped. `POST /investigate`

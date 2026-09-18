@@ -37,7 +37,7 @@ import {
   DB_TYPES,
   DEFAULT_PORTS,
   EMPTY_FORM,
-  EXEC_TEMPLATE_PRESETS,
+  commandTemplateError,
   type FormState,
   applyConnectionString,
   connToForm,
@@ -109,6 +109,24 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
+  // The server's own exec commands, fetched once and shown read-only (C-02).
+  const [execTemplates, setExecTemplates] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!form.ssh_exec_mode || Object.keys(execTemplates).length > 0) return;
+    let cancelled = false;
+    api.connections
+      .execTemplates()
+      .then((res) => {
+        if (!cancelled) setExecTemplates(res.templates);
+      })
+      .catch(() => {
+        // Display only: a connection still saves and runs without this text.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.ssh_exec_mode, execTemplates]);
   const [analyticsForm, setAnalyticsForm] = useState<AnalyticsFormState>({
     ...EMPTY_ANALYTICS_FORM,
   });
@@ -921,15 +939,10 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
           onChange={(e) => {
             const newType = e.target.value;
             const knownDefaults = Object.values(DEFAULT_PORTS);
-            const presetValues = Object.values(EXEC_TEMPLATE_PRESETS);
             setForm((prev) => {
-              const autoTemplate =
-                prev.ssh_exec_mode &&
-                newType !== "mongodb" &&
-                (!prev.ssh_command_template ||
-                  presetValues.includes(prev.ssh_command_template))
-                  ? EXEC_TEMPLATE_PRESETS[newType] || ""
-                  : prev.ssh_command_template;
+              // C-02: changing the engine no longer rewrites the command. The server
+              // has one for every engine; a template here is the reader's own.
+              const autoTemplate = prev.ssh_command_template;
               return {
                 ...prev,
                 db_type: newType,
@@ -1356,12 +1369,8 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                     setForm((prev) => ({
                       ...prev,
                       ssh_exec_mode: on,
-                      ...(on && !prev.ssh_command_template
-                        ? {
-                            ssh_command_template:
-                              EXEC_TEMPLATE_PRESETS[prev.db_type] || "",
-                          }
-                        : {}),
+                      // C-02: enabling exec mode fills nothing. Empty means "run the
+                      // server's own command", which is the decorated, read-only one.
                     }));
                   }}
                   className="accent-accent"
@@ -1390,33 +1399,18 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
 
               {form.ssh_exec_mode && (
                 <>
-                  <div className="flex items-center gap-2">
-                    <span className="text-kicker text-text-muted shrink-0">
-                      Template:
-                    </span>
-                    <select
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          setForm((prev) => ({
-                            ...prev,
-                            ssh_command_template: e.target.value,
-                          }));
-                        }
-                      }}
-                      className={selectBaseCls}
-                      defaultValue=""
-                    >
-                      <option value="" disabled>
-                        Load preset...
-                      </option>
-                      {Object.entries(EXEC_TEMPLATE_PRESETS).map(
-                        ([key, val]) => (
-                          <option key={key} value={val}>
-                            {key}
-                          </option>
-                        ),
-                      )}
-                    </select>
+                  {/* C-02: the server's own command, shown rather than copied. It
+                      passes the password in the environment and the SQL as an argument;
+                      a custom command below replaces it and cannot be decorated for
+                      read-only mode, because the server cannot know which client it
+                      launches. */}
+                  <div className="rounded border border-border-subtle bg-surface-2 p-2">
+                    <div className="text-kicker text-text-muted mb-1">
+                      Runs by default (read-only):
+                    </div>
+                    <code className="block font-mono text-kicker text-text-secondary break-all">
+                      {execTemplates[form.db_type] ?? "loading…"}
+                    </code>
                   </div>
                   <textarea
                     value={form.ssh_command_template}
@@ -1426,14 +1420,22 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                         ssh_command_template: e.target.value,
                       })
                     }
-                    placeholder="Command template, e.g.: mysql -h {db_host} ..."
+                    placeholder="Leave empty to run the command above"
                     rows={2}
                     className={inputCls + " font-mono text-kicker resize-y"}
+                    aria-invalid={commandTemplateError(form.ssh_command_template) ? true : undefined}
                   />
                   <p className="text-kicker text-text-muted px-1">
                     Placeholders: {"{db_host}"} {"{db_port}"} {"{db_user}"}{" "}
-                    {"{db_password}"} {"{db_name}"}. Query piped via stdin.
+                    {"{db_name}"}. The password is passed in the environment, and the
+                    query as an argument — a custom command replaces the default and is
+                    not decorated for read-only mode.
                   </p>
+                  {commandTemplateError(form.ssh_command_template) && (
+                    <p className="text-kicker text-error px-1" role="alert">
+                      {commandTemplateError(form.ssh_command_template)}
+                    </p>
+                  )}
                   <textarea
                     value={form.ssh_pre_commands}
                     onChange={(e) =>

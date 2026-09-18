@@ -11,14 +11,24 @@ export const DEFAULT_PORTS: Record<string, string> = {
   clickhouse: "9000",
 };
 
-export const EXEC_TEMPLATE_PRESETS: Record<string, string> = {
-  mysql:
-    'MYSQL_PWD="{db_password}" mysql -h {db_host} -P {db_port} -u {db_user} {db_name} --batch --raw',
-  postgres:
-    'PGPASSWORD="{db_password}" psql -h {db_host} -p {db_port} -U {db_user} -d {db_name} -A -F $\'\\t\' --pset footer=off',
-  clickhouse:
-    'clickhouse-client -h {db_host} --port {db_port} -u {db_user} --password "{db_password}" -d {db_name} --format TabSeparatedWithNames',
-};
+/**
+ * C-02: the form used to ship its own exec templates and auto-fill one. They were the
+ * two shapes the backend had already removed — `{db_password}` on the remote argv, where
+ * `ps` on the bastion reads it, and the SQL piped to the client's stdin, where `psql`
+ * treats `\!` as a shell command. Auto-filling also made every exec connection a CUSTOM
+ * template, which is the one shape the server cannot decorate for read-only mode.
+ *
+ * The server serves its own, read-only, at `GET /connections/exec-templates`.
+ */
+export const PASSWORD_PLACEHOLDER = "{db_password}";
+
+/** A custom command must not carry the password: the bastion's `ps` is not private. */
+export function commandTemplateError(template: string): string | null {
+  if (!template.trim()) return null;
+  return template.includes(PASSWORD_PLACEHOLDER)
+    ? "Remove {db_password}: it would be visible in the process list on the bastion. The password is passed to the client in the environment."
+    : null;
+}
 
 export const EMPTY_FORM = {
   name: "",

@@ -29,3 +29,23 @@ describe("applyConnectionString", () => {
     expect(form.db_password).toBe("existing");
   });
 });
+
+describe("C-02: the form ships no exec templates of its own", () => {
+  it("exports no presets", async () => {
+    const helpers = await import("@/components/connections/connection-form-helpers");
+    expect("EXEC_TEMPLATE_PRESETS" in helpers).toBe(false);
+  });
+
+  it("refuses a custom command that carries the password", async () => {
+    const { commandTemplateError } = await import(
+      "@/components/connections/connection-form-helpers"
+    );
+    // `ps` on the bastion is not private, which is why the server passes the password
+    // in the environment instead.
+    expect(
+      commandTemplateError('mysql -u {db_user} --password "{db_password}" {db_name}'),
+    ).toContain("{db_password}");
+    expect(commandTemplateError("mysql -h {db_host} -u {db_user} {db_name}")).toBeNull();
+    expect(commandTemplateError("   ")).toBeNull();
+  });
+});
