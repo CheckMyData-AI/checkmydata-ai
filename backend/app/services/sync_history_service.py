@@ -1,4 +1,11 @@
-"""History of daily_sync runs (replaces the legacy KnowledgeSyncRun audit table)."""
+"""History of a project's scheduled background runs.
+
+Replaces the legacy KnowledgeSyncRun audit table. Two kinds are listed: the nightly
+knowledge sync, and — since PRJ-10 — each analytics connection's collection, which used
+to run nightly against a third-party API and appear in no history at all: the only
+record was a log line on the worker and the per-period journal, neither of which a
+project's owner can open.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +15,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.indexing_run import IndexingRun
+
+#: Run kinds this history answers for, newest-first across both.
+HISTORY_KINDS: tuple[str, ...] = ("daily_sync", "analytics_collect")
 
 
 def _aware(dt: datetime) -> datetime:
@@ -21,7 +31,10 @@ class SyncHistoryService:
     ) -> list[dict]:
         stmt = (
             select(IndexingRun)
-            .where(IndexingRun.project_id == project_id, IndexingRun.kind == "daily_sync")
+            .where(
+                IndexingRun.project_id == project_id,
+                IndexingRun.kind.in_(HISTORY_KINDS),
+            )
             .order_by(IndexingRun.created_at.desc())
             .limit(limit)
         )
@@ -35,6 +48,7 @@ class SyncHistoryService:
                 {
                     "id": r.id,
                     "kind": r.kind,
+                    "connection_id": r.connection_id,
                     "status": r.status,
                     "trigger": r.trigger,
                     "started_at": r.started_at.isoformat() if r.started_at else None,

@@ -39,6 +39,22 @@ APP = Path(__file__).resolve().parents[4] / "backend" / "app"
 #: Counts measured 2026-08-25 over `backend/app/`. Lower them as suppressions go; raise
 #: one only in the same commit as the suppression it admits, so the increase is reviewed.
 CEILINGS: dict[str, int] = {
+    # 664 → 670 on 2026-09-18 (PRJ-10). Six, and five of them are the same decision:
+    # **bookkeeping must never take down the work it is recording.**
+    #   * `AnalyticsCollectService._start_run` / `_finish_run` / `_run_step` (x3, one of
+    #     them the `_close` helper) — a collection that cannot mint, close or step its
+    #     `IndexingRun` is still a collection worth doing, and the alternative is refusing
+    #     to collect because the history row failed. Each logs; none is silent, and the
+    #     one around `collect_in_session` RE-RAISES after closing the run, so the caller
+    #     still sees the failure.
+    #   * `analytics.verify._verify_ga4` — google-auth's `refresh` raises whatever its
+    #     transport raises. Anything that is not an auth failure becomes
+    #     `AnalyticsTransientError`, because "the vendor could not be reached" and "this
+    #     key is dead" are the two answers the caller must never confuse. Both branches
+    #     raise; nothing is swallowed.
+    # The zone lookup in `_today_for` added in the same change is NOT here: it delegates
+    # to `validated_timezone`, which raises `ValueError` and nothing else, so it is caught
+    # narrowly rather than spending this budget.
     # 663 → 664 on 2026-09-18 (A-02). One: `GA4Adapter._refresh_credentials` asks
     # google-auth for a token so `test_connection` can tell a revoked key from a vendor
     # hiccup. Anything the transport raises that is NOT an auth failure becomes
@@ -345,7 +361,7 @@ CEILINGS: dict[str, int] = {
     # The json parse in `stale_run_reaper._requeue_attempts` added in the same change is
     # NOT here: `json.loads` raises `ValueError` or `TypeError` and nothing else can, so
     # it is caught narrowly rather than spending this budget.
-    "except Exception": 664,
+    "except Exception": 670,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:

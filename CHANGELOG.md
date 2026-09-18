@@ -65,7 +65,56 @@ Six rows of the 2026-09-13 audit's analytics findings.
   and the three routes that change what a project has clear it. Stated rather than
   implied: `web` and `worker` keep their own, so the TTL is still what bounds the other.
 
-Forty-two tests, each fix verified by planting its defect back. **Not verifiable on
+- **A-04 — a day ended on the wrong clock.** GA4 evaluates a `date` in the **property's**
+  timezone; the collector's window ended "yesterday" on the scheduler's
+  (`Europe/Berlin`). A property in Los Angeles was therefore read at 18:00 its own time,
+  with six hours of the day still to happen, and journalled `ok` — a *done* status, so
+  those partial numbers were never collected again and the agent published them as a
+  measurement of a finished day. Self-healing depended entirely on the refetch tail, and
+  `analytics_refetch_tail_periods=0` made it permanent. `property_timezone` is a
+  connection knob now, checked where it is written; without one nothing is guessed — the
+  newest period of the run is journalled `partial`, keeping the rows and keeping the
+  period owed, with a caveat naming the missing knob rather than blaming the vendor. The
+  **refetch tail** is unsettled for its own reason — those periods are re-fetched every
+  run *because* the vendor revises them — and now says so in the note the agent repeats,
+  while keeping a done status: the tail refetches them whatever the status says, and
+  marking them owed would leave every healthy connection reading `partial` for ever.
+- **A-08 (GA4 half) — the form promised knobs it did not have.** `GA4Config`'s docstring
+  said the UI "nudges users to name the events they care about" while the form had no
+  such field, so every connection collected every event on the property; `currency_code`
+  was equally unreachable; and the property field edited the first id while carrying the
+  rest invisibly, so a connection collecting three properties looked like one collecting
+  a single property. All four are on the form now — every property id, events, currency,
+  and the timezone above — and the API checks them where they are written: the window is
+  **clamped** (a number has a nearest legal value) while a timezone that names no place
+  and a currency that is not a three-letter code are **refused**, because neither has
+  anything to be corrected to and both otherwise fail nightly in the collector, three
+  layers from the field they were typed into.
+
+### Added — a key can be asked whether it still works, and a collection is a run
+
+- **`POST /api/vendor-credentials/{id}/verify`.** A credential is pasted once and used by
+  a nightly job, so a revocation surfaces as a report that stopped arriving — days later,
+  in a log nobody reads. The probe is one real token refresh, the only thing that tells a
+  dead key from a vendor hiccup, and it asks about the **key** rather than a property, so
+  it answers before the credential is attached to anything. Three outcomes, deliberately
+  distinct: accepted (200, stored with its date), refused (200 `verified: false`, stored
+  **with** the refusal — the request worked and the answer is bad news), unreachable (503,
+  and **nothing** recorded, because an unreachable vendor is no evidence about a key).
+  `last_verified_at` / `last_verify_error` carry the verdict, the second being null
+  exactly when the attempt at the first succeeded — so "checked and refused" can never
+  read as "never checked". The GA4 connection form shows it beside the credential picker,
+  where a key nobody has asked about says so rather than looking approved.
+- **An analytics collection mints an `IndexingRun`.** A nightly call to a third-party API
+  on the project's behalf appeared nowhere a person could look: no heartbeat (so nothing
+  could tell a live collection from a dead one), no row in `/sync-history`, nothing in the
+  active-tasks widget. It is a run of kind `analytics_collect` now — three steps, a
+  heartbeat the reaper reads, its trigger recorded (`schedule` for the wave, `manual` for
+  the button) — and `/sync-history` answers for both kinds. Bookkeeping, never the work: a
+  run row that cannot be written is logged and the collection proceeds. A `partial`
+  outcome **completes** the run; only errors with nothing written fail it.
+
+Seventy-odd tests, each fix verified by planting its defect back. **Not verifiable on
 production:** this deployment has no GA4 connection — the acceptance for these rows is
 the fixture-level end-to-end test, which now also asserts the per-day reading.
 

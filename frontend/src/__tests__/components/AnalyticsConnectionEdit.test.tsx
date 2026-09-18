@@ -89,6 +89,7 @@ vi.mock("@/components/learnings/LearningsPanel", () => ({
 
 const { api } = await import("@/lib/api");
 const { vendorCredentials } = await import("@/lib/api/vendor-credentials");
+const { toast } = await import("@/stores/toast-store");
 
 const GA4_CREDENTIAL = {
   id: "vc1",
@@ -149,6 +150,10 @@ function makeGa4Connection(overrides: Partial<Connection> = {}): Connection {
       backfill_days: 30,
       event_names: ["purchase", "sign_up"],
       currency_code: "USD",
+      property_timezone: "America/Los_Angeles",
+      // A key this form has never heard of: the M2 property is that saving must not
+      // delete it, and after A-08 that is the only kind of key left to carry blind.
+      a_later_milestone: "kept",
     },
     collection_enabled: true,
     collection_hour: 3,
@@ -284,7 +289,7 @@ describe("Edit an analytics connection — the kind is fixed at creation (H6)", 
 });
 
 describe("Edit an analytics connection — source_config round trip (M2)", () => {
-  it("keeps the vendor knobs the form does not own when only the name changes", async () => {
+  it("keeps every vendor knob when only the name changes", async () => {
     await openEdit([makeGa4Connection()]);
     await waitFor(() =>
       expect(screen.getByLabelText("GA4 vendor credential")).toBeInTheDocument(),
@@ -300,19 +305,40 @@ describe("Edit an analytics connection — source_config round trip (M2)", () =>
     // Dropping event_names un-filters the events report on the next run.
     expect(config.event_names).toEqual(["purchase", "sign_up"]);
     expect(config.currency_code).toBe("USD");
-    // The extra property is not editable here, so it must not be deleted here.
+    expect(config.property_timezone).toBe("America/Los_Angeles");
     expect(config.property_ids).toEqual(["111", "222"]);
     expect(config.backfill_days).toBe(30);
+    expect(config.a_later_milestone).toBe("kept");
   });
 
-  it("applies the edited property id without discarding the others", async () => {
+  it("shows every property rather than the first (A-08)", async () => {
     await openEdit([makeGa4Connection()]);
     await waitFor(() =>
-      expect(screen.getByLabelText("GA4 property ID")).toBeInTheDocument(),
+      expect(screen.getByLabelText("GA4 property IDs")).toBeInTheDocument(),
     );
 
-    fireEvent.change(screen.getByLabelText("GA4 property ID"), {
-      target: { value: "333" },
+    expect(
+      (screen.getByLabelText("GA4 property IDs") as HTMLInputElement).value,
+    ).toBe("111, 222");
+    expect((screen.getByLabelText("Event names") as HTMLInputElement).value).toBe(
+      "purchase, sign_up",
+    );
+    expect((screen.getByLabelText("Currency code") as HTMLInputElement).value).toBe(
+      "USD",
+    );
+    expect(
+      (screen.getByLabelText("Property timezone") as HTMLInputElement).value,
+    ).toBe("America/Los_Angeles");
+  });
+
+  it("applies an edited property list exactly as typed", async () => {
+    await openEdit([makeGa4Connection()]);
+    await waitFor(() =>
+      expect(screen.getByLabelText("GA4 property IDs")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(screen.getByLabelText("GA4 property IDs"), {
+      target: { value: "333, 222" },
     });
     fireEvent.click(screen.getByText("Save Changes"));
 
@@ -320,6 +346,43 @@ describe("Edit an analytics connection — source_config round trip (M2)", () =>
     const config = updatePayload().source_config as Record<string, unknown>;
     expect(config.property_ids).toEqual(["333", "222"]);
     expect(config.currency_code).toBe("USD");
+  });
+
+  it("removing a property removes it, now that the field shows them all", async () => {
+    await openEdit([makeGa4Connection()]);
+    await waitFor(() =>
+      expect(screen.getByLabelText("GA4 property IDs")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(screen.getByLabelText("GA4 property IDs"), {
+      target: { value: "111" },
+    });
+    fireEvent.click(screen.getByText("Save Changes"));
+
+    await waitFor(() => expect(api.connections.update).toHaveBeenCalledTimes(1));
+    expect(
+      (updatePayload().source_config as Record<string, unknown>).property_ids,
+    ).toEqual(["111"]);
+  });
+
+  it("refuses a currency the vendor would answer 400 to", async () => {
+    await openEdit([makeGa4Connection()]);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Currency code")).toBeInTheDocument(),
+    );
+
+    fireEvent.change(screen.getByLabelText("Currency code"), {
+      target: { value: "do" },
+    });
+    fireEvent.click(screen.getByText("Save Changes"));
+
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.stringContaining("ISO-4217"),
+        "error",
+      ),
+    );
+    expect(api.connections.update).not.toHaveBeenCalled();
   });
 
   it("starts a brand-new GA4 connection from an empty source_config", async () => {
@@ -343,7 +406,7 @@ describe("Edit an analytics connection — source_config round trip (M2)", () =>
     fireEvent.change(screen.getByLabelText("GA4 vendor credential"), {
       target: { value: "vc1" },
     });
-    fireEvent.change(screen.getByLabelText("GA4 property ID"), {
+    fireEvent.change(screen.getByLabelText("GA4 property IDs"), {
       target: { value: "999" },
     });
     fireEvent.click(screen.getByText("Create Connection"));
@@ -354,6 +417,9 @@ describe("Edit an analytics connection — source_config round trip (M2)", () =>
     expect(payload.source_config).toEqual({
       property_ids: ["999"],
       backfill_days: 30,
+      event_names: [],
+      currency_code: null,
+      property_timezone: null,
     });
   });
 });

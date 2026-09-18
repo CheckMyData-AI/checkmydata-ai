@@ -29,7 +29,7 @@ Standing rules the loop inherits (from `docs/evidence/retro.md`):
 | T00-mem | deliver | Web memory: 525 MB for one answer on a 512 MB dyno | V1 finding 2026-09-17 | in review | #400 on v439: boot steady state **353 MB** vs 387 before (tokenized corpus 58.9 MB dropped, `malloc_trim` returns 23 MB more in #402), one answer **522 MB** peak 548. Not closed: `chromadb` (22 MB) and the connector registry's eager drivers. |
 | T04 | deliver | Track D1 — `WrongDataModal` on the thumbs-down path | plan Track D | in review | #401. Operator's decision 2026-09-18: investigation, not the canned message. Mounted with its first tests; SCN-052 rewritten; planting the canned sentence back fails two tests. |
 | T05 | deliver | PRJ-08 — connection layer correctness | audit §PRJ-08 | in review | #404: C-02, C-03, C-04, C-05, C-06, C-07, C-08, C-09, C-10, C-11, C-12, C-13, C-14, C-15, C-16 — 28 tests, each verified against a planted defect. |
-| T06 | deliver | PRJ-10 — GA4 tells the truth | audit §PRJ-10 | todo | |
+| T06 | deliver | PRJ-10 — GA4 tells the truth | audit §PRJ-10 | in review | A-01, A-02, A-03, A-04, A-05, A-06, A-07, A-08 (GA4 half), A-09, A-11, A-12, plus credential `POST /verify` and a collection that is an `IndexingRun` — ~70 tests, each verified against a planted defect. **Production cannot verify these:** this deployment has no GA4 connection; the acceptance is the fixture-level end-to-end test, and a real property stays owed to PRJ-10's own acceptance. |
 | V2 | verify | T04–T06 landed | — | todo | |
 | T07 | deliver | PRJ-07 — scheduling and recovery that work in every deployment | audit §PRJ-07 | todo | |
 | T08 | deliver | PRJ-13 — orchestrator eval harness | audit §PRJ-13 | todo | |
@@ -53,3 +53,10 @@ Standing rules the loop inherits (from `docs/evidence/retro.md`):
 One line per finished iteration, newest last.
 
 - **T01 (2026-09-17)** — recommendation reversed by production A/B; flash kept. Found and pinned a same-day PyMySQL release that would have broken every MySQL connection on the next deploy.
+- **T06 (2026-09-18)** — PRJ-10 finished: the timezone a GA4 day ends in (A-04), the four
+  knobs the form promised and did not have (A-08's GA4 half), a credential that can be
+  asked whether it still works, and a collection that is a run like any other. Two rules
+  came out of it worth carrying: an injected clock answers for every timezone (a test that
+  pins a date is stating what day it is, and a date has no time of day to convert), and a
+  test that matches an expression verbatim goes stale the day a correct change adds a
+  second reason — the A-01 guard is an AST check now.

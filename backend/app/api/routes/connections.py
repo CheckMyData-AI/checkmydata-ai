@@ -26,7 +26,11 @@ from pydantic import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.context_loader import invalidate_capability_cache
-from app.analytics.source_types import clamp_backfill_days
+from app.analytics.source_types import (
+    clamp_backfill_days,
+    validated_currency_code,
+    validated_timezone,
+)
 from app.api.deps import get_current_user, get_db
 from app.config import settings as app_config
 from app.connectors.exec_templates import validate_new_command_template
@@ -410,6 +414,13 @@ def _validate_source_config(value: dict[str, Any] | None) -> dict[str, Any] | No
     credential, and a 422 on a number the browser would silently have corrected is a
     worse answer than the nearest legal window. A key that is not a window is left
     alone — this bounds what it understands and does not police the rest.
+
+    The other two keys are **refused**, not clamped, because neither has a nearest
+    legal value. A `property_timezone` that resolves to nothing falls back to the
+    scheduler's clock — the A-04 defect the knob exists to close, and silently; a
+    `currency_code` the vendor cannot parse answers 400 on every period of every night,
+    three layers from the form it was typed into. There is nothing to correct them to,
+    so they are rejected where the person can still see what they typed.
     """
     if not value:
         return value
@@ -417,6 +428,10 @@ def _validate_source_config(value: dict[str, Any] | None) -> dict[str, Any] | No
         clamped = clamp_backfill_days(value["backfill_days"])
         if clamped is not None:
             value = {**value, "backfill_days": clamped}
+    if value.get("property_timezone") is not None:
+        value = {**value, "property_timezone": validated_timezone(value["property_timezone"])}
+    if value.get("currency_code") is not None:
+        value = {**value, "currency_code": validated_currency_code(value["currency_code"])}
     return value
 
 
@@ -1833,12 +1848,14 @@ async def collect_now(
     now = datetime.now(ZoneInfo(app_config.daily_knowledge_sync_timezone))
     task_id = f"analytics_collect:manual:{connection_id}:{now.strftime('%Y-%m-%dT%H:%M:%S')}"
 
-    async def _run_in_process(*, connection_id: str = connection_id) -> None:
+    async def _run_in_process(
+        *, connection_id: str = connection_id, trigger: str = "manual"
+    ) -> None:
         # Imported at call time so this module never pulls in the vendor SDKs,
         # and so the in-process fallback resolves the current service class.
         from app.services.analytics_collect_service import AnalyticsCollectService
 
-        await AnalyticsCollectService().collect(connection_id)
+        await AnalyticsCollectService().collect(connection_id, trigger=trigger)
 
     await task_queue.enqueue_or_fail(
         "run_analytics_collect",
@@ -1846,6 +1863,7 @@ async def collect_now(
         task_id=task_id,
         _job_timeout=app_config.analytics_collect_job_timeout_seconds,
         connection_id=connection_id,
+        trigger="manual",
     )
 
     logger.info(

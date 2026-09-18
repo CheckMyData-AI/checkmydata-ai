@@ -45,11 +45,34 @@ def test_the_adapter_marks_a_missing_property():
 
 
 def test_the_collect_service_writes_partial_for_it():
+    """Structural, not textual: the verdict on a written period reads `incomplete`.
+
+    An earlier version of this test matched the expression verbatim and went stale the
+    day A-04 added a second reason to withhold `ok` — a test that fails on a correct
+    change teaches nothing. What must hold is the shape: the status handed to the
+    journal is a choice between `partial` and `ok`, and `fetched.incomplete` is one of
+    the things it is deciding on.
+    """
+    import ast
     import inspect
+    import textwrap
 
     from app.services.analytics_collect_service import AnalyticsCollectService
 
-    source = inspect.getsource(AnalyticsCollectService)
-    assert 'status="partial" if fetched.incomplete else "ok"' in source, (
-        "the rows are kept and the period stays pending — that is the whole fix"
-    )
+    source = textwrap.dedent(inspect.getsource(AnalyticsCollectService._collect_report))
+    tree = ast.parse(source)
+    verdicts = [
+        kw.value
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        for kw in call.keywords
+        if kw.arg == "status" and isinstance(kw.value, ast.IfExp)
+    ]
+    assert verdicts, "the period's status is not decided at the journal call at all"
+
+    for verdict in verdicts:
+        assert isinstance(verdict.body, ast.Constant) and verdict.body.value == "partial"
+        assert isinstance(verdict.orelse, ast.Constant) and verdict.orelse.value == "ok"
+        assert "incomplete" in {
+            node.attr for node in ast.walk(verdict.test) if isinstance(node, ast.Attribute)
+        }, "the rows are kept and the period stays pending — that is the whole fix"

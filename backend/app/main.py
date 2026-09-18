@@ -1183,13 +1183,15 @@ async def _dispatch_analytics_collect_wave(at: datetime | None = None) -> None:
             for conn_id in due_ids:
                 cid = conn_id
 
-                async def _run_in_process(*, connection_id: str = cid) -> None:
+                async def _run_in_process(
+                    *, connection_id: str = cid, trigger: str = "schedule"
+                ) -> None:
                     # Imported inside so the in-process fallback resolves the
                     # service at call time (and so importing main.py does not
                     # pull in the vendor SDKs).
                     from app.services.analytics_collect_service import AnalyticsCollectService
 
-                    await AnalyticsCollectService().collect(connection_id)
+                    await AnalyticsCollectService().collect(connection_id, trigger=trigger)
 
                 job_id = await task_queue.enqueue(
                     "run_analytics_collect",
@@ -1197,6 +1199,7 @@ async def _dispatch_analytics_collect_wave(at: datetime | None = None) -> None:
                     task_id=f"analytics_collect:{cid}:{run_date}",
                     _job_timeout=settings.analytics_collect_job_timeout_seconds,
                     connection_id=cid,
+                    trigger="schedule",
                 )
                 # OPS-17, same as the knowledge wave: a connection whose enqueue failed is
                 # not a connection that was collected, and this line is the only record.

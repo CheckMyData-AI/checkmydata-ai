@@ -21,13 +21,13 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 
 | | |
 |---|---|
-| Scenarios | **153** |
-| Status | draft × 12, implemented × 141 |
-| Last verdict | PARTIAL × 1, PASS × 140, no verdict × 12 |
-| Verified when | 2026-07-19 × 94, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 1, undated × 12 |
-| **Verified >30 days ago** | **94 of 153** (oldest 61 days) |
+| Scenarios | **154** |
+| Status | draft × 12, implemented × 142 |
+| Last verdict | PARTIAL × 1, PASS × 141, no verdict × 12 |
+| Verified when | 2026-07-19 × 94, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 2, undated × 12 |
+| **Verified >30 days ago** | **94 of 154** (oldest 61 days) |
 | Never verified (no date) | 12 |
-| Referenced from code or tests | **38 of 153** |
+| Referenced from code or tests | **39 of 154** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -157,6 +157,7 @@ it is what moves it.
 | SCN-112 | Logged-in visitor auto-redirect to /app | marketing | analyst | implemented | 2026-07-19 PASS |
 | SCN-113 | Add a Google Analytics 4 connection | analytics-sources | owner | implemented | 2026-08-19 PASS |
 | SCN-114 | Add / delete a vendor credential | analytics-sources | owner | implemented | 2026-08-19 PASS |
+| SCN-114a | Check whether a stored credential still works | analytics-sources | owner | implemented | 2026-09-18 PASS |
 | SCN-115 | Analytics collection status — ok / partial / pending periods | analytics-sources | editor | implemented | 2026-08-19 PASS |
 | SCN-116 | Vendor credential delete blocked while in use | analytics-sources | owner | implemented | 2026-08-19 PASS |
 | SCN-117 | Ask about analytics data in chat — grounded answer or honest refusal | analytics-sources | analyst | implemented | 2026-08-19 PASS |
@@ -2193,13 +2194,15 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Preconditions:** project owner; at least one `ga4` vendor credential already saved (SCN-114)
 - **Steps:**
   1. User opens New Connection and picks "Google Analytics 4" as the source type
-  2. The DB/SSH/read-only fields disappear; a credential picker, GA4 property ID, backfill-days, collection-hour and a "Collect automatically" toggle appear
-  3. User selects a stored `ga4` credential, enters the property ID (e.g. `294380179`), and leaves backfill at 30 days and the hour at 03
+  2. The DB/SSH/read-only fields disappear; a credential picker, GA4 property IDs, property timezone, events, currency, backfill-days, collection-hour and a "Collect automatically" toggle appear
+  3. User selects a stored `ga4` credential, enters the property ID(s) (e.g. `294380179`), names the property's timezone, and leaves events and currency blank, backfill at 30 days and the hour at 03
   4. User submits
 - **Expected result:** connection created with `source_type=ga4` and no host/port/database; it appears in the list with a GA4 badge and collects at the chosen hour (or immediately via "Collect now", SCN-115)
-- **UI elements:** source-type select ("Google Analytics 4"), credential select + "＋ new credential" affordance, property-ID input, backfill-days input, collection-hour select, "Collect automatically" toggle, Save button
+- **UI elements:** source-type select ("Google Analytics 4"), credential select + "＋ new credential" affordance + "Check key" (SCN-114a), property-IDs input, property-timezone input (suggestions from the browser's own zone list), event-names input, currency-code input, backfill-days input, collection-hour select, "Collect automatically" toggle, Save button
 - **States covered:** loading, empty (no credentials saved yet), error, success
-- **Errors & recovery:** submitting without a credential → toast and the credential select is marked invalid; a property not shared with the service account → 403 → `AnalyticsPermissionError` surfaced as "grant Viewer on this property"; a credential owned by another user → 404 (owner-strict); create fails → toast, form keeps its values
+- **Errors & recovery:** submitting without a credential → toast and the credential select is marked invalid; a currency that is not a three-letter code, or a timezone the browser does not know, → toast naming the fix and nothing is sent (the API refuses both with 422 for a direct call); a property not shared with the service account → 403 → `AnalyticsPermissionError` surfaced as "grant Viewer on this property"; a credential owned by another user → 404 (owner-strict); create fails → toast, form keeps its values
+- **Why every knob is on the form (A-08, 2026-09-18):** the collector has always read `event_names`, `currency_code` and every id in `property_ids`, while the form owned the first property and the backfill window — so a connection collecting three properties looked like one collecting a single property, and `GA4Config`'s docstring said the UI "nudges users to name the events they care about" while no such field existed. Editing here now edits what the collector reads, removals included.
+- **Why the timezone is asked for (A-04):** GA4 ends a day in the property's own zone. Without it the newest day of each run is kept but journalled `partial` and collected again, rather than being sealed as a measurement of a day that had not finished.
 - **Status:** implemented
 - **Audit note (2026-08-19):** verified against shipped code, AUD-0819-15. These nine shipped in `[1.16.0]` and stayed `draft` with `Last audit: —` for a month, which is the drift the scenario-first rule exists to prevent: the base is the source of truth only while it is kept current.
 - **Coverage:** components/connections/ConnectionSelector.tsx
@@ -2221,6 +2224,24 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Status:** implemented
 - **Audit note (2026-08-19):** verified against shipped code, AUD-0819-15. These nine shipped in `[1.16.0]` and stayed `draft` with `Last audit: —` for a month, which is the drift the scenario-first rule exists to prevent: the base is the source of truth only while it is kept current.
 - **Coverage:** components/settings/VendorCredentialsPanel.tsx
+
+### SCN-114a: Check whether a stored credential still works
+- **Persona:** owner
+- **Feature:** analytics-sources
+- **Entry point:** GA4 connection form → select a credential → "Check key"
+- **Preconditions:** a `ga4` vendor credential the caller owns
+- **Steps:**
+  1. User selects a stored credential in the GA4 connection form
+  2. The line beneath the picker states what the vendor last said — "Never checked with Google." until somebody asks
+  3. User clicks "Check key"
+  4. The app asks the vendor for a token with that key and shows the answer
+- **Expected result:** a live key → "Google accepted this key." with the date, stored on the credential; a revoked or deleted key → "Google refused this key: …" carrying the vendor's own words, so the user knows to rotate it rather than to debug a property
+- **UI elements:** "Check key" button (disabled while checking, labelled "Checking…"), verdict line under the credential picker (warning-toned when refused), toast
+- **States covered:** loading, empty (never checked), error, success
+- **Errors & recovery:** the vendor could not be reached → 503 → toast saying the key was not checked, and the stored verdict is deliberately left untouched — an unreachable vendor is no evidence about a key; another user's credential → 404
+- **Why it exists (PRJ-10):** a credential is pasted once and used by a nightly job, so a revocation first shows up as a report that stopped arriving, days later, in a log nobody reads. The probe is one real token refresh because that is the only thing that distinguishes a dead key from a vendor hiccup — a report request answers 500 for both. It asks about the key rather than a property, so it answers before the credential is attached to anything.
+- **Status:** implemented
+- **Coverage:** components/connections/ConnectionSelector.tsx
 
 ### SCN-115: Analytics collection status — ok / partial / pending periods
 - **Persona:** editor

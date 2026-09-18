@@ -1,9 +1,14 @@
 /**
  * SCN-113 — add a Google Analytics 4 connection.
+ * SCN-114a — check whether a stored credential still works.
  *
  * The GA4 branch of ConnectionSelector: picking the source type swaps the whole
  * DB/SSH form out for the analytics fields, and a submit without a credential is
  * refused loudly instead of posting a half-formed connection.
+ *
+ * The form's fields are the four the collector actually reads (A-08), and the
+ * credential picker can ask the vendor whether the key is still live — where a key
+ * nobody has asked about says so rather than looking approved.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -46,6 +51,7 @@ vi.mock("@/lib/api/vendor-credentials", async () => {
     vendorCredentials: {
       list: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
+      verify: vi.fn(),
       delete: vi.fn(),
     },
   };
@@ -158,10 +164,90 @@ describe("ConnectionSelector — Google Analytics 4 source (SCN-113)", () => {
     await waitFor(() =>
       expect(screen.getByLabelText("GA4 vendor credential")).toBeInTheDocument(),
     );
-    expect(screen.getByLabelText("GA4 property ID")).toBeInTheDocument();
+    expect(screen.getByLabelText("GA4 property IDs")).toBeInTheDocument();
+    // A-08: the three knobs the collector reads and the form used to hide.
+    expect(screen.getByLabelText("Property timezone")).toBeInTheDocument();
+    expect(screen.getByLabelText("Event names")).toBeInTheDocument();
+    expect(screen.getByLabelText("Currency code")).toBeInTheDocument();
     expect(screen.getByLabelText("Backfill days")).toBeInTheDocument();
     expect(screen.getByLabelText("Collection hour")).toBeInTheDocument();
     expect(screen.getByLabelText("Collect automatically")).toBeInTheDocument();
+  });
+
+  it("says a key has never been checked rather than letting silence read as approval", async () => {
+    await renderForm();
+    selectGa4();
+    await waitFor(() =>
+      expect(screen.getByLabelText("GA4 vendor credential")).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("GA4 vendor credential"), {
+      target: { value: "vc1" },
+    });
+
+    expect(screen.getByTestId("credential-verdict")).toHaveTextContent(
+      /never checked/i,
+    );
+  });
+
+  it("asks the vendor on demand and shows what it answered", async () => {
+    (vendorCredentials.verify as ReturnType<typeof vi.fn>).mockResolvedValue({
+      verified: false,
+      error: "Google rejected this key: invalid_grant",
+      credential: {
+        ...GA4_CREDENTIAL,
+        last_verified_at: "2026-09-18T10:00:00Z",
+        last_verify_error: "Google rejected this key: invalid_grant",
+      },
+    });
+    await renderForm();
+    selectGa4();
+    await waitFor(() =>
+      expect(screen.getByLabelText("GA4 vendor credential")).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("GA4 vendor credential"), {
+      target: { value: "vc1" },
+    });
+
+    fireEvent.click(screen.getByText("Check key"));
+
+    await waitFor(() =>
+      expect(vendorCredentials.verify).toHaveBeenCalledWith("vc1"),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("credential-verdict")).toHaveTextContent(
+        /refused this key/i,
+      ),
+    );
+    expect(toast).toHaveBeenCalledWith(
+      expect.stringContaining("refused"),
+      "error",
+    );
+  });
+
+  it("a vendor that could not be reached leaves the stored verdict alone", async () => {
+    (vendorCredentials.verify as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("The vendor could not be reached, so the key was not checked"),
+    );
+    await renderForm();
+    selectGa4();
+    await waitFor(() =>
+      expect(screen.getByLabelText("GA4 vendor credential")).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("GA4 vendor credential"), {
+      target: { value: "vc1" },
+    });
+
+    fireEvent.click(screen.getByText("Check key"));
+
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.stringContaining("could not be reached"),
+        "error",
+      ),
+    );
+    expect(screen.getByTestId("credential-verdict")).toHaveTextContent(
+      /never checked/i,
+    );
   });
 
   it("lists only ga4 credentials in the picker and shows the service-account email", async () => {
@@ -191,7 +277,7 @@ describe("ConnectionSelector — Google Analytics 4 source (SCN-113)", () => {
     fireEvent.change(screen.getByLabelText("Connection name"), {
       target: { value: "GA4 prod" },
     });
-    fireEvent.change(screen.getByLabelText("GA4 property ID"), {
+    fireEvent.change(screen.getByLabelText("GA4 property IDs"), {
       target: { value: "294380179" },
     });
 
@@ -255,7 +341,7 @@ describe("ConnectionSelector — Google Analytics 4 source (SCN-113)", () => {
     fireEvent.change(screen.getByLabelText("GA4 vendor credential"), {
       target: { value: "vc1" },
     });
-    fireEvent.change(screen.getByLabelText("GA4 property ID"), {
+    fireEvent.change(screen.getByLabelText("GA4 property IDs"), {
       target: { value: "294380179" },
     });
     fireEvent.change(screen.getByLabelText("Collection hour"), {
@@ -273,7 +359,13 @@ describe("ConnectionSelector — Google Analytics 4 source (SCN-113)", () => {
       vendor_credential_id: "vc1",
       collection_enabled: true,
       collection_hour: 5,
-      source_config: { property_ids: ["294380179"], backfill_days: 30 },
+      source_config: {
+        property_ids: ["294380179"],
+        backfill_days: 30,
+        event_names: [],
+        currency_code: null,
+        property_timezone: null,
+      },
     });
     expect(payload).not.toHaveProperty("db_host");
     expect(payload).not.toHaveProperty("db_port");

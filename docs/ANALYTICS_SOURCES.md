@@ -141,11 +141,21 @@ appears:
 
 | Field | Default | Notes |
 |---|---|---|
-| *GA4 vendor credential* | — | Only `ga4` credentials are listed. **New credential** adds one inline without leaving the form. |
-| *GA4 property ID* | — | The number from §2.5 |
+| *GA4 vendor credential* | — | Only `ga4` credentials are listed. **New credential** adds one inline without leaving the form. **Check key** asks Google whether it still accepts this key, and the line beneath says what it last answered (§3.3). |
+| *GA4 property IDs* | — | The number(s) from §2.5, comma-separated. Every property the connection collects is shown and editable; removing one here removes it. |
+| *Property timezone* | — | The property's own zone from GA4 Admin → Property details (e.g. `America/Los_Angeles`). See §3.4 — without it the newest day of each run is kept but marked `partial` and collected again. |
+| *Events* | blank | Event names to collect, comma-separated. Blank collects every event on the property. |
+| *Currency* | blank | ISO-4217 code GA4 converts revenue into (e.g. `USD`). Blank leaves the property's own currency. |
 | *Backfill days* | `30` | How far back a fresh connection collects. Clamped to 1–3650. |
 | *Collection hour* | `03:00` | Local to the scheduler timezone (`DAILY_KNOWLEDGE_SYNC_TIMEZONE`, default `Europe/Berlin`) |
 | *Collect automatically* | on | Per-connection pause switch for the schedule |
+
+The last four are stored in `source_config`, and the API checks them where they are
+written rather than at 03:00: the window is **clamped** (a number has a nearest legal
+value), while a timezone that names no place and a currency that is not a three-letter
+code are **refused** with a 422 — neither has anything to be corrected to, and both
+otherwise fail in the collector, nightly, three layers from the field they were typed
+into.
 
 The form ends with the honest bit: *"GA4 is collected up to yesterday — today is
 always partial. Grant the service account Viewer on the property first."*
@@ -164,6 +174,52 @@ Three things worth knowing:
   code↔DB `sync` refuse it with a 400 pointing at
   `POST /api/connections/{id}/collect` instead. It also has no health dot in the
   connection list — the collection row (§5) is its status signal.
+
+### 3.3 Is the key still good?
+
+**Check key**, beside the credential picker, calls
+`POST /api/vendor-credentials/{id}/verify`: one real token refresh against Google,
+which is the only probe that tells a revoked or deleted service-account key from a
+vendor hiccup — a report request answers 500 for both. The verdict is stored on the
+credential (`last_verified_at`, `last_verify_error`) and shown under the picker, so a
+key nobody has asked about reads as *"Never checked with Google"* rather than as
+approval.
+
+Three outcomes, and they are deliberately different:
+
+| What happened | HTTP | What is stored |
+|---|---|---|
+| Google issued a token | 200 `verified: true` | the date, and no error |
+| Google refused the key | 200 `verified: false` | the date **and** the refusal |
+| Google could not be reached | 503 | **nothing** — an unreachable vendor is no evidence about a key |
+
+The probe asks about the *key*, not about a property: it answers before the credential
+is attached to anything, which is when you most want to know the paste was right. Use
+**Test connectivity** on the connection (§3.2) for "can it read property X".
+
+### 3.4 Why the property timezone matters
+
+GA4 evaluates a `date` in the **property's** timezone. The collector's window ends
+"yesterday" — and until this knob existed, yesterday on the *scheduler's* clock. A
+property in Los Angeles collected at 03:00 Europe/Berlin was read at 18:00 the previous
+day in its own zone, with six hours still to happen, and the journal recorded `ok`,
+which is a **done** status: those partial numbers were never collected again, and the
+agent published them as a measurement of a finished day.
+
+With the zone set, the day is judged where the property lives. Without it nothing is
+guessed: the newest period of each run is journalled `partial` — the rows are kept, the
+period stays owed — and carries the caveat *"collected before this period was certainly
+over"*. It is collected again on the next run, when it is complete wherever the property
+is.
+
+The **refetch tail** is unsettled for a different reason, and says so the same way: the
+most recent `ANALYTICS_REFETCH_TAIL_PERIODS` periods are re-fetched on every run because
+the vendor revises them (GA4 settles within ~48 h), so a number quoted from one may change
+tomorrow. Their journal rows stay a *done* status — the tail refetches them whatever the
+status says, and marking them owed would leave every healthy connection reading `partial`
+for ever — and carry the note *"provisional: the vendor still revises this period"*, which
+the agent repeats as a caveat when it quotes those days. Set the knob to `0` and nothing is
+refetched, so nothing is provisional on that count.
 
 ---
 
@@ -231,6 +287,22 @@ property that did not.
 button on the collection row) enqueues exactly the same job with the same
 day-scoped id. It deliberately ignores `collection_enabled`: that flag pauses the
 *schedule*, and pulling on demand is the normal way to verify a credential fix.
+
+**One run, one turn.** A Redis lock per connection (`analytics:collect:<id>`) keeps the
+button and the wave from collecting the same connection at once — each would spend the
+property's whole daily quota on the same periods. A second caller is told so rather than
+queued: the work it wanted is already being done. Without Redis (dev, one process)
+there is nothing to collide with and the lock is a no-op.
+
+**A collection is a run, and is visible as one.** Each one mints an `IndexingRun` of
+kind `analytics_collect` — three steps (*Connect to Vendor*, *Collect Reports*,
+*Summarize*), a heartbeat the reaper reads, and a row in
+`GET /api/projects/{id}/sync-history` beside the nightly knowledge sync, carrying its
+trigger (`schedule` for the wave, `manual` for the button). Before this, a nightly call
+to a third-party API on the project's behalf appeared nowhere a person could look. The
+row is bookkeeping, never the work: a run that cannot be minted is logged and the
+collection proceeds. A `partial` outcome completes the run — the rows landed and what is
+still owed is owed in the journal; only `failed` (errors with nothing written) fails it.
 
 ---
 
@@ -323,6 +395,10 @@ also surfaces as a permission failure.
 
 Same class of problem, same handling (no retry). Re-download the JSON key, add a
 new credential, re-point the connection at it, and delete the old credential.
+
+**Check key** (§3.3) answers this one before a night is lost, and separates it from a
+403: a key Google refuses at the token endpoint is dead whatever the property access
+says, while a key it accepts moves the question to §2.3.
 
 ### Quota exhaustion
 

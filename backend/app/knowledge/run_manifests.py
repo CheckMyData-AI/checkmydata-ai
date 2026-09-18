@@ -34,6 +34,15 @@ _BASE: dict[str, list[Step]] = {
         Step("store_sync", "Store Results"),
         Step("generate_sync_summary", "Generate Summary"),
     ],
+    # One analytics connection's nightly collection. Three steps because that is what
+    # the run actually has: the vendor either lets us in or it does not, the periods
+    # are fetched, and the outcome is summarised. Per-report progress is in the journal
+    # (`analytics_imports`), which is per period and outlives the run.
+    "analytics_collect": [
+        Step("connect", "Connect to Vendor"),
+        Step("collect_reports", "Collect Reports", weight=5),
+        Step("summarize", "Summarize"),
+    ],
     "daily_sync": [
         Step("plan_targets", "Plan Targets"),
         Step("repo_index", "Repository Index", weight=2),
