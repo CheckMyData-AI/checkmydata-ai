@@ -31,13 +31,15 @@ one transaction.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.source_types import clamp_backfill_days
 from app.models.analytics_import import AnalyticsImport
 
 logger = logging.getLogger(__name__)
@@ -210,15 +212,56 @@ async def record(
     await session.commit()
 
 
-async def prune(session: AsyncSession, *, older_than_days: int = 400) -> int:
-    """Delete journal rows fetched longer than ``older_than_days`` ago (REQ-015).
+async def widest_live_window_days(session: AsyncSession) -> int:
+    """The longest backfill window any analytics connection is configured for (A-07).
 
-    The default retains a little over a year so year-over-year backfills still
-    see their own history.
+    What the prune must not cut into. Read from the connections themselves rather than
+    assumed from the setting: `source_config.backfill_days` overrides it per connection,
+    and the overriding one is exactly the case the old prune got wrong.
+    """
+    from app.config import settings as app_settings
+    from app.models.connection import Connection
+    from app.services.connection_service import is_analytics_source
+
+    widest = int(app_settings.analytics_backfill_days)
+    rows = (await session.execute(select(Connection))).scalars().all()
+    for conn in rows:
+        if not is_analytics_source(conn.source_type) or not getattr(conn, "is_active", True):
+            continue
+        raw = conn.source_config_json or ""
+        if not raw:
+            continue
+        try:
+            configured = json.loads(raw).get("backfill_days")
+        except (TypeError, ValueError):
+            continue
+        days = clamp_backfill_days(configured)
+        if days is not None:
+            widest = max(widest, days)
+    return widest
+
+
+async def prune(
+    session: AsyncSession,
+    *,
+    older_than_days: int = 400,
+    protect_days: int = 0,
+) -> int:
+    """Delete journal rows for periods older than the windows anybody still collects.
+
+    A-07: this pruned on ``fetched_at``, which is when the row was WRITTEN, while a
+    connection may ask for up to 3 650 days of history. So a period inside a live
+    backfill window lost its journal row after 400 days, re-entered ``pending``, and was
+    collected again — about 3 000 vendor calls at once, past the job's 1 800 s ceiling,
+    every ~400 days, for ever. Two changes make that impossible: the age that counts is
+    the **period's**, not the row's, and *protect_days* keeps everything inside the
+    widest window any connection is currently configured for.
 
     Args:
         session: Async session bound to the app database.
         older_than_days: Retention window in days; must be at least 1.
+        protect_days: Never delete a period newer than this many days, whatever the
+            retention says. The caller passes the widest live backfill window.
 
     Returns:
         How many rows were deleted.
@@ -230,14 +273,33 @@ async def prune(session: AsyncSession, *, older_than_days: int = 400) -> int:
     if older_than_days < 1:
         raise ValueError(f"older_than_days must be >= 1, got {older_than_days}")
 
-    cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+    horizon = max(older_than_days, max(protect_days, 0))
+    cutoff_date = (datetime.now(UTC) - timedelta(days=horizon)).date()
+    # The period is stored as the string the report's grain produces: `YYYY-MM-DD` for a
+    # daily report and `YYYY-MM` for a monthly one. Both sort as dates do, so the
+    # comparison is a string one and needs no per-row parsing — and a monthly period is
+    # only dropped once the whole month is behind the cutoff.
+    daily_cutoff = cutoff_date.isoformat()
+    monthly_cutoff = cutoff_date.strftime("%Y-%m")
     # Annotated Any: a DELETE yields a CursorResult, which carries `rowcount`,
     # but AsyncSession.execute is typed as returning the narrower Result.
     result: Any = await session.execute(
-        delete(AnalyticsImport).where(AnalyticsImport.fetched_at < cutoff)
+        delete(AnalyticsImport).where(
+            or_(
+                and_(
+                    func.length(AnalyticsImport.period) == 10, AnalyticsImport.period < daily_cutoff
+                ),
+                and_(
+                    func.length(AnalyticsImport.period) == 7,
+                    AnalyticsImport.period < monthly_cutoff,
+                ),
+            )
+        )
     )
     await session.commit()
     deleted = int(result.rowcount or 0)
     if deleted:
-        logger.info("Pruned %d analytics journal row(s) older than %s", deleted, cutoff.date())
+        logger.info(
+            "Pruned %d analytics journal row(s) for periods before %s", deleted, daily_cutoff
+        )
     return deleted

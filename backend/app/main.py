@@ -1754,7 +1754,15 @@ async def _prune_analytics_journal() -> None:
 
     try:
         async with async_session_factory() as session:
-            await journal.prune(session, older_than_days=settings.analytics_journal_retention_days)
+            # A-07: never inside a window somebody is still collecting. A pruned
+            # period re-enters `pending` and is fetched again — ~3 000 vendor calls at
+            # once for a multi-year backfill, past the job's own ceiling.
+            protect = await journal.widest_live_window_days(session)
+            await journal.prune(
+                session,
+                older_than_days=settings.analytics_journal_retention_days,
+                protect_days=protect,
+            )
     except Exception:
         logger.warning("Analytics journal prune failed", exc_info=True)
 

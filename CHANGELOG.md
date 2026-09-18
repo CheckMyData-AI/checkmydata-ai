@@ -46,7 +46,15 @@ Six rows of the 2026-09-13 audit's analytics findings.
   vendor has revised away lives inside `_upsert`, which an empty fetch never reaches, so
   stale values went on counting into totals published as real measurements.
 
-Twenty-four tests, each fix verified by planting its defect back. **Not verifiable on
+- **A-07 — the journal prune fought the backfill windows.** It deleted by `fetched_at` —
+  when the row was written — while a connection may ask for up to 3 650 days of history,
+  so a period inside a live window lost its journal row after 400 days, re-entered
+  `pending`, and was collected again: ~3 000 vendor calls at once, past the job's 1 800 s
+  ceiling, every ~400 days, for ever. The age that decides is the **period's** now (a tail
+  refetch rewrites `fetched_at`; the period does not get younger), and the prune is handed
+  the widest window any connection is actually configured for, which it never cuts into.
+
+Twenty-eight tests, each fix verified by planting its defect back. **Not verifiable on
 production:** this deployment has no GA4 connection — the acceptance for these rows is
 the fixture-level end-to-end test, which now also asserts the per-day reading.
 

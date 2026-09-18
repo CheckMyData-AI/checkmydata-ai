@@ -312,9 +312,21 @@ class TestRecord:
 
 
 class TestPrune:
-    async def _seed(self, db: AsyncSession, conn_id: str, ages_days: dict[str, int]) -> None:
+    """A-07: the age that decides is the PERIOD's, and a live window is never cut into.
+
+    This pruned on `fetched_at` — when the row was written — while a connection may ask
+    for up to 3 650 days of history. A period inside a live backfill window therefore
+    lost its journal row after 400 days, re-entered `pending`, and was collected again:
+    about 3 000 vendor calls at once, past the job's 1 800 s ceiling, every ~400 days.
+    """
+
+    @staticmethod
+    def _period(days_ago: int) -> str:
+        return (datetime.now(UTC).date() - timedelta(days=days_ago)).isoformat()
+
+    async def _seed(self, db: AsyncSession, conn_id: str, periods: list[str]) -> None:
         now = datetime.now(UTC)
-        for period, age in ages_days.items():
+        for period in periods:
             db.add(
                 AnalyticsImport(
                     connection_id=conn_id,
@@ -322,33 +334,62 @@ class TestPrune:
                     period=period,
                     status="ok",
                     rows_written=1,
-                    fetched_at=now - timedelta(days=age),
+                    # Written today, every one of them: what used to decide, and what
+                    # must now decide nothing.
+                    fetched_at=now,
                 )
             )
         await db.commit()
 
-    async def test_deletes_only_rows_older_than_the_cutoff(self, db: AsyncSession, conn_id: str):
-        await self._seed(db, conn_id, {D1: 500, D2: 401, D3: 399, D4: 0})
+    async def test_deletes_only_periods_older_than_the_cutoff(self, db: AsyncSession, conn_id: str):
+        old, older, recent, today = (
+            self._period(500),
+            self._period(401),
+            self._period(399),
+            self._period(0),
+        )
+        await self._seed(db, conn_id, [old, older, recent, today])
 
         deleted = await journal.prune(db, older_than_days=400)
 
         assert deleted == 2
-        assert [r.period for r in await _rows(db, conn_id)] == [D3, D4]
+        assert sorted(r.period for r in await _rows(db, conn_id)) == sorted([recent, today])
+
+    async def test_a_row_written_today_about_an_old_period_is_still_pruned(
+        self, db: AsyncSession, conn_id: str
+    ):
+        """The refetch tail rewrites `fetched_at`; the period does not get younger."""
+        await self._seed(db, conn_id, [self._period(500)])
+
+        assert await journal.prune(db, older_than_days=400) == 1
+
+    async def test_a_live_backfill_window_is_never_cut_into(self, db: AsyncSession, conn_id: str):
+        inside = self._period(900)
+        await self._seed(db, conn_id, [inside])
+
+        # Retention says 400 days; a connection is configured for 1 095.
+        assert await journal.prune(db, older_than_days=400, protect_days=1095) == 0
+        assert await _count(db) == 1
+
+    async def test_a_monthly_period_survives_until_its_month_is_behind_the_cutoff(
+        self, db: AsyncSession, conn_id: str
+    ):
+        cutoff_month = (datetime.now(UTC).date() - timedelta(days=400)).strftime("%Y-%m")
+        year, month = (int(part) for part in cutoff_month.split("-"))
+        previous = f"{year - 1 if month == 1 else year:04d}-{12 if month == 1 else month - 1:02d}"
+        await self._seed(db, conn_id, [cutoff_month, previous])
+
+        assert await journal.prune(db, older_than_days=400) == 1
+        assert [r.period for r in await _rows(db, conn_id)] == [cutoff_month]
 
     async def test_returns_zero_when_nothing_is_old_enough(self, db: AsyncSession, conn_id: str):
-        await self._seed(db, conn_id, {D1: 10, D2: 20})
+        await self._seed(db, conn_id, [self._period(10), self._period(20)])
 
         assert await journal.prune(db, older_than_days=400) == 0
         assert await _count(db) == 2
 
-    async def test_default_retention_is_400_days(self, db: AsyncSession, conn_id: str):
-        await self._seed(db, conn_id, {D1: 401, D2: 399})
-
-        assert await journal.prune(db) == 1
-        assert [r.period for r in await _rows(db, conn_id)] == [D2]
-
     async def test_prune_is_durable_without_a_caller_commit(self, db: AsyncSession, conn_id: str):
-        await self._seed(db, conn_id, {D1: 500})
+        await self._seed(db, conn_id, [self._period(500)])
 
         await journal.prune(db, older_than_days=400)
         await db.rollback()
@@ -357,8 +398,40 @@ class TestPrune:
 
     async def test_rejects_a_non_positive_retention(self, db: AsyncSession, conn_id: str):
         """``older_than_days=0`` would delete the whole journal."""
-        await self._seed(db, conn_id, {D1: 1})
+        await self._seed(db, conn_id, [self._period(1)])
 
         with pytest.raises(ValueError, match="older_than_days"):
             await journal.prune(db, older_than_days=0)
         assert await _count(db) == 1
+
+
+class TestTheWidestLiveWindow:
+    """What the prune must not cut into (A-07). Read from the connections themselves:
+    `source_config.backfill_days` overrides the setting per connection, and the
+    overriding one is exactly the case the old prune got wrong."""
+
+    async def test_it_defaults_to_the_setting(self, db: AsyncSession):
+        from app.config import settings
+
+        assert await journal.widest_live_window_days(db) == settings.analytics_backfill_days
+
+    async def test_a_connection_asking_for_more_raises_it(self, db: AsyncSession, conn_id: str):
+        import json as _json
+
+        from app.models.connection import Connection
+
+        conn = await db.get(Connection, conn_id)
+        conn.source_config_json = _json.dumps({"backfill_days": 1095})
+        await db.commit()
+
+        assert await journal.widest_live_window_days(db) >= 1095
+
+    async def test_an_unreadable_config_does_not_shrink_it(self, db: AsyncSession, conn_id: str):
+        from app.config import settings
+        from app.models.connection import Connection
+
+        conn = await db.get(Connection, conn_id)
+        conn.source_config_json = "{not json"
+        await db.commit()
+
+        assert await journal.widest_live_window_days(db) == settings.analytics_backfill_days
