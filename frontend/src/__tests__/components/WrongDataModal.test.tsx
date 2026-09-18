@@ -90,6 +90,23 @@ describe("WrongDataModal", () => {
     );
   });
 
+  it("reads the investigation back within the project that owns it", async () => {
+    // The route re-scopes every id to a project the caller belongs to and answers 404
+    // rather than confirming another tenant's investigation exists, so `project_id` is
+    // required. Without it the poll is a 422 — which is what it was until Track D1
+    // mounted this component and a real investigation could not be read back.
+    const { api } = await import("@/lib/api");
+    open();
+
+    await userEvent.click(screen.getByText("Numbers too low"));
+    await userEvent.click(screen.getByRole("button", { name: /investigat/i }));
+
+    await waitFor(
+      () => expect(api.dataValidation.getInvestigation).toHaveBeenCalledWith("inv1", "proj1"),
+      { timeout: 6000 },
+    );
+  });
+
   it("shows the cause and both results once the investigation finishes", async () => {
     open();
 
