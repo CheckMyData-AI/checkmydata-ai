@@ -424,17 +424,20 @@ class TestCollectNow:
         assert resp.json()["task_id"] == kwargs["task_id"]
 
         # The fallback coroutine must actually collect this connection.
-        collected: list[str] = []
+        collected: list[tuple[str, str]] = []
 
         class _FakeService:
-            async def collect(self, connection_id: str):
-                collected.append(connection_id)
+            async def collect(self, connection_id: str, *, trigger: str = "schedule"):
+                collected.append((connection_id, trigger))
 
         monkeypatch.setattr(
             "app.services.analytics_collect_service.AnalyticsCollectService", _FakeService
         )
         await kwargs["coro_factory"]()
-        assert collected == [cid]
+        # The button's run is `manual`, and that reaches the run row a person reads in
+        # `/sync-history`: "the schedule did this" and "I pressed it" are different facts.
+        assert collected == [(cid, "manual")]
+        assert kwargs["trigger"] == "manual"
 
     async def test_collect_works_on_a_paused_connection(
         self, auth_client: AsyncClient, monkeypatch, ga4_conn

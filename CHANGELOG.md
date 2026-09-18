@@ -78,7 +78,13 @@ Six rows of the 2026-09-13 audit's analytics findings.
   **refetch tail** is unsettled for its own reason — those periods are re-fetched every
   run *because* the vendor revises them — and now says so in the note the agent repeats,
   while keeping a done status: the tail refetches them whatever the status says, and
-  marking them owed would leave every healthy connection reading `partial` for ever.
+  marking them owed would leave every healthy connection reading `partial` for ever. That
+  note is **marked**, not merely written: `error` on a done row already meant "the vendor
+  handed over part of this period", which the agent publishes as a LOWER BOUND, and a
+  number that is merely not final is a different claim. `PROVISIONAL_NOTE_PREFIX` lives
+  once in `app/analytics/journal.py` — the writer and the reader must agree byte for byte
+  — and the answer now carries *"STILL SETTLING … the number may change"* beside, not
+  instead of, the coverage sentence: every one of those periods is collected and counted.
 - **A-08 (GA4 half) — the form promised knobs it did not have.** `GA4Config`'s docstring
   said the UI "nudges users to name the events they care about" while the form had no
   such field, so every connection collected every event on the property; `currency_code`

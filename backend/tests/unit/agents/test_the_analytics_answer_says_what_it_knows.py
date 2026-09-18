@@ -53,6 +53,62 @@ class TestAQuietDayIsNotATruncation:
             "ok row is the only signal the window was short"
         )
 
+    def test_a_still_settling_period_is_not_a_truncation_either(self) -> None:
+        """PRJ-10/A-04: the same column now carries a third meaning, and it is marked.
+
+        The refetch tail is re-collected every run *because* the vendor revises it, so
+        those periods carry a note. Read as a truncation it would say the numbers are a
+        LOWER BOUND, which is false: they are complete as far as the vendor knows today
+        and may simply be different tomorrow. The prefix is the contract, so the split
+        is a lookup rather than a reading of prose.
+        """
+        from app.agents.analytics_agent import (
+            PROVISIONAL_NOTE_PREFIX,
+            _degraded_periods,
+            _provisional_periods,
+        )
+
+        statuses = {
+            "2026-09-01": ("ok", "GA4 report 'geo' exceeded the 10,000-row fetch cap"),
+            "2026-09-02": ("ok", f"{PROVISIONAL_NOTE_PREFIX} the vendor still revises it"),
+            "2026-09-03": ("ok", None),
+        }
+        periods = list(statuses)
+
+        degraded = _degraded_periods(periods, statuses)
+        provisional = _provisional_periods(periods, statuses)
+
+        assert [p.split(":")[0] for p in degraded] == ["2026-09-01"]
+        assert [p.split(":")[0] for p in provisional] == ["2026-09-02"]
+        assert "provisional:" not in provisional[0], "the marker is plumbing, not prose"
+
+    def test_the_two_caveats_read_differently_in_the_header(self) -> None:
+        """A user told 'lower bound' acts differently from one told 'may change'."""
+        from app.agents.analytics_agent import AnalyticsAgent, _Window
+
+        header = AnalyticsAgent()._window_coverage_lines(
+            _Window(
+                report="overview",
+                start="2026-09-01",
+                end="2026-09-03",
+                missing=[],
+                failed=[],
+                last_error=None,
+                degraded=[],
+                provisional=["2026-09-03: the vendor still revises this period"],
+            ),
+            ["2026-09-01", "2026-09-02", "2026-09-03"],
+        )
+        text = "\n".join(header)
+
+        assert "STILL SETTLING" in text
+        assert "may change" in text
+        assert "lower than the true total" not in text, (
+            "nothing was truncated; saying so sends the reader to the wrong cause"
+        )
+        # Every period IS collected and IS counted, so the coverage sentence stands.
+        assert "real measurements" in text
+
     def test_the_connection_panel_does_not_show_a_caveat_for_a_quiet_day(self) -> None:
         from app.services.connection_service import _report_status
 

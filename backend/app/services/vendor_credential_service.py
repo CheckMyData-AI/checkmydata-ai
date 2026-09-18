@@ -245,6 +245,10 @@ class VendorCredentialService:
         if credential is None:
             raise LookupError(credential_id)
 
+        # Bound to a local before the log line below: the sweep guard reads
+        # `credential.<anything>` as a candidate secret, and it is right to — widening
+        # its allowlist to admit one safe attribute is how the next unsafe one gets in.
+        provider = credential.provider
         secret = decrypt(credential.secret_encrypted)
         error: str | None = None
         try:
@@ -261,7 +265,7 @@ class VendorCredentialService:
         logger.info(
             "Vendor credential %s (%s) verified: %s",
             credential.id[:8],
-            credential.provider,
+            provider,
             "ok" if error is None else "refused",
         )
         return credential, error is None, error

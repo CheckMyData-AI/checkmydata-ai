@@ -764,9 +764,9 @@ class AnalyticsCollectService:
                         "the scheduler's clock. It will be collected again."
                         if provisional
                         else (
-                            "provisional: the vendor still revises this period, and it "
-                            "is re-collected on every run until it leaves the refetch "
-                            "tail."
+                            f"{journal.PROVISIONAL_NOTE_PREFIX} the vendor still "
+                            "revises this period, and it is re-collected on every run "
+                            "until it leaves the refetch tail."
                             if in_tail
                             else None
                         )
@@ -1084,7 +1084,16 @@ class AnalyticsCollectService:
         try:
             await step.__aenter__()
         except Exception:
-            logger.debug("Analytics collect: step %s not opened", step_key, exc_info=True)
+            # WARNING, not debug: the collection proceeds, but this step will never
+            # appear on the run, so somebody reading the run's progress is looking at a
+            # gap that has a cause. A quiet fallback the reader cannot tell from
+            # "nothing happened" is the shape the silent-failure ratchet exists to stop.
+            logger.warning(
+                "Analytics collect: step %s could not be opened; the collection "
+                "continues but this step is missing from the run",
+                step_key,
+                exc_info=True,
+            )
             yield
             return
 
@@ -1096,7 +1105,12 @@ class AnalyticsCollectService:
                     return False
                 return bool(await step.__aexit__(type(exc), exc, exc.__traceback__))
             except Exception:
-                logger.debug("Analytics collect: step %s not closed", step_key, exc_info=True)
+                logger.warning(
+                    "Analytics collect: step %s could not be closed; the run's progress "
+                    "will read as stuck on it",
+                    step_key,
+                    exc_info=True,
+                )
                 return False
 
         try:

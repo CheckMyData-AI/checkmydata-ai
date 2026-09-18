@@ -55,6 +55,14 @@ DONE_STATUSES: frozenset[str] = frozenset({"ok", "empty"})
 
 #: Every status the journal accepts. An unrecognised one would make the period
 #: look "not done" forever, so it is rejected at the door rather than stored.
+#: Prefix of a journal note that is NOT a defect: the period was collected in full and
+#: the vendor is still revising it (the refetch tail). `error` on a done row otherwise
+#: means "the vendor handed over part of this period", and the agent publishes that as a
+#: LOWER BOUND — a different and wrong claim about a number that is merely not final.
+#: One definition, because the writer (the collect service) and the reader (the
+#: analytics agent) must agree byte for byte or the split silently stops working.
+PROVISIONAL_NOTE_PREFIX = "provisional:"
+
 VALID_STATUSES: frozenset[str] = frozenset({"ok", "empty", "partial", "failed"})
 
 #: Columns the upsert refreshes on conflict — the natural key is never among them.

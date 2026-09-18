@@ -76,7 +76,11 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.agents.analytics_agent import AnalyticsAgent, AnalyticsResult
+from app.agents.analytics_agent import (
+    PROVISIONAL_NOTE_PREFIX,
+    AnalyticsAgent,
+    AnalyticsResult,
+)
 from app.agents.base import AgentContext
 from app.analytics.ga4.adapter import DEFAULT_MAX_ROWS, GA4Adapter
 from app.analytics.ga4.config import CREDENTIAL_SECRET_KEY
@@ -138,6 +142,11 @@ SOURCE_CONFIG: dict[str, Any] = {
     "property_ids": [PROPERTY_ID],
     "backfill_days": BACKFILL_DAYS,
     "event_names": ["pin_show_promo"],
+    # A-04: a properly configured connection says where its property's day ends, so
+    # every collected period here is settled. The connection WITHOUT one is covered by
+    # `tests/unit/analytics/test_a_day_ends_in_the_propertys_timezone.py`, where the
+    # newest period is journalled `partial` and stays owed.
+    "property_timezone": "Europe/Berlin",
 }
 
 #: Readable dimension values, so a swapped column is visible in an assertion
@@ -885,14 +894,25 @@ async def test_a_vendor_truncated_period_is_caveated_in_the_answer(
     assert capped_row.error, "the degraded sentence never reached the journal"
     assert "fetch cap" in capped_row.error
     assert capped_day in capped_row.error
+
     # …and only that period. A cap that leaked everywhere would make the answer
-    # assertions below pass for the wrong reason.
-    assert [row.period for row in overview_journal if row.error] == [capped_day]
+    # assertions below pass for the wrong reason. The refetch tail's own note rides in
+    # the same column and is filtered out by its prefix — the two are different claims
+    # (a lower bound versus a number that may still change), which is why the marker
+    # exists rather than the agent guessing from prose.
+    def _truncation_notes(rows: list[Any]) -> list[str]:
+        return [
+            row.period
+            for row in rows
+            if row.error and not row.error.startswith(PROVISIONAL_NOTE_PREFIX)
+        ]
+
+    assert _truncation_notes(overview_journal) == [capped_day]
     for spec in GA4_REPORTS:
         if spec.name == "overview":
             continue
         rows = await _journal_rows(db_session, connection_id, spec.name)
-        assert [row.error for row in rows] == [None] * len(COLLECTED_DAYS), spec.name
+        assert _truncation_notes(rows) == [], spec.name
 
     # The rows that did arrive were stored, so the totals below are real.
     assert await _count(db_session, GA4OverviewDaily, connection_id) == len(COLLECTED_DAYS)
