@@ -110,9 +110,13 @@ class BM25Snapshot:
     doc_metadatas: list[dict[str, Any]]
     bm25: BM25Okapi
     raw_texts: list[str] = field(default_factory=list)
-    #: The tokenized corpus. This is what is persisted; ``bm25`` is rebuilt from it
-    #: on load, so nothing on disk has to be a class instance.
-    tokenized: list[list[str]] = field(default_factory=list)
+    #: The tokenized corpus is **persisted, not kept**. It is what the snapshot file
+    #: holds and what ``BM25Okapi`` is rebuilt from on load — and after that nothing
+    #: reads it, while it was the largest object in the process: **58.9 MB** of the
+    #: production corpus (32 571 documents), measured 2026-09-17 against 55.6 MB for
+    #: the BM25 structures themselves and 9.2 MB for the document texts. A web dyno
+    #: that needs 525 MB to answer one question on a 512 MB quota cannot afford a copy
+    #: nobody reads, so it lives in a local variable and dies with it.
     #: What the corpus looked like when this was built — its own field rather than
     #: part of ``indexed_sha``, which means the repository's commit and is compared
     #: to a git head by the pipeline's own staleness repair. A commit cannot say the
@@ -266,10 +270,9 @@ class BM25Index:
             doc_metadatas=metadatas,
             bm25=bm25,
             raw_texts=raw_texts,
-            tokenized=tokenized,
             corpus_fingerprint=corpus_fingerprint,
         )
-        self._persist(project_id, snapshot)
+        self._persist(project_id, snapshot, tokenized)
         self._drop_legacy_pickle(project_id)
         with self._lock:
             self._snapshots[project_id] = snapshot
@@ -282,7 +285,7 @@ class BM25Index:
         )
         return snapshot
 
-    def _persist(self, project_id: str, snapshot: BM25Snapshot) -> None:
+    def _persist(self, project_id: str, snapshot: BM25Snapshot, tokenized: list[list[str]]) -> None:
         target = self._path(project_id)
         tmp = target.with_suffix(".tmp")
         payload = {
@@ -292,7 +295,9 @@ class BM25Index:
             "doc_ids": snapshot.doc_ids,
             "doc_metadatas": snapshot.doc_metadatas,
             "raw_texts": snapshot.raw_texts,
-            "tokenized": snapshot.tokenized,
+            # From the caller, not from the snapshot: the corpus is written to disk
+            # and then dropped, so the snapshot in memory does not carry it.
+            "tokenized": tokenized,
             "corpus_fingerprint": snapshot.corpus_fingerprint,
         }
         try:
@@ -380,7 +385,6 @@ class BM25Index:
                     # only becomes an object here, in this process.
                     bm25=BM25Okapi(tokenized),
                     raw_texts=[str(t) for t in raw.get("raw_texts", [])],
-                    tokenized=tokenized,
                     corpus_fingerprint=str(raw.get("corpus_fingerprint", "")),
                 )
             except Exception:
@@ -388,6 +392,10 @@ class BM25Index:
                     "bm25_index: %s parsed but does not describe a corpus", path, exc_info=True
                 )
                 return None, MISS_CORRUPT
+            # The tokens have done their job — `BM25Okapi` has read them — and they are
+            # the largest thing this function allocates. Freed here rather than at the
+            # end of the call, because what follows holds the lock.
+            del tokenized, raw
             self._snapshots[project_id] = snap
             self._stamps[project_id] = stamp
             return snap, "ok"

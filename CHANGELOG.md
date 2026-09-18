@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the web process stops carrying a corpus nobody reads (T00-mem)
+
+Measured per object on the production corpus (32 571 documents, a Standard-1X dyno):
+
+| In the BM25 snapshot | Size |
+|---|---|
+| **tokenized corpus** | **58.9 MB** |
+| BM25 structures (`BM25Okapi`) | 55.6 MB |
+| document metadata | 14.3 MB |
+| document texts | 9.2 MB |
+| document ids | 7.6 MB |
+
+The tokens are what the **file** holds — `BM25Okapi` is rebuilt from them on load, which
+is what makes the snapshot inspectable with `zcat` rather than a pickle — and after the
+rebuild nothing reads them. They are now a local variable at build and load time: written
+to disk, handed to `BM25Okapi`, and freed. The on-disk format does not change, and a
+reload scores identically (asserted, not assumed).
+
+`google.analytics.data_v1beta` (**22 MB**) moves into the method that builds a report
+request. It was imported at boot through `PIPELINE_REGISTRY` on a deployment with no
+analytics connection at all.
+
+**Not done, and why:** `chromadb` (22 MB) stays at module scope in `vector_store.py` —
+tests patch it as a module attribute and production resolves to pgvector anyway, so the
+change is larger than its share. The connector registry imports every engine's driver at
+boot (ClickHouse, Mongo, asyncssh) for the same structural reason. Both are follow-ups on
+`T00-mem`; the numbers above are why they come after the 58.9 MB.
+
 ### Fixed — V1 verification: two things found broken, both fixed
 
 The first verification pass of the loop (T01–T03b) checked the product rather than the
