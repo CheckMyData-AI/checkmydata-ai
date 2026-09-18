@@ -34,6 +34,36 @@ change is larger than its share. The connector registry imports every engine's d
 boot (ClickHouse, Mongo, asyncssh) for the same structural reason. Both are follow-ups on
 `T00-mem`; the numbers above are why they come after the 58.9 MB.
 
+### Changed — the web dyno is Standard-2X, because one chat answer does not fit in 512 MB
+
+Found by V1's end-to-end check, which is the first time this loop asked production a real
+question rather than reading its tables. The first question over REST was cut by the
+platform at 30 s (`H12` — that path is for quick answers; the UI streams), and the SSE
+retry died at 55 s with `H15 Idle connection` having emitted **no bytes at all**: the
+handler had accepted the request and could not get far enough to start the stream.
+
+The cause was neither transport. Measured on a Standard-1X one-off dyno, staged:
+
+| Stage | RSS |
+|---|---|
+| imports (`app.main`) | **294 MB** |
+| + BM25 rebuild at boot (32 531 docs) | **387 MB** |
+| + one chat answer | **525 MB** |
+
+The quota is 512 MB, so the first answer on a fresh web dyno crosses it; the live process
+was measured at **712–737 MB (R14)**, swapping, with its log lines 0.42 s apart. Nothing
+was wrong with the request — the process could not run it.
+
+`web` is now **Standard-2X** (operator's decision, 2026-09-17) and
+`log-runtime-metrics` is enabled so the next time this happens the numbers are in the log
+rather than in an incident. The same answer then completed end to end: 144 s over SSE,
+112 events, one trace row, `route=query`, 132 s against the 216 s hard limit.
+
+**Not closed by the scale-up:** the memory itself. Queued as `T00-mem` — the BM25 corpus
+is held in the web process, the ONNX embedder is loaded per process, and the imports are
+294 MB before anything runs.
+
+
 ### Fixed — V1 verification: two things found broken, both fixed
 
 The first verification pass of the loop (T01–T03b) checked the product rather than the
