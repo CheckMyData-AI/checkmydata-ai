@@ -236,15 +236,20 @@ describe("ConnectionSelector — Google Analytics 4 source (SCN-113)", () => {
   it("says a key has never been checked rather than letting silence read as approval", async () => {
     await renderForm();
     selectGa4();
+    // The picker renders before its options do, and selecting a value the <select> does
+    // not yet carry leaves nothing selected — which is how this read as "no credential"
+    // in CI and as a pass locally. Wait for the option, not the control.
     await waitFor(() =>
-      expect(screen.getByLabelText("GA4 vendor credential")).toBeInTheDocument(),
+      expect(screen.getByRole("option", { name: /analytics-sa/ })).toBeInTheDocument(),
     );
     fireEvent.change(screen.getByLabelText("GA4 vendor credential"), {
       target: { value: "vc1" },
     });
 
-    expect(screen.getByTestId("credential-verdict")).toHaveTextContent(
-      /never checked/i,
+    await waitFor(() =>
+      expect(screen.getByTestId("credential-verdict")).toHaveTextContent(
+        /never checked/i,
+      ),
     );
   });
 
@@ -260,8 +265,11 @@ describe("ConnectionSelector — Google Analytics 4 source (SCN-113)", () => {
     });
     await renderForm();
     selectGa4();
+    // The picker renders before its options do, and selecting a value the <select> does
+    // not yet carry leaves nothing selected — which is how this read as "no credential"
+    // in CI and as a pass locally. Wait for the option, not the control.
     await waitFor(() =>
-      expect(screen.getByLabelText("GA4 vendor credential")).toBeInTheDocument(),
+      expect(screen.getByRole("option", { name: /analytics-sa/ })).toBeInTheDocument(),
     );
     fireEvent.change(screen.getByLabelText("GA4 vendor credential"), {
       target: { value: "vc1" },
@@ -289,8 +297,11 @@ describe("ConnectionSelector — Google Analytics 4 source (SCN-113)", () => {
     );
     await renderForm();
     selectGa4();
+    // The picker renders before its options do, and selecting a value the <select> does
+    // not yet carry leaves nothing selected — which is how this read as "no credential"
+    // in CI and as a pass locally. Wait for the option, not the control.
     await waitFor(() =>
-      expect(screen.getByLabelText("GA4 vendor credential")).toBeInTheDocument(),
+      expect(screen.getByRole("option", { name: /analytics-sa/ })).toBeInTheDocument(),
     );
     fireEvent.change(screen.getByLabelText("GA4 vendor credential"), {
       target: { value: "vc1" },
