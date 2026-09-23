@@ -38,10 +38,12 @@ Standing rules the loop inherits (from `docs/evidence/retro.md`):
 | T04b | deliver | Track D1 residue: F-W1, F-W2, F-W3 | `docs/audits/2026-09-23-recent-work-audit.md` §3.3 | merged #410 — production proof owed by V3 | |
 | B-23 | deliver | Brand pack: `docs/brand/` does not exist, so every user-facing string is written without one (routing requires `/brand-init` first) — seed voice, terminology and facts from the existing interface | found by T04b | todo | |
 | T06b | deliver | PRJ-10 residue: F-G1, F-G2, F-G3, F-G4, F-G5 — before the first real GA4 connection | `docs/audits/2026-09-23-recent-work-audit.md` §3.4 | merged #411 — fixture-level only; no GA4 connection in production | fixture-level only — no GA4 connection exists in production (same limit as T06) |
-| T07 | deliver | PRJ-07 — scheduling and recovery that work in every deployment | audit §PRJ-07 | part 1 merged #415 (S-04 one repo index per process on every path; S-13 DST-correct `run_hourly_wave`); part 2 #416 in review (S-07 recovery without Redis); A-03 closed by T06 | |
+| T07 | deliver | PRJ-07 — scheduling and recovery that work in every deployment | audit §PRJ-07 | done — #415 (S-04, S-13) + #416 (S-07); runtime-verified at V3 on v452 | |
 | T07c | deliver | PRJ-07 S-08/S-09 — repo-only projects nightly, the index→sync chain and live tables for every connection, a bounded live-table read | audit §PRJ-07 | merged #417 — latent on production (no such project shape) | `tests/unit/services/test_every_project_shape_is_served.py` |
 | T07d | deliver | PRJ-07 S-08 remainder — per-connection `db_index` as child jobs with their own ceilings, so four connections do not share one 7 200 s night | audit §PRJ-07 | todo | |
-| T08 | deliver | PRJ-13 — orchestrator eval harness | audit §PRJ-13 | todo | |
+| V3 | verify | B-16, T05b, T04b, T06b, F-E1, B-17, O-1, T07, T07c, T08a landed | — | done (runtime) | v452, one-off dyno 2026-09-23: 1045 not transient, 2013 transient; `$DBPASS` as argument refused; `_tunnel_was_swept` present; GA4 `TransportError` not auth; prune margin 2; F-E1 reopen present; `table_analysis` first param `table_name`; SQLite date literal; repo-index slot 1 inside the task; DST hours [2, 3]; `IN_PROCESS_JOBS` = the six worker jobs; in-process mode OFF on production (Redis); live-tables timeout 60; reasoning `off`; routing replay 98.89 with no gate reason; T04b strings in the production bundle; no errors in the logs after the deploy |
+| V3b | verify | What only a nightly can prove: B-16 (no `unknown or ambiguous` warnings, fallback count), O-1 (cost per night vs $0.61), B-17 (rivalry caveats kept or refreshed), T07 (the 22:00 UTC wave dispatched once), B-25 on the next deploy | — | todo — read after the 2026-09-23 nightly | |
+| T08 | deliver | PRJ-13 — orchestrator eval harness | audit §PRJ-13 | done — T08a #420 (routing, CI gate), T08b #422 (result gates, CI gate), T08c/T08d #423 (online report; replans/retries from spans) | routing replay 98.89 on production; gates 20/20; online 30 d: 25 traces, p95 321 s, 0 replans |
 | T09 | deliver | B-02 — replace the integration harness's open-transaction isolation so the suite runs on PostgreSQL | backlog B-02 | todo | |
 | V3 | verify | T07–T09 landed | — | todo | |
 | T10 | deliver | Track D2 — `feed` / `reconciliation` / `temporal` / `exploration` as chat cards | plan Track D | todo | |
@@ -98,3 +100,7 @@ One line per finished iteration, newest last.
   F-E1 reopens on recurrence) done. In review: T07 part 1 (#415), part 2 (#416), B-21
   (#418). Two process failures, both caught by CI, both now rules: S-11, S-12.
   **Operator questions open: 1** (Q1, non-blocking).
+- **Cycle 2 (2026-09-23)** — T07 parts 1–2 (#415, #416), B-21 (#418), T08a–T08d (#420,
+  #422, #423), B-25 (#421, found BY the routing eval). V3 passed on the runtime markers;
+  V3b reads the nightly. Two CI failures were my own and are now in S-12 (a source guard
+  reading a moved body; a mypy annotation). **Operator questions open: 1** (Q1).
