@@ -136,7 +136,7 @@ def _worker_job(task_name: str) -> Callable[..., Coroutine] | None:
     """
     from app import worker
 
-    known = getattr(worker, "IN_PROCESS_JOBS", frozenset())
+    known: frozenset[str] = getattr(worker, "IN_PROCESS_JOBS", frozenset())
     fn = getattr(worker, task_name, None) if task_name in known else None
     if fn is None:
         return None
