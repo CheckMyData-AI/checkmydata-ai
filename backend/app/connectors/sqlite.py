@@ -36,6 +36,7 @@ neither layer is the whole answer.
 import asyncio
 import logging
 import time
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,10 @@ class SQLiteConnector(BaseConnector):
     validates that the file is reachable and remembers the config; each query opens and
     closes its own connection, which is what makes concurrent readers safe here.
     """
+
+    def _date_literal(self, day: date) -> str:
+        """SQLite stores dates as ISO text, which compares correctly as a string (B-17)."""
+        return f"'{day.isoformat()}'"
 
     def __init__(self):
         self._config: ConnectionConfig | None = None

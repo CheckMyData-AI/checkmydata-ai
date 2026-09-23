@@ -1074,7 +1074,10 @@ class DbIndexPipeline:
                                 relevance={a.table_name: a.relevance_score for a in analyses},
                                 budget_seconds=settings.db_index_rival_budget_seconds,
                             )
-                            _comparison_ran = True
+                            # B-17/F-R2: "ran" means a pair was MEASURED. A run whose
+                            # queries all failed, or whose budget ended before the first
+                            # pair, looked at nothing and must not erase last night's facts.
+                            _comparison_ran = rivalries.pairs_measured > 0
                         except Exception:
                             # Degrades to silence on purpose. The only thing worse than no
                             # warning about `payment_histories` is a warning about a table
