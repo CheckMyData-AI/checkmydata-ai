@@ -18,8 +18,16 @@ logger = logging.getLogger(__name__)
 
 # L1: 200 tokens could truncate the JSON when the model writes a longer
 # "approach" sentence, corrupting the parse and forcing the default route. 512
-# comfortably fits the small fixed schema plus a 1-2 sentence approach.
-_ROUTER_MAX_TOKENS = 512
+# fitted the schema plus a 1-2 sentence approach — for a model that does not reason.
+#
+# B-25 (2026-09-23): the chat model the router runs on in production, z-ai/glm-5.2,
+# REASONS first, and the reasoning counts against this cap. Measured in the production
+# runtime, 15 routings of one question: 159-297 reasoning tokens of 237-378 completion
+# tokens, and in the routing eval 1 reply of 90 came back EMPTY — the cap spent before
+# the JSON began, which the router silently turns into its default route. 1024 covers
+# the measured maximum with the same margin 512 once gave a non-reasoning model; the
+# eval (`app/eval/routing`) is how a model change re-checks it.
+_ROUTER_MAX_TOKENS = 1024
 # A request estimated to need at least this many sub-queries is treated as
 # multi-step and routed to the full pipeline (matches ContextPlanner's heuristic).
 _PIPELINE_ESTIMATED_QUERIES_THRESHOLD = 3
