@@ -17,7 +17,12 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app.analytics.errors import AnalyticsAuthError, AnalyticsError, AnalyticsTransientError
+from app.analytics.errors import (
+    AnalyticsAuthError,
+    AnalyticsError,
+    AnalyticsNotVerifiableError,
+    AnalyticsTransientError,
+)
 from app.analytics.source_types import ANALYTICS_SOURCE_TYPES
 
 logger = logging.getLogger(__name__)
@@ -34,12 +39,12 @@ async def verify_vendor_secret(provider: str, secret: str) -> None:
         AnalyticsAuthError: the credential is malformed, revoked or refused.
         AnalyticsTransientError: the vendor could not be reached — which is **not**
             evidence against the key, and the caller must not record it as one.
-        AnalyticsError: this provider has no probe.
+        AnalyticsNotVerifiableError: this provider has no probe (nothing is learned).
     """
     if provider not in ANALYTICS_SOURCE_TYPES:
         raise AnalyticsError(f"{provider!r} is not an analytics vendor")
     if provider not in VERIFIABLE_PROVIDERS:
-        raise AnalyticsError(
+        raise AnalyticsNotVerifiableError(
             f"{provider} credentials cannot be checked yet — no collector exists for them"
         )
     await _verify_ga4(secret)

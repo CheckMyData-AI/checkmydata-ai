@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 import time
+from datetime import date
 from typing import Any, Literal
 
 import clickhouse_connect
@@ -76,6 +77,10 @@ def _ch_engine_to_kind(engine: str) -> Literal["table", "view", "matview"]:
 
 
 class ClickHouseConnector(BaseConnector):
+    def _date_literal(self, day: date) -> str:
+        """ClickHouse spells a date ``toDate('…')``, not ``DATE '…'`` (B-17)."""
+        return f"toDate('{day.isoformat()}')"
+
     def __init__(self):
         self._client = None
         self._client_kwargs: dict[str, Any] | None = None

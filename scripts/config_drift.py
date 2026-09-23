@@ -46,6 +46,15 @@ DELIBERATE: dict[str, str] = {
         "Production is the paid deployment. The default is off so a self-hosted "
         "install does not surface Stripe routes it has no keys for."
     ),
+    "DEFAULT_LLM_MODEL_REASONING": (
+        "`off` on production since 2026-09-23 (O-1). The background model was repriced "
+        "on 2026-09-21 ($0.64/M out), and 25-40% of its completion tokens were reasoning: "
+        "measured in the production runtime, a three-table batch cost 30-40% less with "
+        "reasoning off, every tool call still came back, and 3 of 3 runs kept the facts "
+        "(cents, multi-currency). The first nightly with it off is the A/B that confirms "
+        "it; revert = unset. The code default leaves the provider's behaviour, because a "
+        "self-hosted install on another model has measured nothing."
+    ),
     "DEFAULT_LLM_MODEL": (
         "The model every unpinned LLM call runs on — code<->DB sync, validators, the "
         "learning analyzer. `deepseek/deepseek-v4-flash-0731`, KEPT on 2026-09-17 after a "

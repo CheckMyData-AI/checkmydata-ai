@@ -372,6 +372,18 @@ def last_complete_month(today: date) -> tuple[str, str, str]:
     return start.isoformat(), end.isoformat(), start.strftime("%Y-%m")
 
 
+class Rivalries(list):
+    """The rivalries found, plus how many pairs were actually measured (B-17, F-R2).
+
+    A list so every caller that only wants the findings keeps treating it as one. The
+    count is what "the comparison ran" means: a run where every query failed, or the
+    budget was spent before the first pair, found nothing because it LOOKED at nothing,
+    and must not be read as "last night's rivalry is gone".
+    """
+
+    pairs_measured: int = 0
+
+
 async def measure_rivalries(
     connector: Any,
     tables: list[TableInfo],
@@ -379,7 +391,7 @@ async def measure_rivalries(
     relevance: dict[str, int] | None = None,
     today: date | None = None,
     budget_seconds: float = 120.0,
-) -> list[Rivalry]:
+) -> Rivalries:
     """Run the same aggregate on each chosen pair and return what diverged.
 
     **Degrades to silence, never to a guess.** A pair whose query fails, whose period is
@@ -392,18 +404,19 @@ async def measure_rivalries(
     the planner decided to scan.
     """
     start, end, label = last_complete_month(today or date.today())
+    start_d, end_d = date.fromisoformat(start), date.fromisoformat(end)
     pairs = choose_pairs(tables, relevance)
+    out = Rivalries()
     if not pairs:
-        return []
+        return out
 
     totals: dict[str, tuple[float | None, int]] = {}
     deadline = monotonic() + budget_seconds
-    out: list[Rivalry] = []
 
     async def total_for(t: MoneyTable) -> tuple[float | None, int]:
         if t.name not in totals:
             totals[t.name] = await connector.period_total(
-                t.name, t.money_column, t.date_column, start, end, schema=t.schema
+                t.name, t.money_column, t.date_column, start_d, end_d, schema=t.schema
             )
         return totals[t.name]
 
@@ -429,6 +442,7 @@ async def measure_rivalries(
             # relationship, and saying "4x apart" about it would be a fabricated warning.
             continue
 
+        out.pairs_measured += 1
         coerced = tuple(t.name for t in (left, right) if t.money_kind == "text")
         rivalry = Rivalry(left.name, right.name, label, l_total, r_total, coerced=coerced)
         if rivalry.diverges:
