@@ -31,14 +31,16 @@ Standing rules the loop inherits (from `docs/evidence/retro.md`):
 | T04 | deliver | Track D1 — `WrongDataModal` on the thumbs-down path | plan Track D | done — V2 proof; residue in T04b | #401. Operator's decision 2026-09-18: investigation, not the canned message. Mounted with its first tests; SCN-052 rewritten; planting the canned sentence back fails two tests. |
 | T05 | deliver | PRJ-08 — connection layer correctness | audit §PRJ-08 | done — V2 proof; residue in T05b | #404: C-02, C-03, C-04, C-05, C-06, C-07, C-08, C-09, C-10, C-11, C-12, C-13, C-14, C-15, C-16 — 28 tests, each verified against a planted defect. |
 | T06 | deliver | PRJ-10 — GA4 tells the truth | audit §PRJ-10 | done | #405 + #406 on **v443**. In the production runtime: alembic head `e1f2a3b4c5d7`; `vendor_credentials` carries `last_verified_at` + `last_verify_error`; the verify route answers 401 without auth (it exists and is guarded); manifest `connect/collect_reports/summarize`; history kinds `daily_sync, analytics_collect`; statuses `ok|empty|partial|failed` with `partial` **not** done; marker `provisional:`; `PST` refused as a zone, `usd`→`USD`. **Rows A-01…A-12 themselves cannot be verified here — no GA4 connection exists on this deployment**; their acceptance is the fixture end-to-end test, and a real property stays owed to PRJ-10's own acceptance. |
-| B-16 | deliver | F-K1 — batch table analysis maps tool calls to tables by position and skips an empty-args call without advancing, so later descriptions land on the wrong table | `docs/audits/2026-09-23-recent-work-audit.md` §3.1 | merged (#408) — proof at the 2026-09-23 nightly `db_index` | `tests/unit/knowledge/test_batch_table_analysis_maps_by_name.py`, 5 tests, all failing on the old code for the defect's reason |
-| O-1 | deliver | Background model after the 09-21 reprice: `DEFAULT_LLM_MODEL_REASONING=off` | audit §2 | in review — first nightly with it off is the A/B | runtime probe 2026-09-23: reasoning 228-505 of 867-1 089 completion tokens; off → 604-650 tokens, cost −30-40%, 3/3 tool calls, facts kept 3/3 |
+| B-16 | deliver | F-K1 — batch table analysis maps tool calls to tables by position and skips an empty-args call without advancing, so later descriptions land on the wrong table | `docs/audits/2026-09-23-recent-work-audit.md` §3.1 | merged #408 — production proof owed by V3 (nightly 2026-09-23) | `tests/unit/knowledge/test_batch_table_analysis_maps_by_name.py`, 5 tests, all failing on the old code for the defect's reason |
+| O-1 | deliver | Background model after the 09-21 reprice: `DEFAULT_LLM_MODEL_REASONING=off` | audit §2 | merged #414; `DEFAULT_LLM_MODEL_REASONING=off` set v449 (runtime: `off`) — first nightly is the A/B, read by V3 | runtime probe 2026-09-23: reasoning 228-505 of 867-1 089 completion tokens; off → 604-650 tokens, cost −30-40%, 3/3 tool calls, facts kept 3/3 |
 | V2 | verify | T00-mem, T04–T06 landed — checklist: `docs/audits/2026-09-23-recent-work-audit.md` §3 | — | done | 2026-09-23. **T00-mem** on v445: web **317 MB** after boot (peak 403 during the BM25 rebuild, returned by `malloc_trim`), runtime-metrics 14:11–14:14 UTC — better than the 353 recorded; idle growth to ~483 MB over ~17 h queued as B-22. **T04** in the production bundle: `Report Incorrect Data` present, `getInvestigation` sends `?project_id=`; in the production runtime `get_investigation` requires `project_id`. **T05** in the production runtime (v444, one-off dyno, read-only): `redact_for_role(…, "viewer")` hides templates on all 4 connections, a new `{db_password}` template refused, `connection_test_timeout_seconds` 90; residue → T05b. **T06** as recorded. Also measured: production holds no command template, no DSN and no MCP connection. |
-| T05b | deliver | PRJ-08 residue: F-C1, F-C2, F-C3, F-C4, F-C7, F-C9 (found here), C-15 | `docs/audits/2026-09-23-recent-work-audit.md` §3.2 | in review | |
-| T04b | deliver | Track D1 residue: F-W1, F-W2, F-W3 | `docs/audits/2026-09-23-recent-work-audit.md` §3.3 | in review | |
+| T05b | deliver | PRJ-08 residue: F-C1, F-C2, F-C3, F-C4, F-C7, F-C9 (found here), C-15 | `docs/audits/2026-09-23-recent-work-audit.md` §3.2 | merged #409 (v447) — production proof owed by V3 | |
+| T04b | deliver | Track D1 residue: F-W1, F-W2, F-W3 | `docs/audits/2026-09-23-recent-work-audit.md` §3.3 | merged #410 — production proof owed by V3 | |
 | B-23 | deliver | Brand pack: `docs/brand/` does not exist, so every user-facing string is written without one (routing requires `/brand-init` first) — seed voice, terminology and facts from the existing interface | found by T04b | todo | |
-| T06b | deliver | PRJ-10 residue: F-G1, F-G2, F-G3, F-G4, F-G5 — before the first real GA4 connection | `docs/audits/2026-09-23-recent-work-audit.md` §3.4 | in review | fixture-level only — no GA4 connection exists in production (same limit as T06) |
-| T07 | deliver | PRJ-07 — scheduling and recovery that work in every deployment | audit §PRJ-07 | part 1 in review (S-04 one repo index per process on every path, S-13 DST + one `run_hourly_wave`); part 2 todo (S-07 recovery without Redis, S-08 multi-connection and repo-only projects; A-03 already closed by T06) | |
+| T06b | deliver | PRJ-10 residue: F-G1, F-G2, F-G3, F-G4, F-G5 — before the first real GA4 connection | `docs/audits/2026-09-23-recent-work-audit.md` §3.4 | merged #411 — fixture-level only; no GA4 connection in production | fixture-level only — no GA4 connection exists in production (same limit as T06) |
+| T07 | deliver | PRJ-07 — scheduling and recovery that work in every deployment | audit §PRJ-07 | part 1 merged #415 (S-04 one repo index per process on every path; S-13 DST-correct `run_hourly_wave`); part 2 #416 in review (S-07 recovery without Redis); A-03 closed by T06 | |
+| T07c | deliver | PRJ-07 S-08/S-09 — repo-only projects nightly, the index→sync chain and live tables for every connection, a bounded live-table read | audit §PRJ-07 | merged #417 — latent on production (no such project shape) | `tests/unit/services/test_every_project_shape_is_served.py` |
+| T07d | deliver | PRJ-07 S-08 remainder — per-connection `db_index` as child jobs with their own ceilings, so four connections do not share one 7 200 s night | audit §PRJ-07 | todo | |
 | T08 | deliver | PRJ-13 — orchestrator eval harness | audit §PRJ-13 | todo | |
 | T09 | deliver | B-02 — replace the integration harness's open-transaction isolation so the suite runs on PostgreSQL | backlog B-02 | todo | |
 | V3 | verify | T07–T09 landed | — | todo | |
@@ -63,7 +65,7 @@ Each loop cycle ends by stating how many are open.
 
 | # | Opened | Question | Blocks | Status |
 |---|---|---|---|---|
-| — | — | none open | — | — |
+| Q1 | 2026-09-23 | GitHub refuses the SSH key `sergeysheleg4@gmail.com (ED25519)` since ~15:00 UTC (`Permission denied (publickey)`; `~/.ssh/config` unchanged since 2026-09-07). Pushes go over HTTPS with `gh` as a one-off credential helper, so nothing is blocked. Needs a person: check the key is still on the GitHub account | nothing | open |
 
 ## Log
 
@@ -89,3 +91,10 @@ One line per finished iteration, newest last.
   T05 is not `done` in substance either — 8 of its 15 C-rows are only partially closed.
   Queued B-16 (first: it mis-attributes table descriptions every night), T05b, T04b, T06b.
   52 documentation mismatches fixed. Full record: `docs/audits/2026-09-23-recent-work-audit.md`.
+- **Cycle 1 of the operator's /loop (2026-09-23)** — shipped B-16 (#408), T05b (#409), T04b
+  (#410), T06b (#411), F-E1 (#412), B-17 (#413), O-1 (#414), T07c (#417); V2 closed on
+  production; ops O-1 (config `off`, v449), O-2 (`VECTOR_STORE_BACKEND` unset, v450 —
+  runtime resolves `pgvector`) and O-3 (23 stale `error_log` rows resolved, safe because
+  F-E1 reopens on recurrence) done. In review: T07 part 1 (#415), part 2 (#416), B-21
+  (#418). Two process failures, both caught by CI, both now rules: S-11, S-12.
+  **Operator questions open: 1** (Q1, non-blocking).

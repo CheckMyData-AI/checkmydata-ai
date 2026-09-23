@@ -760,12 +760,12 @@ undocumented divergences were found on 2026-08-23 and unset on 2026-08-25, one o
 `make config-drift` compares every setting deployed on Heroku (booleans and, since
 2026-08-28, the non-boolean ones too) against
 `backend/app/config.py` and **exits non-zero** on anything that is not recorded, with a
-reason, in the `DELIBERATE` map in `scripts/config_drift.py`. Eleven entries live there
+reason, in the `DELIBERATE` map in `scripts/config_drift.py`. Ten entries live there
 today (measured 2026-09-23): `BILLING_ENABLED`, `DAILY_KNOWLEDGE_SYNC_ENABLED`,
-`DB_CONNECTION_CEILING`, `DEFAULT_LLM_MODEL`, `DEFAULT_LLM_MODEL_REASONING`, `DEFAULT_LLM_PROVIDER`, `GIT_AGENT_AUTO_PULL`,
-`MAX_AGENT_CALLS_PER_HOUR`, `MCP_ENABLED`, `MCP_MOUNT_ENABLED`, `VECTOR_STORE_BACKEND`.
-`VECTOR_STORE_BACKEND` is now redundant — the `auto` default it waited for is deployed —
-and its own entry says to unset it and delete the entry. Adding a key is how you record a decision; it belongs
+`DB_CONNECTION_CEILING`, `DEFAULT_LLM_MODEL`, `DEFAULT_LLM_MODEL_REASONING`,
+`DEFAULT_LLM_PROVIDER`, `GIT_AGENT_AUTO_PULL`, `MAX_AGENT_CALLS_PER_HOUR`, `MCP_ENABLED`,
+`MCP_MOUNT_ENABLED`. `VECTOR_STORE_BACKEND` was unset on 2026-09-23 (v450) and its entry
+deleted: the production runtime resolves `auto` to `pgvector`. Adding a key is how you record a decision; it belongs
 in the same change as the `heroku config:set` it describes.
 
 
