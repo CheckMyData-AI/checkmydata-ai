@@ -63,3 +63,31 @@ async def test_list_runs(session: AsyncSession):
     rows = await LogsService().list_runs(session, "p", kind="db_index")
     assert len(rows) == 1
     assert rows[0]["status"] == "completed"
+
+
+async def test_a_resolved_error_that_happens_again_is_open_again(session: AsyncSession):
+    """F-E1 (2026-09-23): a recurrence only counted. A row marked `resolved` stayed
+    `resolved` with `occurrences` climbing, so the regression the catalog exists to show
+    was hidden by the act of triaging it — found while about to resolve 23 rows."""
+    svc = ErrorLogService()
+    logs = LogsService()
+    kw = dict(project_id="p", source="run", kind="db_index", message="boom")
+    first = await svc.upsert(session, **kw)
+    await logs.update_error_status(session, "p", first.id, "resolved")
+
+    again = await svc.upsert(session, **kw)
+
+    assert again.id == first.id
+    assert again.status == "open"
+    assert again.occurrences == 2
+
+
+async def test_an_acknowledged_error_that_happens_again_stays_acknowledged(session: AsyncSession):
+    """Acknowledged means 'known and still happening' — a recurrence confirms it."""
+    svc = ErrorLogService()
+    logs = LogsService()
+    kw = dict(project_id="p", source="run", kind="db_index", message="boom")
+    first = await svc.upsert(session, **kw)
+    await logs.update_error_status(session, "p", first.id, "acknowledged")
+
+    assert (await svc.upsert(session, **kw)).status == "acknowledged"

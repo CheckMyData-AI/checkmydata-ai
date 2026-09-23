@@ -348,7 +348,7 @@ Per-connection agent memory. Learnings are **not** shared across connections by 
 | GET | `/api/logs/{project_id}/requests` | Paginated request traces |
 | GET | `/api/logs/{project_id}/requests/{trace_id}` | Full trace detail with spans. Each span's `span_type` says what the time was spent on (PRJ-04, `SPAN_TYPE_MAP` in `trace_persistence_service.py`): `db_query` is the query itself, counted once; `tool_call` is an envelope around it; `llm_call` covers query repair, learning analysis and router retries too; plus `sub_agent` and `viz`. One trace row per workflow (unique `workflow_id`) |
 | GET | `/api/logs/{project_id}/summary` | Aggregated summary (totals, success rate, cost) |
-| PATCH | `/api/logs/{project_id}/errors/{error_id}` | Move an error through open → acknowledged → resolved |
+| PATCH | `/api/logs/{project_id}/errors/{error_id}` | Move an error through open → acknowledged → resolved. A `resolved` error that happens again is reopened by the next occurrence (F-E1); an `acknowledged` one stays acknowledged |
 | GET | `/api/logs/{project_id}/query-failures` | Paginated list of captured query failures |
 | GET | `/api/logs/{project_id}/query-failures/{failure_id}` | One query failure in full, including its parsed attempt history |
 | GET | `/api/logs/{project_id}/errors` | Filterable, deduplicated error catalog. A run killed by the stale-run reaper is catalogued here, its message naming the step that died |
