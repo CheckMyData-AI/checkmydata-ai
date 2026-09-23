@@ -348,7 +348,7 @@ Per-connection agent memory. Learnings are **not** shared across connections by 
 | GET | `/api/logs/{project_id}/requests` | Paginated request traces |
 | GET | `/api/logs/{project_id}/requests/{trace_id}` | Full trace detail with spans. Each span's `span_type` says what the time was spent on (PRJ-04, `SPAN_TYPE_MAP` in `trace_persistence_service.py`): `db_query` is the query itself, counted once; `tool_call` is an envelope around it; `llm_call` covers query repair, learning analysis and router retries too; plus `sub_agent` and `viz`. One trace row per workflow (unique `workflow_id`) |
 | GET | `/api/logs/{project_id}/summary` | Aggregated summary (totals, success rate, cost) |
-| PATCH | `/api/logs/{project_id}/errors/{error_id}` | Move an error through open → acknowledged → resolved |
+| PATCH | `/api/logs/{project_id}/errors/{error_id}` | Move an error through open → acknowledged → resolved. A `resolved` error that happens again is reopened by the next occurrence (F-E1); an `acknowledged` one stays acknowledged |
 | GET | `/api/logs/{project_id}/query-failures` | Paginated list of captured query failures |
 | GET | `/api/logs/{project_id}/query-failures/{failure_id}` | One query failure in full, including its parsed attempt history |
 | GET | `/api/logs/{project_id}/errors` | Filterable, deduplicated error catalog. A run killed by the stale-run reaper is catalogued here, its message naming the step that died |
@@ -376,7 +376,7 @@ lookups, Fernet-encrypted at rest, **write-only over HTTP**.
 |--------|----------|-------------|
 | POST | `/api/vendor-credentials` | Store a credential (10/min) |
 | GET | `/api/vendor-credentials` | List the caller's credentials |
-| POST | `/api/vendor-credentials/{credential_id}/verify` | Ask the vendor whether it still accepts this key (10/min). One real token refresh — the only probe that tells a revoked key from a vendor hiccup. Returns `{verified, error, credential}`; a **refused** key is a 200 with `verified: false` (the request worked, the answer is bad news), a vendor that could not be reached is **503** and records nothing. The verdict is stored on the credential as `last_verified_at` / `last_verify_error`, where `error` is `null` exactly when that attempt succeeded. |
+| POST | `/api/vendor-credentials/{credential_id}/verify` | Ask the vendor whether it still accepts this key (10/min). One real token refresh — the only probe that tells a revoked key from a vendor hiccup. Returns `{verified, error, credential}`; a **refused** key is a 200 with `verified: false` (the request worked, the answer is bad news), a vendor that could not be reached is **503** and records nothing; a provider with no probe yet (`appstore`, `googleplay`) or a row the server cannot decrypt is **409** and records nothing either (T06b) — neither is evidence about the key. A network failure on the way to Google is a 503, not a refusal (F-G1). The verdict is stored on the credential as `last_verified_at` / `last_verify_error`, where `error` is `null` exactly when that attempt succeeded. |
 | DELETE | `/api/vendor-credentials/{credential_id}` | Delete (10/min); **409** if a connection still references it |
 
 **Create body:**

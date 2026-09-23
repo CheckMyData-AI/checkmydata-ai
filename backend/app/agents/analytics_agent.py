@@ -413,6 +413,13 @@ class _Window:
     #: different: a truncated period is a lower bound, while one of these is complete as
     #: far as the vendor knows today and may be a different number tomorrow.
     provisional: list[str] = field(default_factory=list)
+    #: ``"{period}: {note}"`` for periods the journal marks ``partial`` (T06b, F-G2 —
+    #: `docs/audits/2026-09-23-recent-work-audit.md` §3.4): a property this period should
+    #: have covered did not answer (A-01), or the day was judged before it was certainly
+    #: over (A-04). The rows written ARE in the totals and may be short of the final
+    #: number, and the period stays owed, so the next run collects it again. Nothing read
+    #: this status before, and such a period was published as a real measurement.
+    partial: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -506,6 +513,17 @@ def _provisional_periods(
         if statuses.get(period, ("", None))[0] == "ok"
         and statuses[period][1]
         and str(statuses[period][1]).startswith(PROVISIONAL_NOTE_PREFIX)
+    ]
+
+
+def _partial_periods(
+    periods: Sequence[str], statuses: Mapping[str, tuple[str, str | None]]
+) -> list[str]:
+    """Periods the journal marks ``partial``, with the writer's reason (F-G2)."""
+    return [
+        f"{period}: {statuses[period][1] or 'not every source answered'}"
+        for period in periods
+        if statuses.get(period, ("", None))[0] == "partial"
     ]
 
 
@@ -934,6 +952,7 @@ class AnalyticsAgent(BaseAgent):
         failed = [p for p in periods if statuses.get(p, ("", None))[0] == "failed"]
         degraded = _degraded_periods(periods, statuses)
         provisional = _provisional_periods(periods, statuses)
+        partial = _partial_periods(periods, statuses)
         window = _Window(
             report=binding.name,
             start=start.isoformat(),
@@ -944,6 +963,7 @@ class AnalyticsAgent(BaseAgent):
             degraded=degraded,
             unjournalled=unjournalled,
             provisional=provisional,
+            partial=partial,
         )
         state.windows.append(window)
 
@@ -1234,6 +1254,15 @@ class AnalyticsAgent(BaseAgent):
                 + " at collect time, so the values below are based on a partial "
                 "vendor response: they are real, but lower than the true total."
             )
+        if window.partial:
+            lines.append(
+                "INCOMPLETE: "
+                + self._render_degraded(window.partial)
+                + " — collected, but not in full: the rows that did arrive ARE counted "
+                "below, so the values may be lower than the final total, and "
+                + ("these periods are" if len(window.partial) > 1 else "this period is")
+                + " collected again on the next run."
+            )
         if window.provisional:
             # Deliberately NOT part of the `if not lines` contradiction below: every
             # period here IS collected and IS counted, so "all periods have been
@@ -1416,6 +1445,14 @@ class AnalyticsAgent(BaseAgent):
                 "periods ARE counted above, but the vendor only handed over part "
                 "of each, so the numbers are real and are a lower bound — NOT a "
                 "complete measurement."
+            )
+        if window.partial:
+            caveats.append(
+                f"PARTIAL DATA: report '{window.report}' over "
+                f"{window.start}..{window.end} includes periods collected only in part — "
+                + self._render_degraded(window.partial)
+                + ". What arrived IS counted above, so those figures may be lower than "
+                "the final total; they will be collected again."
             )
         if window.unjournalled:
             # Third distinct sentence, for the third distinct situation: unlike

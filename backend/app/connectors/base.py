@@ -2,6 +2,7 @@ import hashlib
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Literal
 
 from app.core.error_types import QueryErrorType
@@ -551,8 +552,8 @@ class DatabaseAdapter(DataSourceAdapter):
         table: str,
         money_column: str,
         date_column: str,
-        period_start: str,
-        period_end: str,
+        period_start: date | str,
+        period_end: date | str,
         schema: str | None = None,
     ) -> tuple[float | None, int]:
         """``SUM(money)`` and ``COUNT(*)`` over a half-open period. B-09.
@@ -565,28 +566,52 @@ class DatabaseAdapter(DataSourceAdapter):
         fact, and a comparison that cannot be made must produce no fact at all. A wrong
         one would be presented to the user as measured.
 
-        The period bounds are bound as PARAMETERS in this repository's `:name` style,
-        never formatted in. They arrive from a date computed here, but a string reaching
-        a customer's database is bound, and the rule does not bend for a trusted caller.
+        The bounds are DATE LITERALS rendered from a validated ``datetime.date``
+        (`_date_literal`), not parameters (B-17, audit 2026-09-23 F-R1). As `:name`
+        parameters they were refused by asyncpg (a ``str`` for a date column), left
+        unbound by ClickHouse's ``bind_query`` and refused outright by SSH-exec, so the
+        comparison ran on two of five engines. A literal needs no binding anywhere, and
+        injection is impossible for a different reason than binding: a string that is not
+        a date is rejected by ``date.fromisoformat`` before any SQL is built.
         """
+        try:
+            start_d, end_d = (
+                d if isinstance(d, date) else date.fromisoformat(str(d))
+                for d in (period_start, period_end)
+            )
+        except ValueError:
+            _log.warning("period_total: bounds %r..%r are not dates", period_start, period_end)
+            return None, 0
         tq = self._table_ref(table, schema)
         mq = self._quote_identifier(money_column)
         dq = self._quote_identifier(date_column)
         try:
             qr = await self.execute_query(
                 f"SELECT SUM({mq}) AS total, COUNT(*) AS n FROM {tq} "
-                f"WHERE {dq} >= :period_start AND {dq} < :period_end",
-                params={"period_start": period_start, "period_end": period_end},
+                f"WHERE {dq} >= {self._date_literal(start_d)} "
+                f"AND {dq} < {self._date_literal(end_d)}",
             )
         except Exception:
             _log.debug("period_total failed for %s.%s", table, money_column, exc_info=True)
             return None, 0
         if qr.error or not qr.rows:
+            if qr.error:
+                _log.info(
+                    "period_total: %s.%s answered an error: %s", table, money_column, qr.error
+                )
             return None, 0
         total, count = qr.rows[0][0], qr.rows[0][1]
         if total is None:
             return None, int(count or 0)
         return float(total), int(count or 0)
+
+    def _date_literal(self, day: date) -> str:
+        """A SQL literal for *day* in this engine's dialect (ANSI ``DATE 'YYYY-MM-DD'``).
+
+        Only ever called with a ``datetime.date``, so the rendered text is digits and
+        dashes. Engines that spell a date differently override it (ClickHouse, SQLite).
+        """
+        return f"DATE '{day.isoformat()}'"
 
     async def approx_stats(self, table: str, column: str, schema: str | None = None) -> ColumnStats:
         """Return approximate per-column statistics (distinct count, null rate, min, max).

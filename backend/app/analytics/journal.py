@@ -249,6 +249,11 @@ async def widest_live_window_days(session: AsyncSession) -> int:
     return widest
 
 
+#: Days of slack between the widest live backfill window and what `prune` may delete
+#: (F-G5): one for a property's timezone, one for the UTC day turning during a run.
+WINDOW_EDGE_MARGIN_DAYS = 2
+
+
 async def prune(
     session: AsyncSession,
     *,
@@ -281,7 +286,13 @@ async def prune(
     if older_than_days < 1:
         raise ValueError(f"older_than_days must be >= 1, got {older_than_days}")
 
-    horizon = max(older_than_days, max(protect_days, 0))
+    # T06b/F-G5 (audit 2026-09-23 §3.4): the collector's window starts at the PROPERTY's
+    # today minus `backfill_days`, and west of UTC that is a day earlier than UTC's — so a
+    # cutoff of exactly UTC-today minus the window pruned the oldest owed period, which
+    # then became pending and was fetched again, daily. The margin covers the timezone
+    # day and the day boundary at run time; it widens only the protected window.
+    protected = protect_days + WINDOW_EDGE_MARGIN_DAYS if protect_days > 0 else 0
+    horizon = max(older_than_days, protected)
     cutoff_date = (datetime.now(UTC) - timedelta(days=horizon)).date()
     # The period is stored as the string the report's grain produces: `YYYY-MM-DD` for a
     # daily report and `YYYY-MM` for a monthly one. Both sort as dates do, so the

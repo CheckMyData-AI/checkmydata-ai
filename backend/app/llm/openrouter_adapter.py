@@ -112,6 +112,22 @@ def _classify_openrouter_error(exc: Exception) -> Exception:
     return exc
 
 
+def _reasoning_off_for(model: str | None) -> bool:
+    """Is this the background stream, with reasoning switched off? (O-1)
+
+    Keyed on the RESOLVED model equalling `DEFAULT_LLM_MODEL`: the router substitutes the
+    default for an unpinned call before the adapter sees it, and a pinned model — chat,
+    indexing — never matches unless an operator pins the same id on purpose.
+    """
+    from app.config import settings
+
+    return (
+        settings.default_llm_model_reasoning == "off"
+        and bool(settings.default_llm_model)
+        and model == settings.default_llm_model
+    )
+
+
 class OpenRouterAdapter(BaseLLMProvider):
     def __init__(self):
         self._api_key = settings.openrouter_api_key
@@ -181,6 +197,8 @@ class OpenRouterAdapter(BaseLLMProvider):
         }
         if tools:
             payload["tools"] = self._tools_to_schema(tools)
+        if _reasoning_off_for(model):
+            payload["reasoning"] = {"enabled": False}
 
         try:
             resp = await self._client.post(

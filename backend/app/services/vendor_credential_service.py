@@ -16,6 +16,7 @@ import logging
 from datetime import UTC
 from typing import Any
 
+from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -235,10 +236,16 @@ class VendorCredentialService:
         Raises:
             LookupError: no such credential is visible to this caller.
             AnalyticsTransientError: the vendor could not be reached.
+            AnalyticsNotVerifiableError: this provider has no probe yet.
+            ValueError: the stored secret cannot be decrypted with the current key.
         """
         from datetime import datetime
 
-        from app.analytics.errors import AnalyticsError, AnalyticsTransientError
+        from app.analytics.errors import (
+            AnalyticsError,
+            AnalyticsNotVerifiableError,
+            AnalyticsTransientError,
+        )
         from app.analytics.verify import verify_vendor_secret
 
         credential = await self.get(session, credential_id, user_id=user_id)
@@ -249,11 +256,22 @@ class VendorCredentialService:
         # `credential.<anything>` as a candidate secret, and it is right to — widening
         # its allowlist to admit one safe attribute is how the next unsafe one gets in.
         provider = credential.provider
-        secret = decrypt(credential.secret_encrypted)
+        try:
+            secret = decrypt(credential.secret_encrypted)
+        except (InvalidToken, UnicodeDecodeError) as exc:
+            # T06b/F-G4: the same wrap `get_decrypted` applies. An undecryptable row is
+            # a key-rotation problem on OUR side, not a verdict about the vendor's key,
+            # so nothing is recorded and the caller is told which it is.
+            logger.error("Failed to decrypt vendor credential for verify: %s", type(exc).__name__)
+            raise ValueError(
+                "This credential cannot be decrypted — the server's encryption key may "
+                "have changed. Re-enter the key."
+            ) from exc
         error: str | None = None
         try:
-            await verify_vendor_secret(credential.provider, secret)
-        except AnalyticsTransientError:
+            await verify_vendor_secret(provider, secret)
+        except (AnalyticsTransientError, AnalyticsNotVerifiableError):
+            # Neither is evidence about the key: record nothing (F-G3).
             raise
         except AnalyticsError as exc:
             error = str(exc)[:500]
