@@ -6,18 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Changed — the background model stops paying for reasoning it does not need (O-1)
-
-- **`DEFAULT_LLM_MODEL_REASONING`** (`default` | `off`). `deepseek/deepseek-v4-flash-0731`
-  was repriced on 2026-09-21 — the same ~1.72 M background tokens a night went from
-  $0.10–0.18 to $0.61 — and 25–40% of its completion tokens were reasoning. Measured in the
-  production runtime on a three-table batch: with reasoning off the call cost 30–40% less,
-  all three tool calls came back, and 3 of 3 runs kept the facts that matter (cents,
-  multi-currency). `off` applies only to calls that resolve to `DEFAULT_LLM_MODEL`; a pinned
-  chat or indexing model is never touched. Production runs `off` (recorded in
-  `DELIBERATE`); the undated `deepseek/deepseek-v4-flash` was not chosen — it is the older
-  April model, not an alias.
-
 ### Fixed — a batch table analysis lands on the table it describes (B-16)
 
 - **One unparseable tool call moved every later description onto the wrong table.**
