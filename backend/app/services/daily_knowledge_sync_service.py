@@ -129,9 +129,10 @@ class DailyKnowledgeSyncService:
             eff = await sched.effective(session, project.id)
             if not eff["enabled"]:
                 continue
-            connections = await self._active_connections(session, project.id)
-            if connections:
-                eligible.append(project)
+            # PRJ-07 S-08: a repository is reason enough. A project with a repo and no
+            # database was never nightly indexed, while its codebase answers in chat
+            # depend on that index; `_orchestrate` runs the repo step alone for it.
+            eligible.append(project)
         return eligible
 
     async def run_for_project(
@@ -266,12 +267,6 @@ class DailyKnowledgeSyncService:
                 return result
 
             active_connections = await self._active_connections(session, project.id)
-            if not active_connections:
-                result.status = _STATUS_SKIPPED
-                result.steps_json = {"reason": "no_active_connections"}
-                result.error_message = "project has no active connections"
-                result.duration_seconds = time.monotonic() - started
-                return result
 
         logger.info(
             "Cron: daily knowledge sync started project=%s connections=%d",
@@ -308,6 +303,20 @@ class DailyKnowledgeSyncService:
             return result
 
         await self._emit_progress(parent_wf, "repo_index", "completed", "Repository indexed")
+
+        if not active_connections:
+            # PRJ-07 S-08: repo-only — the database steps have nothing to act on, which
+            # is a fact about the project and not a failure. Said in `reason` so the
+            # history row reads as what happened.
+            steps["reason"] = "repo_only"
+            result.status = _STATUS_SUCCESS
+            result.steps_json = steps
+            result.duration_seconds = time.monotonic() - started
+            logger.info(
+                "Cron: daily knowledge sync completed project=%s (repository only)",
+                project_id[:8],
+            )
+            return result
 
         await self._emit_progress(parent_wf, "db_index", "started", "Indexing connections")
         any_failure = False

@@ -29,7 +29,7 @@ from app.knowledge.repo_url import validate_git_ref, validate_repo_url
 from app.knowledge.vector_store import make_vector_store
 from app.models.base import async_session_factory
 from app.services.checkpoint_service import CheckpointService
-from app.services.connection_service import ConnectionService
+from app.services.connection_service import ConnectionService, is_analytics_source
 from app.services.membership_service import MembershipService
 from app.services.project_cache_service import ProjectCacheService
 from app.services.project_service import ProjectService
@@ -628,11 +628,14 @@ async def _maybe_autostart_sync_chain(project_id: str) -> None:
 
         async with async_session_factory() as db:
             connections = await _connection_svc.list_by_project(db, project_id)
+        # PRJ-07 S-08: every database connection. This stopped at the first one that
+        # started, so a project with two databases kept one code<->DB map fresh. Each
+        # sync is its own run, deduplicated per connection by the run index.
         for conn in connections:
-            if getattr(conn, "is_active", True):
-                started = await maybe_autostart_sync(conn.id, project_id)
-                if started:
-                    break
+            if getattr(conn, "is_active", True) and not is_analytics_source(
+                getattr(conn, "source_type", "database")
+            ):
+                await maybe_autostart_sync(conn.id, project_id)
     except Exception:
         logger.warning(
             "Auto index→sync chain failed for project %s",
@@ -920,29 +923,56 @@ async def check_for_updates(
     }
 
 
+#: Per-connection ceiling on the live-table introspection that precedes an index (S-09).
+#: It runs before the run's heartbeat opens, so a tunnel that hangs for longer than the
+#: reaper's 300 s used to get the whole index reaped before it began.
+LIVE_TABLES_TIMEOUT_SECONDS = 60.0
+
+
 async def _fetch_live_table_names(
     db: AsyncSession,
     project_id: str,
 ) -> list[str] | None:
-    """Best-effort: introspect the first active connection's table names."""
-    try:
-        from app.connectors.registry import get_connector
+    """Best-effort: the table names of EVERY active database connection of the project.
 
-        connections = await _connection_svc.list_by_project(db, project_id)
-        for conn in connections:
-            if not conn.is_active:
-                continue
+    PRJ-07 S-08: this introspected the first connection only, so in a project with two
+    databases the cross-reference knew half the tables. Each connection is bounded by
+    `LIVE_TABLES_TIMEOUT_SECONDS` (S-09); one that fails or hangs is skipped, not fatal.
+    Returns ``None`` when no connection answered, which the caller reads as "unknown".
+    """
+    from app.connectors.registry import get_connector
+
+    connections = await _connection_svc.list_by_project(db, project_id)
+    names: list[str] = []
+    answered = False
+    for conn in connections:
+        if not conn.is_active or is_analytics_source(getattr(conn, "source_type", "database")):
+            continue
+        try:
             cfg = await _connection_svc.to_config(db, conn)
             connector = get_connector(cfg.db_type, ssh_exec_mode=cfg.ssh_exec_mode)
-            await connector.connect(cfg)
-            try:
-                schema = await connector.introspect_schema()
-                return [t.name for t in schema.tables]
-            finally:
-                await connector.disconnect()
-    except Exception:
-        logger.debug("Could not fetch live table names for cross-reference", exc_info=True)
-    return None
+
+            async def _read(c=connector, cf=cfg) -> list[str]:
+                # Disconnect inside the bounded read, so a connect cancelled by the
+                # timeout is still torn down.
+                try:
+                    await c.connect(cf)
+                    schema = await c.introspect_schema()
+                    return [t.name for t in schema.tables]
+                finally:
+                    await c.disconnect()
+
+            names.extend(await asyncio.wait_for(_read(), timeout=LIVE_TABLES_TIMEOUT_SECONDS))
+            answered = True
+        except Exception:
+            logger.info(
+                "live tables: connection %s did not answer in %.0fs; cross-reference "
+                "proceeds without it",
+                str(conn.id)[:8],
+                LIVE_TABLES_TIMEOUT_SECONDS,
+                exc_info=True,
+            )
+    return sorted(set(names)) if answered else None
 
 
 def _git_fetch(repo_dir) -> None:
