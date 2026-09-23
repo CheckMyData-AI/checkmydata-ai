@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the rival-table comparison runs on every engine, and "it ran" means it measured (B-17)
+
+- **On three of five engines it never produced a fact** (F-R1). `period_total` bound the
+  period as ISO strings in `:name` style: asyncpg refuses a `str` for a date parameter,
+  ClickHouse's `bind_query` leaves `:name` unbound, and SSH-exec refuses parameters. The
+  bounds are now date literals rendered from a validated `datetime.date`
+  (`_date_literal`: ANSI `DATE '…'`, ClickHouse `toDate('…')`, SQLite ISO text); a string
+  that is not a date is refused before any SQL exists.
+- **A comparison that looked at nothing erased last night's caveats** (F-R2).
+  `measure_rivalries` returns `Rivalries` with `pairs_measured`, and the pipeline strips
+  the previous `MEASURED (rivalry):` lines only when at least one pair was measured.
+
 ### Fixed — a batch table analysis lands on the table it describes (B-16)
 
 - **One unparseable tool call moved every later description onto the wrong table.**
