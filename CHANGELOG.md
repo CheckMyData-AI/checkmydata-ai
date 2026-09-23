@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the connection layer's residue on the path production uses (T05b: F-C1…F-C9, C-15)
+
+- **Saving a connection sent every field, and three of them did damage.** `ssh_key_id`
+  always travelled, so C-04's "verify only the key being attached" ran on every rename and
+  answered a co-owner 404 (F-C1); `ssh_command_template` always travelled, so a stored
+  template the C-02 validator now refuses made the connection unsaveable (F-C2); and
+  `connection_string`, `mcp_server_args` and `mcp_env` — which the form never receives back —
+  went out as `null`, which the API reads as *clear*: **any save wiped a DSN or an MCP
+  environment** (F-C9). The form now sends only what changed since the edit began
+  (`editPatch`); editing a host field without a DSN is what clears the DSN.
+- **A wrong MySQL password was treated as a network fault.** Error 1045 arrives as the same
+  `pymysql` class as a refused socket, so it was retried, and through a tunnel the shared
+  tunnel was force-closed under every other pool and the failure blamed on the bastion
+  (F-C3). `is_transient_connect_error` now separates refusals (1044/1045/1049/1130/1251/1698)
+  from faults, in the retry decorator (`retry_if`) and in `open_through`.
+- **The first question after a quiet half hour failed.** The idle sweep closed the tunnel
+  under the SQL agent's cached pool; the cache now notices and reconnects before the
+  question instead of after the failure (F-C4).
+- **A wrong key passphrase was retried as a flapping bastion**, and SSH-exec mode read keys
+  unguarded (F-C7). `load_client_key` serves both paths and names the cause at once.
+- **`$DBPASS` as an argument is refused like `{db_password}`** (F-C2): `-p"$DBPASS"` reaches
+  argv and the bastion's `ps`; `MYSQL_PWD="$DBPASS" mysql …` is the safe shape, and the form's
+  help text now says a custom command gets the query on stdin, not as an argument.
+- **An SSH host needs an SSH user**, on create and on the merged PATCH row (C-15).
+  Production holds no row any of these checks would refuse (measured).
+
 ### Fixed — a batch table analysis lands on the table it describes (B-16)
 
 - **One unparseable tool call moved every later description onto the wrong table.**

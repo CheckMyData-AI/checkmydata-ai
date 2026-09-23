@@ -281,7 +281,9 @@ describe("Edit an analytics connection — the kind is fixed at creation (H6)", 
 
     await waitFor(() => expect(api.connections.update).toHaveBeenCalledTimes(1));
     const payload = updatePayload();
-    expect(payload).toMatchObject({ name: "Orders DB (renamed)", db_type: "postgres" });
+    // T05b: an edit sends only what changed, so a rename carries the name alone —
+    // and still no analytics field, which is what this test guards.
+    expect(payload).toEqual({ name: "Orders DB (renamed)" });
     expect(payload).not.toHaveProperty("source_type");
     expect(payload).not.toHaveProperty("vendor_credential_id");
     expect(payload).not.toHaveProperty("source_config");

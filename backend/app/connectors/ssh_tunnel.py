@@ -9,7 +9,7 @@ import asyncssh
 
 from app.connectors.base import ConnectionConfig
 from app.connectors.ssh_known_hosts import connect_with_policy
-from app.connectors.transient_errors import TRANSIENT_CONNECT_ERRORS
+from app.connectors.transient_errors import TRANSIENT_CONNECT_ERRORS, is_transient_connect_error
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,31 @@ _LIVENESS_CACHE_TTL = 30  # seconds
 IDLE_TUNNEL_TTL = 1800  # 30 minutes
 
 
+def load_client_key(config: ConnectionConfig) -> Any:
+    """Read the connection's private key, or raise `SSHKeyUnusableError` at once.
+
+    One function for both SSH paths — the port-forward tunnel and SSH-exec mode (T05b,
+    audit 2026-09-23 F-C7). C-14 caught `asyncssh.KeyImportError` in the tunnel only; a
+    wrong passphrase on a well-formed encrypted key is `asyncssh.KeyEncryptionError`, a
+    sibling `ValueError`, so it still went through the reconnect loop three times as a
+    flapping bastion, and exec mode imported the key unguarded. Retrying cannot make an
+    unreadable key readable. Returns None when the connection carries no key.
+    """
+    if not config.ssh_key_content:
+        return None
+    try:
+        return asyncssh.import_private_key(
+            config.ssh_key_content.strip(),
+            config.ssh_key_passphrase,
+        )
+    except (asyncssh.KeyImportError, asyncssh.KeyEncryptionError) as exc:
+        raise SSHKeyUnusableError(
+            f"The SSH key for this connection cannot be read ({exc}). Check the "
+            "key's format and its passphrase — this is not a problem with the "
+            "bastion."
+        ) from exc
+
+
 class SSHTunnel:
     def __init__(self):
         self._conn: asyncssh.SSHClientConnection | None = None
@@ -76,21 +101,8 @@ class SSHTunnel:
             "connect_timeout": SSH_CONNECT_TIMEOUT,
             "keepalive_interval": SSH_KEEPALIVE_INTERVAL,
         }
-        if config.ssh_key_content:
-            try:
-                key = asyncssh.import_private_key(
-                    config.ssh_key_content.strip(),
-                    config.ssh_key_passphrase,
-                )
-            except asyncssh.KeyImportError as exc:
-                # C-14: immediate and named. Retrying cannot make an unreadable key
-                # readable, and the retries hid what was wrong.
-                raise SSHKeyUnusableError(
-                    f"The SSH key for this connection cannot be read ({exc}). Check the "
-                    "key's format and its passphrase — this is not a problem with the "
-                    "bastion."
-                ) from exc
-
+        key = load_client_key(config)
+        if key is not None:
             connect_kwargs["client_keys"] = [key]
 
         last_exc: Exception | None = None
@@ -435,6 +447,11 @@ class SSHTunnelManager:
         try:
             return await opener(host, port)
         except TRANSIENT_CONNECT_ERRORS as first:
+            # T05b/F-C3: a refusal (wrong password, unknown database) arrives as the same
+            # driver class as a broken forward. Rebuilding would force-close a tunnel other
+            # connections' pools are using, to be refused again — and blame the bastion.
+            if not is_transient_connect_error(first):
+                raise
             logger.warning(
                 "Connect through the tunnel failed (%s -> %s:%s): %s; rebuilding it once",
                 config.ssh_host,
@@ -447,6 +464,8 @@ class SSHTunnelManager:
             try:
                 return await opener(host, port)
             except TRANSIENT_CONNECT_ERRORS as second:
+                if not is_transient_connect_error(second):
+                    raise
                 raise TunnelledConnectError(
                     f"{second} — via SSH tunnel {config.ssh_host} -> "
                     f"{config.db_host}:{config.db_port}"

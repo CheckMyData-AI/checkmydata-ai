@@ -41,6 +41,7 @@ import {
   type FormState,
   applyConnectionString,
   connToForm,
+  editPatch,
   formatAge,
   halfInputCls,
   inputCls,
@@ -178,6 +179,8 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const [credentialInvalid, setCredentialInvalid] = useState(false);
   const [propertyInvalid, setPropertyInvalid] = useState(false);
   const [useConnString, setUseConnString] = useState(false);
+  // The form as it was when an edit began: the PATCH is the difference from it (T05b).
+  const [editSnapshot, setEditSnapshot] = useState<FormState | null>(null);
   const [detectedType, setDetectedType] = useState<string | null>(null);
   const [checking, setChecking] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -237,6 +240,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   useEffect(() => {
     setStatus({});
     setEditingId(null);
+    setEditSnapshot(null);
     setShowCreate(false);
     setIndexStatus({});
     setSyncStatus({});
@@ -445,6 +449,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   useEffect(() => {
     if (createRequested) {
       setEditingId(null);
+    setEditSnapshot(null);
       setForm({ ...EMPTY_FORM });
       setUseConnString(false);
       setShowCreate(true);
@@ -733,6 +738,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
       setEditingSourceType(c.source_type);
     } else {
       setForm(connToForm(c));
+      setEditSnapshot(connToForm(c));
       setAnalyticsForm({ ...EMPTY_ANALYTICS_FORM });
       setSourceConfigBase(null);
       setEditingSourceType(null);
@@ -763,6 +769,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         return next;
       });
       setEditingId(null);
+    setEditSnapshot(null);
       resetForm();
       toast("Connection updated", "success");
     } catch (err) {
@@ -816,57 +823,17 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
         return;
       }
     }
-    const updates: Record<string, unknown> = {};
-    const fields = [
-      "name",
-      "db_type",
-      "db_host",
-      "db_name",
-      "db_user",
-      "ssh_host",
-      "ssh_user",
-      "ssh_key_id",
-    ] as const;
-    for (const f of fields) {
-      updates[f] = form[f] !== "" ? form[f] : null;
+    // T05b: send only what changed since the edit began (see `editPatch`).
+    const result = editPatch(form, editSnapshot ?? form, { useConnString, isMCP });
+    if (!result.ok) {
+      toast(result.error, "error");
+      return;
     }
-    updates.db_port = portForEngine(form.db_port, form.db_type);
-    updates.ssh_port = safePort(form.ssh_port, 22);
-    if (form.db_password) updates.db_password = form.db_password;
-    if (useConnString && form.connection_string) {
-      updates.connection_string = form.connection_string;
-    } else if (!useConnString) {
-      updates.connection_string = null;
+    if (Object.keys(result.patch).length === 0) {
+      toast("Nothing changed", "info");
+      return;
     }
-    updates.name = form.name;
-    updates.is_read_only = form.is_read_only;
-    updates.ssh_exec_mode = form.ssh_exec_mode;
-    updates.ssh_command_template = form.ssh_command_template || null;
-    const preCommandsList = form.ssh_pre_commands.trim()
-      ? form.ssh_pre_commands.split("\n").filter((l) => l.trim())
-      : null;
-    updates.ssh_pre_commands = preCommandsList;
-
-    if (isMCP) {
-      updates.source_type = "mcp";
-      updates.mcp_transport_type = form.mcp_transport_type;
-      updates.mcp_server_command = form.mcp_server_command || null;
-      updates.mcp_server_url = form.mcp_server_url || null;
-      const mcpArgs = form.mcp_server_args.trim()
-        ? form.mcp_server_args.split(/\s+/).filter(Boolean)
-        : null;
-      updates.mcp_server_args = mcpArgs;
-      if (form.mcp_env.trim()) {
-        try {
-          updates.mcp_env = JSON.parse(form.mcp_env);
-        } catch {
-          toast("MCP env must be valid JSON (e.g. {\"KEY\": \"value\"})", "error");
-          return;
-        }
-      } else {
-        updates.mcp_env = null;
-      }
-    }
+    const updates = result.patch;
 
     await applyUpdate(updates);
   };
@@ -986,6 +953,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
 
   const cancelForm = () => {
     setEditingId(null);
+    setEditSnapshot(null);
     setShowCreate(false);
     resetForm();
   };
@@ -1588,9 +1556,11 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                   />
                   <p className="text-kicker text-text-muted px-1">
                     Placeholders: {"{db_host}"} {"{db_port}"} {"{db_user}"}{" "}
-                    {"{db_name}"}. The password is passed in the environment, and the
-                    query as an argument — a custom command replaces the default and is
-                    not decorated for read-only mode.
+                    {"{db_name}"}. The password is available as {"$DBPASS"} — pass it
+                    to the client as an environment variable (for example{" "}
+                    {'MYSQL_PWD="$DBPASS" mysql …'}), never as an argument. The query is
+                    piped to the command&apos;s standard input. A custom command replaces
+                    the default and is not decorated for read-only mode.
                   </p>
                   {commandTemplateError(form.ssh_command_template) && (
                     <p className="text-kicker text-error px-1" role="alert">
@@ -1645,6 +1615,7 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
           <button
             onClick={() => {
               setEditingId(null);
+    setEditSnapshot(null);
               resetForm();
             }}
             className="px-3 py-2 text-text-tertiary hover:text-text-primary transition-colors"

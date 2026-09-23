@@ -259,9 +259,24 @@ def validate_new_command_template(template: str) -> str:
         raise CommandTemplateValidationError(
             "ssh_command_template must not contain {db_password}: the command line is "
             "visible in the process list on the bastion. The password is supplied to the "
-            "client in its environment, and the query as an argument."
+            'client through an environment variable (e.g. MYSQL_PWD="$DBPASS" mysql …).'
         )
+    for match in _DBPASS_REF.finditer(template):
+        if not _ENV_ASSIGNMENT_BEFORE.search(template[: match.start()]):
+            raise CommandTemplateValidationError(
+                "ssh_command_template may use $DBPASS only as an environment assignment "
+                '(e.g. MYSQL_PWD="$DBPASS" mysql …): as an argument it is visible in the '
+                "process list on the bastion, exactly like {db_password}."
+            )
     return template
+
+
+#: T05b/F-C2 (audit 2026-09-23 §3.2): `$DBPASS` is the shell variable `_build_command`
+#: fills from stdin. As `VAR="$DBPASS" client` it reaches the client's environment only;
+#: anywhere else — `-p"$DBPASS"`, `--password=$DBPASS`, inside a URL — the shell expands
+#: it into argv, which `ps` shows to every user on the bastion.
+_DBPASS_REF = re.compile(r"\$\{?DBPASS\b\}?")
+_ENV_ASSIGNMENT_BEFORE = re.compile(r"(?:^|[\s;&|(])[A-Za-z_][A-Za-z0-9_]*=[\"']?\Z")
 
 
 def get_default_template(db_type: str) -> str | None:
