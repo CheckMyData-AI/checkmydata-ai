@@ -1,0 +1,9 @@
+{
+  "accuracy": 98.89,
+  "interval_95": [93.97, 99.8],
+  "n": 90,
+  "k": 3,
+  "model": "z-ai/glm-5.2",
+  "measured": "2026-09-23",
+  "source": "replay of the 2026-09-23 live recordings (production runtime, 30 seed cases x 3); the one miss is R25, where the model returned an empty reply and the router fell back to its default"
+}
