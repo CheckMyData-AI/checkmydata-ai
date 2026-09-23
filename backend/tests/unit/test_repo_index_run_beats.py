@@ -60,7 +60,9 @@ class TestEveryRepoIndexEntryPointBeats:
         pipeline directly — the first version of this test asserted the literal word
         here and was simply wrong about where the beat belongs.
         """
-        code = _code_of(repos.run_repo_index_task)
+        # The body lives in `_run_repo_index_task_unlocked` since PRJ-07 S-04; the public
+        # function only holds the one-index slot around it.
+        code = _code_of(repos._run_repo_index_task_unlocked)
         assert "_run_index_background" in code, (
             "the queue path must run the pipeline through the worker that beats"
         )
