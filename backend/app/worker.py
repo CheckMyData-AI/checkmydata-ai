@@ -353,6 +353,11 @@ async def startup(ctx: dict) -> None:  # noqa: ARG001
 
     redis_url = os.getenv("REDIS_URL")
 
+    # PRJ-07 S-07: say what this process is, for platforms with no `DYNO`.
+    from app.core.release import set_process_role
+
+    set_process_role("worker")
+
     # BEFORE anything in this process tries to enqueue. `app.core.task_queue.enqueue`
     # routes through a module-level pool that only `init_task_queue` builds, and until
     # 2026-09-09 the worker never called it — it was only in the FastAPI lifespan. The

@@ -125,6 +125,35 @@ async def close_task_queue() -> None:
     _fallback_tasks.clear()
 
 
+def _worker_job(task_name: str) -> Callable[..., Coroutine] | None:
+    """The worker's own job for *task_name*, callable in-process (PRJ-07 S-07).
+
+    The reaper's requeue and the orphan sweep enqueue by NAME, as ARQ does, and pass no
+    factory. With no Redis the fallback used to answer ``None`` — so in Docker Compose and
+    DigitalOcean an index interrupted by a restart was never put back. Every job registered
+    in `WorkerSettings.functions` takes ``(ctx, **kwargs)``; in-process there is no ARQ
+    context, and the jobs read nothing from it.
+    """
+    from app import worker
+
+    registered = {
+        getattr(getattr(f, "coroutine", f), "__name__", "") for f in _registered_functions(worker)
+    }
+    fn = getattr(worker, task_name, None) if task_name in registered else None
+    if fn is None:
+        return None
+
+    def _factory(**kwargs: Any) -> Coroutine:
+        return fn({}, **kwargs)
+
+    return _factory
+
+
+def _registered_functions(worker: Any) -> list[Any]:
+    settings_cls = getattr(worker, "WorkerSettings", None)
+    return list(getattr(settings_cls, "functions", []) or [])
+
+
 async def enqueue(
     task_name: str,
     coro_factory: Callable[..., Coroutine] | None = None,
@@ -213,6 +242,8 @@ async def enqueue(
                 exc_info=True,
             )
 
+    if coro_factory is None:
+        coro_factory = _worker_job(task_name)
     if coro_factory is None:
         logger.error("No coro_factory for in-process fallback of task %s", task_name)
         return None
