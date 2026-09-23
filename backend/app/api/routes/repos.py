@@ -352,6 +352,27 @@ async def run_repo_index_task(
     chain_sync: bool = True,
     wf_id: str | None = None,
 ) -> None:
+    """Queue/worker entrypoint for a repo index run, one at a time per process.
+
+    Every path reaches this function — the ARQ job, the nightly sync, the run-retry
+    route, the in-process fallback — so the one-index slot is taken HERE (PRJ-07 S-04,
+    `app.core.repo_index_slots`), not in any one caller.
+    """
+    from app.core.repo_index_slots import repo_index_slot
+
+    async with repo_index_slot(project_id):
+        await _run_repo_index_task_unlocked(
+            project_id, force_full, chain_sync=chain_sync, wf_id=wf_id
+        )
+
+
+async def _run_repo_index_task_unlocked(
+    project_id: str,
+    force_full: bool = False,
+    *,
+    chain_sync: bool = True,
+    wf_id: str | None = None,
+) -> None:
     """Queue/worker entrypoint for a repo index run (no HTTP context).
 
     Mirrors the in-process background path but loads its own project. When ``wf_id``

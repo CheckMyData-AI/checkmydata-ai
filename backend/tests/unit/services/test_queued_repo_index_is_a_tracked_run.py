@@ -22,6 +22,9 @@ Four things need that row, and all four were silently absent:
   proceed.
 """
 
+#: PRJ-07 S-04 moved the body into `_run_repo_index_task_unlocked`; `run_repo_index_task`
+#: now only takes the one-index slot around it. These guards read the body.
+
 from __future__ import annotations
 
 import inspect
@@ -30,7 +33,7 @@ from app.api.routes import repos
 
 
 def test_the_queue_entrypoint_mints_a_run_rather_than_a_bare_workflow() -> None:
-    source = inspect.getsource(repos.run_repo_index_task)
+    source = inspect.getsource(repos._run_repo_index_task_unlocked)
     assert "RunCoordinator" in source, (
         "run_repo_index_task still begins a bare workflow; a rebuild enqueued by "
         "reconcile_embeddings would again run with no IndexingRun behind it — "
@@ -41,7 +44,7 @@ def test_the_queue_entrypoint_mints_a_run_rather_than_a_bare_workflow() -> None:
 def test_it_reuses_a_workflow_id_it_was_given() -> None:
     """The manual route already minted the run before enqueueing. Minting a second one
     here would produce two rows for one rebuild and trip the duplicate guard."""
-    source = inspect.getsource(repos.run_repo_index_task)
+    source = inspect.getsource(repos._run_repo_index_task_unlocked)
     assert "if wf_id is None" in source, "the caller-supplied workflow id must still win"
 
 
@@ -49,7 +52,7 @@ def test_an_already_active_run_is_not_duplicated() -> None:
     """`RunCoordinator.start` raises `RunAlreadyActiveError` when one is live. The task
     must return rather than start a second rebuild of the same project — two concurrent
     `force_full` runs on the memory-constrained worker is how R14 becomes R15."""
-    source = inspect.getsource(repos.run_repo_index_task)
+    source = inspect.getsource(repos._run_repo_index_task_unlocked)
     assert "RunAlreadyActiveError" in source
 
 
@@ -57,7 +60,7 @@ def test_the_trigger_says_where_it_came_from() -> None:
     """`trigger` separates a queued rebuild from a scheduled or manual one in the run
     table. Without it every reconcile-driven rebuild reads as 'manual', which is what an
     operator would search for when something unexpected ran for three hours."""
-    source = inspect.getsource(repos.run_repo_index_task)
+    source = inspect.getsource(repos._run_repo_index_task_unlocked)
     assert '"queue"' in source or "'queue'" in source
 
 
@@ -65,7 +68,7 @@ def test_a_coordinator_failure_does_not_abandon_the_index() -> None:
     """The row is bookkeeping. A rebuild that would have succeeded must not be skipped
     because the row could not be written — the previous behaviour had no row at all and
     still indexed correctly, so falling back to that is strictly no worse."""
-    source = inspect.getsource(repos.run_repo_index_task)
+    source = inspect.getsource(repos._run_repo_index_task_unlocked)
     assert "except Exception" in source or "tracker.begin" in source, (
         "there must be a path that still indexes when the run row cannot be created"
     )

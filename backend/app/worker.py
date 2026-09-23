@@ -218,22 +218,8 @@ async def run_code_db_sync(  # noqa: ARG001
             logger.debug("Failed to update sync_status", exc_info=True)
 
 
-#: How many repository indexes this process may run at once (OPS-08).
-#:
-#: `max_jobs = 8` is the worker's overall concurrency, and it is fine for the short
-#: jobs it was chosen for. A repo index is not one: measured at 967 MiB peak before
-#: `EMBEDDING_UPSERT_BATCH_SIZE` was cut to 8, and still over quota at batch 32 on a
-#: 1 GiB Standard-2X — **one of them already exhausts the dyno**, so eight at once is
-#: seven more than fit. Latent on a one-project deployment, which is why it went
-#: unnoticed; real for any self-hosted install with several projects, where the
-#: nightly wave enqueues one per project within the same second.
-#:
-#: A semaphore rather than `max_jobs = 1`, because that would serialise every other
-#: job behind an index that runs for hours — the analytics collection, the batch
-#: runner and the db-index all fit alongside it and none of them is memory-shaped.
-MAX_CONCURRENT_REPO_INDEXES = 1
-
-_repo_index_slots = asyncio.Semaphore(MAX_CONCURRENT_REPO_INDEXES)
+# The one-index-at-a-time slot (OPS-08) lives in `app.core.repo_index_slots` and is
+# taken inside `run_repo_index_task`, so every path honours it — not only this job.
 
 
 async def run_repo_index(  # noqa: ARG001
@@ -246,21 +232,13 @@ async def run_repo_index(  # noqa: ARG001
     generation, overview regeneration, and the auto index→sync chain all match
     the non-ARQ path exactly.
 
-    Serialised against other indexes in this process (OPS-08). A job waiting on the
-    slot is still a running ARQ job, so its own timeout is ticking — which is the
-    right pressure: a queue of indexes that cannot all finish should say so by timing
-    out, not by taking the dyno down with an R15 that loses every job on it.
+    Serialised against other indexes in this process by `run_repo_index_task` itself
+    (OPS-08, `app.core.repo_index_slots`) — not here, so the nightly sync and the retry
+    route, which call the task directly, are serialised too (PRJ-07 S-04).
     """
     from app.api.routes.repos import run_repo_index_task
 
-    if _repo_index_slots.locked():
-        logger.info(
-            "repo index for project %s is waiting: %d already running (OPS-08)",
-            project_id[:8],
-            MAX_CONCURRENT_REPO_INDEXES,
-        )
-    async with _repo_index_slots:
-        await run_repo_index_task(project_id, force_full=force_full, wf_id=wf_id)
+    await run_repo_index_task(project_id, force_full=force_full, wf_id=wf_id)
 
 
 async def run_batch(ctx: dict, *, batch_id: str, connection_id: str, user_id: str) -> None:  # noqa: ARG001
