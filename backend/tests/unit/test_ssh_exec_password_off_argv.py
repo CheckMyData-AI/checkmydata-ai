@@ -36,6 +36,24 @@ from app.connectors.base import ConnectionConfig
 from app.connectors.exec_templates import EXEC_TEMPLATES
 from app.connectors.ssh_exec import SSHExecConnector
 
+
+@pytest.fixture(autouse=True)
+def _key_read_through_the_patched_asyncssh(monkeypatch):
+    """These tests patch `app.connectors.ssh_exec.asyncssh`. Since T05b (F-C7) the key is
+    read by `ssh_tunnel.load_client_key`, which holds its own `asyncssh` — so route the
+    read back through whatever this module's `asyncssh` is at call time."""
+    import app.connectors.ssh_exec as mod
+
+    def _load(config):
+        if not config.ssh_key_content:
+            return None
+        return mod.asyncssh.import_private_key(
+            config.ssh_key_content.strip(), config.ssh_key_passphrase
+        )
+
+    monkeypatch.setattr(mod, "load_client_key", _load)
+
+
 SECRET = "hunter2-do-not-leak"
 
 

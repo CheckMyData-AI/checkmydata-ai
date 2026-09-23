@@ -104,7 +104,18 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 where one exists and `null` where none does, so a client can still tell that a custom
 command is configured without being able to read it. A **new** template carrying
 `{db_password}` is refused with 422 — the command line is visible in the process list on
-the bastion — while a stored one keeps working and warns on every run.
+the bastion — while a stored one keeps working and warns on every run. So is a new
+template that uses `$DBPASS` anywhere but an environment assignment
+(`MYSQL_PWD="$DBPASS" mysql …` is accepted; `-p"$DBPASS"` is not). A custom template
+receives the query on **stdin**; the built-in ones pass it as an argument (T05b).
+
+**An SSH host needs an SSH user** — `POST` and the merged row of `PATCH` answer 422
+otherwise (C-15). The SSH key stays optional in the API (a self-hosted server may use its
+own keys); the connection form requires one.
+
+**`PATCH` changes only the fields it names** (`exclude_unset`), and an explicit `null`
+clears a field — `connection_string: null` erases the stored DSN. The connection form
+therefore sends only what the user changed since the edit began (T05b).
 
 `POST /api/connections` and `PATCH /api/connections/{id}` accept five additional
 fields used by analytics sources (Google Analytics 4 today — see

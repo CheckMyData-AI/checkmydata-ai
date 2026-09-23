@@ -16,6 +16,7 @@ def retry(
     retryable_exceptions: tuple[type[Exception], ...] = (Exception,),
     non_retryable: tuple[type[BaseException], ...] = (KeyboardInterrupt, SystemExit, GeneratorExit),
     on_retry: Callable[..., Any] | None = None,
+    retry_if: Callable[[BaseException], bool] | None = None,
 ):
     """Async retry decorator with exponential backoff.
 
@@ -25,6 +26,10 @@ def retry(
         backoff_multiplier: Multiplied each retry iteration.
         retryable_exceptions: Only retry on these exception types.
         on_retry: Optional callback(attempt, exception) called before each retry.
+        retry_if: Optional predicate narrowing ``retryable_exceptions``: an exception of a
+            retryable type for which it returns False is raised at once. For a class that
+            carries both a fault and an answer — pymysql's ``OperationalError`` is a lost
+            socket AND "access denied" (T05b, F-C3).
     """
 
     def decorator(func):
@@ -38,6 +43,8 @@ def retry(
                 except non_retryable:
                     raise
                 except retryable_exceptions as exc:
+                    if retry_if is not None and not retry_if(exc):
+                        raise
                     last_exc = exc
                     if attempt >= max_attempts:
                         break

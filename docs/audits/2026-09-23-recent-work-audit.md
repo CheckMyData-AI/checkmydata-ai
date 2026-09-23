@@ -87,6 +87,20 @@ no GA4, no Postgres/ClickHouse/Mongo customer connection) can hit it.
 | F-C7 | P2 | `ssh_tunnel.py:85`, `ssh_exec.py:219` | a wrong passphrase raises `asyncssh.KeyEncryptionError`, not `KeyImportError` | C-14 misses it: 3 retries with backoff, then "SSH tunnel reconnection failed"; SSH-exec `connect()` does not wrap key import | yes if a passphrase is wrong | reader ran `import_private_key(pem, "wrong")` |
 | F-C8 | P2 | `dsn.py:40-46`, `clickhouse.py:102` | `parse_dsn` refuses a DSN without a user | a saved `clickhouse://host/db` (the engine's account is `default`) now fails on connect | no | read — product call |
 
+| F-C9 | P2 | `ConnectionSelector.tsx` edit handler, `connection_service.py:248-250` | found while fixing F-C1: the form starts with empty `connection_string`, `mcp_server_args`, `mcp_env` (never echoed back) and PATCHed all three as `null`; with `exclude_unset` an explicit `null` clears, so **any save wiped a DSN or an MCP environment** | no — production has no DSN or MCP connection (measured 2026-09-23) | read + measured |
+
+**Resolution (T05b, 2026-09-23):** F-C1, F-C2, F-C9 — the form sends only what changed
+(`editPatch`); F-C2 also screens `$DBPASS` outside an environment assignment and the help
+text says what a custom command really receives; F-C3 — `is_transient_connect_error`
+(MySQL refusals are answers) in the retry and the tunnel rebuild; F-C4 — the SQL agent's
+cache reconnects a connector whose tunnel was swept, before the question (keeping
+referenced tunnels out of the sweep was rejected: a reference is released only on
+connection DELETE, so it would have kept every tunnel open for the process's life);
+F-C7 — `load_client_key` for both SSH paths; C-15 — an SSH user is required by the API.
+Measured before shipping: production has **no** stored command template, no DSN
+connection and no tunnel without a user, so none of the tightened checks refuses an
+existing row.
+
 C-row verdicts (reader 2, re-checked where ranked): closed — C-05, C-06 (with F-C8), C-08,
 C-09, C-12, C-13, C-16. Partially closed — **C-02** (F-C2), **C-03** (F-C4), **C-04** (F-C1),
 **C-07** (F-C6), **C-10** (only Postgres/MySQL go through `open_through`; F-C3), **C-11**
@@ -198,6 +212,7 @@ go into `docs/evidence/backlog.md`; `O-…` are operator/ops steps.
 | 12 | **O-2** | P3 (ops) | unset `VECTOR_STORE_BACKEND` on Heroku and delete its `DELIBERATE` entry (its own text says so; `auto` resolves to pgvector on Postgres) — a config change restarts both dynos, so outside the 04:00 UTC window and with no `indexing_runs` row running (S-04) | redundant state that reads as a decision | XS |
 | 13 | **O-3** | P3 (ops) | mark the six `error_log` rows fixed by PRJ-01…04 `resolved` (`PATCH /api/logs/{project_id}/errors/{id}`) | the catalog shows six open errors that no longer happen | XS |
 | 14 | **B-21** | P3 | test hygiene: Q-2 (raise the Vitest per-test timeout or remove the load sensitivity — the same GA4 form test flaked `main` on 2026-09-18), Q-3 (isolate the unit-suite state that leaks into `test_learnings_api` when run in one process), the invalid `# noqa` at `test_suppression_debt_ratchet.py:442`, `pytest-xdist` in `[dev]` (the one-process suite takes 29.5 min) | the next CI flake is already visible locally | S |
+| 15a | **B-22** | P3 | F-M1 — web memory with no chat traffic: **317 MB** after the v445 boot (14:11 UTC), ~483 MB after ~17 h of MCP polls and health loops on v444. ~10 MB/h of idle growth; find what accumulates (health-check workflows? MCP sessions?) before it matters | measured, not yet explained | S |
 | 15 | T00-mem rest | P3 | `chromadb` import (22 MB) and eager connector drivers; worker idles at 722 MB RSS of 1 GiB | headroom, not an outage (swap 0) | M |
 
 **Human steps** (need the operator): O-1 is a spend/quality decision; O-2 and O-3 mutate
