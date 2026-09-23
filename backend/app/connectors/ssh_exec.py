@@ -35,6 +35,7 @@ from app.connectors.exec_templates import (
 )
 from app.connectors.ssh_known_hosts import connect_with_policy
 from app.connectors.ssh_pre_commands import validate_pre_commands
+from app.connectors.ssh_tunnel import load_client_key
 from app.core.error_types import QueryErrorType
 from app.core.redaction import safe_error
 from app.core.safety import is_read_only_statement
@@ -215,11 +216,10 @@ class SSHExecConnector(BaseConnector):
             "connect_timeout": SSH_CONNECT_TIMEOUT,
             "keepalive_interval": 15,
         }
-        if config.ssh_key_content:
-            key = asyncssh.import_private_key(
-                config.ssh_key_content.strip(),
-                config.ssh_key_passphrase,
-            )
+        # T05b/F-C7: the same guarded read the tunnel uses — a bad key or passphrase is
+        # named at once instead of surfacing as an SSH failure.
+        key = load_client_key(config)
+        if key is not None:
             connect_kwargs["client_keys"] = [key]
 
         # R1-2: host-key verification is governed by ssh_host_key_policy.
