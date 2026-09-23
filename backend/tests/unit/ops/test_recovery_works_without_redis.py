@@ -26,6 +26,7 @@ async def test_a_worker_job_runs_in_process_without_a_factory(monkeypatch) -> No
         seen.append(kwargs)
 
     monkeypatch.setattr(task_queue, "_arq_pool", None)
+    monkeypatch.setitem(task_queue._IN_PROCESS_MODE, "on", True)  # no REDIS_URL
     monkeypatch.setattr(worker, "run_repo_index", _fake)
     job = await task_queue.enqueue("run_repo_index", project_id="p1", force_full=True)
     assert job is not None, "the in-process fallback refused a job the worker knows"
@@ -38,7 +39,18 @@ async def test_an_unknown_job_is_still_refused(monkeypatch) -> None:
     from app.core import task_queue
 
     monkeypatch.setattr(task_queue, "_arq_pool", None)
+    monkeypatch.setitem(task_queue._IN_PROCESS_MODE, "on", True)
     assert await task_queue.enqueue("no_such_job", x=1) is None
+
+
+@pytest.mark.asyncio
+async def test_with_redis_configured_a_missing_pool_still_runs_nothing_inline(monkeypatch) -> None:
+    """The boundary: Redis configured, pool down -> no repo index inside the web dyno."""
+    from app.core import task_queue
+
+    monkeypatch.setattr(task_queue, "_arq_pool", None)
+    monkeypatch.setitem(task_queue._IN_PROCESS_MODE, "on", False)
+    assert await task_queue.enqueue("run_repo_index", project_id="p1") is None
 
 
 def test_the_process_role_is_known_off_heroku(monkeypatch) -> None:
