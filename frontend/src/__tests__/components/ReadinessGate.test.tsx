@@ -21,6 +21,9 @@ vi.mock("@/stores/toast-store", () => ({
   toast: vi.fn(),
 }));
 
+// Short polls so a watched step can finish inside a test.
+vi.mock("@/lib/polling", () => ({ POLL_INTERVAL_MS: 10, MAX_POLL_MS: 60_000 }));
+
 const onBypass = vi.fn();
 
 beforeEach(() => {
@@ -203,5 +206,26 @@ describe("ReadinessGate", () => {
         expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(4);
       });
     });
+  });
+
+  // T04b/F-W3 (audit 2026-09-23 §3.3): polling started only from a click, so a step that
+  // was already running when the gate mounted stayed "Running…" until a remount.
+  it("notices a step that was already running finish", async () => {
+    const busy = makeReadiness({
+      repo_connected: true,
+      repo_indexed: true,
+      db_connected: true,
+      db_indexing: true,
+      active_connection_id: "c1",
+    });
+    readinessMock.mockResolvedValueOnce(busy).mockResolvedValueOnce(busy).mockResolvedValue(
+      makeReadiness({ ...busy, db_indexing: false, db_indexed: true }),
+    );
+    const { ReadinessGate } = await import("@/components/chat/ReadinessGate");
+    render(<ReadinessGate projectId="p1" connectionId="c1" onBypass={onBypass} />);
+
+    expect(await screen.findByText("Running…")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Running…")).toBeNull(), { timeout: 3000 });
+    expect(readinessMock.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 });

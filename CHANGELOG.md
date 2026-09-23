@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the "this data is wrong" investigation cannot spin for ever (T04b: F-W1…F-W3)
+
+- **The modal waited 60 s, or stopped at the first failed read, then showed "investigating"
+  for good** — while an investigation runs up to 12 LLM turns with queries between them, so
+  minutes are normal. It now polls until the investigation ends or ten minutes pass, says
+  after 90 s that it can take a few minutes, offers "Check again" when it gives up, and
+  tolerates two failed reads before saying it cannot reach the server ("Try again") (F-W1).
+- **Its fields had no accessible name**: labels are bound to their input and select, and the
+  complaint buttons carry `aria-pressed` (F-W2).
+- **The readiness gate never noticed a step that was already running finish.** Polling began
+  only from a click; a step running at mount is now watched until it stops being busy (F-W3).
+- The new strings were written without a brand pack — the repository has none (`docs/brand/`
+  absent); `/brand-init` is queued as B-23.
+
 ### Fixed — a batch table analysis lands on the table it describes (B-16)
 
 - **One unparseable tool call moved every later description onto the wrong table.**

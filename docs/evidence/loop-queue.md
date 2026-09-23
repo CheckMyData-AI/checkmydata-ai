@@ -34,7 +34,8 @@ Standing rules the loop inherits (from `docs/evidence/retro.md`):
 | B-16 | deliver | F-K1 — batch table analysis maps tool calls to tables by position and skips an empty-args call without advancing, so later descriptions land on the wrong table | `docs/audits/2026-09-23-recent-work-audit.md` §3.1 | merged — proof at the next nightly `db_index` | `tests/unit/knowledge/test_batch_table_analysis_maps_by_name.py`, 5 tests, all failing on the old code for the defect's reason |
 | V2 | verify | T00-mem, T04–T06 landed — checklist: `docs/audits/2026-09-23-recent-work-audit.md` §3 | — | todo | |
 | T05b | deliver | PRJ-08 residue: F-C1, F-C2, F-C3, F-C4 (reproduce first), F-C7, C-15 form | `docs/audits/2026-09-23-recent-work-audit.md` §3.2 | todo | |
-| T04b | deliver | Track D1 residue: F-W1, F-W2, F-W3 | `docs/audits/2026-09-23-recent-work-audit.md` §3.3 | todo | |
+| T04b | deliver | Track D1 residue: F-W1, F-W2, F-W3 | `docs/audits/2026-09-23-recent-work-audit.md` §3.3 | in review | |
+| B-23 | deliver | Brand pack: `docs/brand/` does not exist, so every user-facing string is written without one (routing requires `/brand-init` first) — seed voice, terminology and facts from the existing interface | found by T04b | todo | |
 | T06b | deliver | PRJ-10 residue: F-G1, F-G2, F-G3, F-G4, F-G5 — before the first real GA4 connection | `docs/audits/2026-09-23-recent-work-audit.md` §3.4 | todo | |
 | T07 | deliver | PRJ-07 — scheduling and recovery that work in every deployment | audit §PRJ-07 | todo | |
 | T08 | deliver | PRJ-13 — orchestrator eval harness | audit §PRJ-13 | todo | |
