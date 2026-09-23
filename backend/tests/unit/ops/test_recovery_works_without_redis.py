@@ -61,3 +61,16 @@ def test_the_web_process_sweeps_orphans_when_it_is_the_only_process() -> None:
     src = inspect.getsource(main.lifespan)
     assert 'set_process_role("web")' in src
     assert "requeue_orphaned_runs" in src, "with no worker, nothing else would put runs back"
+
+
+def test_the_in_process_list_is_the_registered_list() -> None:
+    """One source of truth in two shapes: a job added to `WorkerSettings.functions`
+    without `IN_PROCESS_JOBS` would be unrecoverable without Redis again."""
+    import importlib
+
+    worker = importlib.import_module("app.worker")
+    registered = {
+        getattr(getattr(f, "coroutine", f), "__name__", None)
+        for f in worker.WorkerSettings.functions
+    }
+    assert registered == set(worker.IN_PROCESS_JOBS)

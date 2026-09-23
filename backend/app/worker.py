@@ -531,6 +531,22 @@ def _redis_settings():  # pragma: no cover
     return arq_redis_settings(url)
 
 
+#: The jobs `app.core.task_queue.enqueue` may run in-process when there is no Redis
+#: (PRJ-07 S-07). Plain names, not the `WorkerSettings.functions` objects, because those
+#: are arq wrappers (or mocks, in tests that re-import this module with a stub arq);
+#: `test_recovery_works_without_redis` pins the two lists equal, so they cannot drift.
+IN_PROCESS_JOBS = frozenset(
+    {
+        "run_db_index",
+        "run_code_db_sync",
+        "run_batch",
+        "run_repo_index",
+        "run_daily_project_knowledge_sync",
+        "run_analytics_collect",
+    }
+)
+
+
 class WorkerSettings:  # pragma: no cover
     """ARQ discovers this class automatically."""
 

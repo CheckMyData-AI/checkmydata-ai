@@ -136,10 +136,8 @@ def _worker_job(task_name: str) -> Callable[..., Coroutine] | None:
     """
     from app import worker
 
-    registered = {
-        getattr(getattr(f, "coroutine", f), "__name__", "") for f in _registered_functions(worker)
-    }
-    fn = getattr(worker, task_name, None) if task_name in registered else None
+    known = getattr(worker, "IN_PROCESS_JOBS", frozenset())
+    fn = getattr(worker, task_name, None) if task_name in known else None
     if fn is None:
         return None
 
@@ -147,11 +145,6 @@ def _worker_job(task_name: str) -> Callable[..., Coroutine] | None:
         return fn({}, **kwargs)
 
     return _factory
-
-
-def _registered_functions(worker: Any) -> list[Any]:
-    settings_cls = getattr(worker, "WorkerSettings", None)
-    return list(getattr(settings_cls, "functions", []) or [])
 
 
 async def enqueue(
