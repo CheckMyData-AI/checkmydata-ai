@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — the orchestrator's decisions are measured (PRJ-13 T08a–T08d)
+
+- **Routing eval (T08a, #420).** `backend/app/eval/routing`: 30 curated cases (happy,
+  adversarial, failure; EN/RU) with acceptable-route sets, scored through the production
+  parser and capability guards. A deterministic replay of recorded router replies is a CI
+  gate (a drop of more than 5 points fails); an opt-in live tier runs the model `k` times
+  with a Wilson interval. Production runtime, `z-ai/glm-5.2`, 30×3: **98.89%**
+  [93.97, 99.8]. A router fallback is never scored correct — the default is `explore`,
+  which several cases accept, and counting it scored a broken router as a right one.
+- **Result-gate eval (T08b, #422).** `backend/app/eval/gates`: 20 labelled results, labels
+  from the gate's contract; the CI gate is asymmetric — **block precision must be 100%**,
+  because a false block throws away a correct answer.
+- **Online trace report (T08c/T08d, #423).** `python -m app.eval.online.trace_report`:
+  outcome and failure taxonomy, latency vs the 216 s budget, LLM/DB time split over work
+  spans only, route distribution, and replans/retries derived from persisted spans (Ш0b —
+  no second store). Production, 30 days: 25 traces, 5 failed, p50 75 s, p95 321 s,
+  6 over budget, DB 57% of work time, 0 replans.
+
+### Fixed — the router has room to think (B-25, #421)
+
+- The chat model the router runs on reasons first, and reasoning counts against the
+  completion cap: 159–297 reasoning tokens of 237–378 per routing, and 1 reply in 90
+  came back **empty** at 512 — silently the default route. Cap 512 → 1024.
+
+### Fixed — scheduling and recovery in every deployment (T07, #415 #416)
+
+- **One repository index per process on every path (S-04).** The slot lived in the ARQ
+  wrapper only; the nightly sync and the retry route call the task directly. It is taken
+  inside `run_repo_index_task` now (`app/core/repo_index_slots.py`).
+- **A wave that keeps time (S-13).** Both cron loops computed the next boundary on the wall
+  clock — and subtracting two same-zone datetimes in Python is wall-clock too. One
+  `app.core.hourly_wave.run_hourly_wave` measures real time from the local top of the
+  hour and dispatches a spring-forward skipped hour with the next.
+- **Recovery without Redis (S-07).** In the no-Redis mode, `enqueue(name)` resolves the
+  worker's job (`IN_PROCESS_JOBS`) instead of returning `None`; entrypoints declare their
+  role so runs carry an owner off Heroku; the web lifespan runs the orphan sweep. With
+  Redis configured and the pool down, nothing runs inline — a boundary an existing test
+  pinned and this change first broke.
+
+### Changed — test hygiene (B-21, #418)
+
+- Vitest per-test timeout 15 s (load-induced 5 s timeouts); ratchet prose reworded so ruff
+  stops parsing it as malformed `noqa` directives.
+
+
 ### Fixed — every project shape is served, and recovery works without Redis (T07c: S-08, S-09)
 
 - **A repository with no database was never nightly indexed**, because eligibility required
