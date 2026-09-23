@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a batch table analysis lands on the table it describes (B-16)
+
+- **One unparseable tool call moved every later description onto the wrong table.**
+  `DbIndexValidator.analyze_table_batch` mapped `table_analysis` calls to tables by position
+  and skipped an empty-arguments call without advancing, so in a batch where call #2 was
+  empty, call #3's description, hints and relevance were stored on table #2, and so on; the
+  last table fell back. Nothing failed — the index described the wrong tables, on every
+  nightly `db_index` of the production connection. The tool now asks for `table_name` first
+  and required (identity before prose, as `SYNC_ANALYSIS_TOOL` already did), results are
+  keyed by name (`schema.table` always, a bare name when unique; unknown or ambiguous names
+  dropped, duplicates keep the first), and position is used only when no call names
+  anything — each call then consumes its own slot, empty or not. Found by the 2026-09-23
+  audit (F-K1).
+
 ### Documentation — the 2026-09-23 audit: what shipped, what production shows, what the docs got wrong
 
 - **52 statements that had stopped being true were corrected against the code**, among them the

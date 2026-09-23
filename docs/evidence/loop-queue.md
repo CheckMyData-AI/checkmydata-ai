@@ -31,7 +31,7 @@ Standing rules the loop inherits (from `docs/evidence/retro.md`):
 | T04 | deliver | Track D1 — `WrongDataModal` on the thumbs-down path | plan Track D | merged — V2 owes proof | #401. Operator's decision 2026-09-18: investigation, not the canned message. Mounted with its first tests; SCN-052 rewritten; planting the canned sentence back fails two tests. |
 | T05 | deliver | PRJ-08 — connection layer correctness | audit §PRJ-08 | merged — V2 owes proof; residue in T05b | #404: C-02, C-03, C-04, C-05, C-06, C-07, C-08, C-09, C-10, C-11, C-12, C-13, C-14, C-15, C-16 — 28 tests, each verified against a planted defect. |
 | T06 | deliver | PRJ-10 — GA4 tells the truth | audit §PRJ-10 | done | #405 + #406 on **v443**. In the production runtime: alembic head `e1f2a3b4c5d7`; `vendor_credentials` carries `last_verified_at` + `last_verify_error`; the verify route answers 401 without auth (it exists and is guarded); manifest `connect/collect_reports/summarize`; history kinds `daily_sync, analytics_collect`; statuses `ok|empty|partial|failed` with `partial` **not** done; marker `provisional:`; `PST` refused as a zone, `usd`→`USD`. **Rows A-01…A-12 themselves cannot be verified here — no GA4 connection exists on this deployment**; their acceptance is the fixture end-to-end test, and a real property stays owed to PRJ-10's own acceptance. |
-| B-16 | deliver | F-K1 — batch table analysis maps tool calls to tables by position and skips an empty-args call without advancing, so later descriptions land on the wrong table | `docs/audits/2026-09-23-recent-work-audit.md` §3.1 | todo | |
+| B-16 | deliver | F-K1 — batch table analysis maps tool calls to tables by position and skips an empty-args call without advancing, so later descriptions land on the wrong table | `docs/audits/2026-09-23-recent-work-audit.md` §3.1 | merged — proof at the next nightly `db_index` | `tests/unit/knowledge/test_batch_table_analysis_maps_by_name.py`, 5 tests, all failing on the old code for the defect's reason |
 | V2 | verify | T00-mem, T04–T06 landed — checklist: `docs/audits/2026-09-23-recent-work-audit.md` §3 | — | todo | |
 | T05b | deliver | PRJ-08 residue: F-C1, F-C2, F-C3, F-C4 (reproduce first), F-C7, C-15 form | `docs/audits/2026-09-23-recent-work-audit.md` §3.2 | todo | |
 | T04b | deliver | Track D1 residue: F-W1, F-W2, F-W3 | `docs/audits/2026-09-23-recent-work-audit.md` §3.3 | todo | |
@@ -52,6 +52,16 @@ Standing rules the loop inherits (from `docs/evidence/retro.md`):
 | T17 | deliver | PRJ-16 — recipes: model, save-from-answer, run, MCP tools | ADR-0007 | todo | |
 | T18 | deliver | PRJ-15 — workspace shell | ADR-0007 | todo | |
 | V6 | verify | T16–T18 landed | — | todo | |
+
+## Operator questions
+
+Only questions an agent cannot answer by itself — an action that needs a person, a credential,
+or a decision that is the operator's. Everything else is decided and recorded in the row.
+Each loop cycle ends by stating how many are open.
+
+| # | Opened | Question | Blocks | Status |
+|---|---|---|---|---|
+| — | — | none open | — | — |
 
 ## Log
 

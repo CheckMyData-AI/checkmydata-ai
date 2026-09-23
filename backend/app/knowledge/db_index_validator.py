@@ -43,6 +43,20 @@ ANALYZE_TABLE_TOOL = Tool(
     name="table_analysis",
     description="Return a structured analysis of the database table",
     parameters=[
+        # FIRST, and required (B-16, audit 2026-09-23 F-K1): the batch path maps each
+        # call to its table by this name. It used to map by position, and one call with
+        # unparseable arguments shifted every later analysis onto the table before it.
+        # First for the reason `SYNC_ANALYSIS_TOOL` puts identity first: arguments are
+        # emitted in schema order, so a completion cap cuts prose, never the key.
+        ToolParameter(
+            name="table_name",
+            type="string",
+            description=(
+                "The EXACT table name being analyzed, copied verbatim from the "
+                "'## Table: <name>' header (prefix it with the 'Schema:' value as "
+                "'schema.table' when one is shown). Required so results map to the right table."
+            ),
+        ),
         ToolParameter(
             name="is_active",
             type="boolean",
@@ -286,6 +300,57 @@ def apply_measured_corrections(analysis: TableAnalysis, table: TableInfo) -> Tab
     return analysis
 
 
+def _map_calls_to_tables(
+    tool_calls: list, tables: list[tuple[TableInfo, QueryResult | None]]
+) -> dict[int, dict]:
+    """Decide which ``table_analysis`` call describes which table of a batch.
+
+    Returns ``{table index: arguments}``; a table absent from it gets the fallback.
+
+    By NAME whenever any call names a table (B-16, audit 2026-09-23 F-K1 —
+    ``docs/audits/2026-09-23-recent-work-audit.md`` §3.1). Mapping by position alone
+    let one call with empty arguments shift every later analysis onto the table before
+    it, and nothing failed: the index described the wrong tables. A name matches the
+    table's bare name when that is unique in the batch, or ``schema.name`` always;
+    case-insensitive. An unknown or ambiguous name is dropped, and a second analysis
+    of one table keeps the first — the same rules ``CodeDbSyncAnalyzer`` applies.
+
+    By POSITION only when no call names anything (a model that ignores the required
+    parameter), and then every ``table_analysis`` call consumes its slot, empty or
+    not — so an unusable call costs its own table, never the ones after it.
+    """
+    calls = [tc for tc in tool_calls if tc.name == "table_analysis"]
+    named = [tc for tc in calls if tc.arguments and str(tc.arguments.get("table_name", "")).strip()]
+
+    if not named:
+        return {i: tc.arguments for i, tc in enumerate(calls[: len(tables)]) if tc.arguments}
+
+    bare_counts: dict[str, int] = {}
+    for tbl, _ in tables:
+        bare_counts[tbl.name.lower()] = bare_counts.get(tbl.name.lower(), 0) + 1
+    index_by_key: dict[str, int] = {}
+    for i, (tbl, _) in enumerate(tables):
+        if tbl.schema:
+            index_by_key[f"{tbl.schema}.{tbl.name}".lower()] = i
+        if bare_counts[tbl.name.lower()] == 1:
+            index_by_key[tbl.name.lower()] = i
+
+    mapped: dict[int, dict] = {}
+    for tc in named:
+        raw = str(tc.arguments.get("table_name", "")).strip()
+        idx = index_by_key.get(raw.lower())
+        if idx is None:
+            logger.warning(
+                "Batch table analysis: call for unknown or ambiguous table %r — dropped", raw
+            )
+            continue
+        if idx in mapped:
+            logger.warning("Batch table analysis: duplicate analysis for %r — keeping first", raw)
+            continue
+        mapped[idx] = tc.arguments
+    return mapped
+
+
 class DbIndexValidator:
     """Uses LLM to analyze individual tables and generate connection summaries."""
 
@@ -401,7 +466,7 @@ class DbIndexValidator:
             Message(role="user", content="\n".join(prompt_parts)),
         ]
 
-        results: list[TableAnalysis] = []
+        results_by_index: dict[int, TableAnalysis] = {}
         try:
             resp = await self._llm.complete(
                 messages=messages,
@@ -421,42 +486,43 @@ class DbIndexValidator:
                 )
                 resp.tool_calls = []
 
-            tool_idx = 0
-            for tc in resp.tool_calls:
-                if tc.name == "table_analysis" and tc.arguments and tool_idx < len(tables):
-                    args = tc.arguments
-                    tbl = tables[tool_idx][0]
-                    col_notes = as_text(args.get("column_notes", "{}"), "{}")
-                    numeric_notes = as_text(args.get("numeric_format_notes", "{}"), "{}")
-                    results.append(
-                        apply_measured_corrections(
-                            TableAnalysis(
-                                table_name=tbl.name,
-                                is_active=as_bool(args.get("is_active", True), True),
-                                relevance_score=as_int(
-                                    args.get("relevance_score", 3), 3, lo=1, hi=5
-                                ),
-                                business_description=as_text(args.get("business_description", "")),
-                                data_patterns=as_text(args.get("data_patterns", "")),
-                                column_notes_json=col_notes,
-                                query_hints=as_text(args.get("query_hints", "")),
-                                code_match_status=_clamp_code_match(
-                                    args.get("code_match_status", "no_code_info"),
-                                ),
-                                code_match_details=as_text(args.get("code_match_details", "")),
-                                numeric_format_notes=numeric_notes,
-                            ),
-                            tbl,
-                        )
-                    )
-                    tool_idx += 1
+            analysed = _map_calls_to_tables(resp.tool_calls, tables)
+            for i, (tbl, _sample) in enumerate(tables):
+                args = analysed.get(i)
+                if args is None:
+                    continue
+                col_notes = as_text(args.get("column_notes", "{}"), "{}")
+                numeric_notes = as_text(args.get("numeric_format_notes", "{}"), "{}")
+                results_by_index[i] = apply_measured_corrections(
+                    TableAnalysis(
+                        table_name=tbl.name,
+                        is_active=as_bool(args.get("is_active", True), True),
+                        relevance_score=as_int(args.get("relevance_score", 3), 3, lo=1, hi=5),
+                        business_description=as_text(args.get("business_description", "")),
+                        data_patterns=as_text(args.get("data_patterns", "")),
+                        column_notes_json=col_notes,
+                        query_hints=as_text(args.get("query_hints", "")),
+                        code_match_status=_clamp_code_match(
+                            args.get("code_match_status", "no_code_info"),
+                        ),
+                        code_match_details=as_text(args.get("code_match_details", "")),
+                        numeric_format_notes=numeric_notes,
+                    ),
+                    tbl,
+                )
 
         except Exception:
             logger.warning("Batch LLM analysis failed", exc_info=True)
 
-        for i in range(len(results), len(tables)):
-            tbl, sample = tables[i]
-            results.append(self._fallback_analysis(tbl, sample))
+        results: list[TableAnalysis] = []
+        for i, (tbl, sample) in enumerate(tables):
+            analysis = results_by_index.get(i)
+            results.append(
+                analysis if analysis is not None else self._fallback_analysis(tbl, sample)
+            )
+        fallbacks = len(tables) - len(results_by_index)
+        if fallbacks:
+            logger.info("Batch table analysis: %d/%d used fallback", fallbacks, len(tables))
 
         return results
 
