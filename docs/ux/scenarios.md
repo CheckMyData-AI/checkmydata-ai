@@ -712,9 +712,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** connection saved with tunnel/exec config
 - **UI elements:** SSH host/port/user inputs, SSH key select, "SSH Exec Mode" checkbox, exec preset select, command-template + pre-commands textareas, inline warnings
 - **States covered:** error, success
-- **Errors & recovery:** SSH host set but missing user/key → inline warning + toast at submit; MongoDB disables exec mode (`ConnectionSelector.tsx:886-890,314-317`)
+- **Errors & recovery:** SSH host set but missing user/key → inline warning + toast at submit, and the API refuses a host without a user with 422 (C-15); MongoDB disables exec mode; a custom command carrying `{db_password}`, or `$DBPASS` anywhere but an environment assignment, is flagged inline and refused by the API (C-02, T05b); the help text says a custom command receives the query on stdin; a wrong key passphrase is reported at once as a key problem, not retried as a bastion outage (F-C7)
 - **Status:** implemented
-- **Coverage:** components/connections/ConnectionSelector.tsx:842-1006
+- **Coverage:** components/connections/ConnectionSelector.tsx (SSH section), components/connections/connection-form-helpers.ts (`commandTemplateError`), backend/app/connectors/exec_templates.py (`validate_new_command_template`), backend/app/connectors/ssh_tunnel.py (`load_client_key`); tests `backend/tests/unit/connectors/test_a_refused_password_is_not_a_network_fault.py`
 
 ### SCN-029: Toggle read-only mode
 - **Persona:** owner
@@ -753,12 +753,16 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User edits fields (password blank keeps existing)
   2. User clicks "Save Changes"
-- **Expected result:** toast "Connection updated"
+- **Expected result:** toast "Connection updated". Only the fields the user changed are sent
+  (T05b, 2026-09-23): a rename does not re-send the SSH key (a co-owner may rename a
+  connection whose key another member uploaded), a stored command template, the DSN or the
+  MCP environment — which an explicit `null` would have cleared. Editing a host field with
+  the connection-string toggle off moves the connection onto its fields and clears the DSN.
 - **UI elements:** same form as create titled "Edit Connection", Save Changes, Cancel
-- **States covered:** loading, error, success
-- **Errors & recovery:** name required → toast; SSH/MCP validation as create; update fails → toast (`ConnectionSelector.tsx:398-415,487-491`)
+- **States covered:** loading, error, success, nothing-changed (toast "Nothing changed", no request)
+- **Errors & recovery:** name required → toast; SSH/MCP validation as create; invalid MCP env JSON → toast; update fails → toast
 - **Status:** implemented
-- **Coverage:** components/connections/ConnectionSelector.tsx:389-491,1290-1297
+- **Coverage:** components/connections/ConnectionSelector.tsx (`handleUpdate`, `handleEdit`), components/connections/connection-form-helpers.ts (`editPatch`, `buildConnectionUpdates`, `changedFields`); tests `frontend/src/__tests__/connection-edit-sends-what-changed.test.ts`, `frontend/src/__tests__/components/AnalyticsConnectionEdit.test.tsx`
 
 ### SCN-032: Delete a connection
 - **Persona:** owner

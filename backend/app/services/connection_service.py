@@ -12,7 +12,7 @@ from app.connectors.base import ConnectionConfig
 from app.connectors.host_guard import check_connection_targets
 from app.connectors.registry import get_connector
 from app.connectors.ssh_known_hosts import connect_with_policy
-from app.connectors.transient_errors import TRANSIENT_CONNECT_ERRORS
+from app.connectors.transient_errors import TRANSIENT_CONNECT_ERRORS, is_transient_connect_error
 from app.core.redaction import safe_error
 from app.core.retry import retry
 from app.models.connection import Connection
@@ -538,6 +538,9 @@ class ConnectionService:
                 max_attempts=attempts,
                 backoff_seconds=1.0,
                 retryable_exceptions=TRANSIENT_CONNECT_ERRORS,
+                # T05b/F-C3: a refused password is an answer; asking three times
+                # cannot change it.
+                retry_if=is_transient_connect_error,
             )
             async def _connect_with_retry():
                 await connector.connect(config)

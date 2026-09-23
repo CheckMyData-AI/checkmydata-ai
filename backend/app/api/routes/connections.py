@@ -60,6 +60,13 @@ _svc = ConnectionService()
 #: different fact from "there is none", and the exec-mode UI needs the first one.
 _REDACTED = "••••••"
 
+#: T05b/C-15 (audit 2026-09-23 §3.2): the form demanded an SSH user and key, the API
+#: accepted a host alone — and a tunnel opened with `username=""` fails at the bastion
+#: with an error that names neither. The USER is required on both sides now. The KEY
+#: stays optional here on purpose: a self-hosted API can authenticate with the server's
+#: own SSH keys, which no hosted deployment has, so only the form insists on one.
+_SSH_USER_REQUIRED = "An SSH host needs an SSH user: the tunnel has no login without one."
+
 _membership_svc = MembershipService()
 _db_index_svc = DbIndexService()
 _sync_svc = CodeDbSyncService()
@@ -517,6 +524,8 @@ class ConnectionCreate(_ConnectionFieldRules):
             return self
         if not self.connection_string and not (self.db_host and self.db_name):
             raise ValueError("Provide either a connection string or db_host + db_name")
+        if (self.ssh_host or "").strip() and not (self.ssh_user or "").strip():
+            raise ValueError(_SSH_USER_REQUIRED)
         return self
 
 
@@ -985,6 +994,13 @@ async def update_connection(
                 status_code=400,
                 detail="Provide either a connection string or db_host + db_name",
             )
+
+    # T05b/C-15, on the merged row for the reason every check here is: a PATCH that
+    # sets only the host, or clears only the user, must not produce a tunnel with no login.
+    merged_ssh_host = updates["ssh_host"] if "ssh_host" in updates else conn.ssh_host
+    merged_ssh_user = updates["ssh_user"] if "ssh_user" in updates else conn.ssh_user
+    if (merged_ssh_host or "").strip() and not (merged_ssh_user or "").strip():
+        raise HTTPException(status_code=422, detail=_SSH_USER_REQUIRED)
 
     # F-CONN-04, on the merged row: a PATCH that moves only the host must be checked,
     # and one that leaves it alone must not re-check a host already stored.

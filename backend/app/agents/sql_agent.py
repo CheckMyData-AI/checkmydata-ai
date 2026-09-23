@@ -30,6 +30,7 @@ from app.connectors.base import (
     connector_key,
 )
 from app.connectors.registry import get_connector
+from app.connectors.transient_errors import TRANSIENT_CONNECT_ERRORS
 from app.core.context_enricher import ContextEnricher
 from app.core.error_classifier import ErrorClassifier
 from app.core.error_types import QueryErrorType
@@ -114,6 +115,20 @@ class SQLAgentResult(AgentResult):
     #: database stopped answering) or ``deadline`` (the request's wall clock is
     #: spent). ``None`` means the loop ended on its own terms.
     stop_reason: str | None = None
+
+
+def _tunnel_was_swept(cfg: ConnectionConfig) -> bool:
+    """Did the idle sweep close the tunnel a cached connector's pool depends on? (F-C4)
+
+    Only a port-forward tunnel can be swept from under a pool; SSH-exec mode opens its
+    own session per command. `note_activity` answers False exactly when the config has
+    an SSH host and the manager holds no tunnel for it.
+    """
+    if not cfg.ssh_host or cfg.ssh_exec_mode:
+        return False
+    from app.connectors.ssh_tunnel import shared_tunnel_manager
+
+    return not shared_tunnel_manager.note_activity(cfg)
 
 
 class SQLAgent(BaseAgent):
@@ -1571,11 +1586,17 @@ class SQLAgent(BaseAgent):
             existing = self._connectors.get(key)
             if existing is not None:
                 # C-16: this used to ask `getattr(existing, "_closed", False)`, and no
-                # connector has ever set that attribute — the check read "not False" on
-                # every hit, which is what the line below does without pretending to
-                # test anything. A connector that has actually lost its socket reports
-                # it where that can be known: `execute_query` returns "Not connected",
-                # and the tunnel rebuilds itself (C-10).
+                # connector has ever set that attribute. What CAN be known cheaply is
+                # whether the tunnel under a cached pool still exists (T05b, F-C4 —
+                # `docs/audits/2026-09-23-recent-work-audit.md` §3.2): the 30-minute idle
+                # sweep closes it between questions, the pool keeps pointing at the dead
+                # local port, and `execute_query` has no reconnect path — so the first
+                # question after a quiet half hour failed until the health loop's
+                # `reconnect()` ran, up to `health_check_interval_seconds` later. Asking
+                # here repairs it before the question instead of after the failure, and
+                # `note_activity` also marks a live tunnel as used.
+                if _tunnel_was_swept(cfg):
+                    await self._rebuild_swept(existing, cfg)
                 return existing
 
             if len(self._connectors) >= self._MAX_CONNECTORS:
@@ -1590,6 +1611,26 @@ class SQLAgent(BaseAgent):
             await conn.connect(cfg)
             self._connectors[key] = conn
             return conn
+
+    @staticmethod
+    async def _rebuild_swept(conn: BaseConnector, cfg: ConnectionConfig) -> None:
+        """Give a cached connector a new tunnel; a failure surfaces on the query itself."""
+        logger.info(
+            "SQL agent: tunnel under cached connector %s was closed; reconnecting",
+            cfg.connection_id,
+        )
+        try:
+            if not await conn.reconnect():
+                await conn.disconnect()
+                await conn.connect(cfg)
+        except TRANSIENT_CONNECT_ERRORS:
+            # Only the network kind: the question then fails with its own error, which
+            # names the cause. Anything else is a defect and propagates.
+            logger.warning(
+                "SQL agent: reconnect after the tunnel was swept failed for %s",
+                cfg.connection_id,
+                exc_info=True,
+            )
 
     async def _get_cached_schema(self, cfg: ConnectionConfig) -> SchemaInfo:
         key = connector_key(cfg)
