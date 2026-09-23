@@ -1,0 +1,20 @@
+{"id":"G01","provenance":"curated","note":"bounded percent over 100 is impossible","columns":["conversion_pct"],"rows":[[150.0]],"expect":"block"}
+{"id":"G02","provenance":"curated","note":"a high but valid conversion","columns":["conversion_pct"],"rows":[[99.5]],"expect":"accept"}
+{"id":"G03","provenance":"curated","note":"a negative count is impossible","columns":["order_count"],"rows":[[-3]],"expect":"block"}
+{"id":"G04","provenance":"curated","note":"'account' contains 'count' as a substring, not a token: a negative balance is legitimate","columns":["account_balance"],"rows":[[-120.0]],"expect":"accept"}
+{"id":"G05","provenance":"curated","note":"net revenue goes negative with refunds","columns":["revenue"],"rows":[[-50.0]],"expect":"accept"}
+{"id":"G06","provenance":"curated","note":"growth is a signed rate and may exceed 100","columns":["yoy_growth"],"rows":[[180.0]],"expect":"accept"}
+{"id":"G07","provenance":"curated","note":"a percent delta is signed","columns":["percent_change"],"rows":[[-40.0]],"expect":"accept"}
+{"id":"G08","provenance":"curated","note":"a far-future year inside the configured range","columns":["created_date"],"rows":[["2099-01-01"]],"expect":"accept"}
+{"id":"G09","provenance":"curated","note":"a year outside the configured range is a parse glitch","columns":["created_date"],"rows":[["2150-01-01"]],"expect":"block"}
+{"id":"G10","provenance":"curated","note":"a pre-1900 year is a parse glitch","columns":["created_date"],"rows":[["1850-06-01"]],"expect":"block"}
+{"id":"G11","provenance":"curated","note":"a database error is never data","columns":[],"rows":[],"error":"Unknown column 'x' in 'field list'","expect":"block"}
+{"id":"G12","provenance":"curated","note":"an empty result is re-asked while query_empty_result_retry is on","columns":["n"],"rows":[],"expect":"requery","requires":{"query_empty_result_retry":true}}
+{"id":"G13","provenance":"curated","note":"a capped but sound result is a warning, not an error","columns":["country","revenue"],"rows":[["DE",10.0],["FR",12.0]],"truncated":true,"expect":"warn"}
+{"id":"G14","provenance":"curated","note":"capped AND impossible: the block wins","columns":["conversion_pct"],"rows":[[130.0]],"truncated":true,"expect":"block"}
+{"id":"G15","provenance":"curated","note":"'electric' contains 'ctr' as a substring only","columns":["electric_bill"],"rows":[[500.0]],"expect":"accept"}
+{"id":"G16","provenance":"curated","note":"'discount' is not a count","columns":["discount"],"rows":[[-10.0]],"expect":"accept"}
+{"id":"G17","provenance":"curated","note":"a ctr expressed as a fraction","columns":["ctr"],"rows":[[0.042]],"expect":"accept"}
+{"id":"G18","provenance":"curated","note":"exactly 100 percent is valid","columns":["completion_percentage"],"rows":[[100.0]],"expect":"accept"}
+{"id":"G19","provenance":"curated","note":"zero is a valid count","columns":["cnt"],"rows":[[0]],"expect":"accept"}
+{"id":"G20","provenance":"curated","note":"a negative quantity is impossible","columns":["quantity"],"rows":[[-1]],"expect":"block"}
