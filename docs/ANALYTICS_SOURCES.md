@@ -45,8 +45,9 @@ Concretely, per GA4 connection the system stores:
   `(connection_id, property_id, date, …dimensions)` and written with an upsert,
   so re-collecting a period overwrites rather than duplicates;
 - an import journal (`analytics_imports`), one row per
-  `(connection_id, report, period)` recording `ok` / `empty` / `failed`,
-  `rows_written`, `error` and `fetched_at`.
+  `(connection_id, report, period)` recording `ok` / `empty` / `partial` / `failed` (only `ok` and `empty` are
+  *done*; a `partial` period — a property failed, or the day may not be over — is
+  collected again), `rows_written`, `error` and `fetched_at`.
 
 The journal is what lets an answer say *"July was collected and it was zero"*
 rather than *"we have no July"*. Raw vendor response bodies are **never** written
@@ -284,8 +285,10 @@ What survived is written, and the journal row carries a sentence naming the
 property that did not.
 
 **Collect now.** `POST /api/connections/{id}/collect` (or the **Collect now**
-button on the collection row) enqueues exactly the same job with the same
-day-scoped id. It deliberately ignores `collection_enabled`: that flag pauses the
+button on the collection row) enqueues the same job under its **own** task id
+(`analytics_collect:manual:<id>:<timestamp>`, ANA-10) — sharing the wave's day-scoped id
+made it a silent duplicate after any wave run; the lock below is what keeps the two
+from overlapping. It deliberately ignores `collection_enabled`: that flag pauses the
 *schedule*, and pulling on demand is the normal way to verify a credential fix.
 
 **One run, one turn.** A Redis lock per connection (`analytics:collect:<id>`) keeps the
@@ -434,8 +437,9 @@ wait for the next scheduled hour or press **Collect now**.
 
 ### "Today's numbers are missing"
 
-By design. The collection window always ends **yesterday**, in the scheduler's
-timezone. GA4 does not finalise the current day, and a half-collected today looks
+By design. The collection window always ends **yesterday in the property's
+timezone** (`source_config.property_timezone`, A-04, §3.4); without one, the newest
+day is journalled `partial` and collected again rather than sealed. GA4 does not finalise the current day, and a half-collected today looks
 exactly like a crash in traffic. GA4 also keeps revising the previous ~48 h,
 which is why the last 2 periods are refetched on every run.
 
@@ -472,7 +476,7 @@ journal. Check, in order:
 |---|---|
 | **Fact rows** (`ga4_*_daily`) | **Kept** for the life of the connection. They are the answerable surface; expiring them would silently turn answered history into "not collected". |
 | **Raw vendor payloads** | **Never written to disk** — `fetch()` returns parsed rows and the response body goes out of scope. There is nothing to retain, and nothing to leak. |
-| **Journal** (`analytics_imports`) | **Pruned at 400 days** (`ANALYTICS_JOURNAL_RETENTION_DAYS`) by the existing 24 h maintenance cron. Best-effort: a failed prune never fails the maintenance pass. |
+| **Journal** (`analytics_imports`) | **Pruned by the period's age** past `ANALYTICS_JOURNAL_RETENTION_DAYS` (400), never inside the widest `backfill_days` any connection is configured for (A-07, `journal.prune(protect_days=…)`); `fetched_at` does not decide. Run by the existing 24 h maintenance cron. Best-effort: a failed prune never fails the maintenance pass. |
 | **Delete a connection** | `analytics_imports` and all five `ga4_*` fact tables cascade on `connections.id` — every cached row for that connection goes with it. |
 | **Delete a project** | Cascades through its connections, so the same applies. |
 | **Delete a credential** | `connections.vendor_credential_id` is `ON DELETE RESTRICT`: deleting a credential a connection still references fails loudly with **409**, never orphaning the connection. Re-point or delete the connection first. |

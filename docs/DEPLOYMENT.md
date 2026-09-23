@@ -25,7 +25,7 @@ Backend (`backend/`, Python 3.12):
 - Type check: `mypy app/ --ignore-missing-imports`
 - Tests: `pytest tests/unit/ && pytest tests/integration/`
   - Env: `DATABASE_URL=sqlite+aiosqlite:///:memory:`, `MASTER_ENCRYPTION_KEY=<fernet key>`
-- Coverage gate: `coverage report --fail-under=72` (combined unit + integration)
+- Coverage gate: `coverage report --fail-under=80` (combined unit + integration; the per-step runs pass `--cov-fail-under=0`)
 
 Frontend (`frontend/`, Node 20):
 - Type check: `npx tsc --noEmit`
@@ -39,10 +39,14 @@ Frontend (`frontend/`, Node 20):
 3. Land the changes on `main` (merge the feature branch / PR into `main`).
 4. The push to `main` triggers the `CI` workflow. On CI success, the
    `Deploy to Heroku` workflow (`.github/workflows/deploy.yml`) automatically:
-   - Builds `Dockerfile.backend` and `Dockerfile.frontend` (linux/amd64).
-   - Pushes images to `registry.heroku.com/<app>/web`.
-   - Releases both Heroku apps via the platform API.
+   - Builds `Dockerfile.backend`, `Dockerfile.worker`, `Dockerfile.release` (the backend
+     image with `alembic upgrade head` as its CMD) and `Dockerfile.frontend` (linux/amd64).
+   - Pushes `registry.heroku.com/<backend>/web`, `/worker`, `/release` and the frontend `/web`.
+   - Records the current release version, PATCHes the formation, then waits for a **higher**
+     release whose `status` is `succeeded` and for a `worker` dyno `up` on it — a PATCH that
+     returns an error fails the job instead of passing it (P0-4).
    - Runs backend + frontend health checks.
+   - Deploys **queue** rather than cancel, so backend and frontend never end on different commits.
 
 No local `git push heroku` is needed; deploy is fully CI-driven.
 
@@ -66,8 +70,11 @@ No local `git push heroku` is needed; deploy is fully CI-driven.
   `/login`. Set via `heroku config:set AUTH_COOKIE_DOMAIN=.checkmydata.ai -a checkmydata-api`.
 
 ## Migrations / release-phase commands
-- DB migrations run on backend boot via the `Procfile` web command:
-  `cd backend && alembic upgrade head && uvicorn app.main:app ...`
+- DB migrations run in the Heroku **release phase**: `Dockerfile.release` runs
+  `alembic upgrade head` before the release goes live, and a failed migration aborts the
+  deploy. The web image's CMD is plain `uvicorn` (`Dockerfile.backend:80`). As a backstop the
+  FastAPI lifespan (`main.py`) and worker start-up (`worker.py`) also call `run_migrations()`
+  under a session-level advisory lock. The `Procfile` is not used by the container deploy.
 - Worker process: `cd backend && arq app.worker.WorkerSettings`
 
 ## Post-deploy verification

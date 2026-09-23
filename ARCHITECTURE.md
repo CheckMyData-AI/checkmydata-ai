@@ -17,7 +17,7 @@ language questions into database queries with rich visualizations.
 │                                                          │
 │  ┌──────────┐  ┌──────────────┐  ┌───────────────────┐  │
 │  │ API Layer│  │ Multi-Agent  │  │ Knowledge Layer   │  │
-│  │ (Routes) │──│ System       │──│ (RAG + ChromaDB)  │  │
+│  │ (Routes) │──│ System       │──│ (RAG + vectors)   │  │
 │  └──────────┘  └──────┬───────┘  └───────────────────┘  │
 │                        │                                 │
 │  ┌─────────┐  ┌───────▼──────┐  ┌───────────────────┐  │
@@ -27,7 +27,7 @@ language questions into database queries with rich visualizations.
 │  │Anthropic│  │  Mongo, CH)  │  │                    │  │
 │  │OpenR.)  │  └──────────────┘  └───────────────────┘  │
 │                                                          │
-│  Storage: SQLite/PostgreSQL (app) + ChromaDB (vectors)   │
+│  Storage: SQLite/PostgreSQL (app) + pgvector|Chroma (vec)│
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -37,15 +37,15 @@ language questions into database queries with rich visualizations.
 
 | Module | Purpose | Key Files |
 |--------|---------|-----------|
-| `api/routes/` | REST API endpoints (31 routers) | `auth.py`, `chat.py`, `connections.py`, `projects.py`, `logs.py`, `batch.py`, `dashboards.py`, `schedules.py`, `notifications.py`, `insights.py`, `feed.py`, `data_graph.py`, `reconciliation.py`, `semantic_layer.py`, `exploration.py`, `temporal.py`, ... |
+| `api/routes/` | REST API endpoints (40 route modules) | `auth.py`, `chat.py`, `connections.py`, `projects.py`, `logs.py`, `batch.py`, `dashboards.py`, `schedules.py`, `notifications.py`, `insights.py`, `feed.py`, `data_graph.py`, `reconciliation.py`, `semantic_layer.py`, `exploration.py`, `temporal.py`, ... |
 | `agents/` | Multi-agent orchestration | `orchestrator.py`, `sql_agent.py`, `knowledge_agent.py`, `viz_agent.py`, `mcp_source_agent.py`, `query_planner.py`, `stage_executor.py`, `stage_validator.py` |
 | `llm/` | LLM provider abstraction | `router.py`, `base.py`, `openai_adapter.py`, `anthropic_adapter.py`, `openrouter_adapter.py` |
-| `connectors/` | Database connectivity | `postgres.py`, `mysql.py`, `mongodb.py`, `clickhouse.py`, `ssh_tunnel.py`, `mcp_client.py` |
+| `connectors/` | Database connectivity | `postgres.py`, `mysql.py`, `mongodb.py`, `clickhouse.py`, `sqlite.py` (demo), `ssh_tunnel.py`, `ssh_exec.py`, `exec_templates.py`, `dsn.py`, `transient_errors.py`, `mcp_client.py` |
 | `knowledge/` | RAG pipeline & code analysis | `vector_store.py`, `repo_analyzer.py`, `entity_extractor.py`, `learning_analyzer.py`, `pipeline_runner.py`, `db_index_pipeline.py`, `ast_parser.py`, `code_graph.py`, `bm25_index.py`, `hybrid_retriever.py`, `schema_retriever.py`, `code_db_sync_analyzer.py` |
-| `services/` | Business logic | `auth_service.py`, `batch_service.py`, `probe_service.py`, `trace_persistence_service.py`, `logs_service.py`, `schedule_service.py`, `notification_service.py`, `insight_memory_service.py`, `action_engine.py`, `code_graph_service.py`, `knowledge_freshness_service.py`, `indexing_artifacts.py`, ... |
-| `models/` | SQLAlchemy ORM models | `user.py`, `project.py`, `connection.py`, `chat_session.py`, `request_trace.py`, `insight.py`, `schedule.py`, `notification.py`, `agent_learning.py`, ... |
-| `core/` | Cross-cutting concerns | `agent.py`, `context_budget.py`, `history_trimmer.py`, `insight_memory.py`, `validation_loop.py`, `workflow_tracker.py`, `health_monitor.py`, `rate_limit.py`, `audit.py` |
-| `pipelines/` | Long-running workflows | `mcp_pipeline.py` |
+| `services/` | Business logic | `auth_service.py`, `batch_service.py`, `probe_service.py`, `trace_persistence_service.py`, `logs_service.py`, `scheduler_service.py`, `sync_schedule_service.py`, `run_coordinator.py`, `stale_run_reaper.py`, `analytics_collect_service.py`, `vendor_credential_service.py`, `code_graph_service.py`, `knowledge_freshness_service.py`, `indexing_artifacts.py`, ... |
+| `models/` | SQLAlchemy ORM models | `user.py`, `project.py`, `connection.py`, `chat_session.py`, `request_trace.py`, `insight_record.py`, `scheduled_query.py`, `notification.py`, `agent_learning.py`, ... |
+| `core/` | Cross-cutting concerns | `agent.py`, `context_budget.py`, `history_trimmer.py`, `insight_memory.py`, `action_engine.py`, `validation_loop.py`, `workflow_tracker.py`, `health_monitor.py`, `rate_limit.py`, `audit.py` |
+| `pipelines/` | Per-source pipelines, one per `source_type` | `registry.py`, `database_pipeline.py`, `mcp_pipeline.py`, `analytics_pipeline.py` |
 | `mcp_server/` | MCP protocol server | `server.py`, `tools.py`, `resources.py`, `auth.py` |
 
 ### Frontend (`frontend/src/`)
@@ -107,7 +107,7 @@ User connects Git repo
       → graph_db_bridge:    code → DB lineage onto EntityInfo (M5)
       → graph_clustering:   Louvain communities + LLM labels (M6)
       → generate_docs:      LLM doc generation: enriched documentation
-      → embed_and_store:    chunks stored in ChromaDB
+      → embed_and_store:    chunks stored in the vector store (pgvector on Postgres, Chroma on SQLite)
       → bm25_build:         code-aware lexical snapshot on disk (M3)
       → record_index:       persists head SHA + checkpoint state
     → DbIndex pipeline (separate per-connection run):
@@ -122,9 +122,9 @@ User connects Git repo
 
   When a project or connection is deleted, `services/indexing_artifacts.py`
   performs best-effort, non-throwing cleanup of the on-disk BM25
-  snapshots (`data/bm25/{project_id}.pkl`,
-  `data/bm25/schema_{connection_id}.pkl`) and the
-  `project_{project_id}` ChromaDB collection (Postgres FK cascades handle
+  snapshots (`data/bm25/{project_id}.json.gz`,
+  `data/bm25/schema_{connection_id}.json.gz`) and the
+  project's vectors (the `project_{project_id}` Chroma collection, or its `doc_embeddings` rows on pgvector) (Postgres FK cascades handle
   the structured rows).
 ```
 
@@ -164,7 +164,7 @@ Error trace guarantees:
     → WorkflowTracker.has_ended(wf_id) prevents duplicate pipeline_end events
   → _persist_workflow no longer skips traces with empty project_id/user_id
     → Traces are persisted with empty IDs; finalize_trace() updates them later
-  → Stale buffers (pipeline_end never received) are persisted as failed traces
+  → Stale buffers (pipeline_end never received) are persisted as provisional traces, replaced when the route finalizes
     → _cleanup_stale_buffers creates synthetic pipeline_end event
   → Non-streaming /ask wraps _agent.run() in try/except to finalize on crash
   → Streaming _finalize_on_error uses fallback wf_id when original is None
@@ -187,7 +187,7 @@ Traced request paths:
 - **FastAPI** — async web framework
 - **SQLAlchemy 2.0** — async ORM (asyncpg/aiosqlite)
 - **Alembic** — database migrations
-- **ChromaDB** — vector store for RAG
+- **pgvector / ChromaDB** — vector store for RAG (`VECTOR_STORE_BACKEND=auto`: pgvector on Postgres, Chroma on SQLite)
 - **httpx** — async HTTP client (LLM APIs)
 - **Pydantic** — data validation and settings
 - **tree-sitter** + **tree-sitter-language-pack** — AST parsing for the code graph (M1)
@@ -215,7 +215,7 @@ Key models:
 - `KnowledgeDoc` — indexed documentation chunks
 - `RequestTrace` / `TraceSpan` — persisted orchestrator execution traces
 - `AgentLearning` — per-connection learned patterns and knowledge
-- `Schedule` / `ScheduleResult` — recurring query schedules and results
+- `ScheduledQuery` / `ScheduleRun` — recurring query schedules and results
 - `Notification` — in-app notification delivery
 - `InsightRecord` / `TrustScore` — proactive insights with confidence scores
 - `MetricDefinition` / `MetricRelationship` — semantic layer metric catalog
@@ -229,7 +229,7 @@ Key models:
 - Project access enforced via `ProjectMember` role checks
 - Database credentials encrypted with Fernet (MASTER_ENCRYPTION_KEY)
 - SSH tunnels for remote database access
-- Rate limiting on all mutating endpoints
+- Rate limiting on every mutating endpoint except three documented exemptions (API.md › Rate Limiting)
 - Input validation on all Pydantic models
 - Path traversal protection on filesystem-facing parameters
 

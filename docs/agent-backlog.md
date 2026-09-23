@@ -1,5 +1,12 @@
 # Agent Backlog
 
+> **Frozen snapshot — not current (banner added 2026-09-23).** Everything below describes
+> the repository on 2026-07-24 (v1.15.1). Current status of delivery work lives in
+> [`docs/evidence/loop-queue.md`](evidence/loop-queue.md); the latest audit and the prioritised
+> backlog are in [`docs/audits/2026-09-23-recent-work-audit.md`](audits/2026-09-23-recent-work-audit.md);
+> current test counts and gates are in the root `CLAUDE.md` (9,768 backend + 811 frontend,
+> coverage gate 80%, measured 2026-09-23).
+
 Prioritized list of improvements discovered by the continuous improvement agent.
 
 ## Scoring

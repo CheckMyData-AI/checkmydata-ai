@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Documentation — the 2026-09-23 audit: what shipped, what production shows, what the docs got wrong
+
+- **52 statements that had stopped being true were corrected against the code**, among them the
+  current release (`[1.17.0]`, not `[1.16.0]`), the test count (9 768 + 811), nine API routes
+  that were never documented, a manual GA4 collect's task id, `max_orchestrator_iterations`
+  (20, not 100), where migrations run (the release phase, not a `Procfile`), and four settings
+  `.env.example` still offered after `config.py` deleted them.
+- **One home for status.** `docs/evidence/loop-queue.md` is named as the single source in
+  `docs/DOCMAP.md` and `CLAUDE.md`; T00-mem, T04 and T05 read `merged` — deployed, proof owed —
+  instead of `in review`.
+- **The backlog this produced** is in `docs/audits/2026-09-23-recent-work-audit.md` §6: one P1
+  that mis-attributes table descriptions on every nightly index (B-16), the PRJ-08/PRJ-10/Track
+  D1 residue (T05b, T06b, T04b), and a ×6 reprice of the background model (O-1). No application
+  code changed.
+- **A GA4 test failed CI one hour every day.** It asserted exactly one calendar day between
+  UTC+14 and UTC−11 on the real clock, which is two days from 10:00 to 10:59 UTC; a merge in
+  that hour failed CI and skipped the deploy. It now accepts one or two days and still refuses
+  zero — the one-clock defect it exists to catch.
+
 ### Fixed — GA4 tells the truth about what it collected (A-01, A-02, A-03, A-05, A-06, A-09)
 
 Six rows of the 2026-09-13 audit's analytics findings.
