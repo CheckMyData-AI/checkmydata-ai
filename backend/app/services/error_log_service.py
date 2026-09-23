@@ -51,6 +51,12 @@ class ErrorLogService:
 
         async def _merge(into: ErrorLog) -> ErrorLog:
             into.occurrences += 1
+            # F-E1: an error somebody marked `resolved` that happens again is a
+            # regression, and the catalog exists to show exactly that. Counting it on a
+            # row still reading `resolved` hid it. `acknowledged` ("known, still
+            # happening") is left alone: a recurrence confirms it rather than refutes it.
+            if into.status == "resolved":
+                into.status = "open"
             into.last_seen_at = now
             into.message = message or into.message
             into.sample_ref = sample_ref or into.sample_ref

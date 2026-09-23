@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a resolved error that comes back is open again (F-E1)
+
+- `ErrorLogService.upsert` counted a recurrence on the existing row and left its status
+  alone, so an error marked `resolved` that happened again stayed `resolved` with
+  `occurrences` climbing — the regression the catalog exists to show, hidden by the act of
+  triaging it. A recurrence now reopens a `resolved` row; `acknowledged` ("known, still
+  happening") is left as it is. Found while about to resolve the 23 production rows that
+  PRJ-01…PRJ-04 had fixed, none of which had ever been triaged.
+
 ### Fixed — a batch table analysis lands on the table it describes (B-16)
 
 - **One unparseable tool call moved every later description onto the wrong table.**
