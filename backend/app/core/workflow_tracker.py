@@ -28,6 +28,14 @@ request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 
 
+#: B-19: "this task is relaying another process's event". A ContextVar, not an attribute:
+#: the attribute was process-wide and held True across the awaits inside
+#: `broadcast_external`, so a LOCAL event delivered from another task in that window was
+#: treated as relayed — the trace persister skipped it, and a chat whose `pipeline_start`
+#: landed there lost its whole trace. A ContextVar is True only in the relaying task.
+_RELAYING: contextvars.ContextVar[bool] = contextvars.ContextVar("workflow_relaying", default=False)
+
+
 @dataclass
 class WorkflowEvent:
     workflow_id: str
@@ -111,7 +119,6 @@ class WorkflowTracker:
         self._persistence_hooks: list[Any] = []
         self._ended_workflows: set[str] = set()
         self._cross_process_publish = False
-        self._external_rebroadcast = False
 
     def enable_cross_process_publish(self) -> None:
         """Worker process: publish events to Redis for API SSE subscribers."""
@@ -463,6 +470,11 @@ class WorkflowTracker:
         async with self._lock:
             self._subscribers = [s for s in self._subscribers if s.queue is not queue]
 
+    @property
+    def _external_rebroadcast(self) -> bool:
+        """Is the CURRENT task relaying another process's event? (B-19: per task.)"""
+        return _RELAYING.get()
+
     async def broadcast_external(self, event: WorkflowEvent) -> None:
         """Deliver an event received from another process (Redis) to local SSE only."""
         # Tolerate unknown/extra keys as the event contract evolves (greenfield-safe):
@@ -470,7 +482,7 @@ class WorkflowTracker:
         _fields = {f.name for f in dataclasses.fields(WorkflowEvent)}
         if any(k not in _fields for k in vars(event)):
             event = WorkflowEvent(**{k: v for k, v in vars(event).items() if k in _fields})
-        self._external_rebroadcast = True
+        token = _RELAYING.set(True)
         try:
             if event.step == "pipeline_start" and event.pipeline in BACKGROUND_PIPELINES:
                 self._remember_active(
@@ -485,7 +497,7 @@ class WorkflowTracker:
                 self._mark_ended(event.workflow_id)
             await self._deliver_local(event)
         finally:
-            self._external_rebroadcast = False
+            _RELAYING.reset(token)
 
     async def _broadcast(self, event: WorkflowEvent) -> None:
         await self._deliver_local(event)

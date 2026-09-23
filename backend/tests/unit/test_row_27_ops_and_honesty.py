@@ -186,11 +186,15 @@ class TestTheWebProcessDoesNotBufferTheWorkersSpans:
             detail="",
             pipeline="index_repo",
         )
-        tracker._external_rebroadcast = True
+        # The relay flag is per task since B-19 (a ContextVar), so it is set the way
+        # `broadcast_external` sets it.
+        from app.core.workflow_tracker import _RELAYING
+
+        token = _RELAYING.set(True)
         try:
             await service._on_event(event)
         finally:
-            tracker._external_rebroadcast = False
+            _RELAYING.reset(token)
 
         assert "wf-from-the-worker" not in service._buffers, (
             "the web process buffered spans for a workflow it is not running, and only "
