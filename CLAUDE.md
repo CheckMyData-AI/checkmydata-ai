@@ -393,7 +393,7 @@ days. Silent in both directions: the hour-scoped Redis lock made the repeat a no
 and a skipped hour logs nothing at all. The loops now pass `at=next_hour`; the
 argument defaults to `None` so a standalone caller still works.
 
-Hourly cron loops in `app/main.py`, same shape and both multi-dyno-safe (hour-scoped `redis_lock` + day-scoped `task_id`): `_daily_knowledge_sync_cron_loop` (repo index → DB index → code↔DB sync, gated on `daily_knowledge_sync_enabled`) and `_analytics_collect_cron_loop` (analytics collection wave, gated on `analytics_collect_enabled`). Both read their flag **once at start-up** — flipping it needs a restart. They share `daily_knowledge_sync_timezone` so both agree what "3 a.m." means.
+Hourly cron loops in `app/main.py`, both driven by one `app.core.hourly_wave.run_hourly_wave` (PRJ-07: the boundary is one real hour from the local top of the hour, so DST neither loses nor doubles an hour — spring-forward dispatches the skipped hour with the next) and both multi-dyno-safe (hour-scoped `redis_lock` + day-scoped `task_id`): `_daily_knowledge_sync_cron_loop` (repo index → DB index → code↔DB sync, gated on `daily_knowledge_sync_enabled`) and `_analytics_collect_cron_loop` (analytics collection wave, gated on `analytics_collect_enabled`). Both read their flag **once at start-up** — flipping it needs a restart. They share `daily_knowledge_sync_timezone` so both agree what "3 a.m." means.
 
 Maintenance cron (24 h): learning/insight confidence decay, insight TTL expiry, analytics journal prune, optional backup (`maintenance_interval_hours`).
 

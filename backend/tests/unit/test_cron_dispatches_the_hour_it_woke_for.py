@@ -130,7 +130,7 @@ class TestTheLoopPassesWhatItSleptFor:
             patch.object(main.settings, "daily_knowledge_sync_enabled", True),
             patch.object(main.settings, "daily_knowledge_sync_timezone", "Europe/Berlin"),
             patch.object(main, "_dispatch_daily_knowledge_sync_wave", _fake_dispatch),
-            patch("app.main.datetime") as dt,
+            patch("app.core.hourly_wave.datetime") as dt,  # the loops read the clock there (PRJ-07)
             patch("asyncio.sleep", AsyncMock(side_effect=[None, _Stop()])),
         ):
             dt.now.side_effect = lambda tz=None: next(clock)

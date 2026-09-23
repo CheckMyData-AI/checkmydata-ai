@@ -113,9 +113,9 @@ class TestTheWorkerCannotStartMoreIndexesThanItFits:
     """OPS-08."""
 
     def test_repo_index_concurrency_is_one(self) -> None:
-        from app import worker
+        from app.core import repo_index_slots
 
-        assert getattr(worker, "MAX_CONCURRENT_REPO_INDEXES", None) == 1, (
+        assert getattr(repo_index_slots, "MAX_CONCURRENT_REPO_INDEXES", None) == 1, (
             "`max_jobs = 8` against a repo index measured above the dyno's entire "
             "memory quota on its own: eight at once is seven more than fit (OPS-08)"
         )
@@ -136,19 +136,23 @@ class TestTheWorkerCannotStartMoreIndexesThanItFits:
         running = 0
         peak = 0
 
-        async def _slow(project_id, *, force_full=False, wf_id=None):  # noqa: ANN001
+        from app.core.repo_index_slots import MAX_CONCURRENT_REPO_INDEXES
+
+        # The slot moved into `run_repo_index_task` (PRJ-07 S-04), so the body beneath
+        # it is what is replaced; the worker job must still go through the slot.
+        async def _slow(project_id, force_full=False, *, chain_sync=True, wf_id=None):
             nonlocal running, peak
             running += 1
             peak = max(peak, running)
             await asyncio.sleep(0.02)
             running -= 1
 
-        with patch("app.api.routes.repos.run_repo_index_task", new=_slow):
+        with patch("app.api.routes.repos._run_repo_index_task_unlocked", new=_slow):
             await asyncio.gather(*(worker.run_repo_index({}, project_id=f"p{i}") for i in range(4)))
 
-        assert peak == worker.MAX_CONCURRENT_REPO_INDEXES, (
+        assert peak == MAX_CONCURRENT_REPO_INDEXES, (
             f"{peak} repo indexes ran at once against a limit of "
-            f"{worker.MAX_CONCURRENT_REPO_INDEXES}. One of them already exhausts the "
+            f"{MAX_CONCURRENT_REPO_INDEXES}. One of them already exhausts the "
             "dyno's memory quota on its own (OPS-08)"
         )
 

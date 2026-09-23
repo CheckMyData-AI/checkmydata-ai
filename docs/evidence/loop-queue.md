@@ -38,7 +38,9 @@ Standing rules the loop inherits (from `docs/evidence/retro.md`):
 | T04b | deliver | Track D1 residue: F-W1, F-W2, F-W3 | `docs/audits/2026-09-23-recent-work-audit.md` §3.3 | merged #410 — production proof owed by V3 | |
 | B-23 | deliver | Brand pack: `docs/brand/` does not exist, so every user-facing string is written without one (routing requires `/brand-init` first) — seed voice, terminology and facts from the existing interface | found by T04b | todo | |
 | T06b | deliver | PRJ-10 residue: F-G1, F-G2, F-G3, F-G4, F-G5 — before the first real GA4 connection | `docs/audits/2026-09-23-recent-work-audit.md` §3.4 | merged #411 — fixture-level only; no GA4 connection in production | fixture-level only — no GA4 connection exists in production (same limit as T06) |
-| T07 | deliver | PRJ-07 — scheduling and recovery that work in every deployment | audit §PRJ-07 | todo | |
+| T07 | deliver | PRJ-07 — scheduling and recovery that work in every deployment | audit §PRJ-07 | part 1 merged #415 (S-04 one repo index per process on every path; S-13 DST-correct `run_hourly_wave`); part 2 #416 in review (S-07 recovery without Redis); A-03 closed by T06 | |
+| T07c | deliver | PRJ-07 S-08/S-09 — repo-only projects nightly, the index→sync chain and live tables for every connection, a bounded live-table read | audit §PRJ-07 | merged #417 — latent on production (no such project shape) | `tests/unit/services/test_every_project_shape_is_served.py` |
+| T07d | deliver | PRJ-07 S-08 remainder — per-connection `db_index` as child jobs with their own ceilings, so four connections do not share one 7 200 s night | audit §PRJ-07 | todo | |
 | T08 | deliver | PRJ-13 — orchestrator eval harness | audit §PRJ-13 | todo | |
 | T09 | deliver | B-02 — replace the integration harness's open-transaction isolation so the suite runs on PostgreSQL | backlog B-02 | todo | |
 | V3 | verify | T07–T09 landed | — | todo | |
