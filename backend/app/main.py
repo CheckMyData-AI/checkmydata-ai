@@ -1063,31 +1063,15 @@ async def _daily_knowledge_sync_cron_loop() -> None:
     if not settings.daily_knowledge_sync_enabled:
         return
 
-    from zoneinfo import ZoneInfo
+    from app.core.hourly_wave import run_hourly_wave
 
-    while True:
-        try:
-            tz = ZoneInfo(settings.daily_knowledge_sync_timezone)
-            now = datetime.now(tz)
-            next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-            wait_seconds = max(1.0, (next_hour - now).total_seconds())
-            logger.info(
-                "Cron: next daily knowledge sync wave in %.0f seconds (at %s)",
-                wait_seconds,
-                next_hour.isoformat(),
-            )
-            await asyncio.sleep(wait_seconds)
-            # Hand over the boundary rather than letting the dispatcher read the clock
-            # again. The two reads disagree whenever the wake is early or the start is
-            # slow, and the disagreement costs the intended hour entirely.
-            await _dispatch_daily_knowledge_sync_wave(at=next_hour)
-        except asyncio.CancelledError:
-            break
-        except Exception:
-            logger.exception(
-                "Cron: daily knowledge sync loop iteration failed; will retry next cycle"
-            )
-            await asyncio.sleep(60)
+    # PRJ-07 S-13: one implementation for both waves, DST-correct, and each dispatcher
+    # is handed the intended hour rather than re-reading the clock (2026-09-08).
+    await run_hourly_wave(
+        "daily knowledge sync",
+        settings.daily_knowledge_sync_timezone,
+        lambda at: _dispatch_daily_knowledge_sync_wave(at=at),
+    )
 
 
 async def _dispatch_analytics_collect_wave(at: datetime | None = None) -> None:
@@ -1232,26 +1216,13 @@ async def _analytics_collect_cron_loop() -> None:
     if not settings.analytics_collect_enabled:
         return
 
-    from zoneinfo import ZoneInfo
+    from app.core.hourly_wave import run_hourly_wave
 
-    while True:
-        try:
-            tz = ZoneInfo(settings.daily_knowledge_sync_timezone)
-            now = datetime.now(tz)
-            next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-            wait_seconds = max(1.0, (next_hour - now).total_seconds())
-            logger.info(
-                "Cron: next analytics collect wave in %.0f seconds (at %s)",
-                wait_seconds,
-                next_hour.isoformat(),
-            )
-            await asyncio.sleep(wait_seconds)
-            await _dispatch_analytics_collect_wave(at=next_hour)
-        except asyncio.CancelledError:
-            break
-        except Exception:
-            logger.exception("Cron: analytics collect loop iteration failed; will retry next cycle")
-            await asyncio.sleep(60)
+    await run_hourly_wave(
+        "analytics collect",
+        settings.daily_knowledge_sync_timezone,
+        lambda at: _dispatch_analytics_collect_wave(at=at),
+    )
 
 
 async def _cleanup_pipeline_runs() -> None:
@@ -1528,7 +1499,6 @@ async def _scheduler_loop() -> None:
 
 async def _backup_cron_loop() -> None:
     """Run backup daily at the configured hour (default 00:00 UTC)."""
-    from datetime import timedelta
 
     from app.core.backup_manager import BackupManager
     from app.models.backup_record import BackupRecord
@@ -1783,7 +1753,6 @@ async def _prune_unattended_history() -> None:
     Best-effort, like the journal prune beside it: failing to prune history is never
     worth failing the maintenance pass over.
     """
-    from datetime import timedelta
 
     from sqlalchemy import delete
 

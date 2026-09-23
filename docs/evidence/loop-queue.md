@@ -36,7 +36,7 @@ Standing rules the loop inherits (from `docs/evidence/retro.md`):
 | T05b | deliver | PRJ-08 residue: F-C1, F-C2, F-C3, F-C4, F-C7, F-C9 (found here), C-15 | `docs/audits/2026-09-23-recent-work-audit.md` §3.2 | in review | |
 | T04b | deliver | Track D1 residue: F-W1, F-W2, F-W3 | `docs/audits/2026-09-23-recent-work-audit.md` §3.3 | todo | |
 | T06b | deliver | PRJ-10 residue: F-G1, F-G2, F-G3, F-G4, F-G5 — before the first real GA4 connection | `docs/audits/2026-09-23-recent-work-audit.md` §3.4 | todo | |
-| T07 | deliver | PRJ-07 — scheduling and recovery that work in every deployment | audit §PRJ-07 | todo | |
+| T07 | deliver | PRJ-07 — scheduling and recovery that work in every deployment | audit §PRJ-07 | part 1 in review (S-04 one repo index per process on every path, S-13 DST + one `run_hourly_wave`); part 2 todo (S-07 recovery without Redis, S-08 multi-connection and repo-only projects; A-03 already closed by T06) | |
 | T08 | deliver | PRJ-13 — orchestrator eval harness | audit §PRJ-13 | todo | |
 | T09 | deliver | B-02 — replace the integration harness's open-transaction isolation so the suite runs on PostgreSQL | backlog B-02 | todo | |
 | V3 | verify | T07–T09 landed | — | todo | |
