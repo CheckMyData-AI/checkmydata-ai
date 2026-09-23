@@ -17,40 +17,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models import (  # noqa: F401
-    agent_learning,
-    audit_log,
-    backup_record,
-    batch_query,
-    benchmark,
-    chat_session,
-    code_db_sync,
-    code_graph,
-    commit_index,
-    connection,
-    custom_rule,
-    dashboard,
-    data_validation,
-    db_index,
-    indexing_checkpoint,
-    insight_record,
-    knowledge_doc,
-    metric_definition,
-    notification,
-    pipeline_run,
-    project,
-    project_cache,
-    project_invite,
-    project_member,
-    rag_feedback,
-    repository,
-    saved_note,
-    scheduled_query,
-    session_note,
-    ssh_key,
-    token_usage,
-    user,
-)
+# Every table, not a hand-kept list: the list here lacked `llm_credit` and the harness
+# never created it (B-02, 2026-09-23). `app.models` is kept complete by a test.
+import app.models  # noqa: F401
 from app.models.base import Base
 
 #: Every test user may create projects. Written twice because the two engines spell a
@@ -119,20 +88,16 @@ _GRANT_TRIGGER_PG = (
 #: swallows a database error and keeps using the same session is therefore already broken
 #: in production and green in CI — which is exactly what B-02 exists to expose.
 #:
-#: So the switch ships and the CI job does not, yet: a job failing on hundreds of harness
-#: errors teaches people to ignore it. What must change first is the single-session
-#: assumption above.
-#:
-#: **And the obvious fix is not one.** `_grant_project_creation` ends in `flush()`, not
-#: `commit()`, which is what leaves the row locked; committing it would free this
-#: particular deadlock and break the isolation the suite depends on, because the teardown
-#: `rollback()` would then undo nothing and the next test would inherit the row. On a
-#: shared PostgreSQL database that is cross-test pollution rather than a lock.
-#:
-#: The open transaction IS the isolation model. Replacing it — a truncation sweep, a
-#: schema per test, or a nested SAVEPOINT the app's own session can join — is the work,
-#: and it is a project rather than a tail item: 688 tests depend on the current shape.
+#: **Resolved 2026-09-23.** The single-open-transaction model was replaced by emptying the
+#: tables after every test (`_truncate_all`), the harness commits like the application does,
+#: and every model is imported (`llm_credit` was missing). The suite is 698/698 on both
+#: engines, and CI runs it on `pgvector/pgvector:pg17` in `backend-integration-postgres`.
+#: Its first run found a real production defect the SQLite job could not: the request's
+#: session left aborted by a swallowed error in `resolve_account_key` (now a SAVEPOINT).
 _TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+
+#: Filled by the `engine` fixture: the tables that exist, which `_truncate_all` empties.
+_CREATED_TABLES: set[str] = set()
 _ON_SQLITE = _TEST_DB_URL.startswith("sqlite")
 
 
@@ -175,8 +140,36 @@ async def engine():
         else:
             for statement in _GRANT_TRIGGER_PG:
                 await conn.execute(text(statement))
+        from sqlalchemy import inspect as _inspect
+
+        _CREATED_TABLES.clear()
+        _CREATED_TABLES.update(await conn.run_sync(lambda c: _inspect(c).get_table_names()))
     yield eng
     await eng.dispose()
+
+
+async def _truncate_all(engine) -> None:
+    """Empty every table after a test — the isolation model (B-02, 2026-09-23).
+
+    The suite used to rely on one uncommitted transaction per test, rolled back in
+    teardown. That model was already half-fictional — the request path's `get_db`
+    yields this same session and route handlers COMMIT through it, so on SQLite the
+    rollback undid little and tests were really isolated by unique emails and ids — and
+    on PostgreSQL it deadlocked: a flushed-but-uncommitted `UPDATE users` held the row
+    while the app's own session factory waited on it (B-02's measurement). Emptying the
+    tables after each test isolates on both engines and lets the harness COMMIT like the
+    application does. The schema and the grant trigger are session-scoped and survive.
+    """
+    # Only the tables `create_all` actually made: a model imported LATER in the run (a
+    # route module pulling in `llm_credit`, say) joins `Base.metadata` without a table.
+    tables = [t.name for t in reversed(Base.metadata.sorted_tables) if t.name in _CREATED_TABLES]
+    async with engine.begin() as conn:
+        if _ON_SQLITE:
+            for name in tables:
+                await conn.execute(text(f'DELETE FROM "{name}"'))
+        else:
+            quoted = ", ".join(f'"{name}"' for name in tables)
+            await conn.execute(text(f"TRUNCATE {quoted} RESTART IDENTITY CASCADE"))
 
 
 @pytest_asyncio.fixture()
@@ -185,6 +178,7 @@ async def db_session(engine) -> AsyncGenerator[AsyncSession, None]:
     async with factory() as session:
         yield session
         await session.rollback()
+    await _truncate_all(engine)
 
 
 @pytest_asyncio.fixture()
@@ -248,7 +242,10 @@ async def _grant_project_creation(db_session: AsyncSession, user_id: str) -> Non
     await db_session.execute(
         update(User).where(User.id == user_id).values(can_create_projects=True)
     )
-    await db_session.flush()
+    # COMMIT, not flush (B-02): a flushed row stays locked by this session's open
+    # transaction, and on PostgreSQL the request path's own session then waits on it
+    # for ever. Isolation comes from `_truncate_all`, not from rolling this back.
+    await db_session.commit()
 
 
 async def mark_email_verified(user_id: str) -> None:

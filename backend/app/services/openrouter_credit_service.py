@@ -348,7 +348,14 @@ async def resolve_account_key(db: AsyncSession, user_id: str) -> str | None:
     operator key, which is exactly what every call used before this existed.
     """
     try:
-        row = await OpenRouterCreditService()._row(db, user_id)
+        # A SAVEPOINT, because `db` is the REQUEST's session (B-02, 2026-09-23). On
+        # PostgreSQL a failed statement aborts the whole transaction, so swallowing the
+        # error below left the session unusable and the request's next write — the
+        # assistant's chat message — failed with `InFailedSQLTransactionError`. SQLite
+        # lets a session continue after an error, which is why no test saw it until the
+        # integration suite ran on PostgreSQL. The nested block rolls back only itself.
+        async with db.begin_nested():
+            row = await OpenRouterCreditService()._row(db, user_id)
     except Exception:
         logger.warning(
             "credit: could not read the account key for user=%s; the operator key "
