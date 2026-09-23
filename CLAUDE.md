@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Supported analytics sources**: `Connection.source_type` also accepts three analytics vendors (`backend/app/analytics/`, family defined once in `app/analytics/source_types.py`): **`ga4`** (Google Analytics 4 — the only one with a collector today), plus **`appstore`** and **`googleplay`**, reserved for m1/m2 (connection creation refuses them with 422 until their fact tables land). Runbook: `docs/ANALYTICS_SOURCES.md`.
 - **LLM providers**: OpenAI, Anthropic, OpenRouter (`backend/app/llm/router.py`). **Which model an unpinned call runs on is `DEFAULT_LLM_MODEL`** (empty = each adapter's hardcoded default), added 2026-09-09 after measuring that 8.06M tokens/30d of background work — code↔DB sync, validators, learning analyzer — rode the adapter constant `openai/gpt-4o` while both workloads that HAD a knob were already on cheaper models. Three model streams, three homes: background = `DEFAULT_LLM_MODEL` (production: `deepseek/deepseek-v4-flash-0731`), chat = per-project `agent_llm_model`/`sql_llm_model` (production: `z-ai/glm-5.2`), indexing docs = per-project `indexing_llm_model` + per-doc-type `INDEXING_LLM_MODEL_BY_DOC_TYPE` (production: `qwen/qwen3.8-flash`). A slash-namespaced default with a native provider is refused at boot. Prices are NOT in code — `model_pricing_service` reads the live OpenRouter catalogue. Changing the indexing model does not invalidate the T03 doc cache (the model is deliberately not in `content_hash`).
 - **Task tracking**: [Linear — CheckMyData.ai](https://linear.app/sshlg/project/checkmydataai-b7670b0dd990).
-- **Tests**: **10,344 total** — 9,556 backend collected (9,559 minus 3 deselected) + 788 frontend Vitest (measured 2026-09-15: `pytest tests/ --collect-only -q`, `npx vitest run`). The 9,487 recorded before was measured 2026-09-12 and was stale by 857 after the 2026-09-13 audit's board closed — **this is the figure most likely to rot, so re-run both commands rather than editing the number.** Backend coverage **82%** (combined unit+integration, CI on #228); the CI gate `fail_under` is **80%**, and `test_coverage_gate_is_stated_once.py` fails when `pyproject.toml`, the workflow and this sentence disagree. The 78% recorded before 2026-08-26 was measured without `concurrency = ["greenlet", "thread"]` in `[tool.coverage.run]` — coverage stopped tracing at the first `await` into SQLAlchemy, so ~1,065 statements ran and were counted as untested.
+- **Tests**: **10,579 total** — 9,768 backend collected (9,771 minus 3 deselected) + 811 frontend Vitest (measured 2026-09-23 on `92e3ba24`: `pytest tests/ --collect-only -q`, `npx vitest run`). The 10,344 recorded before was measured 2026-09-15 and was stale by 235 three days of delivery later — **this is the figure most likely to rot, so re-run both commands rather than editing the number.** Backend coverage **82%** (combined unit+integration, CI on #228); the CI gate `fail_under` is **80%**, and `test_coverage_gate_is_stated_once.py` fails when `pyproject.toml`, the workflow and this sentence disagree. The 78% recorded before 2026-08-26 was measured without `concurrency = ["greenlet", "thread"]` in `[tool.coverage.run]` — coverage stopped tracing at the first `await` into SQLAlchemy, so ~1,065 statements ran and were counted as untested.
 - **Remediation board: closed.** The 2026-09-09 audit produced 164 findings and
 `docs/audits/2026-09-09-product-review-and-backlog.md` routed them into 31 rows (the last
 added by reviewing the programme's own PRs). All 31 are ticked (2026-09-12, #343–#368). **The board's own completeness is an exit code,
@@ -21,7 +21,7 @@ DNS-rebinding guard ran at save and never at connect). Nothing was wrong with an
 individual row; the failure was a completeness claim nobody could compute. What remains
 is the `N1`–`N11` product backlog in the same file — **new work, not fixes**, most of it
 needing a product decision before any of it needs code.
-- **Recent work**: current release **`[1.16.0]`** — GA4 as a first-class data source (vendor-credential store, scheduled collection behind an import journal, `AnalyticsAgent` with honesty gates, charting) plus the `vision.md` §8 carve-out recorded in `docs/adr/0001-external-report-cache.md`. `[1.15.1]` (see `CHANGELOG.md`). `[1.15.0]` cut the intelligence-remediation program (W0–W6): data-quality honesty (truncation/partial-data caveats, DataGate on both paths), hybrid retrieval + ContextPack (provenance + reranker), orchestrator live step-budget termination + single-loop/pipeline path unification, DB schema-capture depth across all four connectors, code↔DB trust signals (exact git-freshness states), code-graph correctness, and self-completing embedding reconcile — plus the June orchestrator-audit remediation (DataGate semantic gate, cross-tenant SSE/WS leak fix, `/api/chat/ask` concurrency cap, MCP call timeout). `[1.15.1]` is embedding-loader log hygiene + infra guidance. Benchmark-gated default-on flags: `code_graph_enabled`, `lineage_enabled`, `context_planner_enabled`. A fourth, `reranker_enabled`, was corrected to `False` on 2026-08-10 and the capability behind it was **deleted in 2026-09** — it had never executed in any deployment. Prior hardening (billing, cookie auth, MCP/SSH, Redis limits, Sentry) shipped in `[1.14.0]`.
+- **Recent work**: current release **`[1.17.0]`** (2026-08-31, intelligence, ingestion and observability) — and `[Unreleased]` has carried everything since, PRJ-01…PRJ-10 included. `[1.16.0]` added GA4 as a first-class data source (vendor-credential store, scheduled collection behind an import journal, `AnalyticsAgent` with honesty gates, charting) plus the `vision.md` §8 carve-out recorded in `docs/adr/0001-external-report-cache.md`. `[1.15.1]` (see `CHANGELOG.md`). `[1.15.0]` cut the intelligence-remediation program (W0–W6): data-quality honesty (truncation/partial-data caveats, DataGate on both paths), hybrid retrieval + ContextPack (provenance; the reranker shipped beside it never executed and was deleted in 2026-09), orchestrator live step-budget termination + single-loop/pipeline path unification, DB schema-capture depth across all four connectors, code↔DB trust signals (exact git-freshness states), code-graph correctness, and self-completing embedding reconcile — plus the June orchestrator-audit remediation (DataGate semantic gate, cross-tenant SSE/WS leak fix, `/api/chat/ask` concurrency cap, MCP call timeout). `[1.15.1]` is embedding-loader log hygiene + infra guidance. Benchmark-gated default-on flags: `code_graph_enabled`, `lineage_enabled`, `context_planner_enabled`. A fourth, `reranker_enabled`, was corrected to `False` on 2026-08-10 and the capability behind it was **deleted in 2026-09** — it had never executed in any deployment. Prior hardening (billing, cookie auth, MCP/SSH, Redis limits, Sentry) shipped in `[1.14.0]`.
 
 ## Prerequisites
 
@@ -131,8 +131,11 @@ BM25 rebuild (32 531 docs, held in the process) **+93 MB**, one chat answer **+1
 process was at 712–737 MB (R14) and swapping, its log lines 0.42 s apart; a stream then
 emitted no bytes for 55 s and the router killed it with `H15`, which reads as a transport
 fault and is not one. `log-runtime-metrics` is enabled, so memory is in the log now. The
-scale-up buys headroom, not a fix: `T00-mem` in `docs/evidence/loop-queue.md` carries the
-reduction (BM25 out of process, one embedder, import cost).
+scale-up buys headroom, not a fix: `T00-mem` (#400/#402) cut the boot
+steady state to 353 MB from 387 — the BM25 tokens are no longer held in the process and
+`malloc_trim` returns the freed arenas after the rebuild — but one answer still peaks at
+~548 MB, so Standard-2X stays. Still open there: `chromadb` (22 MB) and the connector
+registry's eagerly imported drivers (`docs/evidence/loop-queue.md` row T00-mem).
 
 **And REST `/api/chat/ask` cannot answer a slow question at all**: Heroku's router cuts
 any request at 30 s (`H12`). The UI streams (`/api/chat/ask/stream`) and the agent keeps
@@ -535,7 +538,7 @@ and *nothing had measured it*, because the fact is about the **relationship** an
 document describes one file. `BaseConnector.period_total` runs the same aggregate on both
 now; `app/knowledge/rival_tables.py` bounds what is compared.
 
-Four settings came with them, all in `config.py` with `.env.example` entries:
+Five settings came with them, all in `config.py` with `.env.example` entries:
 `SYNC_ANALYSIS_MAX_TOKENS` (8192), `SYNC_ANALYSIS_BATCH_MAX_TOKENS` (16384),
 `DB_INDEX_ANALYSIS_MAX_TOKENS` (8192), `DB_INDEX_RIVAL_TABLES_ENABLED` (on) +
 `DB_INDEX_RIVAL_BUDGET_SECONDS` (120).
@@ -661,7 +664,7 @@ clean runs too, so silence never reads as a passing check. Counter:
 ### Data validation, investigations, insights
 
 - **DataGate** — intermediate stage quality (`data_gate.py`); hard checks block impossible percentages/dates when `data_gate_hard_checks_enabled=True`.
-- **InvestigationAgent** — "wrong data" deep-dive; auto-triggered on suspicious results when `orchestrator_auto_investigate_enabled=True` (default on).
+- **InvestigationAgent** — "wrong data" deep-dive; auto-triggered on suspicious results when `orchestrator_auto_investigate_enabled=True` (default on). **A thumbs-down on a SQL answer opens it too (Track D1, 2026-09-18):** `ChatMessage.handleFeedback` still records the rating, the learning rollback and the `validate-data` verdict on the click, then mounts `WrongDataModal`, which starts `POST /api/data-validation/investigate` and polls `GET …/investigate/{id}?project_id=`. A text answer opens nothing.
 - **Insight memory** — anomalies persisted with TTL per severity; reconciliation confirms/dismisses on new query results. Injected into orchestrator context.
 - **Data enrichment** — IP→country, phone→country, aggregation, `cohort_window` between pipeline steps.
 
@@ -733,7 +736,7 @@ Learnings are stored per-connection by default (`cross_connection_learnings_enab
   connected on the first attempt, and the deployed validator refuses the 5 + 10 + 2
   configuration against a ceiling of 15 — the shape that saturated production.
 - Vectors: **`VECTOR_STORE_BACKEND` picks the backend, and its default is `auto`** — resolved by `DATABASE_URL`: `pgvector` on Postgres (table `doc_embeddings`, one row per chunk, HNSW `vector_cosine_ops`), `chroma` on SQLite (`CHROMA_PERSIST_DIR` or `CHROMA_SERVER_URL`; collections named `project_{project_id}`). Neither literal would serve both: `pgvector` breaks a fresh `make setup`, which creates SQLite where the `doc_embeddings` migration is a deliberate no-op, and `chroma` leaves a real deployment on the store described next. An explicit value pins it; an explicit `pgvector` on SQLite raises rather than downgrading silently. The decision lives in the pure `resolve_backend()` — construction opens a psycopg pool, so the choice is untestable through the factory anywhere Postgres is absent. **`auto` means the answer is written nowhere an operator can read, so the boot log names it** (`vector store: … (auto-resolved …)` / `(pinned …)`). **ChromaDB's persist dir on Heroku is the container filesystem** — wiped on every dyno restart, and `web`/`worker` are separate process types with separate copies. An empty store makes `pipeline_runner` set `force_full`, a full rebuild costs 12 039 s against the nightly ceiling of 7 200 s, so the store was empty again by morning: **`index_repo` completed 16 times in 94 runs**. Embeddings are identical across backends (bundled ONNX `all-MiniLM-L6-v2`, 384-d) and the metric matches the `{"hnsw:space": "cosine"}` the collections were created with, so the swap does not move retrieval ranking. pgvector is available on both deployments (0.8.1 Heroku, 0.8.2 Supabase). Requires Postgres — the migration is a deliberate no-op on SQLite, and asking for pgvector there fails at start-up saying so.
-- BM25 snapshots: `backend/data/bm25/{project_id}.json.gz` and `schema_{connection_id}.json.gz` — **gzip JSON, not pickle, since 2026-08-21 (F-KNOW-06)**: `pickle.load` executes its payload, and `BM25_DATA_DIR` is configurable. The tokenized corpus is stored and `BM25Okapi` is rebuilt on load; a leftover `.pkl` is deleted, never read. Both are rebuilt from Postgres at start-up when missing (`app/ops/bm25_local_reconcile.py`).
+- BM25 snapshots: `backend/data/bm25/{project_id}.json.gz` and `schema_{connection_id}.json.gz` — **gzip JSON, not pickle, since 2026-08-21 (F-KNOW-06)**: `pickle.load` executes its payload, and `BM25_DATA_DIR` is configurable. The tokenized corpus is written to the snapshot and `BM25Okapi` is rebuilt from it on load, after which the tokens are freed rather than held (T00-mem, 58.9 MB on the production corpus); a leftover `.pkl` is deleted, never read. Both are rebuilt from Postgres at start-up when missing (`app/ops/bm25_local_reconcile.py`).
 - Redis (`REDIS_URL`): rate limiting, agent concurrency tokens, WS tickets, ARQ task queue. In-memory fallback for dev — keep it working when adding Redis features.
 - Backups: `backend/data/backups/` when `backup_enabled=True`.
 
@@ -754,11 +757,15 @@ Production is allowed to differ from a code default, but only on the record. Ten
 undocumented divergences were found on 2026-08-23 and unset on 2026-08-25, one of them
 `CROSS_CONNECTION_LEARNINGS_ENABLED`, which `vision.md` §7 calls an invariant.
 
-`make config-drift` compares every boolean setting deployed on Heroku against
+`make config-drift` compares every setting deployed on Heroku (booleans and, since
+2026-08-28, the non-boolean ones too) against
 `backend/app/config.py` and **exits non-zero** on anything that is not recorded, with a
-reason, in the `DELIBERATE` map in `scripts/config_drift.py`. Five entries live there
-today: `BILLING_ENABLED`, `DAILY_KNOWLEDGE_SYNC_ENABLED`, `GIT_AGENT_AUTO_PULL`,
-`MCP_ENABLED`, `MCP_MOUNT_ENABLED`. Adding a key is how you record a decision; it belongs
+reason, in the `DELIBERATE` map in `scripts/config_drift.py`. Ten entries live there
+today (measured 2026-09-23): `BILLING_ENABLED`, `DAILY_KNOWLEDGE_SYNC_ENABLED`,
+`DB_CONNECTION_CEILING`, `DEFAULT_LLM_MODEL`, `DEFAULT_LLM_PROVIDER`, `GIT_AGENT_AUTO_PULL`,
+`MAX_AGENT_CALLS_PER_HOUR`, `MCP_ENABLED`, `MCP_MOUNT_ENABLED`, `VECTOR_STORE_BACKEND`.
+`VECTOR_STORE_BACKEND` is now redundant — the `auto` default it waited for is deployed —
+and its own entry says to unset it and delete the entry. Adding a key is how you record a decision; it belongs
 in the same change as the `heroku config:set` it describes.
 
 
@@ -794,7 +801,7 @@ A timeout also gets **exactly one** LLM repair, prompted to narrow scope rather 
 
 `max_orchestrator_iterations` default is **20** (was 100 before W0 intelligence-remediation; set higher only if complex multi-hop queries time out at the wall-clock limit).
 
-**Intelligence remediation W0 landmarks** (spec: `docs/superpowers/specs/2026-07-03-intelligence-remediation-design.md`): `derive_result` helper + `ResultValidation` façade + `AnswerQualityGate`; `DataGate` Decimal/truncation fixes; C-D schema-capture surface (`object_kind`, `sample_values`, `distinct_count`, `null_pct`) on `ColumnInfo`/`TableInfo`/`SchemaInfo` + `DbIndex` migration; `RequestTrace` routing column `complexity` + migration (**correction 2026-08-08**: `approach` and `route_ms` were named here but never existed — `grep -rln "approach" backend/alembic/versions/` is empty and `app/models/request_trace.py:54-56` has only `route`, `complexity`, `estimated_queries`); chunk metadata + `retrieval_degraded` scaffold; hotspot decomposition of `sql_agent`/`orchestrator` (`result_handler`, `_record_request_metrics`). New Prometheus counters: `retrieval_degraded_total`, `datagate_block_total`, `filter_guard_degrade_total`. **`retrieval_degraded_total` was uninterpretable until 2026-08-21 (F-KNOW-07):** it labelled every empty leg `reason="empty_result"`, including a working BM25 index whose query simply had no lexical overlap — so it fired on the normal path and a non-zero value proved nothing. It now carries the real cause (`no_snapshot`, `corrupt`, `schema_mismatch`, `score_error`, `timeout`, `error`) and is **not** incremented for `no_match` / `no_query_tokens`. `retrieval_degraded_total{leg="bm25",reason="no_snapshot"}` is the one to watch, and it should now be ~zero: **F-KNOW-12 is closed** (2026-08-21). BM25 snapshots still live on each dyno's ephemeral disk — that part was never the fixable half. The real defect was that `web` and `worker` are separate Heroku process types with separate filesystems, so the repo index wrote the `.pkl` on the worker and the chat path read for it on the web dyno; the leg had no snapshot **at all**, not merely after a restart. Snapshots are derived from `KnowledgeDoc` rows, so `app/ops/bm25_local_reconcile.py` rebuilds any missing one at start-up in **both** processes — no shared storage, no advisory lock (each disk needs its own copy), and missing-only: staleness needs a clone and stays with the pipeline.
+**Intelligence remediation W0 landmarks** (spec: `docs/superpowers/specs/2026-07-02-intelligence-remediation-design.md`): `derive_result` helper + `ResultValidation` façade + `AnswerQualityGate`; `DataGate` Decimal/truncation fixes; C-D schema-capture surface (`object_kind`, `sample_values`, `distinct_count`, `null_pct`) on `ColumnInfo`/`TableInfo`/`SchemaInfo` + `DbIndex` migration; `RequestTrace` routing column `complexity` + migration (**correction 2026-08-08**: `approach` and `route_ms` were named here but never existed — `grep -rln "approach" backend/alembic/versions/` is empty and `app/models/request_trace.py:54-56` has only `route`, `complexity`, `estimated_queries`); chunk metadata + `retrieval_degraded` scaffold; hotspot decomposition of `sql_agent`/`orchestrator` (`result_handler`, `_record_request_metrics`). New Prometheus counters: `retrieval_degraded_total`, `datagate_block_total`, `filter_guard_degrade_total`. **`retrieval_degraded_total` was uninterpretable until 2026-08-21 (F-KNOW-07):** it labelled every empty leg `reason="empty_result"`, including a working BM25 index whose query simply had no lexical overlap — so it fired on the normal path and a non-zero value proved nothing. It now carries the real cause (`no_snapshot`, `corrupt`, `schema_mismatch`, `score_error`, `timeout`, `error`) and is **not** incremented for `no_match` / `no_query_tokens`. `retrieval_degraded_total{leg="bm25",reason="no_snapshot"}` is the one to watch, and it should now be ~zero: **F-KNOW-12 is closed** (2026-08-21). BM25 snapshots still live on each dyno's ephemeral disk — that part was never the fixable half. The real defect was that `web` and `worker` are separate Heroku process types with separate filesystems, so the repo index wrote the `.pkl` on the worker and the chat path read for it on the web dyno; the leg had no snapshot **at all**, not merely after a restart. Snapshots are derived from `KnowledgeDoc` rows, so `app/ops/bm25_local_reconcile.py` rebuilds any missing one at start-up in **both** processes — no shared storage, no advisory lock (each disk needs its own copy), and missing-only: staleness needs a clone and stays with the pipeline.
 
 **Intelligence remediation W3 landmarks** (orchestrator termination + path unification, ORCH-T01–T03/A01–A03/R01/P01–P04/PR01/CP01/RP01–RP02): live step-budget termination; wrap-up gate; no-tool re-prompt (T03); routing metrics always populated **in the in-memory collector only — the persisted trace was not wired until Ш0a on 2026-09-04**; prompt de-dup (~200 tokens/req saved); ContextPlanner word-boundary cue matching; StageValidator scoped to data stages; trivial-plan bounce + degraded propagation; cohort_window param unification; complex non-DB questions routed to pipeline (ORCH-R01); `ResultValidation` wired into pipeline SQL stage (A01); `AnswerQualityGate` wired into pipeline final answer (A02). Pipeline answers may now return `response_type: "step_limit_reached"` when budget exhausted.
 
@@ -830,6 +837,10 @@ Per-connection, **not** a global flag: `collection_enabled` (default **on**) and
 **Platform / security:**
 
 `billing_enabled`, `mcp_enabled`, `mcp_mount_enabled` (HTTP mount, requires `mcp_enabled`), `security_csp_enabled` / `security_csp`, `security_hsts_enabled`, `session_rotation_enabled`, `backup_enabled`, `sentry_dsn` (off unless set).
+
+`connection_test_timeout_seconds` (90, env `CONNECTION_TEST_TIMEOUT_SECONDS`) — the ceiling on
+`POST /api/connections/{id}/test` (C-05): a timed-out test is reported in the response body, not
+raised, and a non-positive value raises at boot.
 
 **Crash recovery / heartbeat:**
 
@@ -1109,7 +1120,9 @@ Read `vision.md` before any new feature. If a request conflicts with §7 invaria
 | Architecture overview | `ARCHITECTURE.md` |
 | Orchestrator deep-dive | `docs/SYSTEM_ARCHITECTURE.md` |
 | UI / motion | `DESIGN_SYSTEM.md` |
-| Active priorities | `BACKLOG.md`, `ROADMAP.md` |
+| Delivery queue — status of every PRJ-xx / T-xx / V-x row | `docs/evidence/loop-queue.md` (the loop's state; the single source for status), residual board B-xx in `docs/evidence/backlog.md` |
+| Latest audit of recent work + prioritised backlog (2026-09-23) | `docs/audits/2026-09-23-recent-work-audit.md` |
+| Active priorities (product, sprint history) | `BACKLOG.md`, `ROADMAP.md` |
 | Release history | `CHANGELOG.md` |
 | Code-graph rollout | `docs/ROLLOUT_M1_M6.md` |
 | Knowledge layer | `docs/KNOWLEDGE_CATALOG.md` |
@@ -1117,7 +1130,7 @@ Read `vision.md` before any new feature. If a request conflicts with §7 invaria
 | Live Git roadmap | `docs/GIT_ACCESS_AUDIT_AND_ROADMAP.md` |
 | Deployment | `docs/DEPLOYMENT.md`, `INSTALLATION.md#production-deployment` |
 | Audit remediation | `docs/AUDIT_REMEDIATION_PLAN_2026-06.md` |
-| Connections · sync · orchestrator audit + project plan (2026-09-13) | `docs/audits/2026-09-13-connections-sync-orchestrator-audit.md` — two live P0s and 14 scoped projects; start with PRJ-01 |
+| Connections · sync · orchestrator audit + project plan (2026-09-13) | `docs/audits/2026-09-13-connections-sync-orchestrator-audit.md` — 14 scoped projects (+PRJ-15/16 from ADR-0007); both P0s closed by PRJ-01. **Status lives in `docs/evidence/loop-queue.md`**, not in the audit |
 | QA / test plan | `docs/MASTER_TEST_PLAN.md` |
 | Contributing | `CONTRIBUTING.md` |
 | Security | `SECURITY.md` |

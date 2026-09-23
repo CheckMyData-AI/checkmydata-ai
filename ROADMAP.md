@@ -21,14 +21,14 @@ Recipes (saved query chains over MCP, invalidated by the index) and the workspac
 - Performance optimization
 
 ### Documentation (Active)
-- ~~API reference completion~~ (done — see API.md)
+- ~~API reference completion~~ (done 2026-09-23 — every route module compared both ways against API.md)
 - Video tutorials
 - Deployment guides for AWS, GCP, self-hosted
 
 ## Near Term
 
 ### Database Support
-- [ ] SQLite connector
+- [x] SQLite connector (demo connections only; not offered in the connection UI)
 - [ ] BigQuery connector
 - [ ] Snowflake connector
 - [ ] DuckDB connector

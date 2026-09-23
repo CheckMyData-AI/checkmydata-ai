@@ -189,7 +189,7 @@ heroku config:set \
 
 **Heroku notes:**
 - Heroku provides `DATABASE_URL` automatically via the Postgres addon; `config.py` converts `postgres://` to `postgresql+asyncpg://`
-- Alembic migrations run automatically on every container startup
+- Alembic migrations run in the release phase (`Dockerfile.release`) before each release goes live; the app lifespan and worker start-up also apply them under an advisory lock
 - Frontend `NEXT_PUBLIC_*` vars must be passed as `--build-arg` since Next.js bakes them at build time
 
 ### Local Docker

@@ -47,7 +47,8 @@ not backported to older commits.
 
 - JWT authentication with configurable expiry
 - Fernet encryption for stored credentials (`MASTER_ENCRYPTION_KEY`), **with key rotation** (F-CONN-05): `MASTER_ENCRYPTION_KEYS_OLD` holds retired keys for reading, new ciphertext is always written with the primary, and a key change detected at boot re-encrypts every stored secret onto it. See *Rotating the encryption key* below.
-- Rate limiting on all mutating endpoints
+- Rate limiting on every mutating endpoint except three documented exemptions (API.md › Rate Limiting)
+- SSH-exec command surface is the owner's (C-02, C-12): `ssh_command_template` and `ssh_pre_commands` are returned to the connection owner only and redacted for other members; creating or editing a connection is owner-only (`connections.py` create/update require `owner`); a new template carrying `{db_password}` is refused with 422; the server's built-in templates are served read-only from `GET /api/connections/exec-templates` and the form no longer writes one
 - Input validation with Pydantic models and Literal types
 - Path traversal protection via `validate_safe_id`
 - SQL identifier quoting to prevent injection

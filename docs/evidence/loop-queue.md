@@ -7,7 +7,8 @@ previous three landed and nothing regressed.
 
 **This file is the loop's state.** Each iteration reads it first, takes the first row
 whose status is `todo`, and writes its result back before the next one starts. A row is
-`done` only with production evidence in its `Proof` cell; `blocked` names what blocks it.
+`done` only with production evidence in its `Proof` cell; `blocked` names what blocks it;
+`merged` means on `main` and deployed, with the production proof still owed.
 
 Standing rules the loop inherits (from `docs/evidence/retro.md`):
 
@@ -26,11 +27,15 @@ Standing rules the loop inherits (from `docs/evidence/retro.md`):
 | T02b | deliver | PRJ-03 remainder — client disconnect (SSE/WS) and REST `wait_for` cancel the agent task; `CancelledError` swallows in viz/localize; sub-agent deadline into `LLMRouter.complete`; dead retry wrappers | audit §PRJ-03, T02 out-of-scope | done | #396 on v435, in the production runtime: a hanging pipeline stage cut after **1.20 s** → `stage_failed`, not replannable; `localize` source has no `CancelledError` handler; cache/trace horizon 960 s; `4030521071d4` applied, completed `Stale:` rows **0**. Decided: client disconnect does not cancel (answers finish while the user is away). No dead retry wrappers exist. |
 | T03b | deliver | PRJ-04 remainder — split `db_query` spans from LLM repair and learning-analyzer spans; router attempt/backoff events as spans; Logs screen renders both | audit §PRJ-04, T03 out-of-scope | done | #397 on v436; confirmed in the production runtime and on a live chat answer: `execute_query` → `db_query` **once**, `sql:tool:execute_query` → `tool_call`, `query_repair` / `sql:learning_analysis` / `orchestrator:llm_retry` → `llm_call`. |
 | V1 | verify | T01–T03b landed | — | done | Live chat answer on prod (SSE, 112 events, 144 s): **one** trace row, `completed`, route `query`, 132 s < 216 s, db_query counted once, 179 rows / 179 workflows. Nightly 2026-09-16 completed on all four kinds. Found and fixed: session-less pipelines failed (#398), SCN-123 shadow (#398). Found and escalated: **web dyno was over its 512 MB quota on the first chat request** (import 294 + BM25 93 + request 138 = 525 MB measured); operator chose Standard-2X — scaled, chat answers end to end since. Memory reduction queued as T00-mem. |
-| T00-mem | deliver | Web memory: 525 MB for one answer on a 512 MB dyno | V1 finding 2026-09-17 | in review | #400 on v439: boot steady state **353 MB** vs 387 before (tokenized corpus 58.9 MB dropped, `malloc_trim` returns 23 MB more in #402), one answer **522 MB** peak 548. Not closed: `chromadb` (22 MB) and the connector registry's eager drivers. |
-| T04 | deliver | Track D1 — `WrongDataModal` on the thumbs-down path | plan Track D | in review | #401. Operator's decision 2026-09-18: investigation, not the canned message. Mounted with its first tests; SCN-052 rewritten; planting the canned sentence back fails two tests. |
-| T05 | deliver | PRJ-08 — connection layer correctness | audit §PRJ-08 | in review | #404: C-02, C-03, C-04, C-05, C-06, C-07, C-08, C-09, C-10, C-11, C-12, C-13, C-14, C-15, C-16 — 28 tests, each verified against a planted defect. |
+| T00-mem | deliver | Web memory: 525 MB for one answer on a 512 MB dyno | V1 finding 2026-09-17 | merged — V2 owes proof | #400 on v439: boot steady state **353 MB** vs 387 before (tokenized corpus 58.9 MB dropped, `malloc_trim` returns 23 MB more in #402), one answer **522 MB** peak 548. Not closed: `chromadb` (22 MB) and the connector registry's eager drivers. |
+| T04 | deliver | Track D1 — `WrongDataModal` on the thumbs-down path | plan Track D | merged — V2 owes proof | #401. Operator's decision 2026-09-18: investigation, not the canned message. Mounted with its first tests; SCN-052 rewritten; planting the canned sentence back fails two tests. |
+| T05 | deliver | PRJ-08 — connection layer correctness | audit §PRJ-08 | merged — V2 owes proof; residue in T05b | #404: C-02, C-03, C-04, C-05, C-06, C-07, C-08, C-09, C-10, C-11, C-12, C-13, C-14, C-15, C-16 — 28 tests, each verified against a planted defect. |
 | T06 | deliver | PRJ-10 — GA4 tells the truth | audit §PRJ-10 | done | #405 + #406 on **v443**. In the production runtime: alembic head `e1f2a3b4c5d7`; `vendor_credentials` carries `last_verified_at` + `last_verify_error`; the verify route answers 401 without auth (it exists and is guarded); manifest `connect/collect_reports/summarize`; history kinds `daily_sync, analytics_collect`; statuses `ok|empty|partial|failed` with `partial` **not** done; marker `provisional:`; `PST` refused as a zone, `usd`→`USD`. **Rows A-01…A-12 themselves cannot be verified here — no GA4 connection exists on this deployment**; their acceptance is the fixture end-to-end test, and a real property stays owed to PRJ-10's own acceptance. |
-| V2 | verify | T04–T06 landed | — | todo | |
+| B-16 | deliver | F-K1 — batch table analysis maps tool calls to tables by position and skips an empty-args call without advancing, so later descriptions land on the wrong table | `docs/audits/2026-09-23-recent-work-audit.md` §3.1 | todo | |
+| V2 | verify | T00-mem, T04–T06 landed — checklist: `docs/audits/2026-09-23-recent-work-audit.md` §3 | — | todo | |
+| T05b | deliver | PRJ-08 residue: F-C1, F-C2, F-C3, F-C4 (reproduce first), F-C7, C-15 form | `docs/audits/2026-09-23-recent-work-audit.md` §3.2 | todo | |
+| T04b | deliver | Track D1 residue: F-W1, F-W2, F-W3 | `docs/audits/2026-09-23-recent-work-audit.md` §3.3 | todo | |
+| T06b | deliver | PRJ-10 residue: F-G1, F-G2, F-G3, F-G4, F-G5 — before the first real GA4 connection | `docs/audits/2026-09-23-recent-work-audit.md` §3.4 | todo | |
 | T07 | deliver | PRJ-07 — scheduling and recovery that work in every deployment | audit §PRJ-07 | todo | |
 | T08 | deliver | PRJ-13 — orchestrator eval harness | audit §PRJ-13 | todo | |
 | T09 | deliver | B-02 — replace the integration harness's open-transaction isolation so the suite runs on PostgreSQL | backlog B-02 | todo | |
@@ -66,3 +71,9 @@ One line per finished iteration, newest last.
   flaky test of my own that the PR run had passed — so the merge landed and the deploy
   was **skipped**, leaving production on the old release until #406 fixed the race. A
   green PR is not a green `main`.
+- **Audit (2026-09-23)** — not an iteration: an operator-requested audit of T00-mem…T06, production
+  (v444) and documentation. Production healthy (32/32 nightly runs, no errors since 09-17).
+  T00-mem/T04/T05 relabelled `merged`: they are deployed, and none has its production proof.
+  T05 is not `done` in substance either — 8 of its 15 C-rows are only partially closed.
+  Queued B-16 (first: it mis-attributes table descriptions every night), T05b, T04b, T06b.
+  52 documentation mismatches fixed. Full record: `docs/audits/2026-09-23-recent-work-audit.md`.

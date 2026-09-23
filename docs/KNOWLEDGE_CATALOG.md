@@ -69,7 +69,7 @@ Every knowledge artifact, regardless of store, is described by this envelope:
 | `learning`     | `agent_learnings` (`AgentLearningService`)         | `learnings`    | per-connection; confidence = priority/100 |
 | `insight`      | `insights` (`InsightMemoryService`)                | `insights`     | TTL/decay applies |
 | `rule`         | `CustomRulesEngine`                                | `rules`        | user-authored, confidence = 1.0 |
-| `rag_chunk`    | ChromaDB per project ⊕ BM25 code snapshot          | `rag`          | payload carries `commit_sha`, `file_path`, `indexed_at` (Phase 2 temporal metadata) |
+| `rag_chunk`    | vector store (pgvector on Postgres / Chroma on SQLite) ⊕ BM25 code snapshot | `rag`          | payload carries `commit_sha`, `file_path`, `indexed_at` (Phase 2 temporal metadata) |
 | `metric`       | `data_graph` (`DataGraphService`)                  | `data_graph`   | metric definitions + relationships |
 | `sync_note`    | `code_db_sync` (`conversion_warnings`, filters)    | `code_db_sync` | attached to the relevant `table` |
 

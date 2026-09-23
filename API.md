@@ -1,17 +1,18 @@
 # API Reference
 
-> **Coverage note (2026-07-24):** this document is incomplete — 65 implemented endpoints are
-> not yet documented here (Billing, Connection Learnings, Runs, and Health Monitor sections
-> are missing entirely, plus ~45 individual endpoints). The full audited inventory lives in
-> [`docs/qa-audit/full-audit-2026-07-24/02-api-contract.md`](docs/qa-audit/full-audit-2026-07-24/02-api-contract.md).
-> For anything not listed below, prefer the OpenAPI docs at `/docs` (see the bottom of this
-> page).
+> **Coverage note (2026-09-23):** every route in `backend/app/api/routes/` was compared both
+> ways against the tables below (the 2026-09-23 audit, `docs/audits/2026-09-23-recent-work-audit.md`):
+> nine that were missing are now listed, and no documented route is absent from the code. The
+> route modules remain the tiebreaker (`docs/DOCMAP.md`); the OpenAPI docs at `/docs` (bottom of
+> this page) are generated from them. The 2026-07-24 inventory
+> ([`docs/qa-audit/full-audit-2026-07-24/02-api-contract.md`](docs/qa-audit/full-audit-2026-07-24/02-api-contract.md))
+> is history.
 
 The backend exposes a REST API at `http://localhost:8000/api`. All endpoints
 require authentication, except the public-by-design set:
 `/api/auth/*` (register/login/google/verify-email/resend-verification/forgot-password/reset-password),
-`GET /api/health`, `GET /api/plans`, and the two signed webhooks
-(`POST /api/webhook` — Stripe signature; `POST /api/repos/{project_id}/webhook` — HMAC).
+`GET /api/health`, `GET /api/billing/plans`, and the two signed webhooks
+(`POST /api/billing/webhook` — Stripe signature; `POST /api/repos/{project_id}/webhook` — HMAC).
 Note that `GET /api/health/modules` **does** require authentication.
 Two mechanisms are supported (`backend/app/api/deps.py::get_current_user`):
 
@@ -83,7 +84,11 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 | POST | `/api/connections/{id}/test` | Test connectivity (analytics sources are probed with the vendor adapter) |
 | POST | `/api/connections/{id}/refresh-schema` | Refresh schema cache |
 | POST | `/api/connections/{id}/index-db` | Index database schema |
+| GET | `/api/connections/{connection_id}/index-db` | The full stored database index for a connection. Viewer role |
+| DELETE | `/api/connections/{connection_id}/index-db` | Clear the database index. Owner role, 10/min |
 | POST | `/api/connections/{id}/sync` | Trigger code-DB sync (202) |
+| GET | `/api/connections/{connection_id}/sync` | The full code↔DB sync results. Viewer role |
+| DELETE | `/api/connections/{connection_id}/sync` | Clear the code↔DB sync data. Owner role, 10/min |
 | POST | `/api/connections/{connection_id}/reconnect` | Re-run the health probe and reopen the connector. Analytics sources have no database to reach, so they are answered without one (editor) |
 | POST | `/api/connections/{connection_id}/test-ssh` | Test SSH reachability on its own, separately from the database behind it |
 | GET | `/api/connections/exec-templates` | The commands the server itself runs in SSH-exec mode, read-only. The form shows these instead of shipping copies: its own carried `{db_password}` on the remote argv and piped the SQL to the client's stdin (C-02) |
@@ -109,7 +114,7 @@ fields used by analytics sources (Google Analytics 4 today — see
 |---|---|---|---|
 | `source_type` | string | `"database"` | `"database"`, `"mcp"`, or an analytics vendor: `"ga4"`, `"appstore"`, `"googleplay"` |
 | `vendor_credential_id` | string \| null | `null` | Id of an already-stored `VendorCredential`. **Required** when `source_type` is an analytics source; the secret itself is never sent here. |
-| `source_config` | object \| null | `null` | Non-secret vendor knobs. For GA4: `{"property_ids": ["294380179"], "backfill_days": 30, "event_names": [...], "currency_code": "USD"}` |
+| `source_config` | object \| null | `null` | Non-secret vendor knobs. For GA4: `{"property_ids": ["294380179"], "property_timezone": "America/Los_Angeles", "backfill_days": 30, "event_names": [...], "currency_code": "USD"}`. `property_timezone` (IANA) decides when a day ends (A-04) — without it the newest period is journalled `partial` and collected again; an unknown zone or a non-ISO-4217 currency is a **422**, and `backfill_days` is clamped (A-08) |
 | `collection_enabled` | boolean | `true` | Whether the hourly wave dispatches this connection |
 | `collection_hour` | integer (0–23) | `3` | Hour the connection collects in, local to `DAILY_KNOWLEDGE_SYNC_TIMEZONE` |
 
@@ -140,14 +145,16 @@ Behaviour notes:
 Both return **400** for a non-analytics connection and **404** when the connection
 does not exist.
 
-`POST /api/connections/{id}/collect` enqueues exactly the job the hourly cron
-enqueues — same task name, same day-scoped task id — so "collect now" and the
-schedule cannot race into two concurrent runs for one connection on one day. It
-deliberately ignores `collection_enabled` (that flag pauses the *schedule*; pulling
+`POST /api/connections/{id}/collect` enqueues the same job the hourly cron runs,
+under its **own** task id (ANA-10): sharing the wave's day-scoped id made a manual
+collect a silent duplicate for the rest of the day after any wave run. The two
+cannot overlap because the collection service holds a per-connection Redis lock for
+the length of a run (A-05); a second caller is told the connection is already being
+collected. It deliberately ignores `collection_enabled` (that flag pauses the *schedule*; pulling
 on demand is how a credential fix is verified). Response:
 
 ```json
-{"status": "queued", "connection_id": "…", "task_id": "analytics_collect:<connection_id>:<YYYY-MM-DD>"}
+{"status": "queued", "connection_id": "…", "task_id": "analytics_collect:manual:<connection_id>:<YYYY-MM-DDTHH:MM:SS>"}
 ```
 
 `GET /api/connections/{id}/collection-status` returns:
@@ -225,6 +232,7 @@ name `_connect`, which currently appears as an entry in `reports[]` with
 | GET | `/api/chat/sessions/{project_id}` | List chat sessions for a project |
 | GET | `/api/chat/sessions/{id}/messages` | Get session messages |
 | DELETE | `/api/chat/sessions/{id}` | Delete session |
+| PATCH | `/api/chat/sessions/{session_id}` | Rename a session. Body `{title}` (1–255 chars). Owner **and** current member of its project; 30/min |
 | GET | `/api/chat/estimate?project_id=&connection_id=&session_id=` | Estimate token cost and how full the conversation is. **`session_id` is what makes the second half a measurement**: without it the response carries `history_measured: false` and reports the static context only. `context_utilization_pct` is the session's stored history against the rotation threshold — the same quantity `/ask/stream` rotates on |
 | GET | `/api/chat/suggestions` | Get query suggestions |
 | WS | `/api/chat/ws/{project_id}/{connection_id}` | WebSocket chat (single-use ticket via `Sec-WebSocket-Protocol`; mint with `POST /api/chat/ws-ticket`) |
@@ -252,6 +260,7 @@ name `_connect`, which currently appears as an entry in `reports[]` with
 |--------|----------|-------------|
 | POST | `/api/notes` | Save a query as note |
 | GET | `/api/notes?project_id=` | List notes |
+| GET | `/api/notes/{note_id}` | Get one note (same access rule as the list) |
 | PATCH | `/api/notes/{id}` | Update note |
 | DELETE | `/api/notes/{id}` | Delete note |
 | POST | `/api/notes/{note_id}/execute` | Run a saved note's query. Routed through `SafetyGuard` like every other raw-SQL entry point |
@@ -306,6 +315,7 @@ Per-connection agent memory. Learnings are **not** shared across connections by 
 |--------|----------|-------------|
 | POST | `/api/rules` | Create custom rule |
 | GET | `/api/rules?project_id=` | List rules |
+| GET | `/api/rules/{rule_id}` | Get one rule. Viewer role on the rule's project |
 | PATCH | `/api/rules/{id}` | Update rule |
 | DELETE | `/api/rules/{id}` | Delete rule |
 
@@ -325,7 +335,7 @@ Per-connection agent memory. Learnings are **not** shared across connections by 
 |--------|----------|-------------|
 | GET | `/api/logs/{project_id}/users` | List users with request counts |
 | GET | `/api/logs/{project_id}/requests` | Paginated request traces |
-| GET | `/api/logs/{project_id}/requests/{trace_id}` | Full trace detail with spans |
+| GET | `/api/logs/{project_id}/requests/{trace_id}` | Full trace detail with spans. Each span's `span_type` says what the time was spent on (PRJ-04, `SPAN_TYPE_MAP` in `trace_persistence_service.py`): `db_query` is the query itself, counted once; `tool_call` is an envelope around it; `llm_call` covers query repair, learning analysis and router retries too; plus `sub_agent` and `viz`. One trace row per workflow (unique `workflow_id`) |
 | GET | `/api/logs/{project_id}/summary` | Aggregated summary (totals, success rate, cost) |
 | PATCH | `/api/logs/{project_id}/errors/{error_id}` | Move an error through open → acknowledged → resolved |
 | GET | `/api/logs/{project_id}/query-failures` | Paginated list of captured query failures |
@@ -377,6 +387,8 @@ part of the key material).
   "provider": "ga4",
   "fingerprint": "3f2a1c9e7b4d5061",
   "meta": {"client_email": "sa@project.iam.gserviceaccount.com", "project_id": "…"},
+  "last_verified_at": null,
+  "last_verify_error": null,
   "created_at": "2026-08-01T10:00:00+00:00",
   "updated_at": "2026-08-01T10:00:00+00:00"
 }
@@ -415,6 +427,7 @@ Status codes:
 | POST | `/api/invites/accept/{invite_id}` | Accept invite for current user. **Requires a verified email address** (AUTH-01): the email match proves only the caller's *stored* string, which they chose at registration — and registration returns a live session with `email_verified=false`. Refused with 403 until the address is confirmed; a Google login is pre-verified, and verifying an address auto-accepts what was pending |
 | GET | `/api/invites/pending` | List pending invites for current user |
 | GET | `/api/invites/{project_id}/members` | List project members |
+| PATCH | `/api/invites/{project_id}/members/{member_user_id}` | Change a member's role to `editor` or `viewer` (owner; 20/min). Ownership moves only through `transfer-ownership` |
 | DELETE | `/api/invites/{project_id}/members/{member_user_id}` | Remove member (owner) |
 | POST | `/api/invites/{project_id}/transfer-ownership` | **Transfer ownership** (F-PROJ-10). Body `{new_owner_user_id}`. `204` on success, no body. The target must already be a member (else `400`); the previous owner is demoted to **editor**, not removed; `Project.owner_id` and the member row move together. The **receiving** owner's plan project-quota is enforced before any write. Authorization is the current owner **or** an admin (`ADMIN_EMAILS`) — deliberately not `require_role(…, "owner")`, because `owner_id` is `ondelete="SET NULL"` and an orphaned project has no owner, so that check would `403` everyone on exactly the project this exists to rescue. A non-admin member claiming an orphaned project gets `403`. Rate limit `5/minute`. Note `PATCH …/members/{id}` accepts only `editor`/`viewer` — ownership has one way in, so the quota check cannot be bypassed. |
 | DELETE | `/api/invites/{project_id}/members/me` | **Leave the project** (F-PROJ-12). Removes the caller's own membership; `204` on success, `404` when not a member. An **owner is refused with 400** — leaving would strand the workspace, which is what F-PROJ-10 exists to prevent — and the message names the transfer route. Ownership is read from the member row *or* `Project.owner_id`, so an owner whose row disagrees with the column is still refused. Path is `/me`, not `/{id}`: the request cannot express acting on anyone else. Rate limit `10/minute`. |
@@ -478,7 +491,7 @@ reconciles it if the pipeline turns out to still be alive.
 | GET | `/api/data-validation/analytics/{project_id}` | Project-wide feedback analytics (owner) |
 | GET | `/api/data-validation/summary/{project_id}` | Lightweight analytics summary (owner) |
 | POST | `/api/data-validation/investigate` | Start async data investigation |
-| GET | `/api/data-validation/investigate/{investigation_id}` | Get investigation detail |
+| GET | `/api/data-validation/investigate/{investigation_id}?project_id=` | Get investigation detail. Viewer role; `project_id` is required (the thumbs-down modal passes it since the Track D1 follow-up) |
 | POST | `/api/data-validation/investigate/{investigation_id}/confirm-fix` | Accept or reject proposed fix |
 | POST | `/api/data-validation/anomaly-analysis` | Run anomaly intelligence on posted rows/columns |
 | POST | `/api/data-validation/anomaly-scan/{connection_id}` | Probe tables for anomalies |

@@ -29,7 +29,7 @@ CheckMyData.ai is an AI-powered database query agent. Users connect databases (P
 | Frontend | Next.js 15, React 19, TypeScript, Tailwind CSS 4, Zustand |
 | Backend | Python 3.12, FastAPI, SQLAlchemy 2.0 (async), Alembic |
 | LLM Providers | OpenAI, Anthropic, OpenRouter (any model) |
-| Vector Store | ChromaDB |
+| Vector Store | pgvector on Postgres (production), ChromaDB on SQLite — `VECTOR_STORE_BACKEND=auto` |
 | App Database | SQLite (dev) / PostgreSQL (prod) |
 | User Databases | PostgreSQL, MySQL, ClickHouse, MongoDB, SQLite (demo only) |
 | Deployment | Docker, Heroku, DigitalOcean App Platform |
@@ -81,7 +81,7 @@ backend/app/
 │   ├── ssh_tunnel.py       # SSH tunnel for remote DBs
 │   └── mcp_client.py       # MCP protocol client
 ├── knowledge/              # RAG pipeline and analysis
-│   ├── vector_store.py     # ChromaDB wrapper
+│   ├── vector_store.py     # ChromaDB wrapper (+ pgvector_store.py)
 │   ├── repo_analyzer.py    # Git repo indexing
 │   ├── learning_analyzer.py# Heuristic + LLM lesson extraction
 │   ├── entity_extractor.py # Code entity extraction (regex baseline)
@@ -298,7 +298,7 @@ Each component is truncated to fit its budget if necessary.
 
 **Step 5 — Tool-Calling Loop (Adaptive Step Budget)**
 
-The loop runs up to `max_orchestrator_iterations` (default 100, configurable in settings and overrideable per-project or per-request via `max_steps`):
+The loop runs up to `max_orchestrator_iterations` (default 20 since W0, configurable in settings and overrideable per-project or per-request via `max_steps`):
 
 ```
 for each iteration:
@@ -381,6 +381,19 @@ flowchart LR
 **Replan loop**: When a stage fails after its retries and is replan-eligible, `OrchestratorAgent._run_pipeline_replans` asks `AdaptivePlanner.replan()` for a new plan that avoids the failed stage, carrying over only the stages that completed successfully — bounded by `max_pipeline_replans` (default 2). A replanned plan that references a `depends_on` id which is neither in the new plan nor a carried-over success stage (a *dangling dependency*) is rejected before execution, and the prior `stage_failed` result is surfaced as honest partial results instead of burning a replan on a structurally-doomed plan.
 
 **Fallback**: If the planner fails to produce a valid plan, the orchestrator falls back to the simple tool-calling loop with a `_skip_complexity` flag to prevent infinite recursion.
+
+### 2.6.0 One request deadline (PRJ-03, 2026-09-17)
+
+Both paths share ONE deadline, taken from the request's start: `app/agents/request_clock.py`.
+`remaining()` is `start + agent_wall_clock_timeout_seconds x 1.2 - now` (216 s at the default
+180), the 1.2 being the tool loop's existing hard-cutoff margin rather than a second one.
+`bounded(awaitable, context, limit)` cuts any awaited step at that point — an orchestrator LLM
+call, a whole SQL-agent dispatch, and, since T02b, every pipeline batch in `StageExecutor` — and
+raises `WallClockExceeded`, a `BaseException` for the same reason `CancelledError` is one: the
+tool loop wraps dispatches in `except Exception`, and a deadline caught there would become "the
+tool failed, try again". A spent deadline still allows `LOCALIZE_GRACE_SECONDS` (3 s) to put
+the fallback answer into the reader's language. Decided in T02b: a client disconnect (SSE/WS)
+does **not** cancel the run — the answer finishes and is stored while the user is away.
 
 ### 2.6.1 Knowledge Freshness Warning Injection
 
@@ -944,7 +957,8 @@ Users provide feedback through two mechanisms:
 
 **Thumbs up/down** (`POST /api/chat/feedback`):
 - Thumbs up: positive reinforcement (stored as user_rating on the message)
-- Thumbs down: triggers `LearningAnalyzer.analyze_negative_feedback()` which creates a `query_pattern` learning with the user's error description
+- Thumbs down: triggers `LearningAnalyzer.analyze_negative_feedback()` which creates a `query_pattern` learning with the user's error description, and rolls back the `exposed_learning_ids` of that answer
+- Thumbs down **on a SQL answer** also opens `WrongDataModal` (Track D1, 2026-09-18, `frontend/src/components/chat/ChatMessage.tsx`): the user names the complaint type, column and expected value, and the modal starts `POST /api/data-validation/investigate` and polls `GET /api/data-validation/investigate/{id}?project_id=`. The rating, the rollback and the `validate-data` verdict are recorded on the click, before the modal opens. A text answer opens nothing
 
 **Data validation** (via `FeedbackPipeline` in `backend/app/services/feedback_pipeline.py`):
 
@@ -1142,8 +1156,8 @@ Key chat-related endpoints in `backend/app/api/routes/chat.py`:
 
 ### 7.1 Vector Store
 
-`ChromaDB` is used as the vector store (`backend/app/knowledge/vector_store.py`):
-- One collection per project
+The vector store is chosen by `VECTOR_STORE_BACKEND` (default `auto`, resolved from `DATABASE_URL` by `resolve_backend()`): **pgvector** on Postgres (`backend/app/knowledge/pgvector_store.py`, table `doc_embeddings`, HNSW cosine — production since 2026-08-28) or **ChromaDB** on SQLite (`backend/app/knowledge/vector_store.py`). The boot log names the resolved backend. Embeddings are identical on both (bundled ONNX `all-MiniLM-L6-v2`, 384-d):
+- One collection (Chroma) or one `project_id` partition (pgvector) per project
 - Documents are chunked code/documentation with metadata (source_path, doc_type, entity_type)
 - Similarity search returns ranked chunks for context injection
 
@@ -1193,14 +1207,9 @@ Links ORM models found in the codebase to actual database tables:
 - **Rule Freshness Check**: the orchestrator prompt includes a `RULE FRESHNESS CHECK` instruction that compares query results against loaded rules, detects discrepancies (e.g., unknown enum values), and proposes updates via `manage_rules`
 - **Schema-aware rule validation**: `RuleService.validate_rules_against_schema()` checks rules for references to tables that were dropped during a schema refresh; wired into the `POST /connections/{id}/refresh-schema` endpoint alongside learning validation
 
-### 7.6 Table Resolution
+### 7.6 Table Resolution (removed)
 
-`table_resolver.py` (`backend/app/agents/table_resolver.py`):
-- Lightweight heuristic (no LLM) that parses the compact table map and matches user question terms against known tables
-- Uses exact, plural/singular, substring, and keyword-to-description matching
-- Returns `TableResolution(matched, fuzzy, unresolved)` with confidence scores for fuzzy matches
-- `build_resolution_hints()` generates prompt-injectable warnings for unresolved or fuzzy-matched terms
-- The orchestrator injects these hints into the system prompt; the `QUERY PLANNING` rule mandates using `ask_user` when TABLE RESOLUTION WARNINGS are present
+`table_resolver.py` was deleted in `a0344647` (2026-04-17, v1.9.0) and nothing replaced it under that name: table selection is now schema retrieval (`schema_retriever.py`, BM25 over the connection's per-table schema documents — deliberately no embeddings) unioned with the relevance safety net (`sql_agent_safety_net_min_relevance`). The `TABLE RESOLUTION WARNINGS` prompt block no longer exists (`grep -rn "TABLE RESOLUTION" backend/app` is empty).
 
 ### 7.7 Execution Plan Visibility
 
@@ -1468,7 +1477,7 @@ Key settings from `backend/app/config.py` that affect system behavior:
 | `openrouter_api_key` | — | OpenRouter API key |
 | `max_context_tokens` | varies | Maximum tokens for context window |
 | `max_history_tokens` | varies | Maximum tokens for chat history |
-| `max_orchestrator_iterations` | `100` | Tool-calling loop safety ceiling |
+| `max_orchestrator_iterations` | `20` | Tool-calling loop safety ceiling |
 | `orchestrator_wrap_up_steps` | `3` | Steps remaining to trigger wrap-up prompt |
 | `orchestrator_final_synthesis` | `true` | Enable LLM synthesis on step exhaustion |
 | `max_investigation_iterations` | `12` | Investigation agent loop limit |
