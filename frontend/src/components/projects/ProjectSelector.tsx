@@ -261,6 +261,13 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
   useEffect(() => {
     if (!triggerProjectEdit || !activeProject) return;
     setTriggerProjectEdit(false);
+    // Every trigger (sidebar checklist, ReadinessGate, Data panel) lands here, so the
+    // role check lives here once: the form saves through an owner-only PATCH, and a
+    // non-owner handed it met a 403 on Save (SCN-018).
+    if (activeProject.user_role !== "owner") {
+      toast("Only the project owner can edit the project or connect a repository.", "info");
+      return;
+    }
     setEditingId(activeProject.id);
     setForm(projectToForm(activeProject));
     setShowCreate(false);
@@ -325,10 +332,13 @@ export function ProjectSelector({ createRequested, onCreateHandled }: ProjectSel
       useAppStore.setState((state) => ({
         projects: [project, ...state.projects],
       }));
-      setActiveProject(project);
       resetForm();
       setShowCreate(false);
       toast("Project created", "success");
+      // Through the same path as picking it from the list: `setActiveProject` alone
+      // left the previous project's connections, sessions and role on screen under the
+      // new project's name (SCN-016).
+      await handleSelect({ ...project, user_role: project.user_role || "owner" });
     } catch (err) {
       toast(
         err instanceof Error ? err.message : "Failed to create project",

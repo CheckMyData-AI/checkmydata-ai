@@ -337,7 +337,7 @@ function DeleteConfirm({ onDone }: { onDone: () => void }) {
   return (
     <div className="px-4 pb-4 space-y-2.5 border-t border-border-subtle pt-3">
       <p className="text-meta text-text-secondary leading-relaxed">
-        This will permanently delete your account and all associated data.
+        This will permanently delete your account and all associated data. This action cannot be undone.
       </p>
       <input
         type="text"

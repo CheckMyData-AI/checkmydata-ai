@@ -154,7 +154,20 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
         if (sshKeyId) payload.ssh_key_id = sshKeyId;
       }
 
-      const conn = await api.connections.create(payload);
+      // SCN-002: "Edit connection" returns here after a failed test. Re-submitting must
+      // correct THAT connection — creating another left each failed attempt in the
+      // project, spending the plan's connection quota on rows nobody asked to keep.
+      let conn: Connection;
+      if (createdConnection) {
+        const { project_id: _projectId, ...changes } = payload;
+        void _projectId;
+        if (!(showAdvanced && sshHost) && createdConnection.ssh_host) {
+          changes.ssh_host = null;
+        }
+        conn = await api.connections.update(createdConnection.id, changes);
+      } else {
+        conn = await api.connections.create(payload);
+      }
       setCreatedConnection(conn);
       goNext();
     } catch (err) {

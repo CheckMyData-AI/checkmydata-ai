@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const mockSetProjects = vi.fn();
@@ -36,6 +36,7 @@ vi.mock("@/lib/api", () => ({
     projects: { create: vi.fn(), list: vi.fn().mockResolvedValue([]), update: vi.fn() },
     connections: {
       create: vi.fn().mockResolvedValue({ id: "c1", name: "test" }),
+      update: vi.fn().mockResolvedValue({ id: "c1", name: "test" }),
       test: vi.fn().mockResolvedValue({ success: true }),
       indexDb: vi.fn().mockResolvedValue({}),
       listByProject: vi.fn().mockResolvedValue([]),
@@ -126,5 +127,59 @@ describe("OnboardingWizard", () => {
     const { container } = render(<OnboardingWizard onComplete={onComplete} />);
     const dots = container.querySelectorAll(".rounded-full.transition-all");
     expect(dots.length).toBe(5);
+  });
+
+  // SCN-002: the failure path. "Edit connection" goes back to step 0, and re-submitting
+  // must correct the connection that failed rather than create a second one.
+  describe("when the connection test fails", () => {
+    async function submit() {
+      await userEvent.type(screen.getByLabelText("Host"), "db.example.com");
+      await userEvent.type(screen.getByLabelText("Database name"), "shop");
+      await userEvent.click(screen.getByText("Continue"));
+    }
+
+    it("shows the failure with its detail, and Edit re-submits as an update", async () => {
+      const { api } = await import("@/lib/api");
+      (api.projects.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "p1", name: "shop" });
+      (api.connections.test as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: false,
+        error: "password authentication failed",
+      });
+      render(<OnboardingWizard onComplete={onComplete} />);
+      await submit();
+
+      expect(await screen.findByText("Connection failed")).toBeTruthy();
+      expect(screen.getByText("password authentication failed")).toBeTruthy();
+
+      await userEvent.click(screen.getByText("Edit connection"));
+      await userEvent.click(await screen.findByText("Continue"));
+
+      await screen.findByText("Connection failed");
+      expect(api.connections.create).toHaveBeenCalledTimes(1);
+      expect(api.projects.create).toHaveBeenCalledTimes(1);
+      expect(api.connections.update).toHaveBeenCalledTimes(1);
+      const [id, changes] = (api.connections.update as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(id).toBe("c1");
+      expect(changes).not.toHaveProperty("project_id");
+    });
+
+    it("Retry runs the test exactly once", async () => {
+      const { api } = await import("@/lib/api");
+      (api.projects.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "p1", name: "shop" });
+      (api.connections.test as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: false,
+        error: "timeout",
+      });
+      render(<OnboardingWizard onComplete={onComplete} />);
+      await submit();
+      await screen.findByText("Connection failed");
+      expect(api.connections.test).toHaveBeenCalledTimes(1);
+
+      await userEvent.click(screen.getByText("Retry"));
+      await waitFor(() => expect(api.connections.test).toHaveBeenCalledTimes(2));
+      await screen.findByText("Connection failed");
+      await new Promise((r) => setTimeout(r, 50));
+      expect(api.connections.test).toHaveBeenCalledTimes(2);
+    });
   });
 });

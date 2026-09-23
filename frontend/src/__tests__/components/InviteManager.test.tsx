@@ -504,4 +504,50 @@ describe("Leave project (SCN-127, F-PROJ-12)", () => {
       ),
     );
   });
+
+  // SCN-021 / F-PROJ-06: the backend reports whether the email left. "Invite sent" on a
+  // failed send is the belief the backend fix exists to correct.
+  describe("the invite email", () => {
+    async function submitInvite() {
+      await renderInviteManager();
+      await userEvent.type(screen.getByPlaceholderText("Email address"), "new@test.com");
+      await userEvent.click(screen.getByText("Invite"));
+    }
+
+    it("says sent only when the backend says it was sent", async () => {
+      mockCreateInvite.mockResolvedValue(makeInvite({ email_sent: true }));
+      const { toast } = await import("@/stores/toast-store");
+      await submitInvite();
+      await waitFor(() => expect(toast).toHaveBeenCalledWith("Invite sent", "success"));
+    });
+
+    it("says the email failed when it did, and never says sent", async () => {
+      mockCreateInvite.mockResolvedValue(makeInvite({ email_sent: false }));
+      const { toast } = await import("@/stores/toast-store");
+      await submitInvite();
+      await waitFor(() =>
+        expect(toast).toHaveBeenCalledWith(
+          expect.stringContaining("email could not be sent"),
+          "error",
+        ),
+      );
+      expect(toast).not.toHaveBeenCalledWith("Invite sent", "success");
+    });
+
+    it("does not claim a resend went out when it did not", async () => {
+      mockListInvites.mockResolvedValue([makeInvite({ email: "resend@test.com" })]);
+      mockResend.mockResolvedValue({ ok: true, email_sent: false });
+      const { toast } = await import("@/stores/toast-store");
+      await renderInviteManager();
+      await waitFor(() => expect(screen.getByText("resend@test.com")).toBeInTheDocument());
+      await userEvent.click(screen.getByText("Resend"));
+      await waitFor(() =>
+        expect(toast).toHaveBeenCalledWith(
+          expect.stringContaining("could not be sent"),
+          "error",
+        ),
+      );
+      expect(toast).not.toHaveBeenCalledWith("Invite email resent", "success");
+    });
+  });
 });

@@ -105,3 +105,31 @@ describe("PendingInvites decline", () => {
     expect(screen.getByLabelText("Decline invitation to Acme")).toBeInTheDocument();
   });
 });
+
+// SCN-014: accepting is the action; refreshing the project list afterwards is not.
+describe("PendingInvites accept", () => {
+  it("accepting calls the API, reloads projects, and says accepted", async () => {
+    mockListPending.mockResolvedValue([makeInvite({ id: "inv1", project_name: "Acme" })]);
+    mockAccept.mockResolvedValue({ ok: true, project_id: "proj1", role: "editor" });
+    await renderPendingInvites();
+    await userEvent.click(await screen.findByLabelText("Accept invitation to Acme"));
+
+    await waitFor(() => expect(mockToast).toHaveBeenCalledWith("Invite accepted", "success"));
+    expect(mockAccept).toHaveBeenCalledWith("inv1");
+    expect(mockProjectsList).toHaveBeenCalled();
+  });
+
+  it("a failed refresh after a successful accept is not reported as a failed accept", async () => {
+    mockListPending.mockResolvedValue([makeInvite({ id: "inv1", project_name: "Acme" })]);
+    mockAccept.mockResolvedValue({ ok: true, project_id: "proj1", role: "editor" });
+    mockProjectsList.mockRejectedValue(new Error("network down"));
+    await renderPendingInvites();
+    await userEvent.click(await screen.findByLabelText("Accept invitation to Acme"));
+
+    await waitFor(() => expect(mockToast).toHaveBeenCalledWith("Invite accepted", "success"));
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith(expect.stringContaining("You joined the project"), "error"),
+    );
+    expect(mockToast).not.toHaveBeenCalledWith("network down", "error");
+  });
+});

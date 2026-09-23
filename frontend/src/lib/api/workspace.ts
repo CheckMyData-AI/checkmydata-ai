@@ -95,7 +95,7 @@ export const invites = {
       method: "DELETE",
     }),
   resend: (projectId: string, inviteId: string) =>
-    request<{ ok: boolean }>(`/invites/${projectId}/invites/${inviteId}/resend`, {
+    request<{ ok: boolean; email_sent?: boolean }>(`/invites/${projectId}/invites/${inviteId}/resend`, {
       method: "POST",
     }),
   listPending: () => request<ProjectInvite[]>("/invites/pending"),

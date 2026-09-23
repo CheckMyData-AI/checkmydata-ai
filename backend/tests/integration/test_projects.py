@@ -297,6 +297,28 @@ class TestProjectCreationEligibility:
         assert resp.json()["ok"] is True
         mock_send.assert_awaited_once()
 
+    async def test_an_undelivered_access_request_is_not_reported_as_sent(self, client):
+        """SCN-004: the email is the only record of the request, so a failed send is a 503."""
+        from unittest.mock import AsyncMock, patch
+
+        user = await register_user(client)
+        with patch(
+            "app.api.routes.projects._email_svc.send_access_request_email",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            resp = await client.post(
+                "/api/projects/access-requests",
+                json={
+                    "email": "requester@example.com",
+                    "description": "Need a project for analytics",
+                    "message": "Please grant me access.",
+                },
+                headers=auth_headers(user["token"]),
+            )
+        assert resp.status_code == 503
+        assert "could not be delivered" in resp.json()["detail"]
+
     async def test_access_request_requires_auth(self, client):
         """Unauthenticated access-request call returns 401."""
         resp = await client.post(
