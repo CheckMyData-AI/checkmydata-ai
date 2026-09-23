@@ -371,7 +371,7 @@ Gating: `ContextLoader.has_analytics_sources(project_id)` decides whether `query
 
 ### Background worker (ARQ)
 
-When `REDIS_URL` is set, long jobs run in the worker process; otherwise `app/core/task_queue.py` runs them in-process on the API event loop (keep both paths working).
+When `REDIS_URL` is set, long jobs run in the worker process; otherwise `app/core/task_queue.py` runs them in-process on the API event loop (keep both paths working). **Recovery works in both since PRJ-07 S-07 (2026-09-23):** an `enqueue(name, …)` with no `coro_factory` — how the reaper and the orphan sweep put work back — resolves the job from `WorkerSettings.functions` in-process instead of returning `None`; each entrypoint declares its role (`app.core.release.set_process_role`), so runs carry an owner off Heroku where there is no `DYNO`; and with no Redis the web lifespan runs the orphan sweep the worker would have run.
 
 Worker functions (`backend/app/worker.py`):
 

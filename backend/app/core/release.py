@@ -28,11 +28,28 @@ def current_release() -> str:
 BOOT_ID = uuid.uuid4().hex
 
 
+#: The role this process declared at start-up (`set_process_role`), for platforms that do
+#: not name their processes. Empty until declared.
+_ROLE: dict[str, str] = {"role": ""}
+
+
+def set_process_role(role: str) -> None:
+    """Declare which process type this is — called by the web lifespan and worker start-up.
+
+    PRJ-07 S-07: off Heroku there is no `DYNO`, so every run was stamped with an empty
+    owner, and the orphan sweep skips an unstamped run by design — it could never act in
+    Docker Compose or DigitalOcean. The entrypoint knows what it is; now it says so.
+    """
+    _ROLE["role"] = role
+
+
 def owner() -> str:
     """Which process type this is — ``"worker"``, ``"web"``, or ``""`` when unknown.
 
-    Read from Heroku's `DYNO` ("worker.1"). It matters because `index_repo` runs on both:
-    the queue path executes on the worker, the manual route on the web dyno. A worker that
-    swept the web dyno's runs would kill an index that is running perfectly.
+    Heroku's `DYNO` ("worker.1") first, then the role the entrypoint declared. It matters
+    because `index_repo` runs on both: the queue path executes on the worker, the manual
+    route on the web dyno. A worker that swept the web dyno's runs would kill an index
+    that is running perfectly.
     """
-    return (os.environ.get("DYNO", "") or "").split(".")[0]
+    dyno = (os.environ.get("DYNO", "") or "").split(".")[0]
+    return dyno or _ROLE["role"]

@@ -136,6 +136,19 @@ async def lifespan(app: FastAPI):
     # Shared client for AgentLimiter / WsTicketStore (T-SCALE-1 / T-SEC-7).
     await redis_client.connect(redis_url)
 
+    # PRJ-07 S-07: this process says what it is, so the runs it starts carry an owner off
+    # Heroku too. And with no Redis there is no worker — this process runs every job — so
+    # it also puts back what the process it replaced was running (the worker's own sweep,
+    # `worker.startup`, never runs here). With Redis the worker owns that.
+    from app.core.release import set_process_role
+
+    set_process_role("web")
+    if not redis_url:
+        from app.ops.orphan_runs import requeue_orphaned_runs
+
+        async with async_session_factory() as _orphan_db:
+            await requeue_orphaned_runs(_orphan_db)  # its contract: never raises
+
     # Self-completing deploy: auto-reindex embeddings if the model/window changed.
     # Runs after the task queue is up (it enqueues). Best-effort — never blocks boot.
     try:

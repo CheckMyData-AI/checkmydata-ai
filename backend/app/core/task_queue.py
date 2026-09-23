@@ -21,6 +21,13 @@ _fallback_tasks: dict[str, asyncio.Task] = {}
 #: The URL a successful or failed connect was made against, so a later `enqueue` can
 #: retry without being told it again (OPS-15).
 _arq_url: str | None = None
+
+#: True once `init_task_queue` was called WITHOUT a Redis URL: the deployment has no worker
+#: and this process is meant to run every job (PRJ-07 S-07). Only then may `enqueue`
+#: resolve a worker job by name and run it here. With Redis configured and the pool merely
+#: unavailable, running a repo index inline in the web dyno is exactly what must not happen
+#: (`test_worker_can_enqueue`), so that path still returns None, loudly.
+_IN_PROCESS_MODE: dict[str, bool] = {"on": False}
 _next_pool_attempt: float = 0.0
 _pool_lock: asyncio.Lock | None = None
 
@@ -98,7 +105,9 @@ async def init_task_queue(redis_url: str | None = None) -> None:
     """Initialise the task queue backend.  Call once during app startup."""
     if not redis_url:
         logger.info("Task queue: using in-process asyncio fallback (no REDIS_URL)")
+        _IN_PROCESS_MODE["on"] = True
         return
+    _IN_PROCESS_MODE["on"] = False
     _reset_pool_backoff()
     await _ensure_pool(redis_url)
 
@@ -123,6 +132,28 @@ async def close_task_queue() -> None:
         except (asyncio.CancelledError, Exception):
             pass
     _fallback_tasks.clear()
+
+
+def _worker_job(task_name: str) -> Callable[..., Coroutine] | None:
+    """The worker's own job for *task_name*, callable in-process (PRJ-07 S-07).
+
+    The reaper's requeue and the orphan sweep enqueue by NAME, as ARQ does, and pass no
+    factory. With no Redis the fallback used to answer ``None`` — so in Docker Compose and
+    DigitalOcean an index interrupted by a restart was never put back. Every job registered
+    in `WorkerSettings.functions` takes ``(ctx, **kwargs)``; in-process there is no ARQ
+    context, and the jobs read nothing from it.
+    """
+    from app import worker
+
+    known: frozenset[str] = getattr(worker, "IN_PROCESS_JOBS", frozenset())
+    fn = getattr(worker, task_name, None) if task_name in known else None
+    if fn is None:
+        return None
+
+    def _factory(**kwargs: Any) -> Coroutine:
+        return fn({}, **kwargs)
+
+    return _factory
 
 
 async def enqueue(
@@ -213,6 +244,8 @@ async def enqueue(
                 exc_info=True,
             )
 
+    if coro_factory is None and _IN_PROCESS_MODE["on"]:
+        coro_factory = _worker_job(task_name)
     if coro_factory is None:
         logger.error("No coro_factory for in-process fallback of task %s", task_name)
         return None
