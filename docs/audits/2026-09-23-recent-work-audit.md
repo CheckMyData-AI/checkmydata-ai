@@ -128,6 +128,7 @@ C-09, C-12, C-13, C-16. Partially closed — **C-02** (F-C2), **C-03** (F-C4), *
 | — failure 2 | `test_learnings_api.py::test_update_learning_toggle_active` — `StaleDataError` only when the unit suite runs first in the same process; the file alone is 15/15 and `tests/integration` alone is 698/698. CI runs them in separate steps, so CI cannot see it (Q-3) |
 | `npx vitest run` | 811 tests; 7 timed out at 5 s while `pytest` ran beside it; the 6 files re-run alone: **56/56 pass** (Q-2) |
 | `tsc --noEmit`, `eslint --max-warnings=0` | clean |
+| CI on this PR (#407), 10:27 UTC | **1 failed**: `test_a_day_ends_in_the_propertys_timezone.py::test_two_properties_a_day_apart_get_different_todays` asserted exactly one calendar day between UTC+14 and UTC−11 on the real clock — true 23 hours a day, **false every day 10:00–10:59 UTC** (two days; computed for every half hour of 2026-09-23). Introduced by T06 on 2026-09-18, so any merge to `main` in that hour fails CI and skips the deploy. **Fixed in this change** (Q-4): the assertion is now 1–2 days, which still refuses the defect it guards (one clock → 0 days; verified by planting it) |
 
 ## 5. Documentation — fixed in this change
 
@@ -159,6 +160,7 @@ and schema retrieval is BM25 only). Corrected here:
   the property's timezone; prune by period age.
 - **`docs/DEPLOYMENT.md`, `INSTALLATION.md`** — coverage gate 80; the four images and the
   release verification; migrations run in the release phase, not from a `Procfile`.
+- **One test, not documentation** — Q-4 above: a clock-dependent assertion that failed CI one hour a day.
 - **`backend/.env.example`** — four settings deleted from `config.py` on 2026-09-14 removed.
 - **`SECURITY.md`** — rate-limit exemptions; the SSH-exec shell surface (C-02/C-12).
 - **`docs/KNOWLEDGE_CATALOG.md`, `docs/DOCMAP.md`, `ROADMAP.md`** — vector store; ADR count;
@@ -204,7 +206,8 @@ production and are one command each once approved.
 ## 7. Handoff
 
 - **Objective of this run:** audit + documentation truth + backlog. **Done:** §2–§6. **No
-  application code was changed**; only documentation and planning files.
+  application code was changed**; documentation and planning files, plus one test assertion (Q-4)
+  that blocked this PR's CI.
 - **Checks actually run:** listed in §2 and §4, all on `92e3ba24` / v444.
 - **Decisions taken here:** `docs/evidence/loop-queue.md` is the single source for status
   (DOCMAP updated to say so); dated audits are not rewritten; the UX block is not restamped

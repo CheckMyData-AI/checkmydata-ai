@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that mis-attributes table descriptions on every nightly index (B-16), the PRJ-08/PRJ-10/Track
   D1 residue (T05b, T06b, T04b), and a ×6 reprice of the background model (O-1). No application
   code changed.
+- **A GA4 test failed CI one hour every day.** It asserted exactly one calendar day between
+  UTC+14 and UTC−11 on the real clock, which is two days from 10:00 to 10:59 UTC; a merge in
+  that hour failed CI and skipped the deploy. It now accepts one or two days and still refuses
+  zero — the one-clock defect it exists to catch.
 
 ### Fixed — GA4 tells the truth about what it collected (A-01, A-02, A-03, A-05, A-06, A-09)
 

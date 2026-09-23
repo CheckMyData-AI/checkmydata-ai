@@ -104,14 +104,21 @@ def _conn(zone: str | None) -> Connection:
 
 class TestTodayIsTheProperties:
     def test_two_properties_a_day_apart_get_different_todays(self):
-        """The real clock, deliberately: 25 hours of offset cannot collapse."""
+        """The real clock, deliberately: 25 hours of offset cannot collapse.
+
+        Nor is it always one day. 25 hours is one calendar day for 23 hours of every UTC
+        day and TWO for the hour 10:00-10:59 UTC, when Niue's 23:xx is Kiritimati's
+        day-after-tomorrow. Asserting exactly one day failed CI every day in that hour
+        (found 2026-09-23 on PR #407, 10:27 UTC: 09-24 vs 09-22). The defect this guards
+        against — one clock for every property — gives zero, and zero is still refused.
+        """
         service = AnalyticsCollectService(adapter_factory=lambda conn: FakeAdapter())
 
         east, east_known = service._today_for(_conn(EAST))
         west, west_known = service._today_for(_conn(WEST))
 
         assert east_known and west_known
-        assert east - west == dt.timedelta(days=1), (
+        assert dt.timedelta(days=1) <= east - west <= dt.timedelta(days=2), (
             "the window was computed on one clock for every property on earth"
         )
 
