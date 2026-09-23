@@ -381,9 +381,9 @@ CEILINGS: dict[str, int] = {
     # reached the `pass` below.
     #
     #   `required_filter_guard.py:257` — a metrics increment; `# pragma: no cover`.
-    #   `git_tracker.py:84`            — merge_base lookup, diagnostic only; `# noqa: BLE001`.
+    #   `git_tracker.py:84`            — merge_base lookup, diagnostic only; a BLE001 suppression.
     #
-    # The second one was already declared in the `# noqa` metric while its shape stayed
+    # The second one was already declared in the noqa-directive metric while its shape stayed
     # invisible here. Both predate this change and are recorded, not edited.
     "except ...: pass": 57,
     # 49 -> 50 on 2026-09-08. One, on `ConnectionResponse.capability`,
@@ -401,7 +401,7 @@ CEILINGS: dict[str, int] = {
     # answer was to hold the provider in a one-slot dict and need no suppression at all.
     # 130 -> 131 on 2026-09-12. One: `from app.models.audit_log import AuditLog`
     # in `app/models/__init__.py`, which is a side-effect import like the other
-    # forty-eight lines in that file and carries the identical `# noqa: F401`. Its
+    # forty-eight lines in that file and carries the identical F401 suppression. Its
     # absence was DATA-05 — `alembic/env.py` compares against `Base.metadata`, which
     # this file populates, so the table was invisible to autogenerate and the next
     # generated revision would have emitted `drop_table("audit_logs")`.
@@ -439,7 +439,7 @@ PATTERNS: dict[str, re.Pattern[str]] = {
 
 
 #: Directives that only take effect TRAILING a line of code. `# type: ignore` on its own
-#: line suppresses nothing in mypy, and a lone `# noqa` suppresses nothing in ruff — both
+#: line suppresses nothing in mypy, and a lone noqa directive suppresses nothing in ruff — both
 #: must sit on the line that errors. So a full-line comment naming one is prose.
 _TRAILING_DIRECTIVES = frozenset({"# type: ignore", "# noqa"})
 

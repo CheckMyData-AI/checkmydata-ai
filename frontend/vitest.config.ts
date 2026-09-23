@@ -27,6 +27,14 @@ export default defineConfig({
      * fixed 6 would over-subscribe exactly the way 14 does here.
      */
     maxWorkers: "50%",
+    /**
+     * 15 s, not the default 5 s (B-21, audit 2026-09-23 §4). The machine these suites
+     * run on hosts many agent sessions at once, and a 5 s ceiling turned load into
+     * failures: 7 tests timed out in one full run while pytest ran beside it, and all 56
+     * in those files passed alone; the same GA4 form test flaked `main` on 2026-09-18.
+     * A test that is genuinely stuck still fails — at 15 s instead of 5.
+     */
+    testTimeout: 15_000,
   },
   resolve: {
     alias: {
