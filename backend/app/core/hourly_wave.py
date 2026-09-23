@@ -59,6 +59,7 @@ async def run_hourly_wave(
     spring-forward night the skipped hour is dispatched too. A failed iteration logs and
     waits a minute; cancellation ends the loop.
     """
+
     # Looked up per call, not bound at definition: a test that patches `asyncio.sleep`
     # must reach this loop, or it waits a real hour.
     def _sleep(seconds: float) -> Awaitable[None]:
