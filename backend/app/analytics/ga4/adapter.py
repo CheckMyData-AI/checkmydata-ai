@@ -149,30 +149,51 @@ _AUTH_FAILURE_MARKERS = (
 )
 
 
-def _is_auth_failure(exc: BaseException) -> bool:
-    """Is this a credential that will never work again, however it arrived?"""
-    auth_errors: tuple[type[BaseException], ...] = ()
+def _google_auth_classes() -> tuple[
+    tuple[type[BaseException], ...], tuple[type[BaseException], ...]
+]:
+    """``(refusals, faults)`` from google-auth, or two empty tuples when it is absent."""
     try:
-        from google.auth import exceptions as google_auth_exceptions
-
-        auth_errors = (
-            google_auth_exceptions.RefreshError,
-            google_auth_exceptions.GoogleAuthError,
-        )
+        from google.auth import exceptions as gae
     except ImportError:  # pragma: no cover - google-auth absent in a trimmed image
         logger.debug("google-auth is not installed; classifying auth failures by text alone")
+        return (), ()
+    return (gae.GoogleAuthError,), (gae.TransportError, gae.TimeoutError)
 
+
+_GOOGLE_AUTH_REFUSALS, _GOOGLE_AUTH_FAULTS = _google_auth_classes()
+
+
+def _is_auth_failure(exc: BaseException) -> bool:
+    """Is this a credential that will never work again, however it arrived?
+
+    Three readings, in order, over the whole cause chain:
+
+    1. The words of a revoked key (`_AUTH_FAILURE_MARKERS`) — A-02: gRPC wraps a dead
+       key as HTTP 500, and only the text tells.
+    2. A network fault on the way to Google is NOT a refusal (T06b, audit 2026-09-23
+       F-G1). google-auth's `TransportError` and `TimeoutError` subclass
+       `GoogleAuthError`, and so does a `RefreshError` the library marks `retryable`
+       (the token endpoint answered 5xx); reading the base class alone journalled a
+       blip as `failed` and let Verify stamp a working key as refused.
+    3. Any other `GoogleAuthError` — `RefreshError`, a malformed key file — is.
+    """
+    chain: list[BaseException] = []
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if auth_errors and isinstance(current, auth_errors):
-            return True
-        text = str(current).lower()
-        if any(marker in text for marker in _AUTH_FAILURE_MARKERS):
-            return True
+        chain.append(current)
         current = current.__cause__ or current.__context__
-    return False
+
+    if any(m in str(link).lower() for link in chain for m in _AUTH_FAILURE_MARKERS):
+        return True
+    for link in chain:
+        if _GOOGLE_AUTH_FAULTS and isinstance(link, _GOOGLE_AUTH_FAULTS):
+            return False
+        if getattr(link, "retryable", False) is True:
+            return False
+    return any(_GOOGLE_AUTH_REFUSALS and isinstance(link, _GOOGLE_AUTH_REFUSALS) for link in chain)
 
 
 def _map_client_error(exc: Exception) -> AnalyticsError | None:
@@ -189,7 +210,11 @@ def _map_client_error(exc: Exception) -> AnalyticsError | None:
     code = getattr(exc, "code", None)
     if isinstance(code, int) and code >= 300:
         return classify_response(Resp(status=code, headers={}, body=str(exc).encode()))
-    if isinstance(exc, _TRANSPORT_ERRORS):
+    if isinstance(exc, _TRANSPORT_ERRORS) or (
+        _GOOGLE_AUTH_REFUSALS and isinstance(exc, _GOOGLE_AUTH_REFUSALS)
+    ):
+        # A google-auth error that `_is_auth_failure` did not call a refusal is a fault
+        # on the way to Google (F-G1): retry it like any transport failure.
         return AnalyticsTransientError(f"GA4 request failed at the transport level: {exc}")
     return None
 
