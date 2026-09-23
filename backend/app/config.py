@@ -218,6 +218,14 @@ class Settings(BaseSettings):
     # find out.
     default_llm_model: str = ""
 
+    #: Reasoning for calls that resolve to `default_llm_model` — the background stream
+    #: (sync analyzer, validators, learning analyzer, db-index analysis). "default" leaves
+    #: the provider's behaviour; "off" sends OpenRouter `reasoning: {enabled: false}`.
+    #: O-1, audit 2026-09-23 §2: 25-40% of the background model's completion tokens were
+    #: reasoning, and with it off a batch cost 30-40% less with the same facts in 3 of 3
+    #: runs. A pinned model (chat, indexing) is never touched. OpenRouter only.
+    default_llm_model_reasoning: str = "default"
+
     # F-LLM-01. The router falls back to another vendor when the chosen one fails, and
     # the messages it retries with are the user's question, their schema and their query
     # results — so a transient 503 at Anthropic sends that content to OpenAI. Fallback
@@ -1442,6 +1450,11 @@ class Settings(BaseSettings):
             raise ValueError("LEARNING_ANALYZER_MODE must be one of: heuristic, hybrid, llm_first")
         if self.default_llm_provider not in {"openai", "anthropic", "openrouter"}:
             raise ValueError("DEFAULT_LLM_PROVIDER must be one of: openai, anthropic, openrouter")
+        if self.default_llm_model_reasoning not in {"default", "off"}:
+            raise ValueError(
+                "DEFAULT_LLM_MODEL_REASONING must be 'default' or 'off', got "
+                f"{self.default_llm_model_reasoning!r}."
+            )
         if "/" in self.default_llm_model and self.default_llm_provider != "openrouter":
             raise ValueError(
                 "DEFAULT_LLM_MODEL looks like an OpenRouter id "
