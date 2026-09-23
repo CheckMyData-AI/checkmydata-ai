@@ -104,19 +104,6 @@ DELIBERATE: dict[str, str] = {
         "by widening this checker past booleans; it had never been recorded, and the "
         "boolean-only version could not have seen it."
     ),
-    "VECTOR_STORE_BACKEND": (
-        "pgvector, because ChromaDB persisted to the dyno's container filesystem — "
-        "wiped on every restart, unshared between web and worker — which made the "
-        "repo index force a full rebuild it could not afford (16 completions in 94 "
-        "runs). The condition recorded here is MET: pgvector went live on 2026-08-28 "
-        "(v285), a full rebuild ran 2026-08-31 08:32-11:57 UTC and finished "
-        "`completed`, and doc_embeddings holds 34 348 rows. The code default is now "
-        "`auto`, which resolves to pgvector on a Postgres DATABASE_URL, so this "
-        "variable is REDUNDANT rather than a divergence — unset it once that code is "
-        "deployed and delete this entry. It stays until then: unsetting it against a "
-        "code default of \"chroma\" would move the whole knowledge layer back onto the "
-        "dyno's local disk."
-    ),
     "MCP_MOUNT_ENABLED": (
         "Multi-tenant remote MCP at /mcp, which is the only mode that resolves a "
         "principal per request. Requires MCP_ENABLED, and is off by default for the "

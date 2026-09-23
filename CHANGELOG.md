@@ -6,6 +6,78 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — every project shape is served, and recovery works without Redis (T07c: S-08, S-09)
+
+- **A repository with no database was never nightly indexed**, because eligibility required
+  a connection; it is now, with `steps.reason = repo_only`. The index→sync chain starts a
+  sync on every database connection instead of the first, and the live-table
+  cross-reference reads every connection, each bounded by `LIVE_TABLES_TIMEOUT_SECONDS`
+  (60 s) — a hanging tunnel used to outlast the reaper before the pipeline's heartbeat
+  opened (S-09). Production has neither shape today; any other install does.
+
+### Fixed — the "this data is wrong" investigation cannot spin for ever (T04b: F-W1…F-W3)
+
+- **The modal waited 60 s, or stopped at the first failed read, then showed "investigating"
+  for good** — while an investigation runs up to 12 LLM turns with queries between them, so
+  minutes are normal. It now polls until the investigation ends or ten minutes pass, says
+  after 90 s that it can take a few minutes, offers "Check again" when it gives up, and
+  tolerates two failed reads before saying it cannot reach the server ("Try again") (F-W1).
+- **Its fields had no accessible name**: labels are bound to their input and select, and the
+  complaint buttons carry `aria-pressed` (F-W2).
+- **The readiness gate never noticed a step that was already running finish.** Polling began
+  only from a click; a step running at mount is now watched until it stops being busy (F-W3).
+- The new strings were written without a brand pack — the repository has none (`docs/brand/`
+  absent); `/brand-init` is queued as B-23.
+
+### Fixed — GA4, before the first real connection meets it (T06b: F-G1…F-G5)
+
+- **A slow Google was read as a dead key** (F-G1). google-auth's `TransportError` and
+  `TimeoutError` subclass `GoogleAuthError`, and every `GoogleAuthError` counted as a
+  refusal — so a network blip journalled a report `failed`, and Verify stamped a working
+  key as refused. The words of a revoked key still win (A-02); after them a transport or
+  timeout error, or a `RefreshError` google-auth marks `retryable`, is transient.
+- **A `partial` period was published as a real measurement** (F-G2). The analytics agent
+  now names it `INCOMPLETE` in the coverage header and in the caveats, and withholds the
+  "all periods collected" sentence.
+- **Verify recorded "cannot be checked yet" as a refusal** of an `appstore`/`googleplay` key,
+  and an undecryptable row was a 500 (F-G3, F-G4). Both are a 409 that records nothing.
+- **The journal prune could take the oldest owed period of a property west of UTC** and
+  make it pending again, daily (F-G5). The protected window carries a two-day margin.
+
+### Fixed — a resolved error that comes back is open again (F-E1)
+
+- `ErrorLogService.upsert` counted a recurrence on the existing row and left its status
+  alone, so an error marked `resolved` that happened again stayed `resolved` with
+  `occurrences` climbing — the regression the catalog exists to show, hidden by the act of
+  triaging it. A recurrence now reopens a `resolved` row; `acknowledged` ("known, still
+  happening") is left as it is. Found while about to resolve the 23 production rows that
+  PRJ-01…PRJ-04 had fixed, none of which had ever been triaged.
+
+### Fixed — the rival-table comparison runs on every engine, and "it ran" means it measured (B-17)
+
+- **On three of five engines it never produced a fact** (F-R1). `period_total` bound the
+  period as ISO strings in `:name` style: asyncpg refuses a `str` for a date parameter,
+  ClickHouse's `bind_query` leaves `:name` unbound, and SSH-exec refuses parameters. The
+  bounds are now date literals rendered from a validated `datetime.date`
+  (`_date_literal`: ANSI `DATE '…'`, ClickHouse `toDate('…')`, SQLite ISO text); a string
+  that is not a date is refused before any SQL exists.
+- **A comparison that looked at nothing erased last night's caveats** (F-R2).
+  `measure_rivalries` returns `Rivalries` with `pairs_measured`, and the pipeline strips
+  the previous `MEASURED (rivalry):` lines only when at least one pair was measured.
+
+### Changed — the background model stops paying for reasoning it does not need (O-1)
+
+- **`DEFAULT_LLM_MODEL_REASONING`** (`default` | `off`). `deepseek/deepseek-v4-flash-0731`
+  was repriced on 2026-09-21 — the same ~1.72 M background tokens a night went from
+  $0.10–0.18 to $0.61 — and 25–40% of its completion tokens were reasoning. Measured in the
+  production runtime on a three-table batch: with reasoning off the call cost 30–40% less,
+  all three tool calls came back, and 3 of 3 runs kept the facts that matter (cents,
+  multi-currency). `off` applies only to calls that resolve to `DEFAULT_LLM_MODEL`; a pinned
+  chat or indexing model is never touched. Production runs `off` (recorded in
+  `DELIBERATE`); the undated `deepseek/deepseek-v4-flash` was not chosen — it is the older
+  April model, not an alias.
+
+
 ### Fixed — the connection layer's residue on the path production uses (T05b: F-C1…F-C9, C-15)
 
 - **Saving a connection sent every field, and three of them did damage.** `ssh_key_id`
