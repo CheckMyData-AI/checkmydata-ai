@@ -40,7 +40,9 @@ vi.mock("@/stores/app-store", () => {
 
 const { WrongDataModal } = await import("@/components/chat/WrongDataModal");
 
-function open(onClose = vi.fn()) {
+const FAST = { intervalMs: 5, slowAfterMs: 20, giveUpAfterMs: 120, maxConsecutiveErrors: 3 };
+
+function open(onClose = vi.fn(), pollTiming?: typeof FAST) {
   render(
     <WrongDataModal
       messageId="msg1"
@@ -48,9 +50,15 @@ function open(onClose = vi.fn()) {
       sessionId="sess1"
       resultColumns={["n"]}
       onClose={onClose}
+      pollTiming={pollTiming}
     />,
   );
   return onClose;
+}
+
+async function start() {
+  await userEvent.click(screen.getByText("Numbers too low"));
+  await userEvent.click(screen.getByRole("button", { name: /investigat/i }));
 }
 
 describe("WrongDataModal", () => {
@@ -117,5 +125,50 @@ describe("WrongDataModal", () => {
     expect(
       await screen.findByText(/The filter excluded refunded rows/, {}, { timeout: 6000 }),
     ).toBeInTheDocument();
+  });
+
+  // T04b (audit 2026-09-23 §3.3): the modal used to wait 60 s, or stop at the first
+  // failed read, and then sit on "investigating" for ever.
+
+  it("names its fields for a screen reader and says which complaint is chosen", async () => {
+    open();
+    expect(screen.getByLabelText("Expected value (optional)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Which column? (optional)")).toBeInTheDocument();
+    const choice = screen.getByRole("button", { name: /Numbers too low/ });
+    expect(choice).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(choice);
+    expect(choice).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("says it is slow, then offers to look again instead of spinning for ever", async () => {
+    const { api } = await import("@/lib/api");
+    vi.mocked(api.dataValidation.getInvestigation).mockResolvedValue({ id: "inv1", status: "investigating" });
+    open(vi.fn(), FAST);
+    await start();
+
+    expect(await screen.findByText(/can take a few minutes/)).toBeInTheDocument();
+    const again = await screen.findByRole("button", { name: "Check again" });
+
+    vi.mocked(api.dataValidation.getInvestigation).mockResolvedValue({
+      id: "inv1",
+      status: "presenting_fix",
+      root_cause: "Found it on the second look",
+    });
+    await userEvent.click(again);
+    expect(await screen.findByText(/Found it on the second look/)).toBeInTheDocument();
+  });
+
+  it("survives a failed read, and says so after three in a row", async () => {
+    const { api } = await import("@/lib/api");
+    const get = vi.mocked(api.dataValidation.getInvestigation);
+    get.mockRejectedValueOnce(new Error("502")).mockResolvedValue({ id: "inv1", status: "investigating" });
+    open(vi.fn(), { ...FAST, giveUpAfterMs: 60_000, slowAfterMs: 60_000 });
+    await start();
+    await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(2));
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+
+    get.mockRejectedValue(new Error("offline"));
+    expect(await screen.findByText(/Couldn't reach the server/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });

@@ -17,12 +17,32 @@ const COMPLAINT_TYPES = [
   { id: "completely_wrong", label: "Completely wrong", icon: "✕" },
 ] as const;
 
+/**
+ * How the modal waits for an investigation (T04b, F-W1 —
+ * `docs/audits/2026-09-23-recent-work-audit.md` §3.3). An investigation runs up to
+ * `max_investigation_iterations` (12) LLM turns with queries between them, so minutes are
+ * normal. The poll used to stop after 60 s, or at the first failed read, and leave the
+ * modal on "investigating" for ever. Now it says when it is slow, gives up only after
+ * `giveUpAfterMs` with a way to look again, and tolerates a few failed reads before
+ * saying it cannot reach the server.
+ */
+export const POLL_TIMING = {
+  intervalMs: 2000,
+  slowAfterMs: 90_000,
+  giveUpAfterMs: 600_000,
+  maxConsecutiveErrors: 3,
+};
+
+type PollState = "running" | "slow" | "stalled" | "error";
+
 interface WrongDataModalProps {
   messageId: string;
   query: string;
   sessionId: string;
   resultColumns?: string[];
   onClose: () => void;
+  /** Tests only: shorter waits than the real ones. */
+  pollTiming?: typeof POLL_TIMING;
 }
 
 type Step = "collect" | "investigating" | "results";
@@ -33,6 +53,7 @@ export function WrongDataModal({
   sessionId,
   resultColumns = [],
   onClose,
+  pollTiming = POLL_TIMING,
 }: WrongDataModalProps) {
   const [step, setStep] = useState<Step>("collect");
   const [complaintType, setComplaintType] = useState("");
@@ -41,6 +62,7 @@ export function WrongDataModal({
   const [investigationId, setInvestigationId] = useState<string | null>(null);
   const [investigation, setInvestigation] = useState<Record<string, unknown> | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [pollState, setPollState] = useState<PollState>("running");
   const mountedRef = useRef(true);
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -78,24 +100,42 @@ export function WrongDataModal({
     dialogRef.current?.focus();
   }, []);
 
-  const pollInvestigation = useCallback(async (id: string, projectId: string) => {
-    const maxAttempts = 30;
-    for (let i = 0; i < maxAttempts; i++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      if (!mountedRef.current) return;
-      try {
-        const inv = await api.dataValidation.getInvestigation(id, projectId);
+  const pollInvestigation = useCallback(
+    async (id: string, projectId: string) => {
+      const started = Date.now();
+      let consecutiveErrors = 0;
+      setPollState("running");
+      while (Date.now() - started < pollTiming.giveUpAfterMs) {
+        await new Promise((r) => setTimeout(r, pollTiming.intervalMs));
         if (!mountedRef.current) return;
-        setInvestigation(inv);
-        if (inv.status === "presenting_fix" || inv.status === "resolved" || inv.status === "failed") {
-          setStep("results");
-          return;
+        try {
+          const inv = await api.dataValidation.getInvestigation(id, projectId);
+          if (!mountedRef.current) return;
+          consecutiveErrors = 0;
+          setInvestigation(inv);
+          if (inv.status === "presenting_fix" || inv.status === "resolved" || inv.status === "failed") {
+            setStep("results");
+            return;
+          }
+        } catch {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= pollTiming.maxConsecutiveErrors) {
+            if (mountedRef.current) setPollState("error");
+            return;
+          }
         }
-      } catch {
-        break;
+        if (Date.now() - started >= pollTiming.slowAfterMs) setPollState("slow");
       }
-    }
-  }, []);
+      if (mountedRef.current) setPollState("stalled");
+    },
+    [pollTiming],
+  );
+
+  const handleCheckAgain = () => {
+    const { activeProject } = useAppStore.getState();
+    if (!investigationId || !activeProject) return;
+    pollInvestigation(investigationId, activeProject.id);
+  };
 
   const handleStartInvestigation = async () => {
     const { activeProject, activeConnection } = useAppStore.getState();
@@ -179,6 +219,7 @@ export function WrongDataModal({
                     <button
                       key={ct.id}
                       onClick={() => setComplaintType(ct.id)}
+                      aria-pressed={complaintType === ct.id}
                       className={`p-2.5 rounded-lg text-left text-xs border transition-colors ${
                         complaintType === ct.id
                         ? "border-warning bg-warning-muted text-warning"
@@ -193,8 +234,9 @@ export function WrongDataModal({
               </div>
 
               <div>
-                <label className="text-xs text-text-secondary block mb-1">Expected value (optional)</label>
+                <label htmlFor="wrong-data-expected" className="text-xs text-text-secondary block mb-1">Expected value (optional)</label>
                 <input
+                  id="wrong-data-expected"
                   type="text"
                   value={expectedValue}
                   onChange={(e) => setExpectedValue(e.target.value)}
@@ -205,8 +247,9 @@ export function WrongDataModal({
 
               {resultColumns.length > 0 && (
                 <div>
-                  <label className="text-xs text-text-secondary block mb-1">Which column? (optional)</label>
+                  <label htmlFor="wrong-data-column" className="text-xs text-text-secondary block mb-1">Which column? (optional)</label>
                   <select
+                    id="wrong-data-column"
                     value={problematicColumn}
                     onChange={(e) => setProblematicColumn(e.target.value)}
                     className={selectBaseCls}
@@ -231,7 +274,29 @@ export function WrongDataModal({
 
           {/* Step 2: Investigating */}
           {step === "investigating" && (
-            <InvestigationProgress investigation={investigation} />
+            <div className="space-y-3">
+              <InvestigationProgress investigation={investigation} />
+              {pollState === "slow" && (
+                <p className="text-xs text-text-muted" role="status">
+                  Still working — an investigation can take a few minutes. Keep this window open.
+                </p>
+              )}
+              {(pollState === "stalled" || pollState === "error") && (
+                <div className="space-y-2" role="alert">
+                  <p className="text-xs text-text-secondary">
+                    {pollState === "stalled"
+                      ? "No result after 10 minutes. The investigation may still finish."
+                      : "Couldn't reach the server to check progress."}
+                  </p>
+                  <button
+                    onClick={handleCheckAgain}
+                    className="w-full py-2 rounded-lg text-xs font-medium border border-border-default text-text-primary hover:bg-surface-2 transition-colors"
+                  >
+                    {pollState === "stalled" ? "Check again" : "Try again"}
+                  </button>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Step 3: Results */}

@@ -144,6 +144,42 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
     }
   }, [loading, fetchError, readiness, onBypass]);
 
+  // T04b/F-W3 (audit 2026-09-23 §3.3): a step already running when the gate mounts is
+  // shown as "Running…", but polling started only from `handleAction`, so nothing ever
+  // noticed it finish and the gate stayed stuck until a remount. Watch it the same way,
+  // until the readiness row stops reporting it busy (or the usual ceiling passes).
+  const busyAtLoad =
+    readiness?.db_indexing ? "index_db" : readiness?.code_db_syncing ? "sync" : null;
+  useEffect(() => {
+    if (!busyAtLoad || pollRef.current || actionInProgress) return;
+    const start = Date.now();
+    pollRef.current = setInterval(async () => {
+      if (Date.now() - start > MAX_POLL_MS) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
+        return;
+      }
+      try {
+        const r = await api.projects.readiness(projectId);
+        if (!mountedRef.current) return;
+        setReadiness(r);
+        const stillBusy =
+          (busyAtLoad === "index_db" && r.db_indexing) ||
+          (busyAtLoad === "sync" && r.code_db_syncing);
+        if (!stillBusy) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          useAppStore.getState().setReadinessCache(projectId, {
+            ready: r.ready,
+            checkedAt: Date.now(),
+          });
+        }
+      } catch {
+        /* the next tick asks again; the ceiling bounds it */
+      }
+    }, POLL_INTERVAL_MS);
+  }, [busyAtLoad, actionInProgress, projectId]);
+
   const handleAction = async (step: string) => {
     const cid = connectionId || readiness?.active_connection_id;
     setActionInProgress(step);
