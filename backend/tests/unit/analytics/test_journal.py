@@ -371,6 +371,17 @@ class TestPrune:
         assert await journal.prune(db, older_than_days=400, protect_days=1095) == 0
         assert await _count(db) == 1
 
+    async def test_the_oldest_owed_period_west_of_utc_survives(
+        self, db: AsyncSession, conn_id: str
+    ):
+        """F-G5: a window of 1 095 days, seen from a property a day behind UTC, starts at
+        UTC-today minus 1 096. Pruning at exactly 1 095 took that period, which then
+        became pending and was fetched again every day."""
+        edge = self._period(1096)
+        await self._seed(db, conn_id, [edge])
+
+        assert await journal.prune(db, older_than_days=400, protect_days=1095) == 0
+
     async def test_a_monthly_period_survives_until_its_month_is_behind_the_cutoff(
         self, db: AsyncSession, conn_id: str
     ):

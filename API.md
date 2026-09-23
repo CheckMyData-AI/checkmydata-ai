@@ -365,7 +365,7 @@ lookups, Fernet-encrypted at rest, **write-only over HTTP**.
 |--------|----------|-------------|
 | POST | `/api/vendor-credentials` | Store a credential (10/min) |
 | GET | `/api/vendor-credentials` | List the caller's credentials |
-| POST | `/api/vendor-credentials/{credential_id}/verify` | Ask the vendor whether it still accepts this key (10/min). One real token refresh — the only probe that tells a revoked key from a vendor hiccup. Returns `{verified, error, credential}`; a **refused** key is a 200 with `verified: false` (the request worked, the answer is bad news), a vendor that could not be reached is **503** and records nothing. The verdict is stored on the credential as `last_verified_at` / `last_verify_error`, where `error` is `null` exactly when that attempt succeeded. |
+| POST | `/api/vendor-credentials/{credential_id}/verify` | Ask the vendor whether it still accepts this key (10/min). One real token refresh — the only probe that tells a revoked key from a vendor hiccup. Returns `{verified, error, credential}`; a **refused** key is a 200 with `verified: false` (the request worked, the answer is bad news), a vendor that could not be reached is **503** and records nothing; a provider with no probe yet (`appstore`, `googleplay`) or a row the server cannot decrypt is **409** and records nothing either (T06b) — neither is evidence about the key. A network failure on the way to Google is a 503, not a refusal (F-G1). The verdict is stored on the credential as `last_verified_at` / `last_verify_error`, where `error` is `null` exactly when that attempt succeeded. |
 | DELETE | `/api/vendor-credentials/{credential_id}` | Delete (10/min); **409** if a connection still references it |
 
 **Create body:**

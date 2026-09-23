@@ -327,6 +327,15 @@ The rule mirrors the collector's own exit contract: **zero rows is only a failur
 when something actually failed.** A window that came back genuinely `empty`
 everywhere collected fine — the vendor simply had no data — and is `ok`.
 
+### What the agent says about a `partial` period
+
+A `partial` journal row — a property did not answer (A-01), or the day was judged before
+it was certainly over (A-04) — is quoted by the analytics agent as **INCOMPLETE**: the rows
+that arrived are in the totals, so the value may be lower than the final one, and the
+period is collected again on the next run. Until T06b (2026-09-23) the agent read nothing
+but `ok`/`empty`/`failed` and published such a period under *"all periods collected, so the
+values below are real measurements"*.
+
 ### `caveat` is not an error
 
 Two separate fields, and they must never be collapsed:
@@ -476,7 +485,7 @@ journal. Check, in order:
 |---|---|
 | **Fact rows** (`ga4_*_daily`) | **Kept** for the life of the connection. They are the answerable surface; expiring them would silently turn answered history into "not collected". |
 | **Raw vendor payloads** | **Never written to disk** — `fetch()` returns parsed rows and the response body goes out of scope. There is nothing to retain, and nothing to leak. |
-| **Journal** (`analytics_imports`) | **Pruned by the period's age** past `ANALYTICS_JOURNAL_RETENTION_DAYS` (400), never inside the widest `backfill_days` any connection is configured for (A-07, `journal.prune(protect_days=…)`); `fetched_at` does not decide. Run by the existing 24 h maintenance cron. Best-effort: a failed prune never fails the maintenance pass. |
+| **Journal** (`analytics_imports`) | **Pruned by the period's age** past `ANALYTICS_JOURNAL_RETENTION_DAYS` (400), never inside the widest `backfill_days` any connection is configured for (A-07, `journal.prune(protect_days=…)`) plus a two-day margin for a property west of UTC, whose window starts a day earlier (`WINDOW_EDGE_MARGIN_DAYS`, T06b/F-G5); `fetched_at` does not decide. Run by the existing 24 h maintenance cron. Best-effort: a failed prune never fails the maintenance pass. |
 | **Delete a connection** | `analytics_imports` and all five `ga4_*` fact tables cascade on `connections.id` — every cached row for that connection goes with it. |
 | **Delete a project** | Cascades through its connections, so the same applies. |
 | **Delete a credential** | `connections.vendor_credential_id` is `ON DELETE RESTRICT`: deleting a credential a connection still references fails loudly with **409**, never orphaning the connection. Re-point or delete the connection first. |

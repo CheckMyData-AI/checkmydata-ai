@@ -83,3 +83,12 @@ RETRYABLE_ERRORS: tuple[type[AnalyticsError], ...] = (
     AnalyticsTransientError,
     QuotaExhaustedError,
 )
+
+
+class AnalyticsNotVerifiableError(AnalyticsError):
+    """This provider has no probe, so nothing can be learned about its key (T06b, F-G3).
+
+    Kept apart from a refusal: `appstore` and `googleplay` credentials can be STORED
+    before their collectors exist (m1/m2), and recording "cannot be checked yet" as the
+    key's `last_verify_error` stamped an untested key as refused.
+    """

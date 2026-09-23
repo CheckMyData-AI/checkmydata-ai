@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — GA4, before the first real connection meets it (T06b: F-G1…F-G5)
+
+- **A slow Google was read as a dead key** (F-G1). google-auth's `TransportError` and
+  `TimeoutError` subclass `GoogleAuthError`, and every `GoogleAuthError` counted as a
+  refusal — so a network blip journalled a report `failed`, and Verify stamped a working
+  key as refused. The words of a revoked key still win (A-02); after them a transport or
+  timeout error, or a `RefreshError` google-auth marks `retryable`, is transient.
+- **A `partial` period was published as a real measurement** (F-G2). The analytics agent
+  now names it `INCOMPLETE` in the coverage header and in the caveats, and withholds the
+  "all periods collected" sentence.
+- **Verify recorded "cannot be checked yet" as a refusal** of an `appstore`/`googleplay` key,
+  and an undecryptable row was a 500 (F-G3, F-G4). Both are a 409 that records nothing.
+- **The journal prune could take the oldest owed period of a property west of UTC** and
+  make it pending again, daily (F-G5). The protected window carries a two-day margin.
+
 ### Fixed — a batch table analysis lands on the table it describes (B-16)
 
 - **One unparseable tool call moved every later description onto the wrong table.**

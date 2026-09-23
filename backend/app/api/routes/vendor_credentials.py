@@ -132,9 +132,10 @@ async def verify_vendor_credential(
 
     A **refused** key is a 200 carrying `verified: false` — the request worked and the
     answer is bad news, which is different from the request failing. A vendor that
-    could not be reached is a 503: nothing was learned, and nothing is recorded.
+    could not be reached is a 503: nothing was learned, and nothing is recorded. A provider
+    with no probe yet, or a row the server cannot decrypt, is a 409 and records nothing (T06b).
     """
-    from app.analytics.errors import AnalyticsTransientError
+    from app.analytics.errors import AnalyticsNotVerifiableError, AnalyticsTransientError
 
     try:
         credential, verified, error = await _svc.verify(db, credential_id, user_id=user["user_id"])
@@ -145,6 +146,13 @@ async def verify_vendor_credential(
             status_code=503,
             detail=f"The vendor could not be reached, so the key was not checked: {exc}",
         ) from exc
+    except AnalyticsNotVerifiableError as exc:
+        # T06b/F-G3: nothing can be learned, so nothing is recorded and the key is not
+        # told it failed.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        # T06b/F-G4: an undecryptable row — the server's key, not the vendor's verdict.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     audit_log(
         "vendor_credential.verify",
