@@ -61,6 +61,30 @@ async def test_the_report_counts_outcomes_latency_and_where_time_went(session) -
             _span(2, "t1", "db_query", 200.0),
             _span(3, "t1", "tool_call", 900.0),  # an envelope: never summed
             _span(4, "t1", "validation", 5000.0),  # an envelope: never summed
+            TraceSpan(
+                id="s5",
+                trace_id="t1",
+                span_type="llm_call",
+                name="orchestrator:replan",
+                duration_ms=0.0,
+                started_at=NOW,
+            ),
+            TraceSpan(
+                id="s6",
+                trace_id="t3",
+                span_type="llm_call",
+                name="orchestrator:replan",
+                duration_ms=0.0,
+                started_at=NOW,
+            ),
+            TraceSpan(
+                id="s7",
+                trace_id="t3",
+                span_type="llm_call",
+                name="orchestrator:llm_retry",
+                duration_ms=0.0,
+                started_at=NOW,
+            ),
         ]
     )
     await session.commit()
@@ -73,7 +97,10 @@ async def test_the_report_counts_outcomes_latency_and_where_time_went(session) -
     assert report["unrouted_share"] == pytest.approx(33.3)
     assert report["latency_ms"]["over_budget"] == 1
     assert report["latency_ms"]["p50"] == 3000.0
+    # The replan/retry spans are `llm_call` too but carry 0 ms, so the split holds.
     assert report["time_split_pct"] == {"llm_call": 75.0, "db_query": 25.0}
+    assert report["replans"] == {"total": 2, "traces_with_replan": 2}
+    assert report["llm_retries"] == 1
 
 
 async def test_an_empty_window_is_a_report_not_an_error(session) -> None:

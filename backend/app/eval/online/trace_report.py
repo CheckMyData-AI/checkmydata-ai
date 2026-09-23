@@ -56,6 +56,25 @@ async def build_report(
         else []
     )
 
+    # T08d (Ш0b): the counters `MetricsCollector` keeps in memory — and loses on every
+    # restart — are derivable from what IS persisted: each replan is an
+    # `orchestrator:replan` span (REQ-6), each provider retry an `*:llm_retry` span
+    # (PRJ-04), so history needs a query, not a second store.
+    marker_spans = (
+        (
+            await session.scalars(
+                select(TraceSpan).where(
+                    TraceSpan.trace_id.in_(ids),
+                    (TraceSpan.name == "orchestrator:replan") | TraceSpan.name.like("%:llm_retry"),
+                )
+            )
+        ).all()
+        if ids
+        else []
+    )
+    replans = [s for s in marker_spans if s.name == "orchestrator:replan"]
+    retries = [s for s in marker_spans if s.name.endswith(":llm_retry")]
+
     budget = request_budget_ms()
     durations = [t.total_duration_ms for t in traces if t.total_duration_ms is not None]
     by_type: dict[str, float] = {k: 0.0 for k in _WORK_SPANS}
@@ -87,6 +106,11 @@ async def build_report(
         if work
         else {},
         "tokens": sum(t.total_tokens or 0 for t in traces),
+        "replans": {
+            "total": len(replans),
+            "traces_with_replan": len({s.trace_id for s in replans}),
+        },
+        "llm_retries": len(retries),
     }
 
 
