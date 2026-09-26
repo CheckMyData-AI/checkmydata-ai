@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Space_Grotesk } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { ClientShell } from "@/components/ui/ClientShell";
 import { THEME_STORAGE_KEY } from "@/stores/theme-store";
@@ -8,21 +8,27 @@ import { ThemeWatcher } from "@/components/theme/ThemeWatcher";
 /* The `ledger` pack's UI face. It fills `--font-ui-webfont`, which globals.css
    puts in front of the pack's own `--font-ui` stack — the pack keeps the
    fallback, the webfont is the preference. */
-const inter = Inter({
-  subsets: ["latin"],
+/* Self-hosted from `@fontsource-variable/*` (OFL), never fetched from Google at
+   build time: `next/font/google` downloads the CSS during `next build`, and on
+   2026-09-26 a malformed Google response ("Cannot read properties of null
+   (reading '1')" in its loader) failed the production image build for #431.
+   A deploy must not depend on a third party answering well at that minute. */
+const inter = localFont({
+  src: "../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2",
   variable: "--font-ui-webfont",
   display: "swap",
+  weight: "100 900",
 });
 
 /* Display face for marketing headlines only — the product UI never uses it.
    The pack's own display face is licensed and self-hosted by its reference,
    so per the pack this project points the product display at the UI face and
    leaves the marketing layer its own. */
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
+const spaceGrotesk = localFont({
+  src: "../../node_modules/@fontsource-variable/space-grotesk/files/space-grotesk-latin-wght-normal.woff2",
   variable: "--font-display-webfont",
   display: "swap",
-  weight: ["500", "600", "700"],
+  weight: "300 700",
 });
 
 /* JetBrains Mono was dropped with the redesign: the pack sets ALL data in the

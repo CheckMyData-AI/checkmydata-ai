@@ -27,7 +27,9 @@ backend/data/
 !frontend/.env.example
 
 # Node
-node_modules/
+# No trailing slash: `node_modules/` matches directories only, and a symlink named
+# node_modules was committed through it on 2026-09-26 (#432).
+node_modules
 frontend/.next/
 frontend/out/
 
