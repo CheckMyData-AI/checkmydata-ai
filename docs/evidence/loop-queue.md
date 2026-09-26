@@ -69,8 +69,8 @@ Each loop cycle ends by stating how many are open.
 
 | # | Opened | Question | Blocks | Status |
 |---|---|---|---|---|
-| Q1 | 2026-09-23 | GitHub refuses the SSH key `sergeysheleg4@gmail.com (ED25519)` since ~15:00 UTC (`Permission denied (publickey)`; `~/.ssh/config` unchanged since 2026-09-07). Pushes go over HTTPS with `gh` as a one-off credential helper, so nothing is blocked. Needs a person: check the key is still on the GitHub account | nothing | open |
-| Q2 | 2026-09-23 | The `gh` token lacks the `workflow` scope, so GitHub refuses any change under `.github/workflows/` — the PostgreSQL CI job for B-02 is committed on the local branch `ci/b02-postgres-job` and cannot be pushed. Needs a person: `gh auth refresh -h github.com -s workflow` (or fix Q1's SSH key) | the B-02 CI job only | open |
+| Q1 | 2026-09-23 | GitHub refuses the SSH key `sergeysheleg4@gmail.com (ED25519)` since ~15:00 UTC (`Permission denied (publickey)`; `~/.ssh/config` unchanged since 2026-09-07). Pushes go over HTTPS with `gh` as a one-off credential helper, so nothing is blocked. Needs a person: check the key is still on the GitHub account | nothing | closed 2026-09-26 — `ssh -T git@github.com` answers "Hi sshlg!"; it resolved on its own |
+| Q2 | 2026-09-23 | The `gh` token lacks the `workflow` scope, so GitHub refuses any change under `.github/workflows/` — the PostgreSQL CI job for B-02 is committed on the local branch `ci/b02-postgres-job` and cannot be pushed. Needs a person: `gh auth refresh -h github.com -s workflow` (or fix Q1's SSH key) | the B-02 CI job only | closed 2026-09-26 — an SSH key carries no OAuth scopes, so the job was pushed over SSH; #429, green on its first run |
 
 ## Log
 
@@ -108,3 +108,4 @@ One line per finished iteration, newest last.
   V3b reads the nightly. Two CI failures were my own and are now in S-12 (a source guard
   reading a moved body; a mypy annotation). **Operator questions open: 1** (Q1).
 - **Cycle 3 (2026-09-23 → 09-26)** — B-02 (#425: the integration suite runs on PostgreSQL, and its first run found a production defect), B-19 (#426), B-18 (#427: six UX defects from re-auditing the 14 oldest scenarios). V3b closed from the database. A full local unit run was stopped by the harness for low machine memory; #427 went through CI as its full gate, and said so in the PR. **Operator questions open: 2** (Q1, Q2; neither blocks delivery).
+- **Cycle 4 (2026-09-26)** — #428 (cycle-3 consolidation), #429 (PostgreSQL CI job), #430 (reconciler test isolation), #431 (B-26), #432 (B-27: the second re-audit batch, 12 scenarios), and **release 1.18.0** (B-20). V3 for #425–#427 read on production v457: backend markers present, the new UI strings in the served bundle, no errors after restart. One failure was mine and is now a rule: a unit test that uses `with TestClient(app)` runs the app lifespan and leaked state into 27 later tests. **Operator questions open: 0** (Q1 resolved on its own; Q2 answered by pushing over SSH).

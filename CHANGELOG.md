@@ -6,6 +6,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-09-26 - Money, tenancy and the nightly: what production and the audits found
+
+**Release summary.** 146 changelog sections since 1.17.0 (2026-08-31): PRJ-01…PRJ-04, PRJ-07,
+PRJ-08, PRJ-10 and PRJ-13 (PRJ-05, -06, -09, -11, -12, -15 and -16 are still queued). Almost none is a new surface: most are places where the product stated
+something it had not checked, found by measuring production or by re-reading the code
+against its own scenarios. The load-bearing ones:
+
+- **LLM spend is bounded in dollars.** Nothing bound it before: the per-account OpenRouter
+  key was minted and never presented to the provider, and the plan's token ceilings were
+  reset to *unlimited* on every boot. Dollars are the gate now (ADR-0004), tokens the
+  backstop, and money stopped being a float.
+- **Tenancy holes closed.** A project viewer could write to the customer's database through
+  SSH-exec (`psql` meta-commands), an unverified account could accept someone else's
+  invitation, a chat session with no owner belonged to everybody, one webhook secret
+  authorised every tenant, and the DNS-rebinding guard ran at save but never at connect.
+- **The nightly index had been dying for a month.** `index_repo` completed 16 times in 94
+  runs — the vectors lived on the dyno's ephemeral disk, a heartbeat ticked the wrong row,
+  and one expression made graph construction O(E×(V+E)). pgvector, one heartbeat, and a
+  document cache that took `generate_docs` from 9 375 s to 2 687 s.
+- **The orchestrator's decisions are measured.** Routing accuracy 98.89% on production's
+  model, gated in CI; result gates scored against their contract; an online report of
+  what production did.
+- **The integration suite runs on PostgreSQL**, and its first run found a production defect
+  — the assistant's message failed to save after a swallowed error on the request session.
+- **26 of the oldest UX scenarios re-verified**, 17 defects fixed, among them a background
+  task that could spin for ever and a "Request sent" for a request that went nowhere.
+
+Upgrade notes: migrations run in the release phase; embedding and graph-schema changes
+reindex themselves at boot. `PLAN_GRANTS` must be set on a deployment with billing on and
+no Stripe keys, or scheduled work stops (see `CLAUDE.md` → *Billing & entitlements*).
+
+### Fixed — what the second batch of scenario re-audits found (B-27, #432)
+
+- **Background tasks (SCN-105):** FE-06's sweep skipped every SSE-tracked task — the
+  dropped-connection case it was written for — and marked what it did catch `failed`, with
+  a Retry that could re-run a successful index. A run that left the active list and has not
+  been heard from for 30 s now reads **"Ended — outcome not received"**, with no Retry.
+  Queued rows can be cancelled.
+- **Every 403 said the same thing (SCN-015, SCN-069).** The client replaced the backend's
+  reason ("Requires at least 'editor' role", "This invite is for a different email
+  address") with one generic sentence. The reason is shown now; a CSRF refusal says to
+  reload.
+- **"Continue analysis" (SCN-055):** a second consecutive click sent the button's label as
+  the question, and a multi-stage cutoff carried no continuation context while the prompt
+  said "use the results below". Pipeline cutoffs now hand over their stage results.
+- **Readiness (SCN-045):** a repository index in flight was offered as "Run" and answered
+  409; readiness reports `repo_indexing` now. A failing pipeline-status call no longer turns
+  a finished step into "timed out".
+- **`/verify-email` (SCN-012)** restores the session, reports a refused send, and names
+  accepted invitations only when there were some. Two smaller ones in SCN-069 and SCN-028.
+
+### Fixed — a capped members list no longer reads as the whole team (B-26, #431)
+
+- The members route reports a capped list only in `X-Total-Count` / `X-Result-Capped`, and
+  the SPA — another origin — could not read either: CORS exposed neither. Both are exposed,
+  and the list says "Members (N of TOTAL)" when the server capped it.
+
+### Changed — the integration suite runs on PostgreSQL in CI (B-02, #429)
+
+- `backend-integration-postgres` runs the 698 integration tests against
+  `pgvector/pgvector:pg17` on every push and PR. Its first run passed.
+
+### Fixed — reconciler tests no longer depend on what ran before them (#430)
+
+- `_freshness_reconcile` builds the process vector store on first use, and its tests did
+  not stub it, so a store that failed to build — swallowed by the reconciler's own
+  `except` — made them fail in the full suite and pass alone.
+
 ### Fixed — what a re-audit of the oldest UX scenarios found (B-18, #427)
 
 - **Onboarding (SCN-002):** re-submitting after "Edit connection" created a second
