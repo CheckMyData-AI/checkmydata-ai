@@ -44,7 +44,7 @@ _ID_RE = re.compile(r"^#{2,3} ((?:SCN|SCR|FLW)-\d+[a-z]?):")
 _ROW_RE = re.compile(r"^\|\s*((?:SCN|SCR|FLW)-\d+[a-z]?)\s*\|")
 #: A path, optionally followed by a line anchor: `foo.tsx:12` or `foo.tsx:12-34`.
 _CITATION_RE = re.compile(
-    r"([\w./()\[\]@-]+\.(?:tsx|ts|jsx|js|mjs|cjs|py|md|css|json|ya?ml))(?::(\d+)(?:-(\d+))?)?"
+    r"([\w./()\[\]@-]+\.(?:tsx|ts|json|jsx|js|mjs|cjs|py|md|css|ya?ml)(?![\w]))(?::(\d+)(?:-(\d+))?)?"
 )
 
 

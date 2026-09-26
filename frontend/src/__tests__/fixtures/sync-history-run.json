@@ -1,0 +1,22 @@
+{
+  "_comment": "The /api/projects/{id}/sync-history row contract, shared by both sides (B-28). backend/tests/unit/test_sync_history.py asserts SyncHistoryService emits exactly these keys; SyncHistoryPanel.test.tsx renders from this file. It exists because each side once tested against its own idea of the shape: the panel mocked the retired KnowledgeSyncRun row while the service returned an IndexingRun one.",
+  "id": "r1",
+  "kind": "daily_sync",
+  "connection_id": null,
+  "status": "completed",
+  "outcome": "partial",
+  "trigger": "schedule",
+  "created_at": "2026-09-25T22:00:05+00:00",
+  "started_at": "2026-09-25T22:00:05+00:00",
+  "finished_at": "2026-09-25T22:41:30+00:00",
+  "duration_seconds": 2485.0,
+  "error": null,
+  "progress_pct": 100,
+  "steps": {
+    "repo_index": {"status": "completed", "error": null},
+    "connections": [
+      {"connection_id": "c1", "db_index": {"status": "completed", "error": null}, "code_db_sync": {"status": "completed", "error": null}},
+      {"connection_id": "c2", "db_index": {"status": "failed", "error": "timeout"}, "code_db_sync": {"status": "skipped", "error": "db index failed"}}
+    ]
+  }
+}

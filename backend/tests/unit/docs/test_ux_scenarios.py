@@ -67,7 +67,7 @@ _COVERAGE_RE = re.compile(r"^- \*\*Coverage:\*\*\s*(\S.*)$")
 _STATUS_RE = re.compile(r"^- \*\*Status:\*\*\s*(\S+)\s*$")
 _HEADING_RE = re.compile(r"^## ")
 _PLANNED_RE = re.compile(r"^\s*planned\s*:", re.IGNORECASE)
-_PATH_RE = re.compile(r"[\w./()\[\]@-]+\.(?:tsx|ts|jsx|js|mjs|cjs|py|md|css|json|ya?ml)")
+_PATH_RE = re.compile(r"[\w./()\[\]@-]+\.(?:tsx|ts|json|jsx|js|mjs|cjs|py|md|css|ya?ml)(?![\w])")
 
 
 @dataclass

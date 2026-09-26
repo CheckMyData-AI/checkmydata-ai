@@ -45,3 +45,42 @@ async def test_lists_daily_runs_for_project_only(session: AsyncSession):
 async def test_empty_when_no_runs(session: AsyncSession):
     rows = await SyncHistoryService().list_for_project(session, "nope", limit=10)
     assert rows == []
+
+
+# B-28: one contract for both sides. The panel was tested against the retired
+# KnowledgeSyncRun row (`success`, `error_message`, `created_at`, `steps`) while this
+# service returned an IndexingRun row — so the page showed no icon, "NaNd ago", and never
+# an error, and both test suites were green.
+_FIXTURE = (
+    __import__("pathlib").Path(__file__).resolve().parents[3]
+    / "frontend/src/__tests__/fixtures/sync-history-run.json"
+)
+
+
+async def test_the_row_matches_the_contract_the_panel_is_tested_against(session: AsyncSession):
+    import json
+
+    coord = RunCoordinator()
+    run = await coord.start(session, kind="daily_sync", project_id="p1", connection_id=None)
+    run.meta_json = json.dumps(
+        {"status": "partial", "steps": {"repo_index": {"status": "completed", "error": None}}}
+    )
+    await session.commit()
+    await coord.finish(session, run, "completed")
+
+    (row,) = await SyncHistoryService().list_for_project(session, "p1", limit=10)
+    contract = {k for k in json.loads(_FIXTURE.read_text()) if not k.startswith("_")}
+    assert set(row) == contract
+    assert row["outcome"] == "partial"
+    assert row["steps"]["repo_index"]["status"] == "completed"
+    assert row["created_at"]
+
+
+async def test_a_run_without_an_outcome_says_none_not_a_guess(session: AsyncSession):
+    coord = RunCoordinator()
+    run = await coord.start(session, kind="analytics_collect", project_id="p1", connection_id="c1")
+    run.meta_json = "not json"
+    await session.commit()
+    (row,) = await SyncHistoryService().list_for_project(session, "p1", limit=10)
+    assert row["outcome"] is None
+    assert row["steps"] is None

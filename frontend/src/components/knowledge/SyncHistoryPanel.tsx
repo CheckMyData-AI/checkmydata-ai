@@ -23,39 +23,78 @@ function timeAgo(iso: string): string {
 function connectionCounts(run: SyncHistoryRun): string | null {
   if (!run.steps) return null;
   const connections = run.steps["connections"];
-  if (!Array.isArray(connections)) return null;
-  const total = connections.length;
+  if (!Array.isArray(connections) || connections.length === 0) return null;
+  // A connection is done when both of its steps completed — the shape the daily sync
+  // writes (`{connection_id, db_index: {status}, code_db_sync: {status}}`).
+  const stepOk = (c: Record<string, unknown>, key: string) =>
+    (c[key] as Record<string, unknown> | undefined)?.["status"] === "completed";
   const succeeded = connections.filter(
     (c) =>
       typeof c === "object" &&
       c !== null &&
-      (c as Record<string, unknown>)["status"] === "success",
+      stepOk(c as Record<string, unknown>, "db_index") &&
+      stepOk(c as Record<string, unknown>, "code_db_sync"),
   ).length;
-  return `${succeeded}/${total} connections`;
+  return `${succeeded}/${connections.length} connections`;
 }
 
-const STATUS_ICON: Record<SyncHistoryRun["status"], Parameters<typeof Icon>[0]["name"]> = {
-  success: "check",
-  partial: "alert-triangle",
-  failed: "alert-triangle",
-  skipped: "minus",
+type Tone = "ok" | "warn" | "bad" | "muted" | "busy";
+
+/** The run's own verdict when it gave one, else its lifecycle status. */
+function verdict(run: SyncHistoryRun): { label: string; tone: Tone } {
+  const o = run.outcome;
+  if (o === "success" || o === "ok") return { label: "success", tone: "ok" };
+  if (o === "partial") return { label: "partial", tone: "warn" };
+  if (o === "failed") return { label: "failed", tone: "bad" };
+  if (o === "skipped") return { label: "skipped", tone: "muted" };
+  switch (run.status) {
+    case "completed":
+      return { label: "completed", tone: "ok" };
+    case "failed":
+      return { label: "failed", tone: "bad" };
+    case "cancelled":
+      return { label: "cancelled", tone: "muted" };
+    case "queued":
+    case "running":
+    case "cancelling":
+      return { label: run.status, tone: "busy" };
+    default:
+      return { label: run.status || "unknown", tone: "muted" };
+  }
+}
+
+const TONE_ICON: Record<Tone, Parameters<typeof Icon>[0]["name"]> = {
+  ok: "check",
+  warn: "alert-triangle",
+  bad: "alert-triangle",
+  muted: "minus",
+  busy: "loader",
 };
 
-const STATUS_COLOR: Record<SyncHistoryRun["status"], string> = {
-  success: "text-success",
-  partial: "text-warning",
-  failed: "text-error",
-  skipped: "text-text-tertiary",
+const TONE_COLOR: Record<Tone, string> = {
+  ok: "text-success",
+  warn: "text-warning",
+  bad: "text-error",
+  muted: "text-text-tertiary",
+  busy: "text-text-secondary",
+};
+
+const KIND_LABEL: Record<string, string> = {
+  daily_sync: "Nightly sync",
+  analytics_collect: "Analytics collection",
 };
 
 function RunRow({ run, isLatest }: { run: SyncHistoryRun; isLatest: boolean }) {
   const [expanded, setExpanded] = useState(isLatest);
   const counts = connectionCounts(run);
-  const ago = timeAgo(run.created_at);
-  const statusColor = STATUS_COLOR[run.status];
-  const iconName = STATUS_ICON[run.status];
+  const when = run.started_at ?? run.created_at;
+  const ago = when ? timeAgo(when) : null;
+  const { label, tone } = verdict(run);
+  const statusColor = TONE_COLOR[tone];
+  const iconName = TONE_ICON[tone];
+  const kind = KIND_LABEL[run.kind] ?? run.kind;
 
-  const summary = [run.status, ago, counts].filter(Boolean).join(" · ");
+  const summary = [kind, label, ago, counts].filter(Boolean).join(" · ");
 
   return (
     <li className="rounded-md border border-border-subtle bg-surface-0/50">
@@ -83,7 +122,7 @@ function RunRow({ run, isLatest }: { run: SyncHistoryRun; isLatest: boolean }) {
         <div className="px-2.5 pb-2 space-y-1 border-t border-border-subtle/50 pt-2">
           <div className="flex items-center gap-1.5 text-kicker text-text-tertiary">
             <Icon name="clock" size={10} />
-            <span>{new Date(run.created_at).toLocaleString()}</span>
+            <span>{when ? new Date(when).toLocaleString() : "not started"}</span>
             {run.trigger && (
               <>
                 <span>&middot;</span>
@@ -91,8 +130,8 @@ function RunRow({ run, isLatest }: { run: SyncHistoryRun; isLatest: boolean }) {
               </>
             )}
           </div>
-          {run.error_message && (
-            <p className="text-kicker text-error break-all">{run.error_message}</p>
+          {run.error && (
+            <p className="text-kicker text-error break-all">{run.error}</p>
           )}
           {counts && (
             <p className="text-kicker text-text-secondary">{counts}</p>
@@ -134,7 +173,10 @@ export function SyncHistoryPanel({ projectId }: SyncHistoryPanelProps) {
     fetchHistory();
   }, [fetchHistory]);
 
-  const latest = runs?.[0] ?? null;
+  // The header speaks for the nightly sync; collections are listed below it (B-28).
+  const latest = runs?.find((r) => r.kind === "daily_sync") ?? null;
+  const latestVerdict = latest ? verdict(latest) : null;
+  const latestWhen = latest ? latest.started_at ?? latest.created_at : null;
   const visibleRuns = showAll ? (runs ?? []) : (runs ?? []).slice(0, 5);
 
   return (
@@ -171,15 +213,14 @@ export function SyncHistoryPanel({ projectId }: SyncHistoryPanelProps) {
           {latest && (
             <div className="flex items-center gap-2 text-xs">
               <Icon
-                name={STATUS_ICON[latest.status]}
+                name={TONE_ICON[latestVerdict!.tone]}
                 size={12}
-                className={`shrink-0 ${STATUS_COLOR[latest.status]}`}
+                className={`shrink-0 ${TONE_COLOR[latestVerdict!.tone]}`}
               />
               <span className="text-text-secondary">
                 Nightly sync:{" "}
-                <span className={STATUS_COLOR[latest.status]}>{latest.status}</span>
-                {" · "}
-                {timeAgo(latest.created_at)}
+                <span className={TONE_COLOR[latestVerdict!.tone]}>{latestVerdict!.label}</span>
+                {latestWhen ? ` · ${timeAgo(latestWhen)}` : ""}
                 {connectionCounts(latest) ? ` · ${connectionCounts(latest)}` : ""}
               </span>
             </div>

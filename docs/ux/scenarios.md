@@ -23,11 +23,11 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 |---|---|
 | Scenarios | **154** |
 | Status | draft × 12, implemented × 142 |
-| Last verdict | PARTIAL × 12, PASS × 130, no verdict × 12 |
-| Verified when | 2026-07-19 × 73, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 2, 2026-09-23 × 14, 2026-09-26 × 12, undated × 12 |
-| **Verified >30 days ago** | **85 of 154** (oldest 69 days) |
+| Last verdict | FAIL × 1, PARTIAL × 12, PASS × 129, no verdict × 12 |
+| Verified when | 2026-07-19 × 72, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 2, 2026-09-23 × 14, 2026-09-26 × 13, undated × 12 |
+| **Verified >30 days ago** | **84 of 154** (oldest 69 days) |
 | Never verified (no date) | 12 |
-| Referenced from code or tests | **51 of 154** |
+| Referenced from code or tests | **52 of 154** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -105,7 +105,7 @@ it is what moves it.
 | SCN-061 | Browse indexed docs | knowledge | analyst | implemented | 2026-07-19 PASS |
 | SCN-062 | Knowledge health & re-index actions | knowledge | editor | implemented | 2026-07-19 PASS |
 | SCN-063 | Knowledge freshness warnings | knowledge | analyst | implemented | 2026-07-19 PASS |
-| SCN-064 | Nightly sync history | knowledge | owner | implemented | 2026-07-19 PASS |
+| SCN-064 | Nightly sync history | knowledge | owner | implemented | 2026-09-26 FAIL → fixed |
 | SCN-065 | View & filter the insights feed | insights | analyst | implemented | 2026-07-19 PASS |
 | SCN-066 | Confirm / dismiss / resolve an insight | insights | analyst | implemented | 2026-07-19 PASS |
 | SCN-067 | Browse the metric catalog | insights | analyst | implemented | 2026-07-19 PASS |
@@ -1332,12 +1332,13 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Preconditions:** scheduled daily syncs have run (or not)
 - **Steps:**
   1. User reviews the latest run summary and expands earlier runs
-- **Expected result:** per-run outcomes with error messages when failed
+- **Expected result:** per-run outcomes — the run's own verdict (success / partial / failed / skipped, or ok for a collection), when it ran, how many connections finished both steps, and the error a failed run recorded. The header summarises the latest **nightly** sync; analytics collections are listed as such
 - **UI elements:** refresh button, per-run expanders, "Show all N runs"
-- **States covered:** loading, empty, error, success
-- **Errors & recovery:** fetch fails → inline "Could not load sync history" (`SyncHistoryPanel.tsx:162-166`). Empty: "No scheduled syncs yet."
+- **States covered:** loading, empty, error, success; per run: success, partial, failed, skipped, running/queued (lifecycle when no verdict yet)
+- **Errors & recovery:** fetch fails → inline "Could not load sync history". Empty: "No scheduled syncs yet." A run with unreadable metadata shows its lifecycle status rather than a guessed verdict
 - **Status:** implemented
-- **Coverage:** components/knowledge/SyncHistoryPanel.tsx:146-201
+- **Coverage:** frontend/src/components/knowledge/SyncHistoryPanel.tsx (`verdict`, `connectionCounts`, `RunRow`); frontend/src/lib/api/types.ts (`SyncHistoryRun`); backend/app/services/sync_history_service.py (`_outcome`, `list_for_project`); backend/app/api/routes/projects.py (`project_sync_history`); contract frontend/src/__tests__/fixtures/sync-history-run.json; tests frontend/src/__tests__/components/SyncHistoryPanel.test.tsx, backend/tests/unit/test_sync_history.py
+- **Audit note (2026-09-26):** FAIL → fixed. Since the retirement of `KnowledgeSyncRun`, the panel read a row shape the API no longer returned: no status icon (`completed` was not in its map), "NaNd ago" and "Invalid Date" (`created_at` was absent), never an error (`error_message` vs `error`), no connection count (`steps` absent). Its test mocked the retired shape, so both suites stayed green. One fixture now pins the row for both sides.
 
 ### SCN-144: Refresh the documentation and see what changed
 - **Persona:** editor

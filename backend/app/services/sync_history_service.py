@@ -20,6 +20,30 @@ from app.models.indexing_run import IndexingRun
 HISTORY_KINDS: tuple[str, ...] = ("daily_sync", "analytics_collect")
 
 
+def _outcome(meta_json: str | None) -> tuple[str | None, dict | None]:
+    """What the run reported about itself, beside its lifecycle ``status``.
+
+    ``status`` is the IndexingRun lifecycle (`running`, `completed`, `failed`…); a
+    completed daily sync may still be *partial*, and only ``meta_json`` says so
+    (`success|partial|failed|skipped` for a daily sync, `ok|partial|failed` for a
+    collection). Unreadable metadata is reported as unknown — None — never guessed.
+    """
+    import json
+
+    try:
+        meta = json.loads(meta_json or "{}")
+    except ValueError:
+        return None, None
+    if not isinstance(meta, dict):
+        return None, None
+    outcome = meta.get("status")
+    steps = meta.get("steps")
+    return (
+        outcome if isinstance(outcome, str) else None,
+        steps if isinstance(steps, dict) else None,
+    )
+
+
 def _aware(dt: datetime) -> datetime:
     """Normalise to UTC-aware (SQLite reads timestamps back naive)."""
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
@@ -44,18 +68,24 @@ class SyncHistoryService:
             duration = None
             if r.started_at and r.finished_at:
                 duration = (_aware(r.finished_at) - _aware(r.started_at)).total_seconds()
+            outcome, steps = _outcome(r.meta_json)
+            # The row contract is pinned by a fixture both suites read (B-28):
+            # frontend/src/__tests__/fixtures/sync-history-run.json.
             out.append(
                 {
                     "id": r.id,
                     "kind": r.kind,
                     "connection_id": r.connection_id,
                     "status": r.status,
+                    "outcome": outcome,
                     "trigger": r.trigger,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
                     "started_at": r.started_at.isoformat() if r.started_at else None,
                     "finished_at": r.finished_at.isoformat() if r.finished_at else None,
                     "duration_seconds": duration,
                     "error": r.error,
                     "progress_pct": r.progress_pct,
+                    "steps": steps,
                 }
             )
         return out
