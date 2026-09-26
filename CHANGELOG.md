@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a full rebuild interrupted part-way resumes, against its own tree (PRJ-06 T12a, #441)
+
+- A restart during a full rebuild used to pay for all of it again: the run created a fresh
+  checkpoint whenever `force_full` was set. A full run now continues a full checkpoint (an
+  incremental run still never continues a full one), and a resume is checked out at the
+  commit its checkpoint describes; if that commit is gone, the run starts from the top.
+
+### Changed — a multi-connection project's nightly gives each connection its own job (T07d, #438)
+
+- PRJ-07 S-08 remainder. The nightly sync ran every connection inside one job under one
+  7 200 s ceiling; one connection measures ~2 300 s on production, so four could not fit a
+  night. With more than one connection, each now runs as its own job with its own ceiling
+  (`DAILY_SYNC_CONNECTION_JOB_TIMEOUT_SECONDS`, 7200), one after another, and writes its
+  own row in the sync history. A one-connection project — every project in production
+  today — is unchanged.
+
+### Fixed — the sync history panel read a row the API had stopped returning (B-28, #437)
+
+- Since the history moved to `indexing_runs` the panel showed no status icon, "NaNd ago",
+  no error and no connection count, while both test suites stayed green: the panel's test
+  mocked the retired row. The API now also returns the run's own verdict (`outcome` — a
+  completed sync can be partial) and its steps, and one fixture pins the row for both
+  sides.
+
+### Fixed — a test's background work can no longer undo the next test's data (B-21, #439)
+
+- On SQLite every test session shares one connection, and background work a request
+  started outlived its test; a rollback from it could erase the next test's uncommitted
+  insert — the intermittent `StaleDataError` in `test_learnings_api`. The harness now
+  **waits** for that work before each test is torn down, and never cancels it: a first
+  version cancelled, and a statement cancelled mid-flight replaced the shared in-memory
+  database with an empty one (263 failures on CI). A lost schema now fails at the cause.
+
 ## [1.18.0] - 2026-09-26 - Money, tenancy and the nightly: what production and the audits found
 
 **Release summary.** 147 changelog sections since 1.17.0 (2026-08-31): PRJ-01…PRJ-04, PRJ-07,
