@@ -173,12 +173,75 @@ async def _truncate_all(engine) -> None:
             await conn.execute(text(f"TRUNCATE {quoted} RESTART IDENTITY CASCADE"))
 
 
+async def _drain_background_work(timeout: float = 30.0) -> int:
+    """Wait for whatever a test left running in the background (B-21). Never cancels.
+
+    Route handlers start work with `spawn_tracked`, and in-process `task_queue`
+    fallbacks with `asyncio.create_task`. Neither is awaited by the request, so they
+    outlived the test that started them — and on SQLite every session shares ONE
+    physical connection (`StaticPool`, above). A leftover task that rolls back on that
+    connection can undo the NEXT test's flushed-but-uncommitted insert; that test then
+    commits nothing, finds the object in its identity map without a query, and its
+    `UPDATE` matches zero rows — the `StaleDataError` `test_learnings_api` hit on
+    2026-09-23 and 2026-09-26, passing alone and on rerun.
+
+    **Waiting, not cancelling, and that was learned the hard way.** The first version
+    cancelled: a task cancelled in the middle of a statement makes SQLAlchemy invalidate
+    the connection, and under `StaticPool` the replacement is a NEW, EMPTY `:memory:`
+    database, so every later test failed with "no such table: users" (#439's first CI
+    run: 263 failed, 965 errors). Waiting lets each task finish its statement and its
+    transaction. A task still running after `timeout` is left alone and named in a
+    warning rather than cut mid-query. Returns how many were still running.
+    """
+    import asyncio
+    import logging
+
+    from app.core import task_queue
+    from app.core.background import _BACKGROUND_TASKS
+
+    pending = [
+        t for t in (*_BACKGROUND_TASKS, *task_queue._fallback_tasks.values()) if not t.done()
+    ]
+    if not pending:
+        return 0
+    _done, still = await asyncio.wait(pending, timeout=timeout)
+    if still:
+        logging.getLogger(__name__).warning(
+            "%d background task(s) still running after %.0fs, left alone: %s",
+            len(still),
+            timeout,
+            sorted(t.get_name() for t in still),
+        )
+    return len(still)
+
+
+async def _assert_schema_survived(engine) -> None:
+    """Fail at the cause, not a thousand tests later: the shared SQLite DB kept its tables."""
+    if not _ON_SQLITE:
+        return
+    from sqlalchemy import inspect as _inspect
+
+    async with engine.connect() as conn:
+        present = await conn.run_sync(lambda c: set(_inspect(c).get_table_names()))
+    missing = _CREATED_TABLES - present
+    if missing:
+        raise RuntimeError(
+            "the shared in-memory database lost its schema during this test's teardown "
+            f"({len(missing)} tables missing, e.g. {sorted(missing)[:3]}) — the StaticPool "
+            "connection was replaced, usually by a statement cancelled mid-flight"
+        )
+
+
 @pytest_asyncio.fixture()
 async def db_session(engine) -> AsyncGenerator[AsyncSession, None]:
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
         yield session
+        # Before the rollback and the truncate: a task still running would otherwise
+        # execute against the next test's rows on the shared connection (B-21).
+        await _drain_background_work()
         await session.rollback()
+    await _assert_schema_survived(engine)
     await _truncate_all(engine)
 
 
