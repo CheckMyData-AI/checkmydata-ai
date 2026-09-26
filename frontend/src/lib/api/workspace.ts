@@ -108,6 +108,25 @@ export const invites = {
     request<{ ok: boolean }>(`/invites/decline/${inviteId}`, { method: "POST" }),
   listMembers: (projectId: string) =>
     request<ProjectMember[]>(`/invites/${projectId}/members`),
+  /** The members list with what the server says about its completeness. The route is
+   *  capped (F-PROJ-13) and reports that in headers only, so a caller that shows a
+   *  count must read them or present a partial list as the whole team (SCN-022, B-26).
+   *  `total` is null when the header is absent or unreadable — unknown, not zero. */
+  listMembersPage: async (
+    projectId: string,
+  ): Promise<{ members: ProjectMember[]; total: number | null; capped: boolean }> => {
+    let total: number | null = null;
+    let capped = false;
+    const members = await request<ProjectMember[]>(`/invites/${projectId}/members`, {
+      onResponse: (res) => {
+        const raw = res.headers.get("X-Total-Count");
+        const n = raw === null ? NaN : Number(raw);
+        total = Number.isFinite(n) ? n : null;
+        capped = res.headers.get("X-Result-Capped") === "true";
+      },
+    });
+    return { members, total, capped };
+  },
   updateMemberRole: (projectId: string, userId: string, role: string) =>
     request<ProjectMember>(`/invites/${projectId}/members/${userId}`, {
       method: "PATCH",
