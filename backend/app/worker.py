@@ -256,6 +256,21 @@ async def run_daily_project_knowledge_sync(ctx: dict, *, project_id: str) -> Non
     await DailyKnowledgeSyncService().run_for_project(project_id)
 
 
+async def run_daily_connection_sync(
+    ctx: dict, *, project_id: str, connection_ids: list[str], trigger: str = "schedule"
+) -> None:
+    """One link of the nightly per-connection chain (PRJ-07 S-08, T07d).
+
+    Runs the first connection's db index + code↔DB sync under its own ceiling
+    (`daily_sync_connection_job_timeout_seconds`), then queues the rest.
+    """
+    from app.services.daily_knowledge_sync_service import DailyKnowledgeSyncService
+
+    await DailyKnowledgeSyncService().run_connection_sync(
+        project_id, connection_ids, trigger=trigger
+    )
+
+
 async def run_analytics_collect(
     ctx: dict,  # noqa: ARG001
     *,
@@ -483,6 +498,12 @@ def _daily_sync_timeout() -> int:  # pragma: no cover
     return settings.daily_knowledge_sync_job_timeout_seconds
 
 
+def _daily_connection_sync_timeout() -> int:  # pragma: no cover
+    from app.config import settings
+
+    return settings.daily_sync_connection_job_timeout_seconds
+
+
 def _analytics_collect_timeout() -> int:  # pragma: no cover
     from app.config import settings
 
@@ -520,6 +541,7 @@ IN_PROCESS_JOBS = frozenset(
         "run_batch",
         "run_repo_index",
         "run_daily_project_knowledge_sync",
+        "run_daily_connection_sync",
         "run_analytics_collect",
     }
 )
@@ -547,6 +569,10 @@ class WorkerSettings:  # pragma: no cover
         _arq_func_with_timeout(
             run_daily_project_knowledge_sync,
             _daily_sync_timeout(),
+        ),
+        _arq_func_with_timeout(
+            run_daily_connection_sync,
+            _daily_connection_sync_timeout(),
         ),
         _arq_func_with_timeout(
             run_analytics_collect,

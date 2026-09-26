@@ -309,6 +309,28 @@ def test_repo_index_registered_with_its_own_configurable_timeout(monkeypatch):
     assert bare == []
 
 
+def test_the_per_connection_nightly_job_has_its_own_ceiling(monkeypatch):
+    """T07d: each connection of a multi-connection project runs under its own ceiling."""
+    import types
+
+    from app.config import settings
+
+    captured: list = []
+
+    def fake_func(coroutine, **kwargs):
+        captured.append((coroutine.__name__, kwargs))
+        return ("Function", coroutine.__name__, kwargs)
+
+    worker_mod = types.ModuleType("arq.worker")
+    worker_mod.func = fake_func
+    w = _import_worker_with_arq_stub(monkeypatch, worker_mod)
+    names = {n: kw for n, kw in captured}
+    assert names["run_daily_connection_sync"] == {
+        "timeout": settings.daily_sync_connection_job_timeout_seconds
+    }
+    assert "run_daily_connection_sync" in w.IN_PROCESS_JOBS
+
+
 def test_repo_index_timeout_reads_the_setting(monkeypatch):
     """The value comes from config, so an operator can raise it for a huge repo."""
     import types

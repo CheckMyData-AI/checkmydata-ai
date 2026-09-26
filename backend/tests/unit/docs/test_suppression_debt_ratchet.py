@@ -361,7 +361,12 @@ CEILINGS: dict[str, int] = {
     # The json parse in `stale_run_reaper._requeue_attempts` added in the same change is
     # NOT here: `json.loads` raises `ValueError` or `TypeError` and nothing else can, so
     # it is caught narrowly rather than spending this budget.
-    "except Exception": 670,
+    # 670 -> 672 on 2026-09-26 (T07d): the per-connection nightly job has two, both
+    # deliberate. `run_connection_sync` catches whatever the db index or sync raises so
+    # the link is RECORDED failed and the rest of the chain is still queued — one
+    # connection must not cost the others their night. `_finish_connection_run` guards
+    # bookkeeping: a failure to write the run's row must not raise out of the job.
+    "except Exception": 672,
     # 53 -> 55 on 2026-09-01, and this rise is the counter getting MORE accurate rather
     # than debt growing. The old regex required `except …:` and `pass` on consecutive
     # lines, so a comment between them hid the handler entirely. Two were hiding:
