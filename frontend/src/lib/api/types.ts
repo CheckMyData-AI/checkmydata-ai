@@ -1017,13 +1017,27 @@ export interface LossReportDTO {
   severity: string;
 }
 
+/**
+ * One row of `/projects/{id}/sync-history` — an `indexing_runs` row (B-28). The shape
+ * is pinned by `src/__tests__/fixtures/sync-history-run.json`, which the backend test
+ * also reads: this type once described the retired KnowledgeSyncRun row while the API
+ * returned this one, and the panel rendered "NaNd ago" with no icon and no error.
+ */
 export interface SyncHistoryRun {
   id: string;
+  kind: "daily_sync" | "analytics_collect" | string;
+  connection_id: string | null;
+  /** Lifecycle of the run. */
+  status: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled" | string;
+  /** What the run reported about itself (a completed sync may be partial); null = unknown. */
+  outcome: "success" | "partial" | "failed" | "skipped" | "ok" | string | null;
   trigger: string;
-  status: "success" | "partial" | "failed" | "skipped";
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
   duration_seconds: number | null;
-  error_message: string | null;
-  created_at: string;
+  error: string | null;
+  progress_pct: number;
   steps: Record<string, unknown> | null;
 }
 
