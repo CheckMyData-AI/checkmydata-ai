@@ -1332,7 +1332,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Preconditions:** scheduled daily syncs have run (or not)
 - **Steps:**
   1. User reviews the latest run summary and expands earlier runs
-- **Expected result:** per-run outcomes — the run's own verdict (success / partial / failed / skipped, or ok for a collection), when it ran, how many connections finished both steps, and the error a failed run recorded. The header summarises the latest **nightly** sync; analytics collections are listed as such
+- **Expected result:** per-run outcomes — the run's own verdict (success / partial / failed / skipped, or ok for a collection), when it ran, how many connections finished both steps, and the error a failed run recorded. The header summarises the latest **nightly** sync; analytics collections are listed as such. On a project with more than one connection each connection has its own row ("Nightly sync · one connection") with its own status, duration and error, written by its own job (T07d); the header summarises the repository row
 - **UI elements:** refresh button, per-run expanders, "Show all N runs"
 - **States covered:** loading, empty, error, success; per run: success, partial, failed, skipped, running/queued (lifecycle when no verdict yet)
 - **Errors & recovery:** fetch fails → inline "Could not load sync history". Empty: "No scheduled syncs yet." A run with unreadable metadata shows its lifecycle status rather than a guessed verdict

@@ -61,4 +61,20 @@ describe("SyncHistoryPanel", () => {
     render(<SyncHistoryPanel projectId="p1" />);
     expect(await screen.findByText(/No scheduled syncs yet/i)).toBeInTheDocument();
   });
+
+  // T07d: a multi-connection project writes one `daily_sync` row per connection after
+  // the repository row; the header speaks for the repository row only.
+  it("summarises the repository row and lists each connection's own row", async () => {
+    syncHistory.mockResolvedValue({
+      runs: [
+        row({ id: "c2", connection_id: "c2", outcome: "failed", error: "tunnel down", steps: null }),
+        row({ id: "parent", connection_id: null, outcome: "success", steps: null }),
+      ],
+    });
+    render(<SyncHistoryPanel projectId="p1" />);
+    expect(await screen.findByText(/Nightly sync:/)).toBeInTheDocument();
+    const header = screen.getByText(/Nightly sync:/).closest("div")!;
+    expect(header.textContent).toMatch(/success/);
+    expect(screen.getAllByText(/one connection/).length).toBeGreaterThan(0);
+  });
 });

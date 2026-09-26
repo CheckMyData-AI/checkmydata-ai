@@ -92,7 +92,10 @@ function RunRow({ run, isLatest }: { run: SyncHistoryRun; isLatest: boolean }) {
   const { label, tone } = verdict(run);
   const statusColor = TONE_COLOR[tone];
   const iconName = TONE_ICON[tone];
-  const kind = KIND_LABEL[run.kind] ?? run.kind;
+  const kind =
+    run.kind === "daily_sync" && run.connection_id
+      ? "Nightly sync · one connection"
+      : (KIND_LABEL[run.kind] ?? run.kind);
 
   const summary = [kind, label, ago, counts].filter(Boolean).join(" · ");
 
@@ -174,7 +177,10 @@ export function SyncHistoryPanel({ projectId }: SyncHistoryPanelProps) {
   }, [fetchHistory]);
 
   // The header speaks for the nightly sync; collections are listed below it (B-28).
-  const latest = runs?.find((r) => r.kind === "daily_sync") ?? null;
+  // The repository row (no connection_id). On a multi-connection project each
+  // connection writes its own `daily_sync` row after it (T07d), and those are listed
+  // below rather than summarised here.
+  const latest = runs?.find((r) => r.kind === "daily_sync" && !r.connection_id) ?? null;
   const latestVerdict = latest ? verdict(latest) : null;
   const latestWhen = latest ? latest.started_at ?? latest.created_at : null;
   const visibleRuns = showAll ? (runs ?? []) : (runs ?? []).slice(0, 5);
