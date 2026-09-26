@@ -173,11 +173,43 @@ async def _truncate_all(engine) -> None:
             await conn.execute(text(f"TRUNCATE {quoted} RESTART IDENTITY CASCADE"))
 
 
+async def _drain_background_work(timeout: float = 5.0) -> int:
+    """Cancel and await whatever a test left running in the background (B-21).
+
+    Route handlers start work with `spawn_tracked`, and in-process `task_queue`
+    fallbacks with `asyncio.create_task`. Neither is awaited by the request, so without
+    this they outlive the test that started them — and on SQLite every session shares
+    ONE physical connection (`StaticPool`, above). A leftover task that rolls back on
+    that connection can undo the NEXT test's flushed-but-uncommitted insert; that test
+    then commits nothing, finds the object in its identity map without a query, and its
+    `UPDATE` matches zero rows. `test_learnings_api` failed exactly that way
+    (`StaleDataError: expected to update 1 row(s); 0 were matched`) on 2026-09-23 and
+    2026-09-26, passing alone and on rerun. Returns how many tasks were cancelled.
+    """
+    import asyncio
+
+    from app.core import task_queue
+    from app.core.background import _BACKGROUND_TASKS
+
+    pending = [
+        t for t in (*_BACKGROUND_TASKS, *task_queue._fallback_tasks.values()) if not t.done()
+    ]
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.wait(pending, timeout=timeout)
+    task_queue._fallback_tasks.clear()
+    return len(pending)
+
+
 @pytest_asyncio.fixture()
 async def db_session(engine) -> AsyncGenerator[AsyncSession, None]:
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
         yield session
+        # Before the rollback and the truncate: a task still running would otherwise
+        # execute against the next test's rows on the shared connection (B-21).
+        await _drain_background_work()
         await session.rollback()
     await _truncate_all(engine)
 
