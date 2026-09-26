@@ -91,9 +91,8 @@ _GRANT_TRIGGER_PG = (
 #: **Resolved 2026-09-23.** The single-open-transaction model was replaced by emptying the
 #: tables after every test (`_truncate_all`), the harness commits like the application does,
 #: and every model is imported (`llm_credit` was missing). The suite is 698/698 on both
-#: engines. The CI job that runs it on `pgvector/pgvector:pg17` (`backend-integration-postgres`)
-#: is written and waits for a token allowed to change workflows (operator question Q2); until
-#: then run it with `TEST_DATABASE_URL=postgresql+asyncpg://…`.
+#: engines. CI runs it on `pgvector/pgvector:pg17` too (`backend-integration-postgres` in
+#: `.github/workflows/ci.yml`); locally, set `TEST_DATABASE_URL=postgresql+asyncpg://…`.
 #: Its first run found a real production defect the SQLite job could not: the request's
 #: session left aborted by a swallowed error in `resolve_account_key` (now a SAVEPOINT).
 _TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
