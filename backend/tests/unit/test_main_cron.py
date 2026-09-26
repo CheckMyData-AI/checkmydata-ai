@@ -12,7 +12,24 @@ from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 import app.main as main_mod
+
+
+@pytest.fixture(autouse=True)
+def _stub_the_process_vector_store(monkeypatch):
+    """`_freshness_reconcile` takes the process-wide store, and `get_vector_store` builds
+    a real one on first use — which depends on whatever configuration earlier tests in
+    the same process left behind. When that build raised, the reconciler's own
+    `except Exception` swallowed it and triggered nothing, so these tests failed in the
+    full suite and passed alone. `get_vector_store`'s docstring names the contract:
+    tests substitute the function, not the value it caches.
+    """
+    import app.knowledge.vector_store as vs
+
+    monkeypatch.setattr(vs, "get_vector_store", lambda: MagicMock())
+
 
 # ---------------------------------------------------------------------------
 # Helpers
