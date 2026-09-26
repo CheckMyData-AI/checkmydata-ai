@@ -38,6 +38,23 @@ from app.services.ssh_key_service import SshKeyService
 
 logger = logging.getLogger(__name__)
 
+
+def resume_checkpoint(checkpoint_force_full: bool | None, run_force_full: bool) -> bool:
+    """Whether a run continues the checkpoint it finds (KNOW-08, PRJ-06).
+
+    Only like continues like. An incremental run over a FULL checkpoint would read its
+    whole-tree `changed_files` as "everything changed" and redo a full rebuild while
+    calling itself incremental; a full run over an INCREMENTAL checkpoint would inherit
+    a diff it did not ask for. A full run over a full checkpoint continues it — the
+    rebuild interrupted at 63% resumes at 63% (PRJ-06; before 2026-09-26 every full
+    rebuild started over, so a restart mid-rebuild paid for the whole thing again).
+    `None` is a checkpoint written before the column existed: unknown, never resumed.
+    """
+    if checkpoint_force_full is None:
+        return False
+    return checkpoint_force_full == run_force_full
+
+
 router = APIRouter()
 _project_svc = ProjectService()
 _ssh_key_svc = SshKeyService()
@@ -717,21 +734,18 @@ async def _run_index_background(
                 # 7 200 s ceiling, while calling itself incremental. `force_full is None`
                 # is a checkpoint written before this column existed: unknown, and treated
                 # as full, because resuming an unknown as incremental is the mistake here.
-                if (
-                    existing_cp is not None
-                    and existing_cp.force_full is not False
-                    and not body.force_full
+                if existing_cp is not None and not resume_checkpoint(
+                    existing_cp.force_full, bool(body.force_full)
                 ):
                     logger.info(
-                        "index: not resuming project %s — its checkpoint came from a full "
-                        "rebuild (force_full=%r), which cannot be continued incrementally",
+                        "index: not resuming project %s — its checkpoint (force_full=%r) "
+                        "cannot be continued by a %s run",
                         project_id[:8],
                         existing_cp.force_full,
+                        "full" if body.force_full else "incremental",
                     )
-                if (
-                    existing_cp is not None
-                    and existing_cp.force_full is False
-                    and not body.force_full
+                if existing_cp is not None and resume_checkpoint(
+                    existing_cp.force_full, bool(body.force_full)
                 ):
                     existing_cp.workflow_id = wf_id
                     existing_cp.status = "running"

@@ -1030,17 +1030,25 @@ as a code change does. On 2026-09-09 a commit whose own text said "shipping rele
 through one is a losing race" orphaned the third consecutive rebuild. Before starting a
 full rebuild, finish merging.
 
-**It prevents loss, not repetition, and that is deliberate.** The replacement starts at
-`clone_or_pull`, because `force_full` is inherited and a full rebuild has no checkpoint to
-resume from — only a clean run reconciles what `save_incremental` merges by FILE, which is
-the whole reason the rebuild was full. So a full rebuild still needs an uninterrupted
-window, and shipping releases through one is a losing race: observed 2026-09-09, three
-consecutive runs orphaned at 63%, 33% and 33% of the way. What blunts the cost is the
-document cache — each attempt regenerates fewer documents than the last, because every one
-it finished recorded its `content_hash`. Verified in production: `1 put back` at 07:27:41
-and again at 08:04:45, both carrying `ORPHAN_ERROR` so neither spent the reaper's budget,
-and the replacement started 36 s after the first — against 300 s of waiting followed by a
-refusal.
+**Since 2026-09-26 it prevents repetition too (PRJ-06 T12a).** Until then the replacement
+started at `clone_or_pull`: the route created a fresh checkpoint whenever `force_full` was
+set, and `CheckpointService.create` deletes the old one, so a full rebuild had nothing to
+resume from — observed 2026-09-09, three consecutive runs orphaned at 63%, 33% and 33% of
+the way, each paying for the whole rebuild again (the document cache blunted it: each
+attempt regenerated fewer documents than the last). Now `repos.resume_checkpoint` lets
+like continue like — a full run continues a full checkpoint, an incremental one an
+incremental checkpoint, and neither the other (KNOW-08) — and the gated steps
+(`detect_changes`, `cross_file_analysis`, `code_symbol_embed`, per-document
+`generate_docs`) are skipped as they already were for incremental resumes. The rebuild
+stays CLEAN: `ast_parse` and `graph_build` are ungated, so a resumed full run re-parses the
+whole tree and saves the whole graph, which is what `save_incremental`'s merge-by-file
+cannot do. A resume is pinned to the tree its checkpoint describes
+(`pipeline_runner.pin_to_tree`, S-11): `clone_or_pull` moves the clone to the branch's
+current head, and the restored changed-file list, profile and cross-file analysis describe
+the checkpoint's; if that commit is gone, the recorded progress is discarded
+(`CheckpointService.reset_progress`) and the run starts from the top. The orphan sweep's
+`ORPHAN_ERROR` requeue is what reaches this path — verified in production earlier as `1 put
+back` 36 s after a restart.
 
 Second, `_requeue_attempts` no longer counts a reap whose run started under a different
 release. An unstamped run still counts — unknown means counted, or the bound stops
