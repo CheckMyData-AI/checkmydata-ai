@@ -37,9 +37,15 @@ export function PendingInvites() {
     try {
       await api.invites.accept(inviteId);
       setInvites((prev) => prev.filter((i) => i.id !== inviteId));
-      const projects = await api.projects.list();
-      setProjects(projects);
       toast("Invite accepted", "success");
+      // The accept has already happened. A failed refresh is reported as a refresh
+      // failure — reporting it through the accept's catch told the user an invitation
+      // they HAD accepted had failed (SCN-014).
+      try {
+        setProjects(await api.projects.list());
+      } catch {
+        toast("You joined the project, but the list could not refresh. Reload the page to see it.", "error");
+      }
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to accept invite", "error");
     } finally {

@@ -12,7 +12,7 @@ human review moves them to `validated`.
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-09-18 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-09-23 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -23,11 +23,11 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 |---|---|
 | Scenarios | **154** |
 | Status | draft × 12, implemented × 142 |
-| Last verdict | PARTIAL × 1, PASS × 141, no verdict × 12 |
-| Verified when | 2026-07-19 × 94, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 2, undated × 12 |
-| **Verified >30 days ago** | **94 of 154** (oldest 61 days) |
+| Last verdict | PARTIAL × 7, PASS × 135, no verdict × 12 |
+| Verified when | 2026-07-19 × 80, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 2, 2026-09-23 × 14, undated × 12 |
+| **Verified >30 days ago** | **92 of 154** (oldest 66 days) |
 | Never verified (no date) | 12 |
-| Referenced from code or tests | **39 of 154** |
+| Referenced from code or tests | **46 of 154** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -43,28 +43,28 @@ it is what moves it.
 | ID | Title | Feature | Persona | Status | Last audit |
 |----|-------|---------|---------|--------|------------|
 | SCN-001 | First-run onboarding wizard — happy path | onboarding | new-user | implemented | 2026-08-31 PASS |
-| SCN-002 | Onboarding — connection test fails, retry/edit | onboarding | new-user | implemented | 2026-07-19 PASS |
+| SCN-002 | Onboarding — connection test fails, retry/edit | onboarding | new-user | implemented | 2026-09-23 PARTIAL → fixed |
 | SCN-003 | Onboarding — skip setup / try demo | onboarding | new-user | implemented | 2026-08-20 PASS (seeded, read-only, deduped) |
-| SCN-004 | Request project access (non-approved user) | onboarding | new-user | implemented | 2026-07-19 PASS |
+| SCN-004 | Request project access (non-approved user) | onboarding | new-user | implemented | 2026-09-23 PARTIAL → fixed |
 | SCN-005 | Register with email + password | auth | new-user | implemented | 2026-08-31 PASS |
 | SCN-006 | Log in with email + password | auth | analyst | implemented | 2026-08-31 PASS |
-| SCN-007 | Sign in with Google | auth | analyst | implemented | 2026-07-19 PASS |
+| SCN-007 | Sign in with Google | auth | analyst | implemented | 2026-09-23 PASS |
 | SCN-008 | Log out | auth | analyst | implemented | 2026-08-25 PASS |
-| SCN-009 | Change password | auth | analyst | implemented | 2026-07-19 PASS |
-| SCN-010 | Delete account | auth | analyst | implemented | 2026-07-19 PASS |
+| SCN-009 | Change password | auth | analyst | implemented | 2026-09-23 PASS |
+| SCN-010 | Delete account | auth | analyst | implemented | 2026-09-23 PARTIAL → fixed |
 | SCN-011 | Session expiry → forced re-login | auth | analyst | implemented | 2026-08-25 PASS |
 | SCN-012 | Email verification after registration | auth | new-user | implemented | 2026-08-25 PASS |
 | SCN-013 | Forgot / reset password | auth | analyst | implemented | 2026-08-25 PASS |
-| SCN-014 | Accept a pending project invite | invites | analyst | implemented | 2026-07-19 PASS |
+| SCN-014 | Accept a pending project invite | invites | analyst | implemented | 2026-09-23 PASS |
 | SCN-015 | Decline / reject an invite | invites | analyst | implemented | 2026-08-25 PASS (line refs corrected) |
-| SCN-016 | Create a project | projects | owner | implemented | 2026-07-19 PASS |
-| SCN-017 | Switch between projects (multi-entity) | projects | analyst | implemented | 2026-07-19 PASS |
-| SCN-018 | Edit a project | projects | owner | implemented | 2026-07-19 PASS |
-| SCN-019 | Delete a project | projects | owner | implemented | 2026-07-19 PASS |
-| SCN-020 | Project overview — no project / empty | projects | analyst | implemented | 2026-07-19 PASS |
-| SCN-021 | Invite a member & set role | members | owner | implemented | 2026-07-19 PASS |
-| SCN-022 | Change a member's role | members | owner | implemented | 2026-07-19 PASS |
-| SCN-023 | Remove a member | members | owner | implemented | 2026-07-19 PASS |
+| SCN-016 | Create a project | projects | owner | implemented | 2026-09-23 PARTIAL → fixed |
+| SCN-017 | Switch between projects (multi-entity) | projects | analyst | implemented | 2026-09-23 PASS |
+| SCN-018 | Edit a project | projects | owner | implemented | 2026-09-23 PARTIAL → fixed |
+| SCN-019 | Delete a project | projects | owner | implemented | 2026-09-23 PASS |
+| SCN-020 | Project overview — no project / empty | projects | analyst | implemented | 2026-09-23 PASS |
+| SCN-021 | Invite a member & set role | members | owner | implemented | 2026-09-23 PARTIAL → fixed |
+| SCN-022 | Change a member's role | members | owner | implemented | 2026-09-23 PASS |
+| SCN-023 | Remove a member | members | owner | implemented | 2026-09-23 PASS |
 | SCN-024 | Resend / revoke a pending invite | members | owner | implemented | 2026-07-19 PASS |
 | SCN-025 | Add a DB connection | connections | owner | implemented | 2026-07-19 PASS |
 | SCN-026 | Add connection via connection-string autofill | connections | owner | implemented | 2026-07-19 PASS |
@@ -260,9 +260,10 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** user can correct credentials and re-test without leaving the wizard
 - **UI elements:** test spinner "Testing connection...", failure block, error message, "Edit connection" button, "Retry" button
 - **States covered:** loading, error
-- **Errors & recovery:** this scenario IS the error path; retry re-runs the test, edit returns to step 0 (`OnboardingWizard.tsx:515-544,178-181`)
+- **Errors & recovery:** this scenario IS the error path; Retry re-runs the test; Edit returns to step 0 and re-submitting **updates the connection that failed** (`PATCH /connections/{id}`) rather than creating another (`OnboardingWizard.tsx` `handleCreateConnection`, `handleTestConnection`, step-1 render)
 - **Status:** implemented
-- **Coverage:** components/onboarding/OnboardingWizard.tsx:498-547
+- **Coverage:** components/onboarding/OnboardingWizard.tsx (handleCreateConnection, handleTestConnection, renderStep case 1); tests frontend/src/__tests__/components/OnboardingWizard.test.tsx ("when the connection test fails")
+- **Audit note (2026-09-23):** PARTIAL → fixed. Re-submitting after "Edit connection" called `connections.create` again, so every failed attempt stayed in the project and spent the plan's connection quota (`base` allows 5). It now updates the connection it created. The failure path had no test at all; it has two now.
 
 ### SCN-003: Onboarding — skip setup / try demo
 - **Persona:** new-user
@@ -283,7 +284,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 ### SCN-004: Request project access (non-approved user)
 - **Persona:** new-user
 - **Feature:** onboarding
-- **Entry point:** onboarding step 0 when `!user.can_create_projects`, or the "New project" action for a non-approved user (`OnboardingWizard.tsx:310-315`, `ProjectSelector.tsx:277-288`)
+- **Entry point:** `OnboardingWizard` step 0 when `!canCreate && email_verified !== false`, or the "New" project action for a non-approved user (`ProjectSelector` createRequested effect)
 - **Preconditions:** authenticated, not permitted to create projects
 - **Steps:**
   1. User sees the approval notice and clicks "Request project access"
@@ -292,10 +293,11 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** confirmation panel "Request sent" + toast; user can dismiss with "Got it"
 - **UI elements:** "Request project access" button, email/description/message inputs, "Send request" button, success panel, "Got it" button, FormModal close
 - **States covered:** loading, success, error
-- **Errors & recovery:** submit fails → toast "Failed to send request" (`RequestAccessModal.tsx:40`)
+- **Errors & recovery:** submit fails → toast with the server message, else "Failed to send request"; limit 3/hour; **the email could not be sent → 503 "Your request could not be delivered…" shown as a toast, and no "Request sent" panel** (`projects.py` `request_project_access`)
 - **Reached far less often since 2026-09-02:** `can_create_projects` defaulted to False and **no code path anywhere granted it** — this very screen's "Send request" emails a human and returns ok, setting nothing. So every signup landed here about forty seconds in, and the queue was drained by hand. The right is now granted the moment the address is proven owned: at email verification, and at creation for a Google login. This scenario survives for the two cases that remain — an account whose right was revoked, and a self-hosted install with no mail configured — and the wall a user hits before verifying now says *verify your email*, with the resend link, instead of *request access*.
 - **Status:** implemented
-- **Coverage:** components/projects/RequestAccessModal.tsx:26,38-73,90-132; backend/app/api/routes/projects.py:152-169; backend/app/services/auth_service.py (verify_email, find_or_create_google_user); tests backend/tests/unit/test_project_access_grant.py, backend/tests/integration/test_projects.py
+- **Coverage:** components/projects/RequestAccessModal.tsx (RequestAccessModal, handleSubmit); components/onboarding/OnboardingWizard.tsx (renderStep case 0); components/projects/ProjectSelector.tsx (createRequested effect); backend/app/api/routes/projects.py (request_project_access, create_project); backend/app/services/auth_service.py (verify_email, find_or_create_google_user); tests backend/tests/unit/test_project_access_grant.py, backend/tests/integration/test_projects.py (test_access_request_endpoint, test_an_undelivered_access_request_is_not_reported_as_sent), frontend/src/__tests__/components/ProjectSelector.test.tsx, frontend/src/__tests__/components/VerificationIsNotApproval.test.tsx
+- **Audit note (2026-09-23):** PARTIAL → fixed. The route discarded `send_access_request_email`'s result and always answered `ok`. The email is the only record of the request, so on an install with no mail configured (one of the two cases this scenario survives for) the user read "Request sent" about a request that went nowhere. A failed send is now a 503.
 
 ## auth
 
@@ -338,12 +340,12 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User clicks the rendered Google button
   2. User completes Google auth; credential + CSRF token exchanged
-- **Expected result:** pre-verified session, redirect to `/app`
+- **Expected result:** pre-verified session, redirect to a safe same-origin `next`, else `/app` (`resolveRedirect`)
 - **UI elements:** GIS button, "Signing in with Google..." disabled state
 - **States covered:** loading, error, success
-- **Errors & recovery:** exchange fails → toast "Google sign-in failed" + store error (`auth-store.ts:131-135`); button absent entirely if Google not configured
+- **Errors & recovery:** exchange fails → toast with the server's message, else "Google sign-in failed", plus store error; button absent entirely if Google not configured
 - **Status:** implemented
-- **Coverage:** app/login/page.tsx:61-96,256-273; stores/auth-store.ts:125-136
+- **Coverage:** app/login/page.tsx (handleGoogleResponse, GIS init effect); stores/auth-store.ts (googleLogin); backend/app/api/routes/auth.py (google_login); tests frontend/src/__tests__/components/LoginPage.test.tsx (Google sign-in), backend/tests/integration/test_auth.py (test_google_*), backend/tests/unit/test_project_access_grant.py::test_a_google_signup_gets_it_at_creation
 
 ### SCN-008: Log out
 - **Persona:** analyst
@@ -371,9 +373,10 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** toast "Password changed successfully"; form closes
 - **UI elements:** current-password input, new-password input, Cancel, Save ("Saving...")
 - **States covered:** loading, error, success
-- **Errors & recovery:** new password <8 → toast; API fails → toast (server msg or "Failed to change password") (`AccountMenu.tsx:114-124`)
+- **Errors & recovery:** new password <8 → the browser's native validation message (`required minLength={8}`; the in-code toast is only a fallback); wrong current password → 401 "Current password is incorrect" toast; other failures → toast (server msg or "Failed to change password")
 - **Status:** implemented
-- **Coverage:** components/auth/AccountMenu.tsx:107-175; components/settings/SettingsPanel.tsx:224-258
+- **Coverage:** components/auth/AccountMenu.tsx (PasswordForm); components/settings/SettingsPanel.tsx (PasswordForm); backend/app/api/routes/auth.py (change_password); tests frontend/src/__tests__/components/AccountMenu.test.tsx (show/hide only), backend/tests/integration/test_auth.py (test_change_password_*), backend/tests/integration/test_auth_extended.py (test_change_password_*)
+- **Audit note (2026-09-23):** PASS with corrected text: the "<8 → toast" branch never runs in a browser, because the input's own validation blocks the submit first. No frontend test exercises the submit.
 
 ### SCN-010: Delete account
 - **Persona:** analyst
@@ -387,9 +390,10 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** account deleted, toast "Account deleted", user logged out
 - **UI elements:** type-to-confirm input, "This action cannot be undone" warning, Cancel, Delete (disabled until `DELETE`, "Deleting...")
 - **States covered:** loading, error, success
-- **Errors & recovery:** API fails → toast "Failed to delete account" (`AccountMenu.tsx:189`). Destructive-confirm: inline typed-`DELETE` gate (bespoke, not the global ConfirmModal)
+- **Errors & recovery:** API fails → toast with the server message, else "Failed to delete account" (`DeleteConfirm.handleDelete`, in both AccountMenu and SettingsPanel). Destructive-confirm: inline typed-`DELETE` gate (bespoke, not the global ConfirmModal)
 - **Status:** implemented
-- **Coverage:** components/auth/AccountMenu.tsx:177-227; components/settings/SettingsPanel.tsx:263-310
+- **Coverage:** components/auth/AccountMenu.tsx (DeleteConfirm); components/settings/SettingsPanel.tsx (DeleteConfirm); backend/app/api/routes/auth.py (delete_account); tests frontend/src/__tests__/components/DeleteAccountWarning.test.tsx, backend/tests/integration/test_auth.py (test_delete_account_*), backend/tests/integration/test_auth_extended.py, backend/tests/integration/test_auth_cascade.py
+- **Audit note (2026-09-23):** PARTIAL → fixed. The form exists twice, and the Settings copy had lost "This action cannot be undone". A test now pins the warning on both copies.
 
 ### SCN-011: Session expiry → forced re-login
 - **Persona:** analyst
@@ -450,9 +454,10 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** row removed, projects reloaded, toast "Invite accepted"
 - **UI elements:** invite row, "Accept" button (shows "..."), Spinner while list loads
 - **States covered:** loading, empty (banner hidden when none), error, success
-- **Errors & recovery:** load fails (non-401) → toast; accept fails → toast "Failed to accept invite" (`PendingInvites.tsx:20-23,42`)
+- **Errors & recovery:** load fails (non-401) → toast; accept fails → toast (server msg, e.g. 403 for an unverified email, else "Failed to accept invite"); **accept succeeds but the project reload fails → "Invite accepted" and a separate refresh-failure toast** (`PendingInvites.tsx` `load`, `handleAccept`)
 - **Status:** implemented
-- **Coverage:** components/invites/PendingInvites.tsx:29-73
+- **Coverage:** components/invites/PendingInvites.tsx (load, handleAccept); lib/api/workspace.ts (invites.accept, listPending); backend/app/api/routes/invites.py (accept_invite, list_pending_invites); tests frontend/src/__tests__/components/PendingInvites.test.tsx ("PendingInvites accept"), backend/tests/integration/test_invites.py (test_accept_invite_creates_membership, test_pending_invites_endpoint), backend/tests/unit/test_invite_service.py::test_an_unverified_user_cannot_accept
+- **Audit note (2026-09-23):** PASS; minor defect fixed. A failed project-list reload after a successful accept went through the accept's catch, so the user was told an invitation they had accepted had failed.
 
 ### SCN-015: Decline / reject an invite
 - **Persona:** analyst
@@ -473,18 +478,19 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 ### SCN-016: Create a project
 - **Persona:** owner
 - **Feature:** projects
-- **Entry point:** sidebar "New project" action → "New Project" FormModal
+- **Entry point:** sidebar Project header "New" button, or the Getting Started "Create your first project" step
 - **Preconditions:** authenticated with `can_create_projects` — held by every user whose email address is verified (2026-09-02); before that the flag had no grant path at all and this scenario was unreachable for a self-signup
 - **Steps:**
   1. User opens New Project
   2. User enters a name, optionally a Git repo URL (+ SSH key/branch), optionally LLM models
   3. User clicks "Create"
-- **Expected result:** project created, prepended, set active; toast "Project created"
+- **Expected result:** project created, prepended, and **entered through the same path as picking it** — connections, sessions and role reset and reloaded; toast "Project created"
 - **UI elements:** name input, repo URL input, SSH key select, branch select/input, LLM "details", "Use Agent model" checkbox, Create button
 - **States covered:** loading (repo access check), error, success
-- **Errors & recovery:** empty name → inline "Name is required"; repo access denied → inline red text; SSH URL without key → inline "add an SSH key first"; create fails → toast (`ProjectSelector.tsx:296-299,322-327,512-538`)
+- **Errors & recovery:** empty name → inline "Name is required"; repo access denied → inline red text; SSH URL without key → inline "add an SSH key first"; plan limit → 402 toast, duplicate name → 409 toast; other failures → toast (`ProjectSelector.tsx` `handleCreate`, `runAccessCheck`)
 - **Status:** implemented
-- **Coverage:** components/projects/ProjectSelector.tsx:461-655; components/Sidebar.tsx:494
+- **Coverage:** components/projects/ProjectSelector.tsx (handleCreate → handleSelect, runAccessCheck, formUI); components/Sidebar.tsx (setProjCreateReq); backend/app/api/routes/projects.py (create_project); tests frontend/src/__tests__/components/ProjectSelector.test.tsx ("a new project does not inherit…"), backend/tests/integration/test_projects.py (test_create_*, test_eligible_user_can_create)
+- **Audit note (2026-09-23):** PARTIAL → fixed. `handleCreate` only called `setActiveProject`, so the new project showed the previous project's connections, active connection, chat sessions and role under its own name.
 
 ### SCN-017: Switch between projects (multi-entity)
 - **Persona:** analyst
@@ -496,14 +502,14 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** active project + role swap; connections and chat sessions reload; first connection auto-selected; a welcome session ensured when none exist
 - **UI elements:** project row (role="button"), active indicator, role badge, per-row Spinner
 - **States covered:** loading, error, success
-- **Errors & recovery:** parallel load fails → toast "Failed to load project data", connections/sessions reset, and an inline error + Retry rendered in the connections list instead of a deceptive "No connections yet" (audit M5; `connectionsError` in app-store); stale responses ignored via sequence guard (`ProjectSelector.tsx:379-431`)
+- **Errors & recovery:** parallel load fails → toast with the error's own message ("Failed to load project data" is the fallback), connections/sessions reset, and an inline error + Retry rendered in the connections list instead of a deceptive "No connections yet" (audit M5; `connectionsError` in app-store); stale responses ignored via sequence guard (`ProjectSelector.tsx` `handleSelect`)
 - **Status:** implemented
-- **Coverage:** components/projects/ProjectSelector.tsx:379-431,679-729; components/connections/ConnectionSelector.tsx:118-136,1097-1103
+- **Coverage:** components/projects/ProjectSelector.tsx (handleSelect, project row); components/connections/ConnectionSelector.tsx (handleRetryLoad, ListError branch); test frontend/src/__tests__/components/ProjectSelector.test.tsx ("clicking project calls setActiveProject")
 
 ### SCN-018: Edit a project
 - **Persona:** owner
 - **Feature:** projects
-- **Entry point:** hover a project row → pencil "Edit project" (owner only), or the active-project edit trigger
+- **Entry point:** hover a project row → pencil "Edit project" (owner only), or the edit trigger fired by the sidebar checklist step 3, ReadinessGate and the Data panel's "Connect a repository" — **the trigger opens the form for the owner only**; anyone else gets "Only the project owner can…"
 - **Preconditions:** owner of the project
 - **Steps:**
   1. User opens Edit Project
@@ -512,9 +518,10 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** toast "Project updated"; row reflects changes
 - **UI elements:** same FormModal as create titled "Edit Project", Save Changes, Cancel
 - **States covered:** error, success
-- **Errors & recovery:** empty name → inline; update fails → toast "Failed to update project" (`ProjectSelector.tsx:341-344,371-376`)
+- **Errors & recovery:** empty name → inline; update fails → toast "Failed to update project" (`ProjectSelector.tsx` `handleEdit`, `handleUpdate`); non-owner trigger → info toast, no form
 - **Status:** implemented
-- **Coverage:** components/projects/ProjectSelector.tsx:253-261,640-655
+- **Coverage:** components/projects/ProjectSelector.tsx (handleEdit, handleUpdate, triggerProjectEdit effect); components/workspace/DataWorkspace.tsx (repository row); backend/app/api/routes/projects.py (update_project); tests frontend/src/__tests__/components/ProjectSelector.test.tsx ("edit button opens edit form", "an edit trigger …"), backend/tests/integration/test_projects.py (test_update_project, test_viewer_can_get_but_not_update_or_delete)
+- **Audit note (2026-09-23):** PARTIAL → fixed. The edit trigger had no role check, and the Data panel offered "Connect a repository" to everyone, so a viewer or editor got the Edit Project form and a 403 on Save. The check now lives in the one effect every trigger reaches, and the Data panel tells a non-owner to ask the owner.
 
 ### SCN-019: Delete a project
 - **Persona:** owner
@@ -528,9 +535,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** project removed; if active, active project/connections/sessions cleared
 - **UI elements:** trash ActionButton, ConfirmModal (severity critical, detail, type-to-confirm the project name)
 - **States covered:** error, success
-- **Errors & recovery:** delete fails → toast "Failed to delete project" (`ProjectSelector.tsx:451-455`)
+- **Errors & recovery:** delete fails → toast (server msg, else "Failed to delete project"); IntegrityError → 409 (`ProjectSelector.tsx` `handleDelete`)
 - **Status:** implemented
-- **Coverage:** components/projects/ProjectSelector.tsx:429-455; components/ui/ConfirmModal.tsx:64,126-127
+- **Coverage:** components/projects/ProjectSelector.tsx (handleDelete); components/ui/ConfirmModal.tsx (confirmAction, needsTyping); backend/app/api/routes/projects.py (delete_project); tests frontend/src/__tests__/components/ConfirmModal.test.tsx, frontend/src/__tests__/components/ProjectSelector.test.tsx ("delete button exists…"), backend/tests/integration/test_projects.py::test_delete_project
 
 ### SCN-020: Project overview — no project / empty
 - **Persona:** analyst
@@ -540,11 +547,11 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User views the overview panel
 - **Expected result:** clear guidance — "Select a project to see its overview", "No connections configured yet", "No recent pipeline errors"
-- **UI elements:** folder icon empty states, embedded HomeAsk / ConnectionHealth / KnowledgeHealth / Usage panels
+- **UI elements:** folder icon on the no-project state; text-only for no connections; a "Select a connection from the sidebar" state; embedded HomeAsk / ConnectionHealth / KnowledgeHealth / Usage panels
 - **States covered:** empty
 - **Errors & recovery:** read-only surface; last 5 failed pipeline log entries shown
 - **Status:** implemented
-- **Coverage:** components/projects/ProjectOverview.tsx:36-90
+- **Coverage:** components/projects/ProjectOverview.tsx (ProjectOverview); app/app/page.tsx; test frontend/src/__tests__/components/ProjectOverviewConnection.test.tsx (labelling only; the empty states have no test)
 
 ## members
 
@@ -556,12 +563,13 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User types an email, picks a role (Editor/Viewer)
   2. User clicks "Invite" (or presses Enter)
-- **Expected result:** toast "Invite sent"; invite appears under Pending
+- **Expected result:** toast "Invite sent" **only when the backend reports `email_sent`**; invite appears under Pending either way
 - **UI elements:** email input, role select, Invite button, close (X)
 - **States covered:** loading, error, success
-- **Errors & recovery:** invite fails → inline error text; load fails → toast "Failed to load access data" (`InviteManager.tsx:86,66`)
+- **Errors & recovery:** invite fails → inline error text; load fails → toast "Failed to load access data"; **invite created but the email not delivered (`email_sent=false`) → error toast saying so, with Resend as the recovery; a resend that did not go out says so too** (`InviteManager.tsx` `handleInvite`, `handleResend`, `refresh`)
 - **Status:** implemented
-- **Coverage:** components/projects/InviteManager.tsx:186-210; components/projects/ProjectSelector.tsx:733-773
+- **Coverage:** components/projects/InviteManager.tsx (handleInvite, handleResend, refresh); components/projects/ProjectSelector.tsx (AccessModal); components/settings/SettingsPanel.tsx ("Team & Invites", owner only); backend/app/api/routes/invites.py (create_invite, resend_invite); tests frontend/src/__tests__/components/InviteManager.test.tsx ("the invite email"), backend/tests/integration/test_invites.py (test_owner_can_create_invite, test_non_owner_cannot_create_invite), backend/tests/unit/test_invite_service.py::test_rejects_duplicate_pending_invite
+- **Audit note (2026-09-23):** PARTIAL → fixed. The backend has reported `email_sent` since F-PROJ-06, and the UI ignored it on both create and resend, toasting success on a send that failed.
 
 ### SCN-022: Change a member's role
 - **Persona:** owner
@@ -573,11 +581,12 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** toast "Role updated" (applied optimistically)
 - **UI elements:** per-member role select
 - **States covered:** loading, error, success
-- **Errors & recovery:** update fails → optimistic revert + toast (`InviteManager.tsx:158-161`). Note: role change has no confirm dialog
+- **Errors & recovery:** update fails → optimistic revert + toast (`InviteManager.tsx` `handleRoleChange`); owner's role → 400. Note: role change has no confirm dialog
 - **`owner` is not one of the choices, by design (F-PROJ-10):** the select offers `editor`/`viewer` and the route's schema accepts only those. Ownership moves through SCN-126, which enforces the receiving owner's plan quota and keeps `Project.owner_id` and the member row in step; allowing "owner" here would be a second, unguarded path to the same state.
 - **The member list is bounded (F-PROJ-13):** the API returns at most 500 members (hard maximum 1000) and marks a partial page with `X-Result-Capped: true`, carrying the real total in `X-Total-Count`. A team that large is not a case this product has met, but a page returned with no marker would read as the whole team — which is the same shape as a truncated query result reported as a total.
 - **Status:** implemented
-- **Coverage:** components/projects/InviteManager.tsx:237-254,149-165
+- **Coverage:** components/projects/InviteManager.tsx (handleRoleChange); backend/app/api/routes/invites.py (update_member_role, list_members); tests frontend/src/__tests__/components/InviteManager.test.tsx ("changing role calls updateMemberRole API"), backend/tests/integration/test_invites.py (test_owner_can_update_member_role, test_cannot_update_owner_role, test_update_role_invalid_value)
+- **Audit note (2026-09-23):** PASS, one open gap (backlog B-26): the members API marks a capped list with `X-Result-Capped` (F-PROJ-13), and the UI never reads it, so a capped list is labelled "Members (N)" as if complete.
 
 ### SCN-126: Transfer project ownership
 - **Persona:** owner
@@ -632,9 +641,9 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** toast "Member removed"; member row gone
 - **UI elements:** "Remove" button, ConfirmModal (warning, no type-to-confirm)
 - **States covered:** error, success
-- **Errors & recovery:** remove fails → toast (`InviteManager.tsx:145`)
+- **Errors & recovery:** remove fails → toast; owner → 400; unknown member → 404 (`InviteManager.tsx` `handleRemoveMember`)
 - **Status:** implemented
-- **Coverage:** components/projects/InviteManager.tsx:256-264,131-146
+- **Coverage:** components/projects/InviteManager.tsx (handleRemoveMember); backend/app/api/routes/invites.py (remove_member); tests frontend/src/__tests__/components/InviteManager.test.tsx ("clicking remove calls removeMember API"), backend/tests/integration/test_invites.py (test_owner_can_remove_non_owner_member, test_non_owner_cannot_remove_members)
 
 ### SCN-024: Resend / revoke a pending invite
 - **Persona:** owner

@@ -221,4 +221,58 @@ describe("ProjectSelector", () => {
     expect(onHandled).toHaveBeenCalled();
     expect(screen.getByTestId("request-access-modal")).toBeInTheDocument();
   });
+
+  // SCN-016: a created project is entered through the same path as a picked one —
+  // `setActiveProject` alone left the previous project's data under the new name.
+  it("a new project does not inherit the previous project's connections or role", async () => {
+    const old = makeProject({ id: "p-old", name: "Old", user_role: "viewer" });
+    const created = makeProject({ id: "p-new", name: "Fresh", user_role: "owner" });
+    (api.projects.create as ReturnType<typeof vi.fn>).mockResolvedValue(created);
+    (api.connections.listByProject as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.chat.listSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    useAppStore.setState({
+      projects: [old],
+      activeProject: old,
+      userRole: "viewer",
+      connections: [{ id: "c-old", name: "old-db" } as never],
+      activeConnection: { id: "c-old", name: "old-db" } as never,
+      chatSessions: [{ id: "s-old", project_id: "p-old", title: "old chat" } as never],
+    });
+
+    const { ProjectSelector } = await import("@/components/projects/ProjectSelector");
+    render(<ProjectSelector createRequested={true} onCreateHandled={() => {}} />);
+    await userEvent.type(screen.getByPlaceholderText("Project name"), "Fresh");
+    await userEvent.click(screen.getByText("Create"));
+
+    await waitFor(() => expect(api.connections.listByProject).toHaveBeenCalledWith("p-new"));
+    const state = useAppStore.getState();
+    expect(state.activeProject?.id).toBe("p-new");
+    expect(state.userRole).toBe("owner");
+    expect(state.connections).toEqual([]);
+    expect(state.activeConnection).toBeNull();
+    expect(state.chatSessions.find((x) => x.id === "s-old")).toBeUndefined();
+  });
+
+  // SCN-018: every "edit the project" trigger lands in one effect; the form saves through
+  // an owner-only PATCH, so a non-owner must not be handed it.
+  it("an edit trigger opens the form for the owner", async () => {
+    const project = makeProject({ id: "p1", name: "Alpha", user_role: "owner" });
+    useAppStore.setState({ projects: [project], activeProject: project, userRole: "owner" });
+    await renderSelector();
+    useAppStore.getState().setTriggerProjectEdit(true);
+    expect(await screen.findByText("Save Changes")).toBeInTheDocument();
+  });
+
+  it("an edit trigger does not open the form for a non-owner, and says why", async () => {
+    const project = makeProject({ id: "p1", name: "Alpha", user_role: "editor" });
+    useAppStore.setState({ projects: [project], activeProject: project, userRole: "editor" });
+    const { toast } = await import("@/stores/toast-store");
+    await renderSelector();
+    useAppStore.getState().setTriggerProjectEdit(true);
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(expect.stringContaining("Only the project owner"), "info"),
+    );
+    expect(screen.queryByText("Save Changes")).not.toBeInTheDocument();
+    expect(useAppStore.getState().triggerProjectEdit).toBe(false);
+  });
 });

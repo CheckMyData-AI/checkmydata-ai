@@ -301,7 +301,7 @@ export function DataWorkspace() {
   const activeProject = useAppStore((s) => s.activeProject);
   const connections = useAppStore((s) => s.connections);
   const setConnections = useAppStore((s) => s.setConnections);
-  const { canEdit } = usePermission();
+  const { canEdit, canManageProject } = usePermission();
   const { setPanel } = useAppPanel();
   const [docCount, setDocCount] = useState<number | null>(null);
 
@@ -427,13 +427,22 @@ export function DataWorkspace() {
               {/* The panel stated the absence and offered nothing. `repo_url` lives
                   on the project, so the control is the project form — the same one
                   the sidebar's checklist opens. */}
-              <button
-                type="button"
-                onClick={() => setTriggerProjectEdit(true)}
-                className="text-sm text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring rounded"
-              >
-                Connect a repository
-              </button>
+              {/* The project form saves as owner only (PATCH /projects/{id} requires
+                  it), so a viewer or editor offered this button got the form and a
+                  403 on Save — SCN-018. */}
+              {canManageProject ? (
+                <button
+                  type="button"
+                  onClick={() => setTriggerProjectEdit(true)}
+                  className="text-sm text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring rounded"
+                >
+                  Connect a repository
+                </button>
+              ) : (
+                <span className="text-meta text-text-muted">
+                  Ask the project owner to connect one.
+                </span>
+              )}
               <span className="text-meta text-text-muted"> · </span>
               <LoadDemoDataButton className="text-sm text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring rounded" />
             </div>

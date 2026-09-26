@@ -224,8 +224,15 @@ async def request_project_access(
     body: AccessRequestBody,
     user: dict = Depends(get_current_user),
 ):
-    """Submit a request to be granted project creation privileges."""
-    await _email_svc.send_access_request_email(
+    """Submit a request to be granted project creation privileges.
+
+    The email IS the request — nothing else records it for a human to act on — so a send
+    that did not happen is answered 503, never ``ok``. It used to return ``ok`` whatever
+    ``send_access_request_email`` said, and on an install with no mail configured (one of
+    the two cases SCN-004 survives for) the user read "Request sent" about a request that
+    went nowhere. See docs/ux/scenarios.md SCN-004.
+    """
+    email_sent = await _email_svc.send_access_request_email(
         requester_email=body.email,
         description=body.description,
         message=body.message,
@@ -234,8 +241,20 @@ async def request_project_access(
     audit_log(
         "project.access_request",
         user_id=user["user_id"],
-        detail=body.email,
+        detail=f"{body.email} email_sent={bool(email_sent)}",
     )
+    if not email_sent:
+        logger.warning(
+            "access request from user %s could not be emailed; nothing was delivered",
+            user["user_id"],
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Your request could not be delivered: this server cannot send email "
+                "right now. Contact the administrator of this installation directly."
+            ),
+        )
     return {"ok": True}
 
 

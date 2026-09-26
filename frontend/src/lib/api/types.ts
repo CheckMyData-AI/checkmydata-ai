@@ -29,6 +29,8 @@ export interface ProjectInvite {
   created_at: string | null;
   accepted_at: string | null;
   project_name: string | null;
+  /** Set on create only: `false` means the invite exists but its email never left (F-PROJ-06). */
+  email_sent?: boolean | null;
 }
 
 export interface ProjectMember {

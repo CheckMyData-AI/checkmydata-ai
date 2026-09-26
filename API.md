@@ -65,7 +65,7 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 | GET | `/api/projects/{id}/pipeline-status` | Unified repo/DB index/code-DB sync running state |
 | GET | `/api/projects/{id}/knowledge-health` | Knowledge freshness panel data |
 | GET | `/api/projects/{id}/sync-history?limit=N` | Recent scheduled background runs (viewer) — the nightly knowledge sync (`kind: "daily_sync"`) and each analytics connection's collection (`kind: "analytics_collect"`, carrying `connection_id`), newest-first across both. Returns `{"runs": [{id, kind, connection_id, status, trigger, started_at, finished_at, duration_seconds, error, progress_pct}]}`. `started_at` / `finished_at` are ISO-8601 strings or `null`; `error` is the failure message (or `null`); `duration_seconds` is `null` until the run finishes. `limit` clamped to 1–50, default 20. |
-| POST | `/api/projects/access-requests` | Request the privilege to create projects |
+| POST | `/api/projects/access-requests` | Request the privilege to create projects. The email to the operator IS the request, so a send that did not happen answers **503**, never `ok` (SCN-004). 3/hour |
 | POST | `/api/projects/{project_id}/sync-now` | Trigger a daily-sync run on demand (editor) |
 | GET | `/api/projects/{project_id}/sync-schedule` | Effective schedule for a project — its override, else the global setting |
 | PUT | `/api/projects/{project_id}/sync-schedule` | Set a per-project daily-sync override (editor) |
@@ -434,7 +434,7 @@ Status codes:
 | POST | `/api/invites/{project_id}/invites` | Create invite (owner); sends email |
 | GET | `/api/invites/{project_id}/invites` | List project invites (owner) |
 | DELETE | `/api/invites/{project_id}/invites/{invite_id}` | Revoke invite (owner) |
-| POST | `/api/invites/{project_id}/invites/{invite_id}/resend` | Resend pending invite email (owner) |
+| POST | `/api/invites/{project_id}/invites/{invite_id}/resend` | Resend pending invite email (owner). Returns `{ok, email_sent}`; the UI reports `email_sent: false` as a failed send (SCN-021) |
 | POST | `/api/invites/accept/{invite_id}` | Accept invite for current user. **Requires a verified email address** (AUTH-01): the email match proves only the caller's *stored* string, which they chose at registration — and registration returns a live session with `email_verified=false`. Refused with 403 until the address is confirmed; a Google login is pre-verified, and verifying an address auto-accepts what was pending |
 | GET | `/api/invites/pending` | List pending invites for current user |
 | GET | `/api/invites/{project_id}/members` | List project members |

@@ -82,9 +82,19 @@ export function InviteManager({ projectId, onClose }: Props) {
     setError("");
     setLoading(true);
     try {
-      await api.invites.create(projectId, email.trim(), role);
+      const created = await api.invites.create(projectId, email.trim(), role);
       setEmail("");
-      toast("Invite sent", "success");
+      // F-PROJ-06 / SCN-021: the invite row exists either way; `email_sent` says whether
+      // the recipient will hear about it. "Invite sent" on a failed send is the belief the
+      // backend fix exists to correct (docs/ux/scenarios.md SCN-021).
+      if (created?.email_sent === false) {
+        toast(
+          "Invite created, but the email could not be sent. Use Resend, or tell them to sign in with this address.",
+          "error",
+        );
+      } else {
+        toast("Invite sent", "success");
+      }
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send invite");
@@ -113,7 +123,11 @@ export function InviteManager({ projectId, onClose }: Props) {
   const handleResend = async (inviteId: string) => {
     setResending(inviteId);
     try {
-      await api.invites.resend(projectId, inviteId);
+      const res = await api.invites.resend(projectId, inviteId);
+      if (res?.email_sent === false) {
+        toast("The invite email could not be sent. Try again later.", "error");
+        return;
+      }
       toast("Invite email resent", "success");
       setResentIds((prev) => new Set(prev).add(inviteId));
       const timer = setTimeout(() => {
