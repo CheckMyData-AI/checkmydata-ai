@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — what a re-audit of the oldest UX scenarios found (B-18, #427)
+
+- **Onboarding (SCN-002):** re-submitting after "Edit connection" created a second
+  connection each time, spending the plan's connection quota on rows nobody kept. It now
+  updates the connection that failed.
+- **Project access request (SCN-004):** answered `ok` whether or not the email went out.
+  The email is the only record of the request, so a failed send is now a **503**.
+- **New project (SCN-016):** kept the previous project's connections, sessions and role on
+  screen under the new name; it now enters through the same path as picking a project.
+- **Edit project (SCN-018):** every "connect a repository" trigger opened the owner-only
+  form for any role, which then failed with 403 on Save. Non-owners are told to ask the
+  owner instead.
+- **Invites (SCN-021):** create and resend ignored `email_sent` and reported success on a
+  send that failed. **Accept (SCN-014):** a failed list refresh after a successful accept no
+  longer reads as a failed accept. **Delete account (SCN-010):** the Settings copy of the
+  form says the deletion cannot be undone again.
+- 14 scenarios re-verified (7 PASS, 7 PARTIAL, 0 FAIL); scenarios verified more than 30
+  days ago 94 → 92. Open: a capped member list still reads as the whole team (B-26).
+
+### Fixed — the integration suite runs on PostgreSQL, and found a production defect (B-02, #425)
+
+- Per-test isolation empties the created tables instead of holding one uncommitted
+  transaction, which deadlocked every second connection on PostgreSQL. 698/698 on
+  PostgreSQL 17 + pgvector and on SQLite.
+- **Production defect:** `resolve_account_key` swallowed a database error on the
+  request's own session. PostgreSQL aborts the transaction after a failed statement, so the
+  assistant's chat message then failed to save. The read now runs inside a SAVEPOINT.
+- `llm_credit` was missing from `app/models/__init__.py`, invisible to `Base.metadata` and
+  to alembic autogenerate; a test keeps the list complete.
+
+### Fixed — relaying another process's event no longer mutes this one's (B-19, #426)
+
+- `WorkflowTracker._external_rebroadcast` was a process-wide flag held across awaits, so a
+  local event from another task in that window was skipped by trace persistence — a lost
+  `pipeline_start` lost the whole trace. It is a `ContextVar` now, true only in the task
+  doing the relaying.
+
 ### Added — the orchestrator's decisions are measured (PRJ-13 T08a–T08d)
 
 - **Routing eval (T08a, #420).** `backend/app/eval/routing`: 30 curated cases (happy,
