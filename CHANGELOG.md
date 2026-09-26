@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a full rebuild interrupted part-way resumes, against its own tree (PRJ-06 T12a, #441)
+
+- A restart during a full rebuild used to pay for all of it again: the run created a fresh
+  checkpoint whenever `force_full` was set. A full run now continues a full checkpoint (an
+  incremental run still never continues a full one), and a resume is checked out at the
+  commit its checkpoint describes; if that commit is gone, the run starts from the top.
+
 ### Changed — a multi-connection project's nightly gives each connection its own job (T07d, #438)
 
 - PRJ-07 S-08 remainder. The nightly sync ran every connection inside one job under one
@@ -28,7 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - On SQLite every test session shares one connection, and background work a request
   started outlived its test; a rollback from it could erase the next test's uncommitted
   insert — the intermittent `StaleDataError` in `test_learnings_api`. The harness now
-  cancels and awaits that work before each test is torn down.
+  **waits** for that work before each test is torn down, and never cancels it: a first
+  version cancelled, and a statement cancelled mid-flight replaced the shared in-memory
+  database with an empty one (263 failures on CI). A lost schema now fails at the cause.
 
 ## [1.18.0] - 2026-09-26 - Money, tenancy and the nightly: what production and the audits found
 
