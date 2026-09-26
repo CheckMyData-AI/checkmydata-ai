@@ -1092,7 +1092,7 @@ Stuck `running` DB-index / sync / repo-index rows self-heal: a crashed worker st
 ### Frontend (TypeScript)
 
 - Semantic design tokens from `@theme` in `frontend/src/app/globals.css` (`bg-surface-*`, `text-text-*`, etc.). **Never raw Tailwind palette classes** — see `DESIGN_SYSTEM.md`.
-- Typography: DM Sans (`font-sans`) for UI; JetBrains Mono (`font-mono`) for code/SQL/data.
+- Typography: Inter (`font-sans`) for UI and Space Grotesk for marketing headlines only, both **self-hosted** from `@fontsource-variable/*` through `next/font/local` in `frontend/src/app/layout.tsx` — never `next/font/google`, which fetches at build time and failed a production build on 2026-09-26. Code/SQL/data use the reader's own `ui-monospace` stack (`font-mono` → `--font-data`); JetBrains Mono was dropped with the redesign.
 - Icons: `components/ui/Icon.tsx` `PATHS` record only — no external icon packages.
 - Accessibility: icon buttons need `aria-label` + `<Tooltip>`; inputs need `aria-label`/`aria-required`/`aria-invalid`; modals need `role="dialog"`, `aria-modal`, focus trap, Escape-to-close.
 - Single breakpoint: `max-width: 767px`. Touch targets ≥44px (`.compact-touch` for 36px in dense areas).
