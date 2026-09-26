@@ -177,6 +177,28 @@ STEP_RESUME_INTENT: dict[str, str] = {
 }
 
 
+def pin_to_tree(repo_dir: Any, sha: str) -> bool:
+    """Check the clone out at *sha* (detached); False when that commit is unavailable.
+
+    The next `clone_or_pull` checks the branch out again before pulling
+    (`repo_analyzer.clone_or_pull`), so a detached head left here does not outlive the
+    run. Nothing else writes to the clone between the two.
+    """
+    from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError
+
+    try:
+        repo = Repo(str(repo_dir))
+        if repo.head.is_valid() and repo.head.commit.hexsha == sha:
+            return True
+        repo.git.checkout("--detach", sha)
+        return repo.head.commit.hexsha == sha
+    except (GitCommandError, InvalidGitRepositoryError, NoSuchPathError, ValueError) as exc:
+        # The caller logs the consequence at WARNING and restarts the run; here the
+        # reason is enough (an unknown commit raises GitCommandError).
+        logger.info("pin_to_tree: cannot check out %s: %s", sha[:12], exc)
+        return False
+
+
 class IndexingPipelineRunner:
     def __init__(
         self,
@@ -343,6 +365,35 @@ class IndexingPipelineRunner:
                 ssh_key_content=state.ssh_key_content,
                 ssh_key_passphrase=state.ssh_key_passphrase,
             )
+
+        # PRJ-06 S-11: a resume continues against the tree its checkpoint was computed
+        # from. `clone_or_pull` just moved the clone to the branch's CURRENT head, while
+        # the restored `changed_files`, profile and cross-file analysis describe the
+        # checkpoint's head — and `ast_parse` re-runs on every resume, so without this
+        # it would parse a newer tree than the rest of the run describes. If that commit
+        # is gone (a force-push), the recorded progress describes nothing we can check
+        # out: it is discarded and the run starts again from the top.
+        if resuming and "detect_changes" in done and checkpoint.head_sha:
+            if not await asyncio.to_thread(pin_to_tree, state.repo_dir, checkpoint.head_sha):
+                logger.warning(
+                    "index: project %s cannot resume — commit %s from its checkpoint is not "
+                    "in the clone; starting again from the top",
+                    project_id[:8],
+                    checkpoint.head_sha[:12],
+                )
+                await tracker.emit(
+                    wf_id,
+                    "pipeline_resume",
+                    "warning",
+                    f"Commit {checkpoint.head_sha[:12]} from the interrupted run is gone; "
+                    "starting again from the top",
+                )
+                await self._cp_svc.reset_progress(db, cp_id)
+                await db.refresh(checkpoint)
+                done.clear()
+                resuming = False
+                result.resumed = False
+                result.resumed_from_step = None
 
         # --- Step 3: detect_changes ---
         if "detect_changes" in done:

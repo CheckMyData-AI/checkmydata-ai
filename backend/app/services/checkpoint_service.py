@@ -88,6 +88,37 @@ class CheckpointService:
         await session.refresh(cp)
         return cp
 
+    async def reset_progress(self, session: AsyncSession, checkpoint_id: str) -> None:
+        """Forget every recorded step and document, keeping the checkpoint row.
+
+        For a resume that cannot continue against the tree it started on (PRJ-06 S-11):
+        the recorded progress describes a commit that is no longer available, so the run
+        starts again from the top under the same checkpoint rather than reusing work
+        computed from a different tree. Both stores are cleared — the step/doc rows and
+        the legacy JSON columns `get_completed_steps` falls back to.
+        """
+        await session.execute(
+            delete(IndexingCheckpointStep).where(
+                IndexingCheckpointStep.checkpoint_id == checkpoint_id
+            )
+        )
+        await session.execute(
+            delete(IndexingCheckpointDoc).where(
+                IndexingCheckpointDoc.checkpoint_id == checkpoint_id
+            )
+        )
+        cp = await session.get(IndexingCheckpoint, checkpoint_id)
+        if cp is not None:
+            cp.completed_steps = "[]"
+            cp.processed_doc_paths = "[]"
+            cp.head_sha = ""
+            cp.last_sha = None
+            cp.changed_files_json = "[]"
+            cp.deleted_files_json = "[]"
+            cp.profile_json = "{}"
+            cp.knowledge_json = "{}"
+        await session.commit()
+
     async def complete_step(
         self,
         session: AsyncSession,
