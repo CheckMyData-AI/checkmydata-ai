@@ -138,4 +138,59 @@ describe("VerifyEmailPage (SCN-012)", () => {
       ).toHaveTextContent("Email sent");
     });
   });
+
+  // B-27 (SCN-012): the page sits outside AuthGate, so without a restore `user` was
+  // always null for a link opened from an email.
+  it("restores the session when it opens", async () => {
+    mockSearchString = "token=good-token";
+    const restore = vi.spyOn(useAuthStore.getState(), "restore").mockResolvedValue();
+    vi.spyOn(api.auth, "verifyEmail").mockResolvedValue({ ok: true, invites_accepted: 0 });
+    await act(async () => {
+      render(<VerifyEmailPage />);
+    });
+    expect(restore).toHaveBeenCalled();
+  });
+
+  it("says invitations were accepted only when some were", async () => {
+    mockSearchString = "token=good-token";
+    vi.spyOn(api.auth, "verifyEmail").mockResolvedValue({ ok: true, invites_accepted: 0 });
+    await act(async () => {
+      render(<VerifyEmailPage />);
+    });
+    await waitFor(() => expect(screen.getByText("Email verified")).toBeInTheDocument());
+    expect(screen.queryByText(/invitation/i)).toBeNull();
+  });
+
+  it("names the count when invitations were accepted", async () => {
+    mockSearchString = "token=good-token";
+    vi.spyOn(api.auth, "verifyEmail").mockResolvedValue({ ok: true, invites_accepted: 2 });
+    await act(async () => {
+      render(<VerifyEmailPage />);
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/Your 2 pending project invitations have been accepted/)).toBeInTheDocument(),
+    );
+  });
+
+  it("does not claim a resend went out when the provider refused it", async () => {
+    mockSearchString = "token=bad-token";
+    useAuthStore.setState({
+      user: { id: "u1", email: "a@b.com", display_name: "A", auth_provider: "email", email_verified: false },
+    });
+    vi.spyOn(api.auth, "verifyEmail").mockRejectedValue(new Error("expired"));
+    vi.spyOn(api.auth, "resendVerification").mockResolvedValue({
+      ok: true,
+      already_verified: false,
+      email_sent: false,
+    });
+    await act(async () => {
+      render(<VerifyEmailPage />);
+    });
+    await waitFor(() => expect(screen.getByText("Verification failed")).toBeInTheDocument());
+    const btn = screen.getByRole("button", { name: "Resend verification email" });
+    await act(async () => {
+      btn.click();
+    });
+    expect(btn).not.toHaveTextContent("Email sent");
+  });
 });

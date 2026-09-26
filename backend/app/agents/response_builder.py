@@ -38,6 +38,57 @@ class SQLResultBlock:
     insights: list[dict[str, Any]] = field(default_factory=list)
 
 
+def pipeline_continuation_context(
+    exec_result: _StageExecutorResult,
+    partial_answer: str,
+    *,
+    steps_used: int,
+    steps_total: int,
+) -> str:
+    """What a pipeline run hands to "Continue analysis", as the tool loop does.
+
+    The schema is the one `OrchestratorAgent` builds after a tool-loop cutoff —
+    ``sql_queries`` (query, row_count, columns, sample_rows, explanation),
+    ``tool_call_log``, ``partial_answer``, ``steps_used``/``steps_total`` — because a
+    single reader, ``_apply_continuation_context``, turns it into the prompt.
+    """
+    import json as _json
+
+    sql_queries: list[dict[str, Any]] = []
+    tool_log: list[dict[str, Any]] = []
+    for stage in exec_result.stage_ctx.plan.stages:
+        sr = exec_result.stage_ctx.get_result(stage.stage_id)
+        if not sr:
+            continue
+        if sr.query:
+            qr = sr.query_result
+            entry: dict[str, Any] = {
+                "query": sr.query,
+                "row_count": qr.row_count if qr else 0,
+                "columns": qr.columns if qr else [],
+            }
+            if qr and qr.rows:
+                entry["sample_rows"] = qr.rows[:3]
+            if stage.description:
+                entry["explanation"] = stage.description
+            sql_queries.append(entry)
+        elif sr.summary:
+            tool_log.append(
+                {"tool": stage.tool, "arguments": "", "result_preview": sr.summary[:500]}
+            )
+    return _json.dumps(
+        {
+            "tool_call_log": tool_log,
+            "sql_queries": sql_queries,
+            "partial_answer": partial_answer[:2000],
+            "knowledge_source_count": 0,
+            "steps_used": steps_used,
+            "steps_total": steps_total,
+        },
+        default=str,
+    )
+
+
 class ResponseBuilder:
     """Builds AgentResponse objects from execution results."""
 
@@ -155,6 +206,17 @@ class ResponseBuilder:
                 steps_used=completed,
                 steps_total=n_stages,
                 error=degraded_reason,
+                # Only the flat tool loop built this, so a pipeline answer downgraded
+                # to `step_limit_reached` offered "Continue analysis" with nothing to
+                # continue from (SCN-055, B-27 D2). Same schema, so
+                # `OrchestratorAgent._apply_continuation_context` reads either.
+                continuation_context=(
+                    pipeline_continuation_context(
+                        exec_result, answer, steps_used=completed, steps_total=n_stages
+                    )
+                    if response_type == "step_limit_reached"
+                    else None
+                ),
             )
 
         if exec_result.status == "checkpoint":

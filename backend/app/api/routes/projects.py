@@ -436,6 +436,34 @@ async def project_readiness(
         except Exception:
             logger.warning("Readiness: repo index check failed", exc_info=True)
 
+    # A repository index in flight, from the table whose partial unique index refuses a
+    # second one (`uq_indexing_runs_active_one`) — so "offered Run" and "would be
+    # refused" are decided by the same rows. Without it the rail offered "Run" for an
+    # index already under way and the click answered 409 (SCN-045, B-27 D3).
+    repo_indexing = False
+    try:
+        from sqlalchemy import select
+
+        from app.models.indexing_run import ACTIVE_STATUSES, IndexingRun
+
+        # A SAVEPOINT, because this is the request's session: on PostgreSQL a failed
+        # statement aborts the whole transaction, and the checks below would then fail
+        # for a reason that is not theirs (B-02).
+        async with db.begin_nested():
+            repo_indexing = (
+                await db.execute(
+                    select(IndexingRun.id)
+                    .where(
+                        IndexingRun.project_id == project_id,
+                        IndexingRun.kind == "index_repo",
+                        IndexingRun.status.in_(ACTIVE_STATUSES),
+                    )
+                    .limit(1)
+                )
+            ).first() is not None
+    except Exception:
+        logger.warning("Readiness: repo index run check failed", exc_info=True)
+
     connections = await _conn_svc.list_by_project(db, project_id)
     db_connected = len(connections) > 0
 
@@ -479,7 +507,7 @@ async def project_readiness(
     missing_steps = []
     if not repo_connected:
         missing_steps.append({"step": "connect_repo", "label": "Connect a Git repository"})
-    if not repo_indexed:
+    if not repo_indexed and not repo_indexing:
         missing_steps.append({"step": "index_repo", "label": "Index the repository"})
     if not db_connected:
         missing_steps.append({"step": "connect_db", "label": "Add a database connection"})
@@ -496,6 +524,7 @@ async def project_readiness(
         "repo_indexed": repo_indexed,
         "db_connected": db_connected,
         "db_indexed": db_indexed,
+        "repo_indexing": repo_indexing,
         "db_indexing": db_indexing,
         "code_db_syncing": code_db_syncing,
         "code_db_synced": code_db_synced,

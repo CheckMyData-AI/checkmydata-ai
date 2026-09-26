@@ -337,6 +337,8 @@ export interface ProjectReadiness {
   code_db_synced: boolean;
   /** A step in flight is a third state, not a shade of "not done" — without it the rail
    *  offers "Run" for work already running, and the second run is refused. */
+  /** A repository index is in flight (B-27 D3); absent from older servers. */
+  repo_indexing?: boolean;
   db_indexing: boolean;
   code_db_syncing: boolean;
   ready: boolean;

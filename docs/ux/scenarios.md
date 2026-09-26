@@ -12,7 +12,7 @@ human review moves them to `validated`.
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-09-23 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-09-26 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -23,11 +23,11 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 |---|---|
 | Scenarios | **154** |
 | Status | draft × 12, implemented × 142 |
-| Last verdict | PARTIAL × 7, PASS × 135, no verdict × 12 |
-| Verified when | 2026-07-19 × 80, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 2, 2026-09-23 × 14, undated × 12 |
-| **Verified >30 days ago** | **92 of 154** (oldest 66 days) |
+| Last verdict | PARTIAL × 12, PASS × 130, no verdict × 12 |
+| Verified when | 2026-07-19 × 73, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 2, 2026-09-23 × 14, 2026-09-26 × 12, undated × 12 |
+| **Verified >30 days ago** | **85 of 154** (oldest 69 days) |
 | Never verified (no date) | 12 |
-| Referenced from code or tests | **47 of 154** |
+| Referenced from code or tests | **51 of 154** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -49,14 +49,14 @@ it is what moves it.
 | SCN-005 | Register with email + password | auth | new-user | implemented | 2026-08-31 PASS |
 | SCN-006 | Log in with email + password | auth | analyst | implemented | 2026-08-31 PASS |
 | SCN-007 | Sign in with Google | auth | analyst | implemented | 2026-09-23 PASS |
-| SCN-008 | Log out | auth | analyst | implemented | 2026-08-25 PASS |
+| SCN-008 | Log out | auth | analyst | implemented | 2026-09-26 PASS |
 | SCN-009 | Change password | auth | analyst | implemented | 2026-09-23 PASS |
 | SCN-010 | Delete account | auth | analyst | implemented | 2026-09-23 PARTIAL → fixed |
-| SCN-011 | Session expiry → forced re-login | auth | analyst | implemented | 2026-08-25 PASS |
-| SCN-012 | Email verification after registration | auth | new-user | implemented | 2026-08-25 PASS |
-| SCN-013 | Forgot / reset password | auth | analyst | implemented | 2026-08-25 PASS |
+| SCN-011 | Session expiry → forced re-login | auth | analyst | implemented | 2026-09-26 PASS |
+| SCN-012 | Email verification after registration | auth | new-user | implemented | 2026-09-26 PARTIAL → fixed |
+| SCN-013 | Forgot / reset password | auth | analyst | implemented | 2026-09-26 PASS |
 | SCN-014 | Accept a pending project invite | invites | analyst | implemented | 2026-09-23 PASS |
-| SCN-015 | Decline / reject an invite | invites | analyst | implemented | 2026-08-25 PASS (line refs corrected) |
+| SCN-015 | Decline / reject an invite | invites | analyst | implemented | 2026-09-26 PASS |
 | SCN-016 | Create a project | projects | owner | implemented | 2026-09-23 PARTIAL → fixed |
 | SCN-017 | Switch between projects (multi-entity) | projects | analyst | implemented | 2026-09-23 PASS |
 | SCN-018 | Edit a project | projects | owner | implemented | 2026-09-23 PARTIAL → fixed |
@@ -69,10 +69,10 @@ it is what moves it.
 | SCN-025 | Add a DB connection | connections | owner | implemented | 2026-07-19 PASS |
 | SCN-026 | Add connection via connection-string autofill | connections | owner | implemented | 2026-07-19 PASS |
 | SCN-027 | Add an MCP connection | connections | owner | implemented | 2026-07-19 PASS |
-| SCN-028 | Configure an SSH tunnel on a connection | connections | owner | implemented | 2026-07-19 PASS |
+| SCN-028 | Configure an SSH tunnel on a connection | connections | owner | implemented | 2026-09-26 PASS |
 | SCN-029 | Toggle read-only mode | connections | owner | implemented | 2026-07-19 PASS |
 | SCN-030 | Test a connection | connections | editor | implemented | 2026-07-19 PASS |
-| SCN-031 | Edit a connection | connections | owner | implemented | 2026-07-19 PASS |
+| SCN-031 | Edit a connection | connections | owner | implemented | 2026-09-26 PASS |
 | SCN-032 | Delete a connection | connections | owner | implemented | 2026-07-19 PASS |
 | SCN-033 | Index / re-index a database | connections | editor | implemented | 2026-07-19 PASS |
 | SCN-034 | Run code↔DB sync | connections | editor | implemented | 2026-07-19 PASS |
@@ -86,7 +86,7 @@ it is what moves it.
 | SCN-042 | Quick-ask from project overview | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-043 | Stop / abort a running answer | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-044 | Empty chat + suggestion chips | chat | analyst | implemented | 2026-07-19 PASS |
-| SCN-045 | Readiness gate (first-run project) | chat | new-user | implemented | 2026-07-19 PASS |
+| SCN-045 | Readiness gate (first-run project) | chat | new-user | implemented | 2026-09-26 PARTIAL → fixed |
 | SCN-046 | Mid-stream error + retry | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-047 | Knowledge-only chat (no connection) | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-048 | Create / switch / delete chat sessions | chat | analyst | implemented | 2026-07-19 PASS |
@@ -96,7 +96,7 @@ it is what moves it.
 | SCN-052 | Rate an answer & report wrong data | chat | analyst | implemented | 2026-09-18 PASS |
 | SCN-053 | Save an answer to notes | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-054 | View the agent reasoning panel | chat | analyst | implemented | 2026-08-31 PASS |
-| SCN-055 | Step-limit reached → continue analysis | chat | analyst | implemented | 2026-07-19 PASS |
+| SCN-055 | Step-limit reached → continue analysis | chat | analyst | implemented | 2026-09-26 PARTIAL → fixed |
 | SCN-056 | Session-continuation (auto-summary) banner | chat | analyst | implemented | 2026-07-19 PASS |
 | SCN-057 | View & switch chart type | viz | analyst | implemented | 2026-07-19 PASS |
 | SCN-058 | Export a result (CSV / JSON / XLSX) | viz | analyst | implemented | 2026-07-19 PASS |
@@ -110,7 +110,7 @@ it is what moves it.
 | SCN-066 | Confirm / dismiss / resolve an insight | insights | analyst | implemented | 2026-07-19 PASS |
 | SCN-067 | Browse the metric catalog | insights | analyst | implemented | 2026-07-19 PASS |
 | SCN-068 | Saved-queries panel (scopes & empty) | notes | analyst | implemented | 2026-07-19 PASS |
-| SCN-069 | Run a saved query | notes | analyst | implemented | 2026-07-19 PASS |
+| SCN-069 | Run a saved query | notes | analyst | implemented | 2026-09-26 PARTIAL → fixed |
 | SCN-070 | Share / unshare a saved query | notes | analyst | implemented | 2026-07-19 PASS |
 | SCN-071 | Edit a saved-query comment | notes | analyst | implemented | 2026-07-19 PASS |
 | SCN-072 | Delete a saved query | notes | analyst | implemented | 2026-07-19 PASS |
@@ -138,7 +138,7 @@ it is what moves it.
 | SCN-094 | Feedback analytics panel | analytics | owner | implemented | 2026-07-19 PASS |
 | SCN-095 | Open settings & navigate | settings | analyst | implemented | 2026-07-19 PASS |
 | SCN-096 | Change theme (light / system / dark) | settings | analyst | implemented | 2026-07-19 PASS |
-| SCN-097 | Reduced-motion honored | settings | analyst | implemented | 2026-07-19 PASS |
+| SCN-097 | Reduced-motion honored | settings | analyst | implemented | 2026-09-26 PASS |
 | SCN-098 | Upgrade via pricing → Stripe checkout | billing | owner | implemented | 2026-07-19 PASS |
 | SCN-099 | Manage billing (Stripe portal) | billing | owner | implemented | 2026-07-19 PASS |
 | SCN-100 | Hit token / quota limit (HTTP 402) | billing | analyst | implemented | 2026-07-19 PASS |
@@ -147,7 +147,7 @@ it is what moves it.
 | SCN-102 | View usage stats | usage | owner | implemented | 2026-07-19 PASS |
 | SCN-103 | Mint & copy an MCP token | mcp-tokens | api-consumer | implemented | 2026-07-19 PASS |
 | SCN-104 | Revoke an MCP token | mcp-tokens | api-consumer | implemented | 2026-07-19 PASS |
-| SCN-105 | Background tasks — view/cancel/retry/dismiss | tasks | analyst | implemented | 2026-07-19 PASS |
+| SCN-105 | Background tasks — view/cancel/retry/dismiss | tasks | analyst | implemented | 2026-09-26 PARTIAL → fixed |
 | SCN-106 | Request history & trace detail | logs | owner | implemented | 2026-08-31 PASS |
 | SCN-107 | Runs & Errors log tabs | logs | owner | implemented | 2026-09-17 PASS |
 | SCN-108 | Live activity log stream | logs | analyst | implemented | 2026-07-19 PASS |
@@ -350,7 +350,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 ### SCN-008: Log out
 - **Persona:** analyst
 - **Feature:** auth
-- **Entry point:** "Sign Out" in Account menu (`AccountMenu.tsx:80-86`) or Settings panel (`SettingsPanel.tsx:104-111`)
+- **Entry point:** "Sign Out" in the Account menu (`AccountMenu`) or the Settings panel (`SettingsPanel`, Sign Out button)
 - **Preconditions:** authenticated
 - **Steps:**
   1. User clicks "Sign Out"
@@ -359,7 +359,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** success
 - **Errors & recovery:** the local teardown is unconditional — a failing call must never trap someone in a session they asked to leave — but a non-401 failure now says the server session may still be active (`auth-store.ts:148-165`), because "Signed out" alone is a claim the client cannot make on its own (AUD-0819-12). A 401 stays quiet: the session is already gone, which is the outcome asked for, and a warning beside it is the noise that teaches people to ignore warnings. No confirm dialog (immediate, non-destructive) — intentional. Session-expiry (SCN-011) and account-deletion paths keep their own distinct toasts (no double-toast)
 - **Status:** implemented
-- **Coverage:** components/auth/AccountMenu.tsx:80-89; components/settings/SettingsPanel.tsx:104-113; stores/auth-store.ts:138-172
+- **Coverage:** frontend/src/components/auth/AccountMenu.tsx; frontend/src/components/settings/SettingsPanel.tsx; frontend/src/stores/auth-store.ts (`logout`); frontend/src/components/auth/AuthGate.tsx; tests frontend/src/__tests__/components/AccountMenu.test.tsx ("Sign Out calls logout and confirms with a toast"), frontend/src/__tests__/auth-store.test.ts ("logout clears state…", "logout honesty — AUD-0819-12"). No test covers the Settings-panel Sign Out
 
 ### SCN-009: Change password
 - **Persona:** analyst
@@ -407,7 +407,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** error
 - **Errors & recovery:** this IS the recovery path — user re-authenticates via SCN-006/007. One shared message constant `SESSION_EXPIRED_MESSAGE` (`lib/session-flash.ts`) across the 401 interceptor, SSE path, and timer path; the one-shot 401 guard (`sessionExpiredHandled`) is re-armed by `resetSessionExpiredFlag()` on every successful (re-)authentication, so repeat 401s are handled even without a full page reload. **Correction 2026-08-21:** until this date the teardown ran through `void import("@/stores/auth-store").then(logout)` with the redirect on the next synchronous line, so whether the profile was actually cleared depended on a race with the document unloading — a session could expire, land the user on `/login`, and leave the app holding their profile against a cookie the server had already rejected
 - **Status:** implemented
-- **Coverage:** frontend/src/lib/session-flash.ts; frontend/src/lib/api/_client.ts:15-52,152-153; stores/auth-store.ts:36,77,90; app/login/page.tsx:62-68,198-205; components/auth/AuthGate.tsx:16-36; tests frontend/src/__tests__/session-flash.test.ts, frontend/src/__tests__/session-expiry-clears-auth.test.ts (the profile is gone before the redirect), frontend/src/__tests__/components/LoginPage.test.tsx (flash banner), frontend/src/__tests__/auth-store.test.ts (re-arm)
+- **Coverage:** frontend/src/lib/session-flash.ts; frontend/src/lib/api/_client.ts (`handleSessionExpired`, `resetSessionExpiredFlag`, the 401 branch of `request`); frontend/src/lib/sse.ts; frontend/src/stores/auth-store.ts (`storeAuth`, `scheduleRefresh`); frontend/src/app/login/page.tsx; frontend/src/components/auth/AuthGate.tsx; tests frontend/src/__tests__/session-flash.test.ts, frontend/src/__tests__/session-expiry-clears-auth.test.ts, frontend/src/__tests__/components/LoginPage.test.tsx, frontend/src/__tests__/auth-store.test.ts. The refresh-timer failure path has no test
 
 ### SCN-012: Email verification after registration
 - **Persona:** new-user
@@ -421,9 +421,10 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** the address is verified, the banner disappears, and pending email invites are auto-accepted; a lost/expired link can be re-requested
 - **UI elements:** `EmailVerifyBanner` (app shell) with a "Resend email" button; `/verify-email` page with loading / "Email verified" (→ "Continue to app") / "Verification failed" (+ resend when logged in) states
 - **States covered:** loading (verifying), success (verified + continue link), error (invalid/expired token, missing token), resend (success/failure toast, "Email sent")
-- **Errors & recovery:** invalid / expired / missing token → error state; logged-in users resend from the page or the banner ("Verification email sent" / failure toast); `email_verified` is surfaced in register/login/refresh/`/me` responses so the banner shows only for unverified non-Google accounts; resend is an idempotent no-op for already-verified / Google accounts (`already_verified: true`) and rate-limited (3/min)
+- **Errors & recovery:** invalid / expired / missing token → error state; a signed-in user resends from the page or the banner — the page **restores the session itself**, since it sits outside AuthGate and a link opened from an email arrives with no profile in memory; a provider refusal (`email_sent: false`) is reported as an error on both, never as "sent"; `email_verified` is surfaced in register/login/refresh/`/me` responses so the banner shows only for unverified non-Google accounts; resend is an idempotent no-op for already-verified / Google accounts (`already_verified: true`) and rate-limited (3/min). The success copy names accepted invitations only when `invites_accepted > 0`
 - **Status:** implemented
 - **Coverage:** backend `backend/app/api/routes/auth.py` (`_auth_response`/`UserResponse` expose `email_verified`; `POST /api/auth/resend-verification`; `POST /api/auth/verify-email`) → `AuthService.issue_email_verification`/`verify_email`, `EmailService.send_verification_email`; frontend `frontend/src/app/verify-email/page.tsx`, `frontend/src/components/auth/EmailVerifyBanner.tsx` (wired into `frontend/src/app/app/page.tsx`), `frontend/src/lib/api/auth.ts` (`verifyEmail`/`resendVerification`), `AuthUser.email_verified` in `frontend/src/lib/api/types.ts`; tests `backend/tests/integration/test_auth_email_verification.py`, `frontend/src/__tests__/components/VerifyEmailPage.test.tsx`, `frontend/src/__tests__/components/EmailVerifyBanner.test.tsx`
+- **Audit note (2026-09-26):** PARTIAL → fixed. The page never called `restore()`, so `user` was always null for an emailed link: resend-from-the-page could not render and the verified flag never reached the cached profile. Its resend ignored `email_sent: false`, and the success copy claimed invitations were accepted whatever `invites_accepted` said. The page tests seeded the auth store by hand, which is why the missing restore never showed; four tests now cover it (`VerifyEmailPage.test.tsx`).
 
 ### SCN-013: Forgot / reset password
 - **Persona:** analyst
@@ -440,7 +441,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** forgot: idle (form), loading ("Sending…"), success (generic confirmation), error (rate-limit/network message), inline invalid-email; reset: loading ("Resetting…"), success (toast + redirect to `/login`), error (invalid/expired token + recovery link), inline password-too-short (<8) / password-mismatch, missing-token
 - **Errors & recovery:** unknown / passwordless (Google-only) email → still a generic `{"ok": true}` with no email sent (no account-enumeration leak); invalid / expired / already-used token → 400 surfaced as an error with a link to request a fresh reset; `new_password` < 8 → 422 (also blocked client-side inline); both endpoints are public + rate-limited (5/min)
 - **Status:** implemented
-- **Coverage:** backend model `backend/app/models/user.py:42-45` (`password_reset_token`/`password_reset_expires_at`), migration `backend/alembic/versions/e7f8a9b0c1d2_add_password_reset_to_users.py` (revision `e7f8a9b0c1d2`, down_revision `d5e6f7a8b9c0`), config `backend/app/config.py:122` (`password_reset_expiry_hours=1`); service `backend/app/services/auth_service.py:162` (`issue_password_reset`), `:188` (`reset_password`); email `backend/app/services/email_service.py:205` (`send_password_reset_email` → `{app_url}/reset-password?token=…`); routes `backend/app/api/routes/auth.py:183-201` (`POST /api/auth/forgot-password`), `:204-224` (`POST /api/auth/reset-password`); frontend `frontend/src/app/forgot-password/page.tsx`, `frontend/src/app/reset-password/page.tsx`, login link `frontend/src/app/login/page.tsx:261`, api `frontend/src/lib/api/auth.ts:75` (`forgotPassword`), `:80` (`resetPassword`); tests `backend/tests/unit/test_password_reset.py`, `backend/tests/integration/test_password_reset.py`, `frontend/src/__tests__/components/ForgotPasswordPage.test.tsx`, `frontend/src/__tests__/components/ResetPasswordPage.test.tsx`, `frontend/src/__tests__/components/LoginPage.test.tsx` (forgot-password link)
+- **Coverage:** backend/app/models/user.py (`password_reset_token`, `password_reset_expires_at`); backend/app/services/auth_service.py (`issue_password_reset`, `reset_password`); backend/app/services/email_service.py (`send_password_reset_email`); backend/app/api/routes/auth.py (`forgot_password`, `reset_password` routes; min 8); frontend/src/app/forgot-password/page.tsx; frontend/src/app/reset-password/page.tsx; frontend/src/app/login/page.tsx ("Forgot password?" in sign-in mode); migration backend/alembic/versions/e7f8a9b0c1d2_add_password_reset_to_users.py
+- **Audit note (2026-09-26):** PASS; line references replaced with symbol names — every one had moved.
 
 ## invites
 
@@ -469,9 +471,10 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** the invite row is removed from the pending list, the invite is deleted server-side (the user never joins the project), and an "Invite declined" success toast is shown
 - **UI elements:** per-row secondary/text "Decline" button (`aria-label="Decline invitation to {project}"`) beside "Accept"; both buttons disabled while either action is in flight (label shows "…")
 - **States covered:** loading (button "…"), success (row removed + toast), error (toast, row retained)
-- **Errors & recovery:** decline fails → toast "Failed to decline invite" (or the API error message) and the row is kept; a non-invitee is rejected 403 and a non-pending/unknown invite 400/404 server-side, surfaced as an error toast
+- **Errors & recovery:** decline fails → toast with the server's reason, else "Failed to decline invite", and the row is kept; a non-invitee is rejected 403 ("This invite is for a different email address") and a non-pending/unknown invite 400/404 — each shown with the backend's own reason
 - **Status:** implemented
-- **Coverage:** backend route `POST /api/invites/decline/{invite_id}` (`backend/app/api/routes/invites.py:253-270`) → `InviteService.decline_invite` (`backend/app/services/invite_service.py:159-196`; deletes the row for constraint-safe re-invite — email-owner + pending checks mirror accept with 404/400/403); frontend `frontend/src/components/invites/PendingInvites.tsx:50-61,85-93` + `frontend/src/lib/api/workspace.ts:106-107`; tests `backend/tests/unit/test_invite_service.py::TestDeclineInvite`, `backend/tests/integration/test_invites.py::TestInviteRoutes::test_invitee_can_decline_invite`, `frontend/src/__tests__/components/PendingInvites.test.tsx`
+- **Coverage:** backend/app/api/routes/invites.py (`decline_invite`); backend/app/services/invite_service.py (`InviteService.decline_invite`); frontend/src/components/invites/PendingInvites.tsx (`handleDecline`); frontend/src/lib/api/workspace.ts (`invites.decline`); frontend/src/lib/api/_client.ts (`forbiddenMessage`); tests backend/tests/unit/test_invite_service.py, backend/tests/integration/test_invites.py (`test_invitee_can_decline_invite`, `test_non_invitee_cannot_decline_invite`, `test_decline_unknown_invite_returns_404`), frontend/src/__tests__/components/PendingInvites.test.tsx, frontend/src/__tests__/forbidden-message.test.ts
+- **Audit note (2026-09-26):** PASS with one defect fixed: the client replaced every 403 detail with "You don't have permission to perform this action.", so the wrong-email refusal never said why. A 403 now carries the backend's reason; the two CSRF refusals say to reload instead (`forbiddenMessage`).
 
 ## projects
 
@@ -719,11 +722,12 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   2. Optionally enables SSH Exec Mode + command template/pre-commands
   3. User submits
 - **Expected result:** connection saved with tunnel/exec config
-- **UI elements:** SSH host/port/user inputs, SSH key select, "SSH Exec Mode" checkbox, exec preset select, command-template + pre-commands textareas, inline warnings
+- **UI elements:** SSH host/port/user inputs, SSH key select, "SSH Exec Mode" checkbox, a read-only display of the server's default command ("Runs by default (read-only)", or a line saying it could not be loaded), command-template + pre-commands textareas, inline warnings
 - **States covered:** error, success
 - **Errors & recovery:** SSH host set but missing user/key → inline warning + toast at submit, and the API refuses a host without a user with 422 (C-15); MongoDB disables exec mode; a custom command carrying `{db_password}`, or `$DBPASS` anywhere but an environment assignment, is flagged inline and refused by the API (C-02, T05b); the help text says a custom command receives the query on stdin; a wrong key passphrase is reported at once as a key problem, not retried as a bastion outage (F-C7)
 - **Status:** implemented
-- **Coverage:** components/connections/ConnectionSelector.tsx (SSH section), components/connections/connection-form-helpers.ts (`commandTemplateError`), backend/app/connectors/exec_templates.py (`validate_new_command_template`), backend/app/connectors/ssh_tunnel.py (`load_client_key`); tests `backend/tests/unit/connectors/test_a_refused_password_is_not_a_network_fault.py`
+- **Coverage:** frontend/src/components/connections/ConnectionSelector.tsx (SSH section, `handleCreate`, `handleUpdate`); frontend/src/components/connections/connection-form-helpers.ts (`commandTemplateError`); backend/app/api/routes/connections.py (`ConnectionCreate` validator, `update_connection`); backend/app/connectors/exec_templates.py (`validate_new_command_template`); backend/app/connectors/ssh_tunnel.py (`load_client_key`); tests backend/tests/unit/connectors/test_a_refused_password_is_not_a_network_fault.py, backend/tests/unit/test_exec_templates.py, frontend/src/__tests__/connection-form-helpers.test.ts
+- **Audit note (2026-09-26):** PASS; the "exec preset select" was removed by C-02 and is gone from the list. One minor defect fixed: a failed fetch of the default commands left the box reading "loading…" for ever.
 
 ### SCN-029: Toggle read-only mode
 - **Persona:** owner
@@ -771,7 +775,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** loading, error, success, nothing-changed (toast "Nothing changed", no request)
 - **Errors & recovery:** name required → toast; SSH/MCP validation as create; invalid MCP env JSON → toast; update fails → toast
 - **Status:** implemented
-- **Coverage:** components/connections/ConnectionSelector.tsx (`handleUpdate`, `handleEdit`), components/connections/connection-form-helpers.ts (`editPatch`, `buildConnectionUpdates`, `changedFields`); tests `frontend/src/__tests__/connection-edit-sends-what-changed.test.ts`, `frontend/src/__tests__/components/AnalyticsConnectionEdit.test.tsx`
+- **Coverage:** frontend/src/components/connections/ConnectionSelector.tsx (`handleUpdate`, `handleEdit`, `applyUpdate`); frontend/src/components/connections/connection-form-helpers.ts (`editPatch`, `buildConnectionUpdates`, `changedFields`); backend/app/api/routes/connections.py (`update_connection`); tests frontend/src/__tests__/connection-form-helpers.test.ts. No component test drives `handleUpdate` on a database connection
 
 ### SCN-032: Delete a connection
 - **Persona:** owner
@@ -1037,11 +1041,12 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Expected result:** steps complete (with success toasts) or user bypasses to chat; auto-bypass when ready & fresh
 - **UI elements:** per-step "Run" buttons, navigable connect steps, "Re-index" on stale, "Chat anyway", "Start chatting", Retry on fetch error
 - **States covered:** loading, error, success, **a step already running** — shown as "Running…" and watched until the readiness row stops reporting it busy, then shown as done (T04b, 2026-09-23; before, only a clicked step was polled and a running one stayed "Running…" until a remount)
-- **Errors & recovery:** action fails → toast; poll timeout → toast; readiness-check fails → "Failed to check project readiness" + Retry / Chat anyway (`ReadinessGate.tsx:159-199`)
+- **Errors & recovery:** action fails → toast; poll timeout → toast; a failing pipeline-status call no longer turns a finished step into "timed out" — the readiness row's own busy flags answer instead; readiness-check fails → "Failed to check project readiness" + Retry / Chat anyway (`ReadinessGate` `handleAction`, fetch-error block)
 - **A step in flight is not a step to start (2026-09-15, reported from production):** the rail showed *"Database indexed — Run"* and *"Code ↔ DB synced — Run"* while `db_index_summary.indexing_status` was `running` with a current heartbeat and `code_db_sync_summary.sync_status` had read `completed` for forty minutes. Two defects, one screen. The readiness endpoint asked `is_synced` **only inside** `if indexed:`, so a finished sync had no state of its own and disappeared whenever an index happened to be running; and a running index was reported simply as not indexed, which the rail can only render as a button. Pressing it starts a second run that `uq_indexing_runs_active_one` refuses, so it appears to do nothing. The endpoint now answers three questions per step — done, running, neither (`db_indexing`, `code_db_syncing`) — a running step is omitted from `missing_steps`, and the rail shows **"Running…"** where the button was
 - **Why the cache expires (FE-11, 2026-09-12):** `ReadinessCacheEntry` carried `checkedAt` and nothing read it, so once `ready: true` was recorded the gate never re-appeared for the life of the document. Invalidation was entirely event-driven — pipeline completion, the index/sync poll endings — and a connection deleted in another tab arrives by no event: the chat then presented itself as ready to query a source that no longer existed, failing at the agent instead of at the gate that exists to prevent exactly that. The TTL does not replace the events; it bounds how long a missed one can lie
 - **Status:** implemented
-- **Coverage:** components/chat/ReadinessGate.tsx:74-336; components/chat/ChatPanel.tsx:740-787; lib/readiness-cache.ts
+- **Coverage:** frontend/src/components/chat/ReadinessGate.tsx; frontend/src/components/chat/ChatPanel.tsx (`showReadinessGate`); frontend/src/lib/readiness-cache.ts; backend/app/api/routes/projects.py (`project_readiness`: `repo_indexing`, `db_indexing`, `code_db_syncing`); tests frontend/src/__tests__/components/ReadinessGate.test.tsx, frontend/src/__tests__/the-interface-does-not-state-what-it-does-not-know.test.ts (FE-11), backend/tests/unit/api/test_a_step_in_flight_is_not_a_step_to_start.py, backend/tests/integration/test_sync_api.py (`test_a_repository_index_in_flight_is_not_offered_again`)
+- **Audit note (2026-09-26):** PARTIAL → fixed. "A step already running" covered the database index and sync only; a repository index in flight was still offered "Run", and the click answered 409. Readiness now reports `repo_indexing` from `indexing_runs` — the rows whose partial unique index refuses the second run — and the gate shows and watches it. Also fixed: a failed pipeline-status call read as "still busy" until the timeout.
 
 ### SCN-046: Mid-stream error + retry
 - **Persona:** analyst
@@ -1186,7 +1191,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Preconditions:** the agent hit its live step budget
 - **Steps:**
   1. User clicks "Continue analysis"
-- **Expected result:** the agent resumes from where it stopped
+- **Expected result:** the agent resumes from where it stopped, on either path — the flat tool loop and the multi-stage pipeline both hand over what they computed — and a second consecutive click still re-asks the original question
 - **The wall clock is one budget for the whole request (F-SQL-03, 2026-08-21):** on the multi-stage path a failing stage is replanned up to `max_pipeline_replans` times, and every replan spends from the *same* deadline the first attempt started. When it is spent the request returns the failed stage's result rather than starting another plan — so a hard question ends in a bounded time with an honest partial answer plus "Continue analysis", instead of running three full budgets back to back. Before this each replan started a fresh budget, so a request whose documented limit is `agent_wall_clock_timeout_seconds` could occupy roughly three times that with the user watching a spinner.
 - **The answer says what it did not reach (2026-09-02):** the synthesis prompt used for this path carried, verbatim, "Do NOT mention step limits, partial results, or that anything was cut short — present this as a complete answer." That function is reached only when the step budget is spent, so the instruction applied to every answer on this scenario: the badge said partial and the text said finished. The prompt now tells the model the run stopped at its budget and asks it to name, in one short closing sentence, which part of the question it did not reach. Honest in both directions — when the collected data does fully answer the question it is told to add **no** caveat, because a caveat invented for a complete answer teaches the reader to discount every caveat after it.
 - **The fallback answer speaks the reader's language (COR-05, 2026-09-12):** `README.md` promises the multilingual rule at "step-limit/emergency synthesis", and the rule is a prompt instruction — so it held wherever an LLM wrote the answer, and this scenario's fallback is joined from literals in Python when no LLM is in the path. A Russian question that hit the 20-step budget was answered *"I reached the maximum number of analysis steps."*, in English, at the moment comprehension matters most. The static text is now translated by one short, bounded call (`app/agents/localize.py`) that **can only ever return the original**: no router, a refused budget, a timeout or an implausible answer all deliver the English sentence rather than an exception, because a degraded answer must not become no answer. The same covers the wall-clock fallback and the pipeline stage-failure answer. *Not covered:* the freshness banner beside the answer, which would cost a second call on a path that has already exhausted its budget.
@@ -1196,7 +1201,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** success, partial (the answer names what it did not reach)
 - **Errors & recovery:** as the normal stream (SCN-046)
 - **Status:** implemented
-- **Coverage:** components/chat/ChatMessage.tsx:619-642; components/chat/ChatPanel.tsx:215-315; backend/app/agents/response_builder.py:335-356; tests backend/tests/unit/test_synthesis_prompt_honesty.py
+- **Coverage:** frontend/src/components/chat/ChatMessage.tsx (step-limit block); frontend/src/components/chat/ChatPanel.tsx (`handleContinueAnalysis`); frontend/src/lib/continue-analysis.ts (`questionToContinue`); backend/app/agents/orchestrator.py (`_apply_continuation_context`); backend/app/agents/response_builder.py (`pipeline_continuation_context`, `build_synthesis_messages`); backend/app/agents/localize.py; tests backend/tests/unit/test_a_pipeline_cutoff_can_be_continued.py, backend/tests/unit/test_synthesis_prompt_honesty.py, backend/tests/unit/test_cutoff_is_visible_to_the_reader.py, frontend/src/__tests__/continue-analysis.test.ts
+- **Audit note (2026-09-26):** PARTIAL → fixed, two defects. (1) A second consecutive click sent "Continue analysis" as the question, because the local bubble it posts is the last user message. (2) Only the flat tool loop built `continuation_context`; a pipeline answer downgraded to `step_limit_reached` carried none, and the continuation prompt still said "use the results below" with nothing below. The pipeline now hands over its stage results in the same schema, and the prompt says so plainly when nothing was carried.
 
 ### SCN-056: Session-continuation (auto-summary) banner
 - **Persona:** analyst
@@ -1440,13 +1446,14 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Preconditions:** a saved query with a connection; **on a WRITABLE connection the caller must be `editor` or `owner`** — on a read-only one `viewer` suffices
 - **Steps:**
   1. User clicks Refresh on a note
-- **Expected result:** query re-executes; toast "Query executed successfully"; refreshed result injected into chat + inline result table (first 20 rows)
+- **Expected result:** query re-executes; toast "Query executed successfully"; a refreshed message is posted to the chat saying how many rows came back — not the note's saved answer, which described an earlier result — plus the inline result table (first 20 rows)
 - **UI elements:** Refresh button (spins), inline result table
 - **States covered:** loading, error, success
-- **Errors & recovery:** result error → toast "Query error: …"; execution throws → toast "Execution failed" (`NoteCard.tsx:97-123`). Disabled when no connection. A viewer on a writable connection gets **403** naming why: the statement could change the data it reaches
+- **Errors & recovery:** result error → toast "Query error: …"; execution throws → toast with the error, else "Execution failed" (`NoteCard` `handleExecute`). Disabled when no connection. A viewer on a writable connection gets **403** and now sees why — the client used to replace the reason with a generic sentence
 - **Why the role gate (COR-06, 2026-09-12):** the ladder gates workspace mutations — a dashboard needs `editor`, a schedule needs `owner` — and no execution path distinguished a viewer from an owner for SQL against the *customer's* database. `SafetyLevel.ALLOW_DML` blocks DDL and nothing else, so a contractor added as `viewer` to keep them read-only could save `DELETE FROM orders WHERE 1=1` and run it. On a read-only connection the engine already refuses a write, so the role is not the layer that has to, and a viewer keeps the SELECT the role exists for
 - **Status:** implemented
-- **Coverage:** components/notes/NoteCard.tsx:93-127,210-238; backend/app/api/routes/notes.py:256-266; backend/app/services/membership_service.py:88-125
+- **Coverage:** frontend/src/components/notes/NoteCard.tsx (`handleExecute`); frontend/src/lib/note-refresh.ts (`refreshedNoteMessage`); frontend/src/lib/api/_client.ts (`forbiddenMessage`); backend/app/api/routes/notes.py (execute route); backend/app/services/membership_service.py (`require_write_role`); tests backend/tests/integration/test_a_viewer_cannot_write_to_the_database.py, backend/tests/integration/test_notes.py, frontend/src/__tests__/note-refresh.test.ts, frontend/src/__tests__/forbidden-message.test.ts. No component test drives `handleExecute`
+- **Audit note (2026-09-26):** PARTIAL → fixed. The 403 reason never reached the user, and the "[Refreshed]" chat message repeated the note's saved answer beside the new rows.
 
 ### SCN-070: Share / unshare a saved query
 - **Persona:** analyst
@@ -1880,7 +1887,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Errors & recovery:** n/a. Note: there is intentionally no in-app reduced-motion toggle
 - **The one the contract could not reach (FE-09, 2026-09-12):** the chat's scroll named `behavior: "smooth"` in JavaScript, and the app's reduced-motion contract is CSS plus `MotionConfig reducedMotion="user"` — the CSS block zeroes the `--dur-*` properties and declares no `scroll-behavior` at all, so neither half could touch it. Worse, the effect depends on `streamingText`, which gains every SSE chunk, so it fired a fresh smooth scroll per token for every reader. It is instant while streaming, instant under reduced motion, and **skipped entirely when the reader is not already near the bottom** — scrolling up to re-read the previous answer's SQL no longer gets undone on the next token
 - **Status:** implemented
-- **Coverage:** app/globals.css:23-31; app/app/page.tsx:384; components/viz/ChartRenderer.tsx:142-145; lib/scroll-behavior.ts; components/chat/ChatPanel.tsx:323-343
+- **Coverage:** frontend/src/app/globals.css (reduced-motion blocks); frontend/src/app/app/page.tsx (`MotionConfig reducedMotion="user"`); frontend/src/components/viz/ChartRenderer.tsx (`prefersReducedMotion`); frontend/src/lib/scroll-behavior.ts; frontend/src/components/chat/ChatPanel.tsx (scroll effect); test frontend/src/__tests__/the-interface-does-not-state-what-it-does-not-know.test.ts (scroll only — the CSS block and chart animation have no test)
 
 ## billing
 
@@ -2080,12 +2087,13 @@ Anonymous marketing-site visitor evaluating the product before signing up.
   1. User expands the widget
   2. User cancels a running task, retries a failed one, or dismisses a finished one
 - **Expected result:** task list with live progress; the chosen action applies. The pill reads **"N queued"** with a spinner while a run is queued, never "✓ N done"
-- **UI elements:** toggle pill (count), per-task Cancel / Retry / Dismiss, progress bars, elapsed timer
-- **States covered:** empty (renders null), loading, error, success
-- **Errors & recovery:** Cancel/Retry failures toast "Failed to cancel task" / "Failed to retry task" (`ActiveTasksWidget.tsx:119-149`). Cancel has no confirm (the run is reversible by re-triggering). **A run missing from the server's active list for more than 30 s is marked ended with "outcome unknown"** — not `completed`, because the outcome arrived on a channel nobody was listening to
+- **UI elements:** toggle pill (count), per-task Cancel (running or queued) / Retry (failed only) / Dismiss (finished only), status icons for running, queued, completed, failed and ended, progress bars, elapsed timer
+- **States covered:** empty (renders null), success; per task: queued, running, completed, failed, ended (outcome not received)
+- **Errors & recovery:** Cancel/Retry failures toast "Failed to cancel task" / "Failed to retry task" (`TaskItem`). Cancel has no confirm (the run is reversible by re-triggering). **A run absent from the server's active list that has not been heard from for 30 s is marked `ended` — "Ended — outcome not received" — with no Retry**: not `completed` and not `failed`, because its outcome arrived on a channel nobody was listening to. This covers SSE-tracked runs too; a run that spoke in the last 30 s is left alone
 - **Why both (FE-06, closed 2026-09-12):** the only transition to a terminal status was an SSE `pipeline_end`, so a dropped connection whose reconnect landed after the run finished left the pill spinning with an elapsed counter climbing past the real run and a Cancel button for a run that had ended — only a reload cleared it. And the pill counted `running` and `failed` only, letting a task one click old fall into the final `else`: "✓ 1 done" for an index that had not started
 - **Status:** implemented
-- **Coverage:** components/tasks/ActiveTasksWidget.tsx:105-278; lib/task-summary.ts; stores/background-tasks-store.ts:211-262
+- **Coverage:** frontend/src/components/tasks/ActiveTasksWidget.tsx (`TaskItem`); frontend/src/lib/task-summary.ts; frontend/src/stores/background-tasks-store.ts (`reconcileFromActive`, `lastEventAt`); frontend/src/hooks/useGlobalEvents.ts; tests frontend/src/__tests__/components/ActiveTasksWidget.test.tsx, frontend/src/__tests__/background-tasks-store.test.ts, frontend/src/__tests__/the-interface-does-not-state-what-it-does-not-know.test.ts (FE-06 + B-27 D5)
+- **Audit note (2026-09-26):** PARTIAL → fixed. FE-06's sweep skipped every SSE-tracked task, and a task that has had one SSE event is SSE-tracked — so the dropped-connection case it was written for was the one it never reached. Where it did fire it said `failed`, with a Retry that could re-run a successful index. A queued row had no icon and offered Dismiss instead of Cancel. The "loading, error" states listed before did not exist.
 
 ## logs
 

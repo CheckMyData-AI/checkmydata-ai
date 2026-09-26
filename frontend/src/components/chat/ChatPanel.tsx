@@ -28,6 +28,7 @@ import { CostEstimator } from "./CostEstimator";
 import { ContextBudgetIndicator } from "./ContextBudgetIndicator";
 import { useSessionPolling } from "@/hooks/useSessionPolling";
 import { useReasoningStore } from "@/stores/reasoning-store";
+import { CONTINUE_LABEL, questionToContinue } from "@/lib/continue-analysis";
 
 export function ChatPanel() {
   const activeProject = useAppStore((s) => s.activeProject);
@@ -231,14 +232,12 @@ export function ChatPanel() {
     (continuationContext: string | null) => {
       if (!activeProject || !activeSession) return;
       abortRef.current?.abort();
-      const currentMessages = useAppStore.getState().messages;
-      const lastUserMsg = [...currentMessages].reverse().find((m) => m.role === "user");
-      const message = lastUserMsg?.content ?? "Continue the analysis";
+      const message = questionToContinue(useAppStore.getState().messages);
 
       addMessage({
         id: crypto.randomUUID(),
         role: "user" as const,
-        content: "Continue analysis",
+        content: CONTINUE_LABEL,
         timestamp: Date.now(),
       });
       setThinking(true);

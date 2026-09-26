@@ -6,7 +6,13 @@ const BACKGROUND_PIPELINES = new Set(["index_repo", "db_index", "code_db_sync", 
 const COMPLETED_DISMISS_MS = 5_000;
 const FAILED_DISMISS_MS = 30_000;
 
-export type BgStatus = "queued" | "running" | "completed" | "failed";
+/**
+ * `ended` means the run is no longer active on the server and its outcome was never
+ * observed — the `pipeline_end` event arrived on a connection that was not listening.
+ * It is not `failed`: showing a failure nobody saw offered a Retry that could re-run a
+ * successful index (SCN-105, B-27 D5).
+ */
+export type BgStatus = "queued" | "running" | "completed" | "failed" | "ended";
 export type BgSource = "sse" | "poll" | "optimistic";
 
 export interface BgTask {
@@ -27,6 +33,9 @@ export interface BgTask {
   error?: string;
   extra: Record<string, unknown>;
   source: BgSource;
+  /** When this client last heard from the run over SSE (seconds). A task that spoke
+   *  recently is alive whatever the active list says; one that went quiet is not. */
+  lastEventAt?: number;
 }
 
 export type BgPipeline = "index_repo" | "db_index" | "code_db_sync" | "daily_sync";
@@ -79,7 +88,7 @@ function scheduleDismiss(key: string, ms: number) {
   _dismissTimers.set(key, timer);
 }
 
-const TERMINAL = (s: BgStatus) => s === "completed" || s === "failed";
+const TERMINAL = (s: BgStatus) => s === "completed" || s === "failed" || s === "ended";
 
 /**
  * How long a task may be missing from the authoritative active list before its
@@ -137,6 +146,7 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
               progressPct: finalStatus === "completed" ? 100 : state.tasks[key].progressPct,
               error: finalStatus === "failed" ? event.detail : undefined,
               source: "sse",
+              lastEventAt: event.timestamp,
             },
           },
         };
@@ -158,6 +168,7 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
             currentStepDetail: event.detail,
             ...progress,
             source: "sse",
+            lastEventAt: event.timestamp,
           },
         },
       }));
@@ -184,6 +195,7 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
           startedAt: event.timestamp,
           extra: event.extra || {},
           source: "sse",
+          lastEventAt: event.timestamp,
         },
       },
     }));
@@ -254,17 +266,24 @@ export const useBackgroundTasks = create<BackgroundTasksState>((set, get) => ({
       // The grace window is what makes an ABSENCE readable: a task inserted
       // optimistically, or begun seconds ago, is legitimately not in the list yet.
       // Below the window an absence means nothing; above it, it means ended.
+      //
+      // SSE-tracked tasks are included (B-27 D5). They were skipped by `pollMayTouch`,
+      // and a task that has received even one SSE event is SSE-tracked — so the
+      // dropped-connection case this sweep was written for is exactly the one it
+      // never reached. What protects a live SSE task is that it SPOKE recently, not
+      // which channel it spoke on.
       const cutoff = Date.now() / 1000 - ORPHAN_GRACE_SECONDS;
       for (const [key, task] of Object.entries(updated)) {
         if (seen.has(key) || TERMINAL(task.status)) continue;
-        if (!pollMayTouch(task) || task.startedAt > cutoff) continue;
+        if (task.startedAt > cutoff) continue;
+        if (task.lastEventAt !== undefined && task.lastEventAt > cutoff) continue;
         // "Ended" is all that is known — the outcome arrived on a channel that was
-        // not listening. Claiming `completed` would assert a success nobody saw.
+        // not listening. Neither `completed` nor `failed` is known.
         updated[key] = {
           ...task,
-          status: "failed",
+          status: "ended",
           completedAt: Date.now() / 1000,
-          error: task.error ?? "Ended while this tab was disconnected — outcome unknown",
+          error: undefined,
         };
       }
       return { tasks: updated };
