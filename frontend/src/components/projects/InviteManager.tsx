@@ -38,6 +38,9 @@ interface Props {
 export function InviteManager({ projectId, onClose }: Props) {
   const [invites, setInvites] = useState<ProjectInvite[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
+  // SCN-022 / B-26: the members route is capped and says so in headers only.
+  const [memberTotal, setMemberTotal] = useState<number | null>(null);
+  const [membersCapped, setMembersCapped] = useState(false);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("editor");
   const [error, setError] = useState("");
@@ -60,12 +63,14 @@ export function InviteManager({ projectId, onClose }: Props) {
   const refresh = useCallback(async () => {
     setRefreshLoading(true);
     try {
-      const [inv, mem] = await Promise.all([
+      const [inv, page] = await Promise.all([
         api.invites.list(projectId),
-        api.invites.listMembers(projectId),
+        api.invites.listMembersPage(projectId),
       ]);
       setInvites(inv);
-      setMembers(mem);
+      setMembers(page.members);
+      setMemberTotal(page.total);
+      setMembersCapped(page.capped);
     } catch (err) {
       toast(err instanceof Error ? err.message : "Failed to load access data", "error");
     } finally {
@@ -290,8 +295,15 @@ export function InviteManager({ projectId, onClose }: Props) {
       {members.length > 0 && (
         <div className="space-y-1">
           <p className="text-kicker text-text-tertiary uppercase tracking-wider">
-            Members ({members.length})
+            {membersCapped
+              ? `Members (${members.length} of ${memberTotal ?? "more"})`
+              : `Members (${members.length})`}
           </p>
+          {membersCapped && (
+            <p className="text-meta text-text-muted">
+              Showing the first {members.length}. The rest are not listed here.
+            </p>
+          )}
           {members.map((m) => (
             <div
               key={m.id}

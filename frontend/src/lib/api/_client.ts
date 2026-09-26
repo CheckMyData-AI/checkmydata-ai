@@ -88,9 +88,17 @@ function isSafeMethod(method?: string): boolean {
 
 export async function request<T>(
   path: string,
-  options?: RequestInit & { timeoutMs?: number },
+  options?: RequestInit & {
+    timeoutMs?: number;
+    /** Sees the successful response before its body is parsed — the one way for a
+     *  caller to read a header (e.g. `X-Result-Capped`) without a second request. */
+    onResponse?: (res: Response) => void;
+  },
 ): Promise<T> {
-  const { headers: optHeaders, timeoutMs, ...restOptions } = (options ?? {}) as RequestInit & { timeoutMs?: number };
+  const { headers: optHeaders, timeoutMs, onResponse, ...restOptions } = (options ?? {}) as RequestInit & {
+    timeoutMs?: number;
+    onResponse?: (res: Response) => void;
+  };
   const safe = isSafeMethod(restOptions.method);
   let lastError: Error | undefined;
 
@@ -225,6 +233,7 @@ export async function request<T>(
       // pattern-matching prose that is free to be rewritten.
       throw Object.assign(new Error(detail), { status: res.status });
     }
+    onResponse?.(res);
     return res.json();
   }
   throw lastError ?? new Error("Request failed after retries");

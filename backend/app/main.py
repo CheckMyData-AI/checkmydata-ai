@@ -570,6 +570,11 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # The SPA is another origin in production, and a browser hides every non-safelisted
+    # response header from it unless named here. The members route reports a capped
+    # list ONLY in these two (F-PROJ-13); unexposed, the client reads a partial list as
+    # the whole team (SCN-022, B-26).
+    expose_headers=["X-Total-Count", "X-Result-Capped"],
 )
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])

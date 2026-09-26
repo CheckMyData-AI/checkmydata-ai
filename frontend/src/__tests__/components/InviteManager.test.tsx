@@ -5,6 +5,7 @@ import type { ProjectInvite, ProjectMember } from "@/lib/api";
 
 const mockListInvites = vi.fn<() => Promise<ProjectInvite[]>>();
 const mockListMembers = vi.fn<() => Promise<ProjectMember[]>>();
+const mockListMembersPage = vi.fn();
 const mockCreateInvite = vi.fn();
 const mockRevoke = vi.fn();
 const mockResend = vi.fn();
@@ -18,6 +19,9 @@ vi.mock("@/lib/api", () => ({
     invites: {
       list: (...args: unknown[]) => mockListInvites(...(args as [])),
       listMembers: (...args: unknown[]) => mockListMembers(...(args as [])),
+      listMembersPage: async (...args: unknown[]) =>
+        mockListMembersPage(...(args as [])) ??
+        { members: await mockListMembers(...(args as [])), total: null, capped: false },
       create: (...args: unknown[]) => mockCreateInvite(...(args as [])),
       revoke: (...args: unknown[]) => mockRevoke(...(args as [])),
       resend: (...args: unknown[]) => mockResend(...(args as [])),
@@ -548,6 +552,31 @@ describe("Leave project (SCN-127, F-PROJ-12)", () => {
         ),
       );
       expect(toast).not.toHaveBeenCalledWith("Invite email resent", "success");
+    });
+  });
+
+  // SCN-022 / B-26: a capped list must not read as the whole team.
+  describe("a capped members list", () => {
+    it("says how many exist when the server capped the list", async () => {
+      mockListMembersPage.mockResolvedValueOnce({
+        members: [makeMember({ id: "m1", user_id: "u1" }), makeMember({ id: "m2", user_id: "u2", role: "editor", email: "b@test.com" })],
+        total: 500,
+        capped: true,
+      });
+      await renderInviteManager();
+      expect(await screen.findByText("Members (2 of 500)")).toBeInTheDocument();
+      expect(screen.getByText(/The rest are not listed here/)).toBeInTheDocument();
+    });
+
+    it("shows the plain count when the list is complete", async () => {
+      mockListMembersPage.mockResolvedValueOnce({
+        members: [makeMember({ id: "m1", user_id: "u1" })],
+        total: 1,
+        capped: false,
+      });
+      await renderInviteManager();
+      expect(await screen.findByText("Members (1)")).toBeInTheDocument();
+      expect(screen.queryByText(/The rest are not listed here/)).not.toBeInTheDocument();
     });
   });
 });

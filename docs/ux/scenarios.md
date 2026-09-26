@@ -27,7 +27,7 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 | Verified when | 2026-07-19 × 80, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-25 × 5, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 2, 2026-09-23 × 14, undated × 12 |
 | **Verified >30 days ago** | **92 of 154** (oldest 66 days) |
 | Never verified (no date) | 12 |
-| Referenced from code or tests | **46 of 154** |
+| Referenced from code or tests | **47 of 154** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -579,14 +579,14 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Steps:**
   1. User changes a member's role in the select
 - **Expected result:** toast "Role updated" (applied optimistically)
-- **UI elements:** per-member role select
+- **UI elements:** per-member role select; members heading "Members (N)", or "Members (N of TOTAL)" plus a "Showing the first N" line when the server capped the list
 - **States covered:** loading, error, success
 - **Errors & recovery:** update fails → optimistic revert + toast (`InviteManager.tsx` `handleRoleChange`); owner's role → 400. Note: role change has no confirm dialog
 - **`owner` is not one of the choices, by design (F-PROJ-10):** the select offers `editor`/`viewer` and the route's schema accepts only those. Ownership moves through SCN-126, which enforces the receiving owner's plan quota and keeps `Project.owner_id` and the member row in step; allowing "owner" here would be a second, unguarded path to the same state.
 - **The member list is bounded (F-PROJ-13):** the API returns at most 500 members (hard maximum 1000) and marks a partial page with `X-Result-Capped: true`, carrying the real total in `X-Total-Count`. A team that large is not a case this product has met, but a page returned with no marker would read as the whole team — which is the same shape as a truncated query result reported as a total.
 - **Status:** implemented
-- **Coverage:** components/projects/InviteManager.tsx (handleRoleChange); backend/app/api/routes/invites.py (update_member_role, list_members); tests frontend/src/__tests__/components/InviteManager.test.tsx ("changing role calls updateMemberRole API"), backend/tests/integration/test_invites.py (test_owner_can_update_member_role, test_cannot_update_owner_role, test_update_role_invalid_value)
-- **Audit note (2026-09-23):** PASS, one open gap (backlog B-26): the members API marks a capped list with `X-Result-Capped` (F-PROJ-13), and the UI never reads it, so a capped list is labelled "Members (N)" as if complete.
+- **Coverage:** components/projects/InviteManager.tsx (handleRoleChange); backend/app/api/routes/invites.py (update_member_role, list_members); tests frontend/src/__tests__/components/InviteManager.test.tsx ("changing role calls updateMemberRole API"), backend/tests/integration/test_invites.py (test_owner_can_update_member_role, test_cannot_update_owner_role, test_update_role_invalid_value); components/projects/InviteManager.tsx (refresh → listMembersPage); frontend/src/lib/api/workspace.ts (listMembersPage); backend/app/main.py (CORS expose_headers); tests frontend/src/__tests__/components/InviteManager.test.tsx ("a capped members list"), frontend/src/__tests__/members-page-api.test.ts, backend/tests/unit/test_cors_exposes_the_completeness_headers.py
+- **Audit note (2026-09-23):** PASS; one gap found and closed in B-26 (2026-09-26): the members API marks a capped list with `X-Result-Capped` (F-PROJ-13), and the UI never read it — nor could it, since CORS did not expose the header to the SPA's origin. The heading now says "Members (N of TOTAL)" with a line that the rest are not listed.
 
 ### SCN-126: Transfer project ownership
 - **Persona:** owner
