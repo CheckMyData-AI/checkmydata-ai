@@ -179,7 +179,7 @@ class DailyKnowledgeSyncService:
 
         _started = time.monotonic()
         async with heartbeat(_hb, interval_seconds=settings.heartbeat_interval_seconds):
-            result = await self._orchestrate(project_id, run_id=run_id)
+            result = await self._orchestrate(project_id, run_id=run_id, trigger=trigger)
         _elapsed = time.monotonic() - _started
 
         # The budget is read HERE rather than captured before the run: a sync that
@@ -235,7 +235,7 @@ class DailyKnowledgeSyncService:
         return result
 
     async def _orchestrate(
-        self, project_id: str, *, run_id: str | None = None
+        self, project_id: str, *, run_id: str | None = None, trigger: str = "schedule"
     ) -> KnowledgeSyncRunResult:
         started = time.monotonic()
         result = KnowledgeSyncRunResult(project_id=project_id)
@@ -318,55 +318,43 @@ class DailyKnowledgeSyncService:
             )
             return result
 
+        if len(active_connections) > 1:
+            # PRJ-07 S-08 (T07d): more than one connection → each runs as its own job
+            # with its own ceiling, one after another, so four connections do not share
+            # this job's 7 200 s. The parent's own work — the repository — is done; each
+            # connection writes its own `daily_sync` row (connection_id set), which is
+            # what the history lists. One connection stays inline below: it fits, and
+            # it is the only shape production runs.
+            ids = [c.id for c in active_connections]
+            if await self._dispatch_connection_chain(project_id, ids, trigger=trigger):
+                steps["connections_dispatched"] = ids
+                await self._emit_progress(
+                    parent_wf, "db_index", "completed", f"{len(ids)} connection job(s) queued"
+                )
+                result.status = _STATUS_SUCCESS
+                result.steps_json = steps
+                result.duration_seconds = time.monotonic() - started
+                logger.info(
+                    "Cron: daily knowledge sync project=%s repository done; %d connection "
+                    "job(s) queued",
+                    project_id[:8],
+                    len(ids),
+                )
+                return result
+            logger.warning(
+                "Cron: daily knowledge sync project=%s could not queue its %d connection "
+                "jobs — running them here, under this job's shared ceiling",
+                project_id[:8],
+                len(ids),
+            )
+
         await self._emit_progress(parent_wf, "db_index", "started", "Indexing connections")
         any_failure = False
         any_skip = False
         for conn in active_connections:
-            conn_steps: dict = {
-                "connection_id": conn.id,
-                "db_index": {"status": _STEP_SKIPPED, "error": None},
-                "code_db_sync": {"status": _STEP_SKIPPED, "error": None},
-            }
-
-            db_status, db_error = await self._run_db_index(conn.id, project_id)
-            conn_steps["db_index"] = {"status": db_status, "error": db_error}
-            if db_status == _STEP_FAILED:
-                any_failure = True
-                conn_steps["code_db_sync"] = {
-                    "status": _STEP_SKIPPED,
-                    "error": "db index failed",
-                }
-                steps["connections"].append(conn_steps)
-                logger.error(
-                    "Cron: daily knowledge sync failed project=%s step=db_index "
-                    "connection=%s error=%s",
-                    project_id[:8],
-                    conn.id[:8],
-                    db_error,
-                )
-                continue
-            if db_status == _STEP_SKIPPED:
-                any_skip = True
-                conn_steps["code_db_sync"] = {
-                    "status": _STEP_SKIPPED,
-                    "error": "db index skipped",
-                }
-                steps["connections"].append(conn_steps)
-                continue
-
-            sync_status, sync_error = await self._run_code_db_sync(conn.id, project_id)
-            conn_steps["code_db_sync"] = {"status": sync_status, "error": sync_error}
-            if sync_status == _STEP_FAILED:
-                any_failure = True
-                logger.error(
-                    "Cron: daily knowledge sync failed project=%s step=code_db_sync "
-                    "connection=%s error=%s",
-                    project_id[:8],
-                    conn.id[:8],
-                    sync_error,
-                )
-            elif sync_status == _STEP_SKIPPED:
-                any_skip = True
+            conn_steps, failed, skipped = await self._run_connection_steps(conn.id, project_id)
+            any_failure = any_failure or failed
+            any_skip = any_skip or skipped
             steps["connections"].append(conn_steps)
 
         # M3: per-connection db_index/code_db_sync interleave; surface them at the
@@ -393,6 +381,158 @@ class DailyKnowledgeSyncService:
             result.duration_seconds,
         )
         return result
+
+    async def _run_connection_steps(
+        self, connection_id: str, project_id: str
+    ) -> tuple[dict, bool, bool]:
+        """One connection's nightly work: db index, then code↔DB sync if it indexed.
+
+        Shared by the in-job path and the per-connection job (T07d), so the two cannot
+        drift. Returns the step record and whether it failed or skipped.
+        """
+        conn_steps: dict = {
+            "connection_id": connection_id,
+            "db_index": {"status": _STEP_SKIPPED, "error": None},
+            "code_db_sync": {"status": _STEP_SKIPPED, "error": None},
+        }
+        db_status, db_error = await self._run_db_index(connection_id, project_id)
+        conn_steps["db_index"] = {"status": db_status, "error": db_error}
+        if db_status == _STEP_FAILED:
+            conn_steps["code_db_sync"] = {"status": _STEP_SKIPPED, "error": "db index failed"}
+            logger.error(
+                "Cron: daily knowledge sync failed project=%s step=db_index connection=%s error=%s",
+                project_id[:8],
+                connection_id[:8],
+                db_error,
+            )
+            return conn_steps, True, False
+        if db_status == _STEP_SKIPPED:
+            conn_steps["code_db_sync"] = {"status": _STEP_SKIPPED, "error": "db index skipped"}
+            return conn_steps, False, True
+
+        sync_status, sync_error = await self._run_code_db_sync(connection_id, project_id)
+        conn_steps["code_db_sync"] = {"status": sync_status, "error": sync_error}
+        if sync_status == _STEP_FAILED:
+            logger.error(
+                "Cron: daily knowledge sync failed project=%s step=code_db_sync "
+                "connection=%s error=%s",
+                project_id[:8],
+                connection_id[:8],
+                sync_error,
+            )
+            return conn_steps, True, False
+        return conn_steps, False, sync_status == _STEP_SKIPPED
+
+    async def _dispatch_connection_chain(
+        self, project_id: str, connection_ids: list[str], *, trigger: str = "schedule"
+    ) -> bool:
+        """Queue the first link of the per-connection chain; False if it could not be.
+
+        A chain, not a fan-out: the worker holds 1 GB, and a db index reads a customer's
+        database — four at once would contend for both. Each link queues the next when
+        it finishes (see `run_connection_sync`).
+        """
+        if not connection_ids:
+            return True
+        from app.core.task_queue import enqueue
+
+        job = await enqueue(
+            "run_daily_connection_sync",
+            project_id=project_id,
+            connection_ids=list(connection_ids),
+            trigger=trigger,
+            allow_in_process=False,
+        )
+        return job is not None
+
+    async def run_connection_sync(
+        self, project_id: str, connection_ids: list[str], *, trigger: str = "schedule"
+    ) -> KnowledgeSyncRunResult:
+        """One link of the chain: the first connection, then queue the rest (T07d).
+
+        Recorded as a `daily_sync` run WITH `connection_id`, so `/sync-history` lists one
+        row per connection with its own status, duration and error — the parent's row
+        speaks for the repository only. The rest of the chain is queued in `finally`:
+        one connection failing must not cost the others their night. A process restart
+        mid-link does lose the remainder until the next night; that is stated rather
+        than hidden (`docs/evidence/loop-queue.md`, T07d).
+        """
+        head, rest = connection_ids[0], list(connection_ids[1:])
+        result = KnowledgeSyncRunResult(project_id=project_id)
+        started = time.monotonic()
+        coord = RunCoordinator()
+        run_id: str | None = None
+        try:
+            async with async_session_factory() as db:
+                if await coord._find_active(db, project_id, "daily_sync", head):
+                    result.status = _STATUS_SKIPPED
+                    result.error_message = "a sync for this connection is already running"
+                    return result
+                run_id = (
+                    await coord.start(
+                        db,
+                        kind="daily_sync",
+                        project_id=project_id,
+                        connection_id=head,
+                        trigger=trigger,
+                    )
+                ).id
+
+            _hb = run_beat_by_workflow_or_id(run_id)
+            async with heartbeat(_hb, interval_seconds=settings.heartbeat_interval_seconds):
+                conn_steps, failed, skipped = await self._run_connection_steps(head, project_id)
+
+            result.status = (
+                _STATUS_FAILED if failed else _STATUS_PARTIAL if skipped else _STATUS_SUCCESS
+            )
+            result.steps_json = {"connections": [conn_steps]}
+            if failed:
+                result.error_message = (
+                    conn_steps["db_index"]["error"] or conn_steps["code_db_sync"]["error"]
+                )
+        except Exception as exc:
+            logger.exception(
+                "Cron: per-connection daily sync failed project=%s connection=%s",
+                project_id[:8],
+                head[:8],
+            )
+            result.status = _STATUS_FAILED
+            result.error_message = str(exc)[:1000]
+        finally:
+            result.duration_seconds = time.monotonic() - started
+            if run_id is not None:
+                await self._finish_connection_run(run_id, result)
+            if rest and not await self._dispatch_connection_chain(
+                project_id, rest, trigger=trigger
+            ):
+                logger.error(
+                    "Cron: daily sync could not queue the next connection job project=%s "
+                    "— %d connection(s) will not sync until the next night",
+                    project_id[:8],
+                    len(rest),
+                )
+        return result
+
+    async def _finish_connection_run(self, run_id: str, result: KnowledgeSyncRunResult) -> None:
+        terminal = "failed" if result.status == _STATUS_FAILED else "completed"
+        try:
+            async with async_session_factory() as db:
+                run = await db.get(IndexingRun, run_id)
+                if run is None or run.status in ("completed", "failed", "cancelled"):
+                    return
+                run.meta_json = json.dumps(
+                    {"status": result.status, "steps": result.steps_json}, default=str
+                )
+                await db.commit()
+                await RunCoordinator().finish(
+                    db,
+                    run,
+                    terminal,
+                    error=result.error_message,
+                    failure_kind="fatal" if terminal == "failed" else None,
+                )
+        except Exception:
+            logger.warning("could not finish per-connection daily_sync %s", run_id, exc_info=True)
 
     async def _emit_progress(
         self, parent_wf: str | None, step_key: str, status: str, detail: str = ""

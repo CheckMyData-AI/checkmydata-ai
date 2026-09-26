@@ -674,6 +674,13 @@ class Settings(BaseSettings):
     daily_knowledge_sync_hour: int = 0
     daily_knowledge_sync_timezone: str = "Europe/Berlin"
     daily_knowledge_sync_job_timeout_seconds: int = 7200
+    # PRJ-07 S-08 (T07d): on a project with MORE than one connection, each connection's
+    # db index + code↔DB sync runs as its own ARQ job with this ceiling, one after
+    # another, instead of all of them inside the parent's 7 200 s. Measured on production
+    # 2026-09-23..25: db index 1 673–1 743 s + sync 542–657 s per connection, so four
+    # connections (~9 400 s) could not fit one shared night. A single-connection project
+    # keeps the in-job path, so this ceiling does not apply to it.
+    daily_sync_connection_job_timeout_seconds: int = 7200
 
     # ----- Analytics sources (GA4 / App Store / Google Play), spec §4 ---------
     # Hourly collection wave for analytics connections. OFF by default: it calls
@@ -1508,6 +1515,8 @@ class Settings(BaseSettings):
             raise ValueError("ANALYTICS_JOURNAL_RETENTION_DAYS must be >= 1.")
         if self.embedding_upsert_batch_size < 1:
             raise ValueError("EMBEDDING_UPSERT_BATCH_SIZE must be >= 1.")
+        if self.daily_sync_connection_job_timeout_seconds <= 0:
+            raise ValueError("DAILY_SYNC_CONNECTION_JOB_TIMEOUT_SECONDS must be positive.")
         if self.repo_index_job_timeout_seconds <= 0:
             raise ValueError("REPO_INDEX_JOB_TIMEOUT_SECONDS must be positive.")
         if self.batch_stale_claim_seconds <= 0:

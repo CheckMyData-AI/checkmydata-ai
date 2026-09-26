@@ -113,6 +113,9 @@ async def test_run_for_project_sequential_order():
 
 @pytest.mark.asyncio
 async def test_run_for_project_all_active_connections():
+    """The FALLBACK: when the per-connection chain cannot be queued (here: no queue at
+    all in the test process), every connection still runs, inline, under the parent's
+    ceiling — and a warning says so (T07d)."""
     svc = DailyKnowledgeSyncService()
     db_calls: list[str] = []
 
@@ -248,7 +251,7 @@ async def test_parent_run_heartbeat_refreshed_during_orchestrate(monkeypatch, fi
     svc = DailyKnowledgeSyncService()
     captured: dict = {}
 
-    async def slow_orchestrate(project_id, *, run_id):
+    async def slow_orchestrate(project_id, *, run_id, **_):
         # Capture the heartbeat at start, sleep, then read again at the end.
         async with sm() as s:
             run = await s.get(IndexingRun, run_id)
@@ -490,3 +493,136 @@ async def test_adopted_parent_projects_and_partial_on_skip(monkeypatch, file_db)
     assert run is not None
     assert run.status in ("completed", "failed")
     assert run.progress_pct > 0
+
+
+# ---------------------------------------------------------------------------
+# T07d — PRJ-07 S-08: per-connection jobs with their own ceilings
+# ---------------------------------------------------------------------------
+
+
+def _orchestrate_patches(svc, connections, **extra):
+    project = MagicMock()
+    project.id = "proj-t07d"
+    project.repo_url = "https://github.com/org/repo.git"
+    mock_sf = MagicMock()
+    mock_sf.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
+    mock_sf.return_value.__aexit__ = AsyncMock(return_value=None)
+    proj_svc = MagicMock()
+    proj_svc.get = AsyncMock(return_value=project)
+    return [
+        patch.object(svc, "_project_svc", proj_svc),
+        patch.object(svc, "_active_connections", AsyncMock(return_value=connections)),
+        patch.object(svc, "_run_repo_index", AsyncMock(return_value=("completed", None))),
+        patch("app.services.daily_knowledge_sync_service.async_session_factory", mock_sf),
+        *[patch.object(svc, k, v) for k, v in extra.items()],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_several_connections_are_queued_as_their_own_jobs():
+    from contextlib import ExitStack
+
+    svc = DailyKnowledgeSyncService()
+    conns = [MagicMock(id="c1"), MagicMock(id="c2"), MagicMock(id="c3")]
+    dispatch = AsyncMock(return_value=True)
+    db_index = AsyncMock(return_value=("completed", None))
+    with ExitStack() as stack:
+        for p in _orchestrate_patches(
+            svc, conns, _dispatch_connection_chain=dispatch, _run_db_index=db_index
+        ):
+            stack.enter_context(p)
+        result = await svc._orchestrate("proj-t07d", trigger="manual")
+
+    dispatch.assert_awaited_once_with("proj-t07d", ["c1", "c2", "c3"], trigger="manual")
+    db_index.assert_not_awaited()
+    assert result.status == _STATUS_SUCCESS
+    assert result.steps_json["connections_dispatched"] == ["c1", "c2", "c3"]
+    assert result.steps_json["connections"] == []
+
+
+@pytest.mark.asyncio
+async def test_one_connection_stays_in_the_parent_job():
+    """Production's only shape: nothing about it changes."""
+    from contextlib import ExitStack
+
+    svc = DailyKnowledgeSyncService()
+    dispatch = AsyncMock(return_value=True)
+    with ExitStack() as stack:
+        for p in _orchestrate_patches(
+            svc,
+            [MagicMock(id="c1")],
+            _dispatch_connection_chain=dispatch,
+            _run_db_index=AsyncMock(return_value=("completed", None)),
+            _run_code_db_sync=AsyncMock(return_value=("completed", None)),
+        ):
+            stack.enter_context(p)
+        result = await svc._orchestrate("proj-t07d")
+
+    dispatch.assert_not_awaited()
+    assert result.steps_json["connections"][0]["connection_id"] == "c1"
+    assert result.status == _STATUS_SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_a_link_records_its_own_run_and_queues_the_rest(monkeypatch, file_db):
+    import json
+
+    sm = file_db
+    async with sm() as s:
+        s.add(Project(id="p-chain", name="x", repo_url="https://x/y.git"))
+        await s.commit()
+    monkeypatch.setattr("app.services.daily_knowledge_sync_service.async_session_factory", sm)
+
+    svc = DailyKnowledgeSyncService()
+    monkeypatch.setattr(svc, "_run_db_index", AsyncMock(return_value=("completed", None)))
+    monkeypatch.setattr(svc, "_run_code_db_sync", AsyncMock(return_value=("completed", None)))
+    dispatch = AsyncMock(return_value=True)
+    monkeypatch.setattr(svc, "_dispatch_connection_chain", dispatch)
+
+    result = await svc.run_connection_sync("p-chain", ["c1", "c2", "c3"], trigger="schedule")
+
+    assert result.status == _STATUS_SUCCESS
+    dispatch.assert_awaited_once_with("p-chain", ["c2", "c3"], trigger="schedule")
+    async with sm() as s:
+        (run,) = (await s.execute(select(IndexingRun))).scalars().all()
+    assert (run.kind, run.connection_id, run.status) == ("daily_sync", "c1", "completed")
+    assert json.loads(run.meta_json)["steps"]["connections"][0]["connection_id"] == "c1"
+
+
+@pytest.mark.asyncio
+async def test_a_failing_link_is_recorded_and_still_passes_the_night_on(monkeypatch, file_db):
+    sm = file_db
+    async with sm() as s:
+        s.add(Project(id="p-fail", name="x", repo_url="https://x/y.git"))
+        await s.commit()
+    monkeypatch.setattr("app.services.daily_knowledge_sync_service.async_session_factory", sm)
+
+    svc = DailyKnowledgeSyncService()
+    monkeypatch.setattr(svc, "_run_db_index", AsyncMock(side_effect=RuntimeError("tunnel down")))
+    dispatch = AsyncMock(return_value=True)
+    monkeypatch.setattr(svc, "_dispatch_connection_chain", dispatch)
+
+    result = await svc.run_connection_sync("p-fail", ["c1", "c2"])
+
+    assert result.status == "failed" and "tunnel down" in (result.error_message or "")
+    dispatch.assert_awaited_once_with("p-fail", ["c2"], trigger="schedule")
+    async with sm() as s:
+        (run,) = (await s.execute(select(IndexingRun))).scalars().all()
+    assert (run.connection_id, run.status) == ("c1", "failed")
+    assert "tunnel down" in (run.error or "")
+
+
+@pytest.mark.asyncio
+async def test_the_last_link_queues_nothing(monkeypatch, file_db):
+    sm = file_db
+    async with sm() as s:
+        s.add(Project(id="p-last", name="x", repo_url="https://x/y.git"))
+        await s.commit()
+    monkeypatch.setattr("app.services.daily_knowledge_sync_service.async_session_factory", sm)
+    svc = DailyKnowledgeSyncService()
+    monkeypatch.setattr(svc, "_run_db_index", AsyncMock(return_value=("completed", None)))
+    monkeypatch.setattr(svc, "_run_code_db_sync", AsyncMock(return_value=("completed", None)))
+    dispatch = AsyncMock(return_value=True)
+    monkeypatch.setattr(svc, "_dispatch_connection_chain", dispatch)
+    await svc.run_connection_sync("p-last", ["c9"])
+    dispatch.assert_not_awaited()
