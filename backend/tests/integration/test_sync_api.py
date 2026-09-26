@@ -137,6 +137,48 @@ class TestReadinessEndpoint:
         assert data["last_indexed_at"] is not None
 
     @pytest.mark.asyncio
+    async def test_a_repository_index_in_flight_is_not_offered_again(
+        self,
+        auth_client: AsyncClient,
+        db_session: AsyncSession,
+    ):
+        """SCN-045 / B-27 D3: a running `index_repo` run is reported, not offered as Run.
+
+        The second start is refused by `uq_indexing_runs_active_one` with a 409, so
+        offering it only produced an error toast for work already under way.
+        """
+        from app.models.indexing_run import IndexingRun
+
+        proj = await auth_client.post(
+            "/api/projects",
+            json={
+                "name": "RepoIndexInFlight",
+                "description": "test",
+                "repo_url": "git@example.com:org/repo.git",
+            },
+        )
+        project_id = proj.json()["id"]
+
+        before = (await auth_client.get(f"/api/projects/{project_id}/readiness")).json()
+        assert before["repo_indexing"] is False
+        assert any(s["step"] == "index_repo" for s in before["missing_steps"])
+
+        db_session.add(
+            IndexingRun(
+                workflow_id=str(uuid.uuid4()),
+                project_id=project_id,
+                kind="index_repo",
+                status="running",
+            )
+        )
+        await db_session.commit()
+
+        after = (await auth_client.get(f"/api/projects/{project_id}/readiness")).json()
+        assert after["repo_indexing"] is True
+        assert after["repo_indexed"] is False
+        assert not any(s["step"] == "index_repo" for s in after["missing_steps"])
+
+    @pytest.mark.asyncio
     async def test_readiness_not_found(self, auth_client: AsyncClient):
         resp = await auth_client.get("/api/projects/nonexistent/readiness")
         assert resp.status_code in (403, 404)

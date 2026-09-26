@@ -143,9 +143,12 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
   const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
   // The server's own exec commands, fetched once and shown read-only (C-02).
   const [execTemplates, setExecTemplates] = useState<Record<string, string>>({});
+  // A failed fetch is a state of its own: without it the box read "loading…" for ever
+  // (SCN-028, B-27).
+  const [execTemplatesFailed, setExecTemplatesFailed] = useState(false);
 
   useEffect(() => {
-    if (!form.ssh_exec_mode || Object.keys(execTemplates).length > 0) return;
+    if (!form.ssh_exec_mode || Object.keys(execTemplates).length > 0 || execTemplatesFailed) return;
     let cancelled = false;
     api.connections
       .execTemplates()
@@ -154,11 +157,12 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
       })
       .catch(() => {
         // Display only: a connection still saves and runs without this text.
+        if (!cancelled) setExecTemplatesFailed(true);
       });
     return () => {
       cancelled = true;
     };
-  }, [form.ssh_exec_mode, execTemplates]);
+  }, [form.ssh_exec_mode, execTemplates, execTemplatesFailed]);
   const [analyticsForm, setAnalyticsForm] = useState<AnalyticsFormState>({
     ...EMPTY_ANALYTICS_FORM,
   });
@@ -1538,7 +1542,10 @@ export function ConnectionSelector({ createRequested, onCreateHandled }: Connect
                       Runs by default (read-only):
                     </div>
                     <code className="block font-mono text-kicker text-text-secondary break-all">
-                      {execTemplates[form.db_type] ?? "loading…"}
+                      {execTemplates[form.db_type] ??
+                        (execTemplatesFailed
+                          ? "Could not load the default command. The connection still uses it."
+                          : "loading…")}
                     </code>
                   </div>
                   <textarea

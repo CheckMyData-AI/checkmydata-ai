@@ -125,7 +125,12 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
           (stepKey === "index_repo" && r.repo_indexed) ||
           (stepKey === "index_db" && r.db_indexed) ||
           (stepKey === "sync" && r.code_db_synced);
-        const pipelineIdle = pipeline ? !pipeline.any_running : false;
+        // When the pipeline endpoint fails, the readiness row's own busy flags answer
+        // "is anything still running" — treating the failure as "busy" made a step
+        // that had finished end as "timed out" (SCN-045, B-27).
+        const pipelineIdle = pipeline
+          ? !pipeline.any_running
+          : !(r.repo_indexing || r.db_indexing || r.code_db_syncing);
         if (stepDone && pipelineIdle) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
@@ -148,8 +153,13 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
   // shown as "Running…", but polling started only from `handleAction`, so nothing ever
   // noticed it finish and the gate stayed stuck until a remount. Watch it the same way,
   // until the readiness row stops reporting it busy (or the usual ceiling passes).
-  const busyAtLoad =
-    readiness?.db_indexing ? "index_db" : readiness?.code_db_syncing ? "sync" : null;
+  const busyAtLoad = readiness?.repo_indexing
+    ? "index_repo"
+    : readiness?.db_indexing
+      ? "index_db"
+      : readiness?.code_db_syncing
+        ? "sync"
+        : null;
   useEffect(() => {
     if (!busyAtLoad || pollRef.current || actionInProgress) return;
     const start = Date.now();
@@ -164,6 +174,7 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
         if (!mountedRef.current) return;
         setReadiness(r);
         const stillBusy =
+          (busyAtLoad === "index_repo" && r.repo_indexing) ||
           (busyAtLoad === "index_db" && r.db_indexing) ||
           (busyAtLoad === "sync" && r.code_db_syncing);
         if (!stillBusy) {
@@ -257,6 +268,7 @@ export function ReadinessGate({ projectId, connectionId, onBypass }: ReadinessGa
   // second request the partial unique index refuses, so the button appears to do nothing
   // — and the user has no way to learn that the work they wanted is already under way.
   const stepBusy: Record<string, boolean> = {
+    index_repo: readiness.repo_indexing ?? false,
     index_db: readiness.db_indexing ?? false,
     sync: readiness.code_db_syncing ?? false,
   };

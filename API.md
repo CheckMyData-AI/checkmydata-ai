@@ -61,7 +61,7 @@ See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for the full MCP integration guid
 | GET | `/api/projects/{id}` | Get project details |
 | PATCH | `/api/projects/{id}` | Update project |
 | DELETE | `/api/projects/{id}` | Delete project |
-| GET | `/api/projects/{id}/readiness` | Check project setup readiness |
+| GET | `/api/projects/{id}/readiness` | Check project setup readiness. Each step has three states — done, running (`repo_indexing`, `db_indexing`, `code_db_syncing`), neither — and a running step is never listed in `missing_steps`, because starting it again is refused by `uq_indexing_runs_active_one`. `repo_indexing` reads `indexing_runs` (B-27) |
 | GET | `/api/projects/{id}/pipeline-status` | Unified repo/DB index/code-DB sync running state |
 | GET | `/api/projects/{id}/knowledge-health` | Knowledge freshness panel data |
 | GET | `/api/projects/{id}/sync-history?limit=N` | Recent scheduled background runs (viewer) — the nightly knowledge sync (`kind: "daily_sync"`) and each analytics connection's collection (`kind: "analytics_collect"`, carrying `connection_id`), newest-first across both. Returns `{"runs": [{id, kind, connection_id, status, trigger, started_at, finished_at, duration_seconds, error, progress_pct}]}`. `started_at` / `finished_at` are ISO-8601 strings or `null`; `error` is the failure message (or `null`); `duration_seconds` is `null` until the run finishes. `limit` clamped to 1–50, default 20. |

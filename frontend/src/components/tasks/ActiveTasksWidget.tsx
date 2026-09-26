@@ -50,7 +50,9 @@ function TaskItem({ task }: { task: BgTask }) {
   }
 
   const stepLabel = STEP_LABELS[task.currentStep] || task.currentStep;
-  const isFinished = task.status !== "running";
+  // Only a terminal task can be dismissed; a queued one is in flight and is cancelled
+  // like a running one (SCN-105).
+  const isFinished = task.status === "completed" || task.status === "failed" || task.status === "ended";
 
   return (
     <div className="px-3 py-2.5 animate-[taskItemIn_0.2s_ease-out] border-b border-border-subtle last:border-b-0">
@@ -64,6 +66,12 @@ function TaskItem({ task }: { task: BgTask }) {
           )}
           {task.status === "failed" && (
             <Icon name="x" size={16} className="text-error" />
+          )}
+          {task.status === "queued" && (
+            <Icon name="clock" size={16} className="text-text-tertiary" />
+          )}
+          {task.status === "ended" && (
+            <Icon name="help-circle" size={16} className="text-text-tertiary" />
           )}
         </div>
 
@@ -102,6 +110,17 @@ function TaskItem({ task }: { task: BgTask }) {
                 {task.error || "Failed"}
               </span>
             )}
+            {task.status === "queued" && (
+              <span className="text-kicker text-text-tertiary">Queued</span>
+            )}
+            {task.status === "ended" && (
+              <span
+                className="text-kicker text-text-tertiary truncate max-w-[180px]"
+                title="This run finished while the tab was not listening. See its result in the run history."
+              >
+                Ended — outcome not received
+              </span>
+            )}
           </div>
 
           {task.status === "running" && (
@@ -118,7 +137,7 @@ function TaskItem({ task }: { task: BgTask }) {
           <span className="text-kicker text-text-muted tabular-nums">
             {elapsed}
           </span>
-          {task.status === "running" && (
+          {(task.status === "running" || task.status === "queued") && (
             <Tooltip label="Cancel">
               <button
                 onClick={() =>
@@ -257,6 +276,8 @@ export function ActiveTasksWidget() {
           <span className="w-3 h-3 rounded-full border-[1.5px] border-current border-t-transparent animate-spin inline-block" />
         ) : summary.icon === "alert" ? (
           <Icon name="x" size={12} />
+        ) : summary.icon === "unknown" ? (
+          <Icon name="help-circle" size={12} />
         ) : (
           <Icon name="check" size={12} />
         )}

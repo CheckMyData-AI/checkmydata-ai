@@ -3,11 +3,13 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const readinessMock = vi.fn();
+const pipelineStatusMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   api: {
     projects: {
       readiness: (...args: unknown[]) => readinessMock(...args),
+      pipelineStatus: (...args: unknown[]) => pipelineStatusMock(...args),
     },
     repos: { index: vi.fn().mockResolvedValue({ workflow_id: "w1" }) },
     connections: {
@@ -28,6 +30,7 @@ const onBypass = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
+  pipelineStatusMock.mockRejectedValue(new Error("pipeline status unavailable"));
 });
 
 function makeReadiness(overrides: Record<string, unknown> = {}) {
@@ -186,6 +189,28 @@ describe("ReadinessGate", () => {
       expect(screen.queryAllByRole("button", { name: "Run" })).toHaveLength(1);
     });
 
+    // B-27 D3: a repository index in flight was offered "Run", and the click answered
+    // 409 "Indexing already in progress".
+    it("a repository index in flight is shown running, not offered", async () => {
+      readinessMock.mockResolvedValue(makeReadiness({
+        repo_connected: true,
+        repo_indexed: false,
+        repo_indexing: true,
+        db_connected: true,
+        db_indexed: true,
+        code_db_synced: true,
+        active_connection_id: "c1",
+      }));
+      const { ReadinessGate } = await import("@/components/chat/ReadinessGate");
+      render(
+        <ReadinessGate projectId="p1" connectionId="c1" onBypass={onBypass} />,
+      );
+      await waitFor(() => {
+        expect(screen.getByText("Running…")).toBeInTheDocument();
+      });
+      expect(screen.queryAllByRole("button", { name: "Run" })).toHaveLength(0);
+    });
+
     it("does not hide a step that finished while another one runs", async () => {
       // The sync summary read `completed` at 20:52 and the rail said "Run", because
       // `is_synced` was consulted only inside `if indexed:` and an index had started at
@@ -227,5 +252,29 @@ describe("ReadinessGate", () => {
     expect(await screen.findByText("Running…")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("Running…")).toBeNull(), { timeout: 3000 });
     expect(readinessMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  // B-27 (SCN-045): with the pipeline endpoint failing, a step that FINISHED ended as
+  // "timed out" — the failure was read as "still busy" until the ceiling.
+  it("a step that finished completes even when the pipeline status call fails", async () => {
+    const { toast } = await import("@/stores/toast-store");
+    const before = makeReadiness({
+      repo_connected: true,
+      repo_indexed: true,
+      db_connected: true,
+      active_connection_id: "c1",
+    });
+    readinessMock
+      .mockResolvedValueOnce(before)
+      .mockResolvedValue(makeReadiness({ ...before, db_indexed: true }));
+    const { ReadinessGate } = await import("@/components/chat/ReadinessGate");
+    render(<ReadinessGate projectId="p1" connectionId="c1" onBypass={onBypass} />);
+    const runs = await screen.findAllByRole("button", { name: "Run" });
+    await userEvent.click(runs[0]);
+    await waitFor(
+      () => expect(toast).toHaveBeenCalledWith(expect.stringMatching(/completed$/), "success"),
+      { timeout: 3000 },
+    );
+    expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/timed out/), "error");
   });
 });

@@ -8,11 +8,11 @@
  * header therefore read "✓ 1 done" for an index that had not started.
  */
 
-export type TaskStatusLike = "queued" | "running" | "completed" | "failed" | string;
+export type TaskStatusLike = "queued" | "running" | "completed" | "failed" | "ended" | string;
 
 export interface TaskSummary {
   label: string;
-  icon: "loader" | "check" | "alert";
+  icon: "loader" | "check" | "alert" | "unknown";
 }
 
 export function summarizeTasks(tasks: { status: TaskStatusLike }[]): TaskSummary {
@@ -34,6 +34,12 @@ export function summarizeTasks(tasks: { status: TaskStatusLike }[]): TaskSummary
   }
   if (queued > 0) {
     return { label: queued === 1 ? "1 queued" : `${queued} queued`, icon: "loader" };
+  }
+  // An `ended` task's outcome is unknown (B-27 D5), so the pill must not read "done"
+  // with a check beside it for a run nobody saw finish.
+  const ended = tasks.filter((t) => t.status === "ended").length;
+  if (ended > 0) {
+    return { label: ended === 1 ? "1 ended" : `${ended} ended`, icon: "unknown" };
   }
   return { label: done === 1 ? "1 done" : `${done} done`, icon: "check" };
 }

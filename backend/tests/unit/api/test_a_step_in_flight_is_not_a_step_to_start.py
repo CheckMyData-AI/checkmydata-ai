@@ -62,7 +62,9 @@ def test_the_sync_check_does_not_sit_inside_the_index_check() -> None:
 def test_running_is_reported_as_its_own_state() -> None:
     """Without it, the caller can only choose between "done" and "offer a button"."""
     body = ast.unparse(_readiness_function())
-    for name in ("is_indexing", "is_syncing", "db_indexing", "code_db_syncing"):
+    # `repo_indexing` joined 2026-09-26 (B-27 D3): a repository index in flight was
+    # still offered "Run", and the click answered 409 "Indexing already in progress".
+    for name in ("is_indexing", "is_syncing", "db_indexing", "code_db_syncing", "repo_indexing"):
         assert name in body, (
             f"readiness no longer reports `{name}` — a step in flight is indistinguishable "
             "from one never started, and the rail offers to start it again"
@@ -82,7 +84,11 @@ def test_a_running_step_is_not_offered_as_a_missing_step() -> None:
         if "missing_steps.append" not in appended:
             continue
         condition = ast.unparse(node.test)
-        for step, running in (("index_db", "db_indexing"), ("sync", "code_db_syncing")):
+        for step, running in (
+            ("index_repo", "repo_indexing"),
+            ("index_db", "db_indexing"),
+            ("sync", "code_db_syncing"),
+        ):
             if f"'{step}'" in appended:
                 assert running in condition, (
                     f"the `{step}` step is offered while `{running}` is true, so the rail "
@@ -90,4 +96,4 @@ def test_a_running_step_is_not_offered_as_a_missing_step() -> None:
                     "unique index refuses, silently"
                 )
                 guarded.add(step)
-    assert guarded == {"index_db", "sync"}, f"only guarded {sorted(guarded)}"
+    assert guarded == {"index_repo", "index_db", "sync"}, f"only guarded {sorted(guarded)}"

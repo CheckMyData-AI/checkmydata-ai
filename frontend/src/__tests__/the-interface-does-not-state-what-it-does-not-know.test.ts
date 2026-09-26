@@ -113,6 +113,55 @@ describe("a background task that disappears stops spinning (FE-06)", () => {
     ).toBe(true);
   });
 
+  // B-27 D5: the sweep skipped every SSE-tracked task, and a task that has received
+  // one SSE event IS SSE-tracked — so the dropped-connection case FE-06 was written
+  // for never reached it. And where it did fire, it said `failed` with a Retry.
+  function sseTask(overrides: Record<string, unknown> = {}) {
+    return {
+      runId: "wf-sse",
+      workflowId: "wf-sse",
+      pipeline: "index_repo",
+      kind: "index_repo",
+      status: "running" as const,
+      currentStep: "graph_build",
+      currentStepDetail: "",
+      stepIndex: 3,
+      totalSteps: 9,
+      progressPct: 40,
+      connectionId: null,
+      startedAt: Date.now() / 1000 - 600,
+      lastEventAt: Date.now() / 1000 - 300,
+      extra: {},
+      source: "sse" as const,
+      ...overrides,
+    };
+  }
+
+  it("an SSE-tracked task that went quiet and left the active list is ended, not failed", async () => {
+    const { useBackgroundTasks } = await import("@/stores/background-tasks-store");
+    useBackgroundTasks.setState({ tasks: { "wf-sse": sseTask() } });
+    useBackgroundTasks.getState().reconcileFromActive([]);
+    const task = useBackgroundTasks.getState().tasks["wf-sse"];
+    expect(task.status).toBe("ended");
+    expect(task.error).toBeUndefined();
+  });
+
+  it("an SSE-tracked task that spoke recently is left alone", async () => {
+    const { useBackgroundTasks } = await import("@/stores/background-tasks-store");
+    useBackgroundTasks.setState({
+      tasks: { "wf-sse": sseTask({ lastEventAt: Date.now() / 1000 - 5 }) },
+    });
+    useBackgroundTasks.getState().reconcileFromActive([]);
+    expect(useBackgroundTasks.getState().tasks["wf-sse"].status).toBe("running");
+  });
+
+  it("an ended task is not counted as done or failed", async () => {
+    const { summarizeTasks } = await import("@/lib/task-summary");
+    const s = summarizeTasks([{ status: "ended" }]);
+    expect(s.label).toBe("1 ended");
+    expect(s.icon).toBe("unknown");
+  });
+
   it("a task queued a moment ago is not counted as done", async () => {
     const { summarizeTasks } = await import("@/lib/task-summary");
     const queued = summarizeTasks([

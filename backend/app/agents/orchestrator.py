@@ -2819,11 +2819,24 @@ class OrchestratorAgent(BaseAgent):
                 parsed = {}
 
         summary_parts: list[str] = []
-        summary_parts.append(
-            "CONTINUATION: The previous analysis run was cut short by the step/time limit. "
-            "Below is a summary of work already completed. Do NOT re-execute these queries — "
-            "use the results below and continue the analysis from where it stopped."
+        carried = bool(
+            parsed.get("sql_queries") or parsed.get("tool_call_log") or parsed.get("partial_answer")
         )
+        if carried:
+            summary_parts.append(
+                "CONTINUATION: The previous analysis run was cut short by the step/time "
+                "limit. Below is a summary of work already completed. Do NOT re-execute "
+                "these queries — use the results below and continue the analysis from "
+                "where it stopped."
+            )
+        else:
+            # Telling the model to reuse "the results below" with nothing below made it
+            # reason about results it was never given (SCN-055, B-27 D2).
+            summary_parts.append(
+                "CONTINUATION: The previous analysis run was cut short by the step/time "
+                "limit, and no intermediate results were carried over. Answer the "
+                "question again, running whatever queries it needs."
+            )
 
         sql_queries = parsed.get("sql_queries", [])
         if sql_queries:

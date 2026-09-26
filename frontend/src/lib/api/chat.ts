@@ -1,4 +1,4 @@
-import { API_BASE, getCsrfHeaders, handleSessionExpired, request } from "./_client";
+import { API_BASE, forbiddenMessage, getCsrfHeaders, handleSessionExpired, request } from "./_client";
 import { SESSION_EXPIRED_MESSAGE } from "@/lib/session-flash";
 import type {
   ChatMessageDTO,
@@ -220,11 +220,12 @@ export const chat = {
           throw new Error("Session expired");
         }
         if (res.status === 403) {
+          const body = await res.json().catch(() => ({}));
           onError({
             error: "Permission denied",
             error_type: "auth",
             is_retryable: false,
-            user_message: "You don't have permission to perform this action.",
+            user_message: forbiddenMessage(body?.detail),
           });
           throw new Error("Permission denied");
         }

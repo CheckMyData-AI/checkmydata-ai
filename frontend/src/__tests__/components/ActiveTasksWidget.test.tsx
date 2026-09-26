@@ -106,4 +106,30 @@ describe("ActiveTasksWidget progress + controls", () => {
       expect(toastMock).toHaveBeenCalledWith("Failed to retry task", "error"),
     );
   });
+
+  // B-27 D5: a queued task is in flight — cancelled, not dismissed.
+  it("a queued task offers Cancel, not Dismiss", () => {
+    useBackgroundTasks.setState({
+      tasks: { r1: { ...RUNNING_TASK, status: "queued" } },
+      pinnedRunningIds: new Set(),
+    });
+    render(<ActiveTasksWidget />);
+    fireEvent.click(screen.getByRole("button", { name: /Background tasks/i }));
+    expect(screen.getByText("Queued")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /cancel run/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^dismiss$/i })).toBeNull();
+  });
+
+  // B-27 D5: an ended task's outcome is unknown — no Retry that could re-run a success.
+  it("an ended task says its outcome was not received and offers no Retry", () => {
+    useBackgroundTasks.setState({
+      tasks: { r1: { ...RUNNING_TASK, status: "ended" } },
+      pinnedRunningIds: new Set(),
+    });
+    render(<ActiveTasksWidget />);
+    fireEvent.click(screen.getByRole("button", { name: /Background tasks/i }));
+    expect(screen.getByText(/outcome not received/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /retry run/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /^dismiss$/i })).toBeTruthy();
+  });
 });

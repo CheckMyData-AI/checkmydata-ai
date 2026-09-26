@@ -19,6 +19,15 @@ function VerifyEmailContent() {
   const [status, setStatus] = useState<Status>("loading");
   const [resending, setResending] = useState(false);
   const [resent, setResent] = useState(false);
+  const [invitesAccepted, setInvitesAccepted] = useState(0);
+
+  // This page sits outside AuthGate, and a link opened from an email arrives with no
+  // profile in memory — so `user` was always null here, the "resend from this page"
+  // path could never render, and the verified flag never reached the cached profile
+  // (SCN-012, B-27). Restoring the session is what makes both reachable.
+  useEffect(() => {
+    void useAuthStore.getState().restore();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -28,8 +37,9 @@ function VerifyEmailContent() {
     }
     api.auth
       .verifyEmail(token)
-      .then(() => {
+      .then((res) => {
         if (cancelled) return;
+        setInvitesAccepted(res?.invites_accepted ?? 0);
         setStatus("success");
         // Reflect the new state in the cached profile so the app-shell prompt
         // (EmailVerifyBanner) disappears immediately for a logged-in user.
@@ -49,9 +59,21 @@ function VerifyEmailContent() {
   const handleResend = async () => {
     setResending(true);
     try {
-      await api.auth.resendVerification();
+      const res = await api.auth.resendVerification();
+      if (res?.already_verified) {
+        toast("This address is already verified — continue to the app.", "success");
+      } else if (res?.email_sent === false) {
+        // The route reports whether the provider took the email; "sent" on a refusal
+        // is the claim `EmailVerifyBanner` already stopped making (SCN-012).
+        toast(
+          "We could not send the email — the mail provider rejected it. Contact support and we will verify you by hand.",
+          "error",
+        );
+        return;
+      } else {
+        toast("Verification email sent — check your inbox.", "success");
+      }
       setResent(true);
-      toast("Verification email sent — check your inbox.", "success");
     } catch (err) {
       toast(
         err instanceof Error ? err.message : "Could not send verification email.",
@@ -86,8 +108,11 @@ function VerifyEmailContent() {
                 Email verified
               </h1>
               <p className="text-sm text-text-tertiary">
-                Your email address is confirmed. Any pending project invitations
-                have been accepted.
+                Your email address is confirmed.
+                {invitesAccepted > 0 &&
+                  (invitesAccepted === 1
+                    ? " Your pending project invitation has been accepted."
+                    : ` Your ${invitesAccepted} pending project invitations have been accepted.`)}
               </p>
               <Link
                 href="/app"

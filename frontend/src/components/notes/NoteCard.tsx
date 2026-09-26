@@ -11,6 +11,7 @@ import { useConfirmStore } from "@/components/ui/ConfirmModal";
 import { toast } from "@/stores/toast-store";
 import { Icon } from "@/components/ui/Icon";
 import type { RawResult } from "@/stores/app-store";
+import { refreshedNoteMessage } from "@/lib/note-refresh";
 
 const VizRenderer = dynamic(
   () => import("@/components/viz/VizRenderer").then((m) => m.VizRenderer),
@@ -110,7 +111,7 @@ export function NoteCard({ note }: NoteCardProps) {
           addMessage({
             id: crypto.randomUUID(),
             role: "assistant",
-            content: `[Refreshed] ${note.title}\n\n${note.answer_text || ""}`,
+            content: refreshedNoteMessage(note.title, refreshedResult),
             query: note.sql_query,
             visualization: viz ?? undefined,
             responseType: "sql_result",

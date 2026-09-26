@@ -86,6 +86,24 @@ function isSafeMethod(method?: string): boolean {
   );
 }
 
+const GENERIC_FORBIDDEN = "You don't have permission to perform this action.";
+
+/**
+ * What a 403 tells the user. The backend's 403 details name the reason and are
+ * written for a person ("Requires at least 'editor' role", "This invite is for a
+ * different email address"), so they are shown. Replacing every one with a generic
+ * sentence meant a viewer, a wrong-email invitee and an unverified account all read
+ * the same thing and none of them could act on it (SCN-015, SCN-069; B-27 D4).
+ * Two are about the CSRF token, not the user's rights, and say what fixes them.
+ */
+export function forbiddenMessage(detail: unknown): string {
+  if (typeof detail !== "string" || !detail.trim()) return GENERIC_FORBIDDEN;
+  if (/csrf/i.test(detail)) {
+    return "Your session's security token is out of date. Reload the page and try again.";
+  }
+  return detail;
+}
+
 export async function request<T>(
   path: string,
   options?: RequestInit & {
@@ -176,7 +194,8 @@ export async function request<T>(
         throw new Error(SESSION_EXPIRED_MESSAGE);
       }
       if (res.status === 403) {
-        throw new Error("You don't have permission to perform this action.");
+        const body = await res.json().catch(() => ({}));
+        throw Object.assign(new Error(forbiddenMessage(body?.detail)), { status: 403 });
       }
       if (res.status === 429) {
         // API-06: the backend serves two different conditions as 429 — the rate
