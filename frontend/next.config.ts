@@ -48,8 +48,29 @@ const securityHeaders = [
     : []),
 ];
 
+// The hosted product was switched off on 2026-10-11: no API, no database behind
+// the site. Its routes stay in the tree for a relaunch, but nobody reaches them —
+// each one lands on the waitlist instead of a sign-in that cannot succeed.
+const RETIRED_PRODUCT_ROUTES = [
+  "/app",
+  "/app/:path*",
+  "/login",
+  "/forgot-password",
+  "/reset-password",
+  "/verify-email",
+  "/dashboard/:path*",
+  "/pricing",
+];
+
 const nextConfig: NextConfig = {
   output: "standalone",
+  async redirects() {
+    return RETIRED_PRODUCT_ROUTES.map((source) => ({
+      source,
+      destination: "/#waitlist",
+      permanent: false,
+    }));
+  },
   async headers() {
     return [
       {

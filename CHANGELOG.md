@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the hosted product is switched off; checkmydata.ai is a waitlist (2026-10-11)
+
+- Operator decision, to stop the running cost. `checkmydata-api` runs no dynos and is in
+  maintenance mode; its Heroku Postgres and Redis add-ons and the Supabase project were
+  deleted after `pg_dump` backups (kept privately, outside Git). The deploy workflow no
+  longer fires on a green CI run: it builds and releases the site only, by hand.
+- The site's "Get Started" / "Log in" / "Try it now" CTAs now lead to a waitlist form
+  (`#waitlist`). A sign-up is one email to `contact@checkmydata.ai` sent by the site's own
+  Next.js server through Resend (`POST /api/waitlist`) — no database. A sign-up that was not
+  mailed is reported to the visitor as a failure, never acknowledged.
+- `/app`, `/login`, `/pricing`, `/dashboard/…` and the password/verification pages
+  redirect to `/#waitlist`. Their code stays for a relaunch; self-hosting is unchanged.
+
 ### Fixed — a full rebuild interrupted part-way resumes, against its own tree (PRJ-06 T12a, #441)
 
 - A restart during a full rebuild used to pay for all of it again: the run created a fresh

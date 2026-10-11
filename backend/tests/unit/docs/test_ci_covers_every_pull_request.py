@@ -15,11 +15,10 @@ full run, and the PR trigger already covers the work. What must not be scoped is
 pull-request one, because the base branch of a PR says nothing about whether its diff
 deserves testing.
 
-The second assertion guards the blast radius of the first. `deploy.yml` fires on a
-completed CI run whose head branch is `main`; widening CI means PR-triggered runs now
-exist that did not before, so the deploy job additionally requires the CI run to have
-come from a `push`. A PR opened *from* `main` is the one shape that could otherwise
-reach the deploy path through a pull request.
+The second assertion guards the blast radius of the first. `deploy.yml` used to fire on
+a completed CI run whose head branch was `main`, and had to exclude PR-triggered runs.
+Since 2026-10-11 it is manual only, so the guard is simpler and stricter: no CI run of
+any kind can reach it.
 """
 
 from __future__ import annotations
@@ -64,18 +63,18 @@ def test_push_stays_scoped_to_main() -> None:
     assert push.get("branches") == ["main"]
 
 
-def test_deploy_only_follows_a_push_to_main() -> None:
-    """Widening CI creates PR-triggered runs that did not exist before. The deploy job
-    must not be reachable from one."""
+def test_deploy_is_never_triggered_by_ci() -> None:
+    """Since 2026-10-11 the deploy runs by hand only (the hosted product is off and the
+    workflow ships the site alone). So no CI run — from a push or from a pull request —
+    can reach it: the only trigger is `workflow_dispatch`, and the job refuses any ref
+    but `main`."""
     deploy = _load("deploy.yml")
-    trigger = deploy["on"]["workflow_run"]
-    assert trigger["branches"] == ["main"]
-
+    assert set(deploy["on"]) == {"workflow_dispatch"}, (
+        f"deploy.yml must be manual only; it triggers on {sorted(deploy['on'])}"
+    )
     condition = deploy["jobs"]["deploy"]["if"]
-    assert "conclusion == 'success'" in condition
-    assert "event == 'push'" in condition, (
-        "a CI run triggered by a pull request must not reach the deploy job; the base "
-        "branch filter alone does not exclude a PR opened from `main`"
+    assert "refs/heads/main" in condition, (
+        "a dispatch from a feature branch must not ship that branch to production"
     )
 
 
