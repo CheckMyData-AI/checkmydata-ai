@@ -9,10 +9,15 @@ found is recorded as a `draft` scenario with `Coverage: none yet`. Paths are
 relative to `frontend/src/` unless noted. All entries start `draft`; only a
 human review moves them to `validated`.
 
+**Since 2026-10-11 the hosted deployment serves the marketing site only** — the API,
+worker and databases were switched off and the product's routes redirect to the
+waitlist (SCN-109, SCN-153). The product scenarios below describe the self-hosted build
+from this repository, which is unchanged; they are not reachable on checkmydata.ai.
+
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-09-26 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-10-11 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -21,13 +26,13 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 
 | | |
 |---|---|
-| Scenarios | **154** |
-| Status | draft × 12, implemented × 142 |
-| Last verdict | FAIL × 1, PARTIAL × 12, PASS × 129, no verdict × 12 |
-| Verified when | 2026-07-19 × 72, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 2, 2026-09-23 × 14, 2026-09-26 × 13, undated × 12 |
-| **Verified >30 days ago** | **84 of 154** (oldest 69 days) |
-| Never verified (no date) | 12 |
-| Referenced from code or tests | **52 of 154** |
+| Scenarios | **155** |
+| Status | draft × 12, implemented × 141, retired × 2 |
+| Last verdict | FAIL × 1, PARTIAL × 12, PASS × 128, no verdict × 14 |
+| Verified when | 2026-07-19 × 69, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 2, 2026-09-23 × 14, 2026-09-26 × 13, 2026-10-11 × 2, undated × 14 |
+| **Verified >30 days ago** | **105 of 155** (oldest 84 days) |
+| Never verified (no date) | 14 |
+| Referenced from code or tests | **52 of 155** |
 
 *Implemented* says somebody built it. *Verified* says somebody checked it, on a date,
 and that date has an age. A reader shown only the first will believe the second — which
@@ -151,10 +156,10 @@ it is what moves it.
 | SCN-106 | Request history & trace detail | logs | owner | implemented | 2026-08-31 PASS |
 | SCN-107 | Runs & Errors log tabs | logs | owner | implemented | 2026-09-17 PASS |
 | SCN-108 | Live activity log stream | logs | analyst | implemented | 2026-07-19 PASS |
-| SCN-109 | Landing page → Get Started | marketing | visitor | implemented | 2026-07-19 PASS |
-| SCN-110 | Pricing CTA (logged out) | marketing | visitor | implemented | 2026-07-19 PASS |
+| SCN-109 | Landing page → Join the waitlist | marketing | visitor | implemented | 2026-10-11 PASS |
+| SCN-110 | Pricing CTA (logged out) | marketing | visitor | retired | — |
 | SCN-111 | Support / Contact / Legal pages | marketing | visitor | implemented | 2026-07-19 PASS |
-| SCN-112 | Logged-in visitor auto-redirect to /app | marketing | analyst | implemented | 2026-07-19 PASS |
+| SCN-112 | Logged-in visitor auto-redirect to /app | marketing | analyst | retired | — |
 | SCN-113 | Add a Google Analytics 4 connection | analytics-sources | owner | implemented | 2026-08-19 PASS |
 | SCN-114 | Add / delete a vendor credential | analytics-sources | owner | implemented | 2026-08-19 PASS |
 | SCN-114a | Check whether a stored credential still works | analytics-sources | owner | implemented | 2026-09-18 PASS |
@@ -196,6 +201,7 @@ it is what moves it.
 | SCN-150 | The sidebar surfaces what needs attention and routes to the fix | workspace | analyst | implemented | 2026-09-08 PASS |
 | SCN-151 | A panel link opens the panel it names | workspace | analyst | implemented | 2026-09-07 PASS |
 | SCN-152 | The rail says when a project's index outgrew its plan | billing | owner | implemented | 2026-09-09 PASS |
+| SCN-153 | A waitlist sign-up reaches the team inbox | marketing | visitor | implemented | 2026-10-11 PASS |
 
 ## Personas
 
@@ -2145,19 +2151,20 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 
 ## marketing
 
-### SCN-109: Landing page → Get Started
+### SCN-109: Landing page → Join the waitlist
 - **Persona:** visitor
 - **Feature:** marketing
-- **Entry point:** `/` (marketing home)
+- **Entry point:** `/` (marketing home), or any retired product URL
 - **Preconditions:** anonymous visitor
 - **Steps:**
-  1. Visitor reads the landing page and clicks "Get Started Free"
-- **Expected result:** navigates to `/login`
-- **UI elements:** hero/final "Get Started Free" CTAs, "View on GitHub", star count (hidden on fetch failure), FAQ accordion
+  1. Visitor reads the landing page and clicks "Join the waitlist" (header, hero, open-source block, mobile menu)
+- **Expected result:** scrolls to the `#waitlist` section with the sign-up form (SCN-153)
+- **UI elements:** "Join the waitlist" CTAs, "View on GitHub", star count (hidden on fetch failure), FAQ accordion, waitlist section
 - **States covered:** success, empty(partial)
-- **Errors & recovery:** GitHub stars fetch fails → star count silently hidden, no visible error (`page.tsx:227-229`)
+- **Errors & recovery:** GitHub stars fetch fails → star count silently hidden, no visible error. A bookmarked product URL (`/app`, `/login`, `/pricing`, `/dashboard/…`, the password and verification pages) redirects to `/#waitlist` rather than a sign-in that cannot succeed
+- **Changed 2026-10-11:** the hosted product was switched off (no API, no database). Every "Get Started" / "Log in" / "Try it now" CTA used to open `/login`; they now lead to the waitlist. The product routes stay in the tree for a relaunch and are redirected in `next.config.ts`
 - **Status:** implemented
-- **Coverage:** app/(marketing)/page.tsx:429-434,976-981; components/marketing/FaqAccordion.tsx:34-60
+- **Coverage:** frontend/src/app/(marketing)/page.tsx; frontend/src/app/(marketing)/layout.tsx; frontend/src/components/ui/MobileMenu.tsx; frontend/next.config.ts; components/marketing/FaqAccordion.tsx
 
 ### SCN-110: Pricing CTA (logged out)
 - **Persona:** visitor
@@ -2170,7 +2177,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** per-plan CTA, static FAQ
 - **States covered:** loading, success
 - **Errors & recovery:** the `next=/pricing` intent is now honored — after login/register `/login` redirects to a safe same-origin `next` (`/pricing`), with an open-redirect guard rejecting `//host` / absolute-URL values (`login/page.tsx` `resolveRedirect`; test `frontend/src/__tests__/components/LoginPage.test.tsx`)
-- **Status:** implemented
+- **Status:** retired
+- **Retired 2026-10-11:** the hosted product was switched off and `/pricing` redirects to `/#waitlist`; nothing can be bought. Kept for a relaunch.
 - **Coverage:** components/marketing/PricingTable.tsx:91-99; redirect honored in frontend/src/app/login/page.tsx
 
 ### SCN-111: Support / Contact / Legal pages
@@ -2199,8 +2207,25 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **UI elements:** (none — AuthRedirect returns null)
 - **States covered:** success
 - **Errors & recovery:** none
-- **Status:** implemented
+- **Retired 2026-10-11:** the landing page no longer mounts `AuthRedirect` — with the API switched off there is no session to restore, and the check would only fail.
+- **Status:** retired
 - **Coverage:** components/auth/AuthRedirect.tsx:12-22
+
+### SCN-153: A waitlist sign-up reaches the team inbox
+- **Persona:** visitor
+- **Feature:** marketing
+- **Entry point:** `/#waitlist` (SCN-109)
+- **Preconditions:** anonymous visitor; `RESEND_API_KEY` set on the site's dyno
+- **Steps:**
+  1. Visitor enters a work email, optionally a name, company and what they would ask their database
+  2. Visitor clicks "Join the waitlist"
+- **Expected result:** the form is replaced by "You're on the list." and one plain-text email reaches `contact@checkmydata.ai`, with the visitor as Reply-To so the team answers them directly
+- **UI elements:** email (required), name, company, note, "Join the waitlist" button ("Joining…" while sending), confirmation panel, inline error (`role="alert"`)
+- **States covered:** idle, loading, success, error
+- **Errors & recovery:** missing or malformed email → inline message, email field marked invalid, nothing sent (422); Resend refuses or is unreachable → "We couldn't save your sign-up. Try again, or email contact@checkmydata.ai." (502) — a sign-up that was not mailed is never acknowledged; key missing → "Sign-ups are briefly unavailable…" (503); more than five sign-ups from one address in ten minutes → 429 with a retry hint; a filled honeypot is answered as success and sends nothing
+- **Why there is no database:** the product's backend and both databases were deleted on 2026-10-11 to stop their cost. The site's own Next.js server sends the email; the inbox is the record
+- **Status:** implemented
+- **Coverage:** frontend/src/components/marketing/WaitlistForm.tsx; frontend/src/app/api/waitlist/route.ts; frontend/src/lib/waitlist.ts; tests frontend/src/__tests__/waitlist.test.ts
 
 ## analytics-sources
 

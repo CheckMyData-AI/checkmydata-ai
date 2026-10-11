@@ -98,11 +98,11 @@ export function MobileMenu({ links }: { links: readonly NavLink[] }) {
               ))}
               <li className="pt-2 border-t border-border-subtle">
                 <Link
-                  href="/login"
+                  href="/#waitlist"
                   className="block py-2.5 text-sm text-text-secondary hover:text-text-primary transition-colors"
                   onClick={close}
                 >
-                  Log in
+                  Join the waitlist
                 </Link>
               </li>
             </ul>

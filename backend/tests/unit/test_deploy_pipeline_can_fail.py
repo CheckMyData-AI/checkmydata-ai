@@ -28,6 +28,14 @@ failure surface.
 the backend on the new sha and the frontend on the old one until the next run's ten-minute
 build finishes.
 
+**2026-10-11: the workflow ships the site only, by hand.** The hosted product was switched
+off (`docs/handoffs/2026-10-11-hosted-product-off.md`), so the backend half — its three
+images, the release phase, the worker poll — left `deploy.yml`; it is in git history for a
+relaunch. The guards for that half went with it (`Dockerfile.release` is still checked,
+because it still exists), and one was added: the site's own check must prove the waitlist
+endpoint is deployed without mailing the team inbox on every deploy. Everything that made
+the release step able to fail still applies to the one release left.
+
 This file reads the workflow as **YAML**, not as text. A guard that greps its own subject
 matches its own comments — the shape this audit files as TEST-04, met three times while
 closing these rows.
@@ -83,7 +91,11 @@ class TestTheReleaseStepCanFail:
             body = step["run"]
             for line in body.splitlines():
                 if "curl" in line and ("-X PATCH" in line or "-X POST" in line):
-                    if "--fail" not in body:
+                    # A probe that captures the status and compares it reads the status,
+                    # which is all `--fail` is for — the waitlist check expects a 422,
+                    # which `--fail` would turn into an exit code.
+                    reads_status = "%{http_code}" in line or "%{http_code}" in body
+                    if "--fail" not in body and not reads_status:
                         offenders.append(step.get("name", "<unnamed>"))
         assert not offenders, (
             "these steps PATCH production and exit 0 on 401/403/404/422, because curl "
@@ -143,25 +155,26 @@ class TestTheReleaseStepCanFail:
         )
 
 
-class TestTheWorkerIsVerified:
-    def test_a_worker_dyno_is_polled_after_the_release(self, workflow: dict) -> None:
-        step = _step(workflow, "/dynos")
-        assert step is not None, (
-            "the worker release is verified by nothing: both health checks speak HTTP and "
-            "the worker serves none (TEST-16)"
+class TestOnlyTheSiteShips:
+    def test_no_backend_app_is_released(self, workflow: dict) -> None:
+        """A release of `checkmydata-api` would start dynos against a database that no
+        longer exists — and start billing for them."""
+        joined = "\n".join(_code(s) for s in _run_steps(workflow))
+        assert "BACKEND_APP" not in joined and "checkmydata-api" not in joined, (
+            "deploy.yml releases the backend again; it was switched off on 2026-10-11"
         )
-        assert "worker" in step["run"]
+
+    def test_the_waitlist_is_checked_without_sending_mail(self, workflow: dict) -> None:
+        step = _step(workflow, "/api/waitlist")
+        assert step is not None, "nothing checks that the waitlist endpoint was deployed"
+        code = _code(step)
+        assert "422" in code and "-d '{}'" in code, (
+            "the check must post an EMPTY body and expect the validation refusal — a real "
+            "sign-up would mail contact@ on every deploy"
+        )
 
 
 class TestMigrationsRunInTheChannelThatDeploys:
-    def test_the_formation_patch_carries_a_release_process_type(self, workflow: dict) -> None:
-        step = _step(workflow, "formation")
-        assert step is not None
-        assert '"type":"release"' in step["run"].replace(" ", ""), (
-            "the formation PATCH declares no release process type, so nothing runs "
-            "migrations on the channel that actually deploys (TEST-15)"
-        )
-
     def test_a_release_image_exists_and_runs_alembic(self) -> None:
         dockerfile = ROOT / "Dockerfile.release"
         assert dockerfile.exists(), "no release image to run the migration"
@@ -171,11 +184,6 @@ class TestMigrationsRunInTheChannelThatDeploys:
             "the release image must be the deployed backend image with a different CMD, "
             "as Dockerfile.worker already is — a separately built one can drift from it"
         )
-
-    def test_the_release_image_is_built_and_pushed(self, workflow: dict) -> None:
-        joined = "\n".join(s["run"] for s in _run_steps(workflow))
-        assert "Dockerfile.release" in joined, "the release image is never built"
-        assert "/release" in joined, "the release image is never pushed to the registry"
 
 
 class TestAReleaseIsNotCancelledHalfway:

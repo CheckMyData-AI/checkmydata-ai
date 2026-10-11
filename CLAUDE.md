@@ -4,6 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Product snapshot
 
+> **Hosting status (2026-10-11): the hosted product is OFF.** Operator decision to stop
+> the running cost. Production is the marketing site alone (`checkmydata-web`, Heroku
+> Basic), with a waitlist that mails `contact@checkmydata.ai` (`POST /api/waitlist`,
+> Resend; SCN-153). `checkmydata-api` has 0 dynos, maintenance on, no add-ons; the
+> Supabase project and the Heroku Postgres/Redis were deleted after `pg_dump` backups
+> (private, outside Git — see `docs/handoffs/2026-10-11-hosted-product-off.md`). The
+> deploy workflow is manual and site-only. Everything below describes the product as it
+> stood when it ran, and as it still runs self-hosted. Relaunch steps are in the handoff.
+
 - **What it is**: AI-powered database query agent — natural language → SQL, codebase Q&A, visualizations, team workspaces.
 - **Supported databases**: PostgreSQL, MySQL, ClickHouse, MongoDB (via `backend/app/connectors/`), plus **SQLite** — file-backed, added 2026-08-20 because the demo path has created `db_type="sqlite"` connections since it existed while `ADAPTER_REGISTRY` had no entry for it, so every demo connection raised `Unsupported adapter: sqlite` on the first question. Not offered in the connection UI; it is what the demo runs on (`app/services/demo_data.py`).
 - **Supported analytics sources**: `Connection.source_type` also accepts three analytics vendors (`backend/app/analytics/`, family defined once in `app/analytics/source_types.py`): **`ga4`** (Google Analytics 4 — the only one with a collector today), plus **`appstore`** and **`googleplay`**, reserved for m1/m2 (connection creation refuses them with 422 until their fact tables land). Runbook: `docs/ANALYTICS_SOURCES.md`.
@@ -1153,8 +1162,8 @@ Read `vision.md` before any new feature. If a request conflicts with §7 invaria
 
 - `docs/ux/scenarios.md` is the source of truth for all user-facing behavior.
 - **The chain now has three layers, and they are not equally complete.**
-  `scenarios.md` covers the whole product (**154 scenarios; 142 `implemented`, 12
-  `draft`** — measured 2026-09-18 by `make ux-status`, and asserted by
+  `scenarios.md` covers the whole product (**155 scenarios; 141 `implemented`, 12
+  `draft`, 2 `retired`** — measured 2026-10-11 by `make ux-status`, and asserted by
   `test_the_ux_base_checks_all_three_documents.py`, because the previous figure
   here said 151/128/23 while the generated block in the document itself counted
   153/141/12 and nothing compared the two). `flows.md` (FLW-01–05) and `screens.md` (SCR-01–10) were added

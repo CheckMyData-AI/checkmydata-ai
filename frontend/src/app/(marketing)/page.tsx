@@ -2,13 +2,13 @@ import type React from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LogoMark } from "@/components/ui/Logo";
-import { AuthRedirect } from "@/components/auth/AuthRedirect";
 import { CinematicEngine } from "@/components/marketing/CinematicEngine";
 import { SchemaGraph } from "@/components/marketing/SchemaGraph";
 import { DataStory } from "@/components/marketing/DataStory";
 import { WordLight } from "@/components/marketing/WordLight";
 import { CountUp } from "@/components/marketing/CountUp";
 import { FaqAccordion } from "@/components/marketing/FaqAccordion";
+import { WaitlistForm } from "@/components/marketing/WaitlistForm";
 
 export const metadata: Metadata = {
   title: "CheckMyData.ai — AI Analyst for Your Database",
@@ -203,7 +203,7 @@ const LANDING_FAQS = [
   },
   {
     q: "Can I self-host, or is it only hosted?",
-    a: "Both. Use the hosted version to start in minutes, or clone the repository and run the Docker setup for full control. The same open-source code powers both.",
+    a: "Self-hosting works today: clone the repository and run the Docker setup. The hosted version is invite-only for now — join the waitlist and we'll email you when your spot opens.",
   },
   {
     q: "Which databases and LLM providers are supported?",
@@ -260,7 +260,6 @@ export default async function LandingPage() {
 
   return (
     <>
-      <AuthRedirect />
       <CinematicEngine />
       <script
         type="application/ld+json"
@@ -426,12 +425,12 @@ export default async function LandingPage() {
               className="cmd-reveal mt-10 flex flex-col sm:flex-row items-center justify-center gap-4"
               style={{ ["--cmd-i"]: 5 } as React.CSSProperties}
             >
-              <Link
-                href="/login"
+              <a
+                href="#waitlist"
                 className="w-full sm:w-auto px-8 py-3.5 text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/92 rounded-lg transition-colors text-center"
               >
-                Get Started Free
-              </Link>
+                Join the waitlist
+              </a>
               <a
                 href={GITHUB_URL}
                 target="_blank"
@@ -447,7 +446,7 @@ export default async function LandingPage() {
               className="cmd-reveal mt-5 text-xs text-text-tertiary"
               style={{ ["--cmd-i"]: 6 } as React.CSSProperties}
             >
-              No credit card. Deploy in minutes. Self-host or use hosted.
+              The hosted version is invite-only for now. Self-host it today from GitHub.
             </p>
           </div>
 
@@ -920,12 +919,12 @@ export default async function LandingPage() {
                   <GitHubIcon />
                   Star on GitHub
                 </a>
-                <Link
-                  href="/login"
+                <a
+                  href="#waitlist"
                   className="px-6 py-3 text-sm font-semibold text-text-primary border border-border-default hover:border-accent hover:text-accent rounded-lg transition-colors"
                 >
-                  Try it now
-                </Link>
+                  Join the waitlist
+                </a>
               </div>
             </div>
           </div>
@@ -963,32 +962,29 @@ export default async function LandingPage() {
         </div>
       </section>
 
-      {/* ── FINAL CTA ── */}
-      <section className="py-20 sm:py-28 border-t border-border-subtle">
-        <div className="cmd-reveal max-w-6xl mx-auto px-6 text-center">
+      {/* ── WAITLIST ── */}
+      <section className="py-20 sm:py-28 border-t border-border-subtle scroll-mt-16" id="waitlist">
+        <div className="cmd-reveal max-w-xl mx-auto px-6 text-center">
           <h2 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-text-primary mb-4">
-            Start exploring <span className="text-accent">your data</span> today
+            Join the <span className="text-accent">waitlist</span>
           </h2>
           <p className="text-text-secondary max-w-md mx-auto mb-10">
-            No credit card. Deploy in minutes.
+            We&apos;re letting teams into the hosted version a few at a time.
+            Leave your email and we&apos;ll write when your spot opens.
           </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link
-              href="/login"
-              className="px-10 py-3.5 text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/92 rounded-lg transition-colors"
-            >
-              Get Started Free
-            </Link>
+          <WaitlistForm />
+          <p className="mt-8 text-sm text-text-tertiary">
+            Prefer to run it yourself?{" "}
             <a
               href={GITHUB_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="px-8 py-3.5 text-sm font-semibold text-text-primary border border-border-default hover:border-accent hover:text-accent rounded-lg transition-colors inline-flex items-center gap-2"
+              className="text-accent hover:text-accent-hover transition-colors underline underline-offset-2"
             >
-              <GitHubIcon />
-              Star on GitHub
+              The source is on GitHub
             </a>
-          </div>
+            .
+          </p>
         </div>
       </section>
     </>

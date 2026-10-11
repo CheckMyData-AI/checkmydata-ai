@@ -154,10 +154,10 @@ export default function AboutPage() {
             View on GitHub
           </a>
           <Link
-            href="/login"
+            href="/#waitlist"
             className="px-5 py-2.5 text-sm font-semibold text-text-primary border border-border-default hover:border-accent hover:text-accent rounded-lg transition-colors text-center"
           >
-            Get Started
+            Join the waitlist
           </Link>
         </div>
       </section>

@@ -5,7 +5,6 @@ import { SmoothScroll } from "@/components/marketing/SmoothScroll";
 
 const NAV_LINKS = [
   { href: "/about", label: "About" },
-  { href: "/pricing", label: "Pricing" },
   { href: "/support", label: "Support" },
   {
     href: "https://github.com/CheckMyData-AI/checkmydata-ai",
@@ -16,7 +15,7 @@ const NAV_LINKS = [
 
 const FOOTER_PRODUCT = [
   { href: "/about", label: "About" },
-  { href: "/pricing", label: "Pricing" },
+  { href: "/#waitlist", label: "Waitlist" },
   { href: "/contact", label: "Contact" },
   { href: "/support", label: "Support" },
 ] as const;
@@ -93,16 +92,10 @@ export default function MarketingLayout({
 
           <div className="flex items-center gap-3">
             <Link
-              href="/login"
-              className="text-sm text-text-secondary hover:text-text-primary transition-colors hidden sm:inline-flex"
-            >
-              Log in
-            </Link>
-            <Link
-              href="/login"
+              href="/#waitlist"
               className="px-4 py-2 text-sm font-semibold text-primary-foreground bg-primary hover:bg-primary/92 rounded-lg transition-colors"
             >
-              Get Started
+              Join the waitlist
             </Link>
             <MobileMenu links={NAV_LINKS} />
           </div>
