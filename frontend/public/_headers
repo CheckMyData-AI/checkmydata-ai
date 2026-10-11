@@ -1,0 +1,12 @@
+# Security headers for every static asset (Cloudflare Workers Static Assets).
+# Moved here from next.config.ts on 2026-10-12: a static export cannot set headers.
+# Next.js injects inline bootstrap scripts, so script-src keeps 'unsafe-inline'.
+# connect-src: the page's own origin (the waitlist endpoint) and Sentry ingest only —
+# the product API it used to allow is switched off.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Strict-Transport-Security: max-age=63072000; includeSubDomains

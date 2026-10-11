@@ -1,0 +1,11 @@
+# The hosted product is switched off (2026-10-11). Its routes stay in the tree for a
+# relaunch; nobody reaches them — each lands on the waitlist. 307, not 301, so browsers
+# do not cache the redirect past a relaunch.
+/app /#waitlist 307
+/app/* /#waitlist 307
+/login /#waitlist 307
+/forgot-password /#waitlist 307
+/reset-password /#waitlist 307
+/verify-email /#waitlist 307
+/dashboard/* /#waitlist 307
+/pricing /#waitlist 307

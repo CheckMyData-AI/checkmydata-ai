@@ -1,109 +1,83 @@
-name: Deploy site to Heroku
+name: Deploy site to Cloudflare
 
-# Site only, and only by hand (operator, 2026-10-11). The hosted product was switched
-# off: `checkmydata-api` runs no dynos and holds no database, so this workflow builds
-# and releases the marketing site and nothing else. It used to fire on every green CI
-# run on `main`; a merge no longer deploys — press "Run workflow" when the site should
-# change. The backend half (images, release phase, worker check) is in git history at
-# the commit before this one, for a relaunch.
+# Site only, and only by hand (operator, 2026-10-11). The hosted product is off, and
+# since 2026-10-12 checkmydata.ai is a static export on Cloudflare Workers — no server,
+# no monthly cost. Press "Run workflow" when the site should change; a merge does not
+# deploy. The Heroku pipeline this replaced is in git history, for a relaunch.
+#
+# Credentials, each narrow (issued per project, never an account admin key):
+#   secrets.CLOUDFLARE_WORKERS_TOKEN — Workers Scripts Write on the account
+#   secrets.CLOUDFLARE_ROUTES_TOKEN  — Workers Routes Write on the checkmydata.ai zone
+#   vars.CLOUDFLARE_ACCOUNT_ID
+# RESEND_API_KEY is a Worker secret set once with `wrangler secret put`, not here.
 on:
   workflow_dispatch:
 
 concurrency:
-  group: heroku-deploy
+  group: site-deploy
   cancel-in-progress: false
 
 env:
-  HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-  FRONTEND_APP: ${{ vars.FRONTEND_APP || 'checkmydata-web' }}
-  FRONTEND_URL: ${{ vars.FRONTEND_URL || 'https://checkmydata.ai' }}
+  SITE_URL: https://checkmydata.ai
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     # Only what is on `main` ships, whichever branch the button was pressed on.
     if: ${{ github.ref == 'refs/heads/main' }}
+    defaults:
+      run:
+        working-directory: frontend
 
     steps:
       - uses: actions/checkout@v5
 
-      - name: Login to Heroku Container Registry
-        run: echo "$HEROKU_API_KEY" | docker login -u _ --password-stdin registry.heroku.com
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Build site image
-        run: |
-          docker build \
-            --platform linux/amd64 \
-            --build-arg NEXT_PUBLIC_SENTRY_DSN=${{ vars.NEXT_PUBLIC_SENTRY_DSN }} \
-            --build-arg NEXT_PUBLIC_SENTRY_ENVIRONMENT=production \
-            -t registry.heroku.com/${{ env.FRONTEND_APP }}/web \
-            -f Dockerfile.frontend .
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Push site image
-        run: docker push registry.heroku.com/${{ env.FRONTEND_APP }}/web
+      - name: Build the static site
+        run: npm run build:site
+        env:
+          NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+          NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
 
-      - name: Note the release version before deploying
-        # `Range:` because the releases collection is paginated in ascending order; without
-        # it the newest version is never read and the check below waits on nothing.
-        run: |
-          set -euo pipefail
-          BEFORE_VERSION=$(curl --fail-with-body -sS \
-            -H "Accept: application/vnd.heroku+json; version=3" \
-            -H "Range: version ..; order=desc, max=1" \
-            -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
-            https://api.heroku.com/apps/${{ env.FRONTEND_APP }}/releases | jq '.[0].version')
-          echo "BEFORE_VERSION=$BEFORE_VERSION" >> "$GITHUB_ENV"
-          echo "Site is at release v$BEFORE_VERSION before this deploy"
+      - name: Deploy the Worker and its assets
+        # wrangler exits non-zero on any refused upload, so a failed deploy fails here.
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Release site
-        run: |
-          set -euo pipefail
-          IMAGE_ID=$(docker inspect --format='{{.Id}}' registry.heroku.com/${{ env.FRONTEND_APP }}/web)
-          curl --fail-with-body -sS -X PATCH https://api.heroku.com/apps/${{ env.FRONTEND_APP }}/formation \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
-            -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
-            -d '{"updates":[{"type":"web","docker_image":"'"$IMAGE_ID"'"}]}'
+      - name: Put the Worker in front of checkmydata.ai
+        run: node scripts/attach-site-route.mjs
+        env:
+          CLOUDFLARE_ROUTES_TOKEN: ${{ secrets.CLOUDFLARE_ROUTES_TOKEN }}
 
-      - name: Verify the release actually happened
-        # The platform, not the public URL: when a release fails, the OLD one still answers 200.
+      - name: Verify the live site is the Worker
+        # Three readings, each one only the Worker gives: its JSON 404 for an unknown
+        # /api path (an older origin answers with an HTML page), the waitlist refusing an
+        # EMPTY body with 422 (proves the endpoint without mailing the inbox), and a
+        # retired product route redirecting to the waitlist.
         run: |
           set -euo pipefail
-          for i in $(seq 1 20); do
-            LATEST=$(curl --fail-with-body -sS \
-              -H "Accept: application/vnd.heroku+json; version=3" \
-              -H "Range: version ..; order=desc, max=1" \
-              -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
-              https://api.heroku.com/apps/${{ env.FRONTEND_APP }}/releases)
-            VERSION=$(jq '.[0].version' <<<"$LATEST")
-            STATUS=$(jq -r '.[0].status' <<<"$LATEST")
-            if [ "$VERSION" -gt "$BEFORE_VERSION" ] && [ "$STATUS" = "succeeded" ]; then
-              echo "Site released: v$BEFORE_VERSION -> v$VERSION"
-              exit 0
-            elif [ "$VERSION" -gt "$BEFORE_VERSION" ] && [ "$STATUS" = "failed" ]; then
-              echo "Release v$VERSION FAILED"
-              exit 1
-            fi
-            echo "Attempt $i: v$VERSION is $STATUS, waiting..."
-            sleep 15
-          done
-          echo "No successful release appeared (still at v$BEFORE_VERSION)"
-          exit 1
-
-      - name: Verify the site and the waitlist endpoint
-        # An empty sign-up must be refused with 422: that proves the route is deployed and
-        # validating, without mailing the team inbox on every deploy.
-        run: |
-          set -euo pipefail
-          for i in 1 2 3 4 5; do
-            sleep 20
-            HOME_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ env.FRONTEND_URL }}")
+          for i in 1 2 3 4 5 6; do
+            HOME_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SITE_URL/")
+            PROBE=$(curl -s "$SITE_URL/api/deploy-probe" || true)
             WAITLIST_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-              -H "Content-Type: application/json" -d '{}' "${{ env.FRONTEND_URL }}/api/waitlist")
-            if [ "$HOME_STATUS" = "200" ] && [ "$WAITLIST_STATUS" = "422" ]; then
-              echo "Site 200, waitlist validates (422 on an empty body)"
+              -H "Content-Type: application/json" -d '{}' "$SITE_URL/api/waitlist")
+            LOGIN=$(curl -s -o /dev/null -w "%{http_code} %{redirect_url}" "$SITE_URL/login")
+            if [ "$HOME_STATUS" = "200" ] && [ "$PROBE" = '{"ok":false,"error":"Not found."}' ] \
+              && [ "$WAITLIST_STATUS" = "422" ] && [ "$LOGIN" = "307 $SITE_URL/#waitlist" ]; then
+              echo "Live: home 200, Worker probe, waitlist 422, /login → /#waitlist"
               exit 0
             fi
-            echo "Attempt $i: home $HOME_STATUS, waitlist $WAITLIST_STATUS"
+            echo "Attempt $i: home $HOME_STATUS, probe '$PROBE', waitlist $WAITLIST_STATUS, login '$LOGIN'"
+            sleep 15
           done
           exit 1

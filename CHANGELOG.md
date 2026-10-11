@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — checkmydata.ai is a static site on Cloudflare; hosting costs nothing (2026-10-12)
+
+- The last running cost was the site's own Heroku dyno. `npm run build:site`
+  (`SITE_EXPORT=1`) now builds a static export served by the Cloudflare Worker
+  `checkmydata-site` (`frontend/wrangler.jsonc`); the Worker runs only for `/api/*` and
+  serves the waitlist, with a Cloudflare rate-limit binding (5 per minute per address).
+  Security headers and the retired-route redirects moved to `public/_headers` and
+  `public/_redirects`. Both Heroku apps now run 0 dynos. `deploy.yml` deploys to
+  Cloudflare by hand and verifies the live domain answers the way only the Worker can.
+- **Fixed: the waitlist redirects no longer apply to a self-hosted build.** In the
+  2026-10-11 change they lived in `next.config.ts` for every build, so a self-hoster's
+  `/login` redirected to a waitlist. A plain `npm run build` is the standalone product
+  again, with its headers and no redirects. `/dashboard/<id>` keeps its URL there through
+  a rewrite to the one page the export prerenders.
+
 ### Changed — the hosted product is switched off; checkmydata.ai is a waitlist (2026-10-11)
 
 - Operator decision, to stop the running cost. `checkmydata-api` runs no dynos and is in

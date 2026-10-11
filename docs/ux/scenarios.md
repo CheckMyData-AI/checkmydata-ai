@@ -17,7 +17,7 @@ from this repository, which is unchanged; they are not reachable on checkmydata.
 <!-- verification-status:begin -->
 ### Implemented is not verified
 
-Counted 2026-10-11 — regenerate with `make ux-status`. **Every number below is
+Counted 2026-10-12 — regenerate with `make ux-status`. **Every number below is
 counted from the index table, never typed.**
 
 Ages are measured against the stamp above, not against the clock. A block that aged on
@@ -30,7 +30,7 @@ without a cause is one people learn to ignore. It goes stale when the *table* ch
 | Status | draft × 12, implemented × 141, retired × 2 |
 | Last verdict | FAIL × 1, PARTIAL × 12, PASS × 128, no verdict × 14 |
 | Verified when | 2026-07-19 × 69, 2026-08-19 × 9, 2026-08-20 × 1, 2026-08-21 × 2, 2026-08-31 × 10, 2026-09-03 × 1, 2026-09-07 × 4, 2026-09-08 × 8, 2026-09-09 × 1, 2026-09-17 × 5, 2026-09-18 × 2, 2026-09-23 × 14, 2026-09-26 × 13, 2026-10-11 × 2, undated × 14 |
-| **Verified >30 days ago** | **105 of 155** (oldest 84 days) |
+| **Verified >30 days ago** | **105 of 155** (oldest 85 days) |
 | Never verified (no date) | 14 |
 | Referenced from code or tests | **52 of 155** |
 
@@ -1674,7 +1674,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** loading, error, success
 - **Errors & recovery:** refresh partial failures → toast "Refreshed: N succeeded, M failed"; duplicate add → toast "Note already on dashboard" (`DashboardBuilder.tsx:60-63,114-123`). Remove-card has no confirm
 - **Status:** implemented
-- **Coverage:** components/dashboards/DashboardBuilder.tsx:158-278; app/dashboard/[id]/page.tsx:224-234
+- **Coverage:** components/dashboards/DashboardBuilder.tsx:158-278; app/dashboard/[id]/DashboardView.tsx:236-246
 
 ### SCN-084: View a shared dashboard
 - **Persona:** viewer
@@ -1692,7 +1692,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Refreshing on open:** opening a dashboard reads stored snapshots and executes nothing — **except** cards that declared an interval and are already past due, which run once, sequentially, as they paint. `setInterval` fires first only after a full period, so without this a card promising hourly data can show a days-old figure for an hour with that promise attached. Cards with no declared interval are never executed by opening the page.
 - **Errors & recovery:** empty → "This dashboard has no cards yet."; per-card "No data" / "Note not found". A failed refresh — on open, on a tick, or from Refresh All — is shown on the card itself ("Last refresh failed: …") and cleared by the next success; a card whose query started failing must never look like a card nobody refreshed. Refresh-All tracks per-card success/failure and toasts the real counts — "Refreshed: N succeeded, M failed" (error toast when M>0, info when all pass)
 - **Status:** implemented
-- **Coverage:** app/dashboard/[id]/page.tsx:113-419; `frontend/src/__tests__/components/DashboardPage.test.tsx` (8)
+- **Coverage:** app/dashboard/[id]/DashboardView.tsx:123-431; `frontend/src/__tests__/components/DashboardPage.test.tsx` (8)
 
 ### SCN-085: Shared dashboard link invalid / expired
 - **Persona:** viewer
@@ -1706,7 +1706,7 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **States covered:** error
 - **Errors & recovery:** FE-04, closed 2026-09-12 — a network failure, a 500, a 504 and a genuine 404 all produced the same permanent screen saying the dashboard did not exist, with no Retry on it, and the toast carrying the real reason auto-dismissed after 10 s. A missing resource is a fact about the account; everything else is a fact about this moment, so they are different sentences and different affordances. Still a GAP: "expired" and "forbidden" are not told apart from "never existed" — the API answers 404 for all three, deliberately, so telling them apart is a backend decision about what to disclose
 - **Status:** implemented
-- **Coverage:** app/dashboard/[id]/page.tsx:87-132,206-218; lib/load-failure.ts; components/auth/AuthGate.tsx:16-20
+- **Coverage:** app/dashboard/[id]/DashboardView.tsx:87-144,218-230; lib/load-failure.ts; components/auth/AuthGate.tsx:16-20
 
 ### SCN-086: Delete a dashboard
 - **Persona:** editor
@@ -2225,7 +2225,8 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Errors & recovery:** missing or malformed email → inline message, email field marked invalid, nothing sent (422); Resend refuses or is unreachable → "We couldn't save your sign-up. Try again, or email contact@checkmydata.ai." (502) — a sign-up that was not mailed is never acknowledged; key missing → "Sign-ups are briefly unavailable…" (503); more than five sign-ups from one address in ten minutes → 429 with a retry hint; a filled honeypot is answered as success and sends nothing
 - **Why there is no database:** the product's backend and both databases were deleted on 2026-10-11 to stop their cost. The site's own Next.js server sends the email; the inbox is the record
 - **Status:** implemented
-- **Coverage:** frontend/src/components/marketing/WaitlistForm.tsx; frontend/src/app/api/waitlist/route.ts; frontend/src/lib/waitlist.ts; tests frontend/src/__tests__/waitlist.test.ts
+- **Moved 2026-10-12:** the endpoint is now the Cloudflare Worker in front of the static site (a Next.js route cannot run in a static export). Behaviour is unchanged except the rate limit — a Cloudflare binding, 5 per minute per address. Verified on production after the cutover: a test sign-up reached the mailbox.
+- **Coverage:** frontend/src/components/marketing/WaitlistForm.tsx; frontend/worker/index.ts; frontend/src/lib/waitlist.ts; tests frontend/src/__tests__/waitlist.test.ts
 
 ## analytics-sources
 

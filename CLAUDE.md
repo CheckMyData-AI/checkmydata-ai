@@ -4,14 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Product snapshot
 
-> **Hosting status (2026-10-11): the hosted product is OFF.** Operator decision to stop
-> the running cost. Production is the marketing site alone (`checkmydata-web`, Heroku
-> Basic), with a waitlist that mails `contact@checkmydata.ai` (`POST /api/waitlist`,
-> Resend; SCN-153). `checkmydata-api` has 0 dynos, maintenance on, no add-ons; the
+> **Hosting status (2026-10-11/12): the hosted product is OFF, and hosting costs $0.**
+> Operator decision to stop the running cost. Production is the marketing site alone, a
+> static export (`npm run build:site`, `SITE_EXPORT=1`) on Cloudflare Workers — Worker
+> `checkmydata-site`, route `checkmydata.ai/*`; `frontend/worker/index.ts` serves the
+> waitlist (`POST /api/waitlist` → Resend → `contact@checkmydata.ai`; SCN-153) and
+> `public/_headers` / `public/_redirects` do the rest. Both Heroku apps run 0 dynos; the
 > Supabase project and the Heroku Postgres/Redis were deleted after `pg_dump` backups
 > (private, outside Git — see `docs/handoffs/2026-10-11-hosted-product-off.md`). The
-> deploy workflow is manual and site-only. Everything below describes the product as it
-> stood when it ran, and as it still runs self-hosted. Relaunch steps are in the handoff.
+> deploy workflow is manual and site-only. A plain `npm run build` is still the
+> standalone self-hosted product, with no redirects. Everything below describes the
+> product as it stood when it ran, and as it still runs self-hosted.
 
 - **What it is**: AI-powered database query agent — natural language → SQL, codebase Q&A, visualizations, team workspaces.
 - **Supported databases**: PostgreSQL, MySQL, ClickHouse, MongoDB (via `backend/app/connectors/`), plus **SQLite** — file-backed, added 2026-08-20 because the demo path has created `db_type="sqlite"` connections since it existed while `ADAPTER_REGISTRY` had no entry for it, so every demo connection raised `Unsupported adapter: sqlite` on the first question. Not offered in the connection UI; it is what the demo runs on (`app/services/demo_data.py`).

@@ -2,6 +2,9 @@ import type { MetadataRoute } from "next";
 
 const BASE_URL = "https://checkmydata.ai";
 
+// The site is a static export: the sitemap is written once, at build time.
+export const dynamic = "force-static";
+
 export default function sitemap(): MetadataRoute.Sitemap {
   return [
     {

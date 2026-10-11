@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import type { Dashboard, SavedNote } from "@/lib/api";
-import DashboardPage from "@/app/dashboard/[id]/page";
+import DashboardPage from "@/app/dashboard/[id]/DashboardView";
 
 const dashboardsGetMock = vi.fn();
 const notesGetMock = vi.fn();
@@ -10,6 +10,7 @@ const toastMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "d1" }),
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
