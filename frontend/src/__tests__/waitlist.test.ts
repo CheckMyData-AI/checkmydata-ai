@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseWaitlist, waitlistEmail, WAITLIST_LIMITS } from "@/lib/waitlist";
+import worker, { type Env } from "../../worker/index";
 
 describe("parseWaitlist", () => {
   it("accepts an email alone and normalises it", () => {
@@ -44,36 +45,41 @@ describe("waitlistEmail", () => {
   });
 });
 
-describe("POST /api/waitlist", () => {
+describe("the site Worker", () => {
   const fetchMock = vi.fn();
+  const assets = { fetch: vi.fn(async () => new Response("asset", { status: 200 })) };
   let ipCounter = 0;
 
-  function req(body: unknown, ip = `10.0.0.${++ipCounter}`) {
-    return new Request("http://localhost/api/waitlist", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-forwarded-for": ip },
-      body: typeof body === "string" ? body : JSON.stringify(body),
+  function env(overrides: Partial<Env> = {}): Env {
+    return { ASSETS: assets, RESEND_API_KEY: "test-key", ...overrides };
+  }
+
+  function req(body: unknown, init: { ip?: string; method?: string; path?: string } = {}) {
+    return new Request(`https://checkmydata.ai${init.path ?? "/api/waitlist"}`, {
+      method: init.method ?? "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "CF-Connecting-IP": init.ip ?? `10.0.0.${++ipCounter}`,
+      },
+      body: init.method === "GET" ? undefined : typeof body === "string" ? body : JSON.stringify(body),
     });
   }
 
-  async function post(body: unknown, ip?: string) {
-    const { POST } = await import("@/app/api/waitlist/route");
-    const res = await POST(req(body, ip));
+  async function post(body: unknown, e: Env = env()) {
+    const res = await worker.fetch(req(body), e);
     return { status: res.status, json: (await res.json()) as Record<string, unknown> };
   }
 
   beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(console, "log").mockImplementation(() => {});
-    process.env.RESEND_API_KEY = "test-key";
-    delete process.env.WAITLIST_TO;
   });
 
   afterEach(() => {
     fetchMock.mockReset();
+    assets.fetch.mockClear();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    delete process.env.RESEND_API_KEY;
   });
 
   it("mails the sign-up to contact@ with the visitor as reply-to", async () => {
@@ -102,8 +108,7 @@ describe("POST /api/waitlist", () => {
   });
 
   it("answers 503 and sends nothing when the key is missing", async () => {
-    delete process.env.RESEND_API_KEY;
-    expect((await post({ email: "ana@example.com" })).status).toBe(503);
+    expect((await post({ email: "ana@example.com" }, env({ RESEND_API_KEY: undefined }))).status).toBe(503);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -124,10 +129,29 @@ describe("POST /api/waitlist", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("limits one address to five sign-ups per window", async () => {
-    fetchMock.mockImplementation(async () => new Response("{}", { status: 200 }));
-    const statuses = [];
-    for (let i = 0; i < 6; i++) statuses.push((await post({ email: `a${i}@b.co` }, "203.0.113.9")).status);
-    expect(statuses).toEqual([200, 200, 200, 200, 200, 429]);
+  it("refuses when the rate limiter says no, keyed by the visitor's IP", async () => {
+    const limit = vi.fn(async () => ({ success: false }));
+    const res = await worker.fetch(req({ email: "a@b.co" }, { ip: "203.0.113.9" }), env({ WAITLIST_LIMITER: { limit } }));
+    expect(res.status).toBe(429);
+    expect(limit).toHaveBeenCalledWith({ key: "203.0.113.9" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("answers 405 to anything but POST", async () => {
+    const res = await worker.fetch(req(null, { method: "GET" }), env());
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("POST");
+  });
+
+  it("answers 404 for an unknown /api path instead of serving a page", async () => {
+    const res = await worker.fetch(req(null, { method: "GET", path: "/api/chat/ask" }), env());
+    expect(res.status).toBe(404);
+    expect(assets.fetch).not.toHaveBeenCalled();
+  });
+
+  it("hands every other path to the static assets", async () => {
+    const res = await worker.fetch(req(null, { method: "GET", path: "/about" }), env());
+    expect(await res.text()).toBe("asset");
+    expect(assets.fetch).toHaveBeenCalledOnce();
   });
 });

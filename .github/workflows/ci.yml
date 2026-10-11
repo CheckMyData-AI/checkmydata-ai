@@ -309,3 +309,9 @@ jobs:
         run: npm run build
         env:
           NEXT_PUBLIC_API_URL: "http://localhost:8000/api"
+
+      # checkmydata.ai is the OTHER build of this tree: a static export on Cloudflare
+      # (SITE_EXPORT=1, 2026-10-12). It is deployed by hand, so a page that cannot be
+      # exported would otherwise surface only when someone presses Deploy.
+      - name: Build the static site (checkmydata.ai)
+        run: npm run build:site

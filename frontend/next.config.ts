@@ -48,38 +48,32 @@ const securityHeaders = [
     : []),
 ];
 
-// The hosted product was switched off on 2026-10-11: no API, no database behind
-// the site. Its routes stay in the tree for a relaunch, but nobody reaches them —
-// each one lands on the waitlist instead of a sign-in that cannot succeed.
-const RETIRED_PRODUCT_ROUTES = [
-  "/app",
-  "/app/:path*",
-  "/login",
-  "/forgot-password",
-  "/reset-password",
-  "/verify-email",
-  "/dashboard/:path*",
-  "/pricing",
-];
+// Two builds from one tree (2026-10-12).
+//
+// SITE_EXPORT=1 is checkmydata.ai: the hosted product is off, so the site is a static
+// export on Cloudflare Workers. Next.js cannot apply `headers()` or `redirects()` to an
+// export, so the security headers live in `public/_headers`, the retired product routes
+// redirect to the waitlist from `public/_redirects`, and the waitlist endpoint is the
+// Worker in `worker/index.ts`. `src/__tests__/static-site-config.test.ts` keeps the
+// two header sets in step.
+//
+// Anything else is the self-hosted product, unchanged: a standalone server with the
+// headers below and no redirects — a self-hoster's /login is a real sign-in.
+const isSiteExport = process.env.SITE_EXPORT === "1";
 
-const nextConfig: NextConfig = {
-  output: "standalone",
-  async redirects() {
-    return RETIRED_PRODUCT_ROUTES.map((source) => ({
-      source,
-      destination: "/#waitlist",
-      permanent: false,
-    }));
-  },
-  async headers() {
-    return [
-      {
-        source: "/:path*",
-        headers: securityHeaders,
+const nextConfig: NextConfig = isSiteExport
+  ? { output: "export" }
+  : {
+      output: "standalone",
+      async headers() {
+        return [{ source: "/:path*", headers: securityHeaders }];
       },
-    ];
-  },
-};
+      async rewrites() {
+        // `/dashboard/[id]` is prerendered for the export with one placeholder id and
+        // `dynamicParams = false`. A running server serves every id through it.
+        return [{ source: "/dashboard/:id((?!_$).+)", destination: "/dashboard/_?id=:id" }];
+      },
+    };
 
 // Sentry build-time wrapper (T-OBS-1). Source-map upload only happens when
 // SENTRY_AUTH_TOKEN / SENTRY_ORG / SENTRY_PROJECT are set in the build env;
