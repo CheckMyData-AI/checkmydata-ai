@@ -1,0 +1,7 @@
+{
+  "task-pipeline": {
+    "materialised": [
+      "docs/DOCMAP.md"
+    ]
+  }
+}

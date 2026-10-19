@@ -1203,3 +1203,29 @@ Read `vision.md` before any new feature. If a request conflicts with §7 invaria
   only then design and build UI.
 - Use the `ux-scenarios` skill to maintain the base and `ux-audit` to verify
   the codebase against it.
+<!-- SSHLG:PROJECT:BEGIN managed by npx sshlg-skills enroll. To opt out, replace the whole block with one SSHLG:PROJECT:OPTOUT comment line. -->
+## Family routes in this project
+
+Surface: `public-web` (detected).
+Signals:
+- dependency `next`: `frontend/package.json`
+- robots.txt: `frontend/public/robots.txt`
+- sitemap: `frontend/src/app/sitemap.ts`
+
+Routes that apply here (the global routing block says what each one owns):
+
+| Router | Answers | Setup here |
+|---|---|---|
+| `super-ux` | what the interface must do | scenarios and their linter: partial (`/ux-init`) |
+| `sheleg-design` | how it looks and moves | nothing to seed |
+| `copywriting` | how it sounds | brand pack: missing (`/brand-init`) |
+| `sheleg-dev` | what it runs on to charge, track and sign in | added by dependency `@sentry/nextjs`, dependency `google-auth`, dependency `sentry-sdk`, dependency `stripe` |
+| `seo-llmo` | whether a machine will find it | SEO brief or audit: missing (`/seo-aeo-audit brief`) |
+| `evidence-docs` | what proves it | nothing to seed |
+| `task-pipeline` | how the change reaches the repository | DOCMAP: present |
+
+Remaining setup:
+- `/ux-init`: scenarios and their linter for `super-ux`, missing `docs/ux/lint.py`
+- `/brand-init`: brand pack for `copywriting`, missing `docs/brand/voice.md`, `docs/brand/terminology.md`, `docs/brand/facts.md`
+- `/seo-aeo-audit brief` (or `/seo-aeo-audit` for a full audit): SEO brief or audit for `seo-llmo`, missing one of `docs/seo/brief-*.md` or `docs/seo/audit-*.md`
+<!-- SSHLG:PROJECT:END -->
