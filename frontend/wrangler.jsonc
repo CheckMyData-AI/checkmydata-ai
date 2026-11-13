@@ -1,6 +1,7 @@
 // The site on Cloudflare Workers (2026-10-12). Static export in ./out, the Worker in
 // worker/index.ts runs first only for /api/* (the waitlist). The account comes from
-// CLOUDFLARE_ACCOUNT_ID at deploy time; RESEND_API_KEY is a Worker secret.
+// CLOUDFLARE_ACCOUNT_ID at deploy time; CLOUDFLARE_EMAIL_API_TOKEN and
+// CLOUDFLARE_EMAIL_ACCOUNT_ID are Worker secrets (the waitlist's Cloudflare Email Sending).
 // The route checkmydata.ai/* is NOT here: it is a zone right the deploy token does not
 // hold, so `scripts/attach-site-route.mjs` attaches it with its own zone-scoped token.
 {

@@ -268,9 +268,10 @@ class Settings(BaseSettings):
     # Kept short so a leaked link has a small window; the token is single-use anyway.
     password_reset_expiry_hours: int = 1
 
-    # Resend transactional email
-    resend_api_key: str = ""
-    resend_from_email: str = "CheckMyData <noreply@checkmydata.ai>"
+    # Transactional email through Cloudflare Email Sending (Resend retired 2026-11-13).
+    cloudflare_email_api_token: str = ""
+    cloudflare_email_account_id: str = ""
+    email_from: str = "CheckMyData <noreply@mail.checkmydata.ai>"
     app_url: str = "http://localhost:3000"
 
     custom_rules_dir: str = "./rules"
@@ -1547,5 +1548,8 @@ elif settings.master_encryption_key:
             _e,
         )
         raise SystemExit(1) from _e
-if not settings.resend_api_key:
-    _config_logger.warning("RESEND_API_KEY is empty. Transactional emails will be skipped.")
+if not (settings.cloudflare_email_api_token and settings.cloudflare_email_account_id):
+    _config_logger.warning(
+        "CLOUDFLARE_EMAIL_API_TOKEN or CLOUDFLARE_EMAIL_ACCOUNT_ID is empty. "
+        "Transactional emails will be skipped."
+    )
