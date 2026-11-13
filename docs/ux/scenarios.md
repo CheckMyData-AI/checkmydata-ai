@@ -2215,17 +2215,18 @@ Anonymous marketing-site visitor evaluating the product before signing up.
 - **Persona:** visitor
 - **Feature:** marketing
 - **Entry point:** `/#waitlist` (SCN-109)
-- **Preconditions:** anonymous visitor; `RESEND_API_KEY` set on the site's dyno
+- **Preconditions:** anonymous visitor; `CLOUDFLARE_EMAIL_API_TOKEN` and `CLOUDFLARE_EMAIL_ACCOUNT_ID` set as secrets on the Worker
 - **Steps:**
   1. Visitor enters a work email, optionally a name, company and what they would ask their database
   2. Visitor clicks "Join the waitlist"
 - **Expected result:** the form is replaced by "You're on the list." and one plain-text email reaches `contact@checkmydata.ai`, with the visitor as Reply-To so the team answers them directly
 - **UI elements:** email (required), name, company, note, "Join the waitlist" button ("Joining…" while sending), confirmation panel, inline error (`role="alert"`)
 - **States covered:** idle, loading, success, error
-- **Errors & recovery:** missing or malformed email → inline message, email field marked invalid, nothing sent (422); Resend refuses or is unreachable → "We couldn't save your sign-up. Try again, or email contact@checkmydata.ai." (502) — a sign-up that was not mailed is never acknowledged; key missing → "Sign-ups are briefly unavailable…" (503); more than five sign-ups from one address in ten minutes → 429 with a retry hint; a filled honeypot is answered as success and sends nothing
+- **Errors & recovery:** missing or malformed email → inline message, email field marked invalid, nothing sent (422); Cloudflare Email Sending refuses, is unreachable or answers without a message id → "We couldn't save your sign-up. Try again, or email contact@checkmydata.ai." (502) — a sign-up that was not mailed is never acknowledged; key missing → "Sign-ups are briefly unavailable…" (503); more than five sign-ups from one address in ten minutes → 429 with a retry hint; a filled honeypot is answered as success and sends nothing
 - **Why there is no database:** the product's backend and both databases were deleted on 2026-10-11 to stop their cost. The site's own Next.js server sends the email; the inbox is the record
 - **Status:** implemented
 - **Moved 2026-10-12:** the endpoint is now the Cloudflare Worker in front of the static site (a Next.js route cannot run in a static export). Behaviour is unchanged except the rate limit — a Cloudflare binding, 5 per minute per address. Verified on production after the cutover: a test sign-up reached the mailbox.
+- **Moved 2026-11-13:** Resend retired; the Worker sends through Cloudflare Email Sending from `noreply@mail.checkmydata.ai` (Cloudflare refuses a same-domain send, so the sender is the onboarded subdomain) to `contact@checkmydata.ai`, which Email Routing delivers into Fabric Inbox. Behaviour for the visitor is unchanged.
 - **Coverage:** frontend/src/components/marketing/WaitlistForm.tsx; frontend/worker/index.ts; frontend/src/lib/waitlist.ts; tests frontend/src/__tests__/waitlist.test.ts
 
 ## analytics-sources

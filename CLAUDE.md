@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > Operator decision to stop the running cost. Production is the marketing site alone, a
 > static export (`npm run build:site`, `SITE_EXPORT=1`) on Cloudflare Workers — Worker
 > `checkmydata-site`, route `checkmydata.ai/*`; `frontend/worker/index.ts` serves the
-> waitlist (`POST /api/waitlist` → Resend → `contact@checkmydata.ai`; SCN-153) and
+> waitlist (`POST /api/waitlist` → Cloudflare Email Sending → `contact@checkmydata.ai`, routed into Fabric Inbox; SCN-153) and
 > `public/_headers` / `public/_redirects` do the rest. Both Heroku apps run 0 dynos; the
 > Supabase project and the Heroku Postgres/Redis were deleted after `pg_dump` backups
 > (private, outside Git — see `docs/handoffs/2026-10-11-hosted-product-off.md`). The

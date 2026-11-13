@@ -33,7 +33,7 @@ from app.services.email_service import EmailService
 
 class TestSendReportsWhetherItSent:
     async def test_a_successful_send_reports_true(self):
-        with patch("app.services.email_service.resend.Emails.send", return_value={"id": "e1"}):
+        with patch("app.services.email_service._cf_send", return_value={"id": "e1"}):
             with patch.object(EmailService, "_is_configured", return_value=True, create=True):
                 ok = await EmailService()._send(to="a@b.c", subject="s", html="<p>b</p>")
 
@@ -42,9 +42,7 @@ class TestSendReportsWhetherItSent:
     async def test_a_failed_send_reports_false_and_does_not_raise(self):
         """It must not raise: the row is already committed, and turning a notification
         failure into a 500 would tell the caller the whole operation failed."""
-        with patch(
-            "app.services.email_service.resend.Emails.send", side_effect=RuntimeError("smtp down")
-        ):
+        with patch("app.services.email_service._cf_send", side_effect=RuntimeError("smtp down")):
             with patch.object(EmailService, "_is_configured", return_value=True, create=True):
                 ok = await EmailService()._send(to="a@b.c", subject="s", html="<p>b</p>")
 

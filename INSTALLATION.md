@@ -140,8 +140,9 @@ Copy `backend/.env.example` to `backend/.env`. All available variables:
 | `OPENROUTER_API_KEY` | One of three | OpenRouter API key (multi-model proxy) |
 | `GOOGLE_CLIENT_ID` | No | Google OAuth Client ID from [Google Cloud Console](https://console.cloud.google.com/apis/credentials). Enables "Sign in with Google". |
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | No | Same value as above, set in `frontend/.env.local` for the GIS JavaScript SDK. |
-| `RESEND_API_KEY` | No | [Resend](https://resend.com) API key for transactional emails (welcome, invite, acceptance). If empty, emails are silently skipped. |
-| `RESEND_FROM_EMAIL` | No | Sender address for emails (default: `CheckMyData <noreply@checkmydata.ai>`). Must match a verified domain in Resend. |
+| `CLOUDFLARE_EMAIL_API_TOKEN` | No | Cloudflare API token with Email Sending send permission, for transactional emails (welcome, invite, acceptance). If it or the account id is empty, emails are skipped. |
+| `CLOUDFLARE_EMAIL_ACCOUNT_ID` | No | The Cloudflare account that owns the sending domain. |
+| `EMAIL_FROM` | No | Sender address (default: `CheckMyData <noreply@mail.checkmydata.ai>`). Must be on a domain onboarded to Cloudflare Email Sending. |
 | `APP_URL` | No | Frontend URL for email links (default: `http://localhost:3000`). Set to production URL in prod. |
 | `CORS_ORIGINS` | No | JSON array of allowed origins |
 | `ENVIRONMENT` | No | Defaults to `production` (fail-closed: strict secret guards). Set `development` for local dev. |

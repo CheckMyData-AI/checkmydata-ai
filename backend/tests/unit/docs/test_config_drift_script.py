@@ -252,7 +252,7 @@ class TestNoValueThatLooksLikeACredentialIsEverPrinted:
             "REDIS_URL",
             "JWT_SECRET",
             "SENTRY_DSN",
-            "RESEND_API_KEY",
+            "CLOUDFLARE_EMAIL_API_TOKEN",
             "STRIPE_SECRET_KEY",
         ],
     )

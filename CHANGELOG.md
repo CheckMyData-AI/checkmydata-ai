@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed: Resend retired, email goes through Cloudflare Email Sending (2026-11-13)
+
+- The waitlist Worker (`frontend/worker/index.ts`) and the backend's transactional mail
+  (`backend/app/services/email_service.py`) send through Cloudflare Email Sending
+  (`POST /accounts/{id}/email/sending/send`), from `noreply@mail.checkmydata.ai`:
+  Cloudflare refuses a same-domain send, so the sender is the onboarded subdomain.
+  Waitlist mail still reaches `contact@checkmydata.ai`, which Email Routing delivers into
+  Fabric Inbox. Settings: `CLOUDFLARE_EMAIL_API_TOKEN`, `CLOUDFLARE_EMAIL_ACCOUNT_ID`,
+  `EMAIL_FROM`; `RESEND_API_KEY` and `RESEND_FROM_EMAIL` are gone, and so is the `resend`
+  dependency.
+- Cloudflare takes no idempotency key, so the backend retries only a send that cannot have
+  gone (a 429, a request that never reached Cloudflare). A 5xx, a timeout or an answer
+  without a message id may already have delivered the mail: it is reported as not sent and
+  not retried, because a retry would be a second email.
+
 ### Changed — checkmydata.ai is a static site on Cloudflare; hosting costs nothing (2026-10-12)
 
 - The last running cost was the site's own Heroku dyno. `npm run build:site`

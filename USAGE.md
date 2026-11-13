@@ -178,7 +178,7 @@ Project owners can invite collaborators:
 
 1. Hover over a project, click the team icon, enter email and select a role (**Editor** or **Viewer**)
 2. **Roles**: Owner (full CRUD), Editor (chat + sessions), Viewer (read-only chat)
-3. Invitees receive email notifications (via Resend when configured)
+3. Invitees receive email notifications (via Cloudflare Email Sending when configured)
 4. Each user gets isolated chat sessions while sharing project data
 
 ---

@@ -9,7 +9,8 @@ name: Deploy site to Cloudflare
 #   secrets.CLOUDFLARE_WORKERS_TOKEN — Workers Scripts Write on the account
 #   secrets.CLOUDFLARE_ROUTES_TOKEN  — Workers Routes Write on the checkmydata.ai zone
 #   vars.CLOUDFLARE_ACCOUNT_ID
-# RESEND_API_KEY is a Worker secret set once with `wrangler secret put`, not here.
+# CLOUDFLARE_EMAIL_API_TOKEN and CLOUDFLARE_EMAIL_ACCOUNT_ID are Worker secrets set once
+# with `wrangler secret put`, not here.
 on:
   workflow_dispatch:
 

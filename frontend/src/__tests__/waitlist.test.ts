@@ -51,7 +51,7 @@ describe("the site Worker", () => {
   let ipCounter = 0;
 
   function env(overrides: Partial<Env> = {}): Env {
-    return { ASSETS: assets, RESEND_API_KEY: "test-key", ...overrides };
+    return { ASSETS: assets, CLOUDFLARE_EMAIL_API_TOKEN: "test-token", CLOUDFLARE_EMAIL_ACCOUNT_ID: "acct1", ...overrides };
   }
 
   function req(body: unknown, init: { ip?: string; method?: string; path?: string } = {}) {
@@ -83,20 +83,28 @@ describe("the site Worker", () => {
   });
 
   it("mails the sign-up to contact@ with the visitor as reply-to", async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: "msg_1" }), { status: 200 }));
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ success: true, result: { message_id: "<m1@mail.checkmydata.ai>", queued: ["contact@checkmydata.ai"] } }), { status: 200 }));
     const { status, json } = await post({ email: "ana@example.com", name: "Ana" });
     expect(status).toBe(200);
     expect(json).toEqual({ ok: true });
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://api.resend.com/emails");
+    expect(url).toBe("https://api.cloudflare.com/client/v4/accounts/acct1/email/sending/send");
     const sent = JSON.parse(String(init.body));
+    expect(sent.from).toEqual({ address: "noreply@mail.checkmydata.ai", name: "CheckMyData" });
     expect(sent.to).toEqual(["contact@checkmydata.ai"]);
-    expect(sent.reply_to).toBe("ana@example.com");
+    expect(sent.reply_to).toEqual({ address: "ana@example.com" });
     expect(sent.subject).toBe("Waitlist: Ana");
   });
 
   it("reports a provider refusal as a failure, never as success", async () => {
     fetchMock.mockResolvedValue(new Response("domain not verified", { status: 403 }));
+    const { status, json } = await post({ email: "ana@example.com" });
+    expect(status).toBe(502);
+    expect(json.ok).toBe(false);
+  });
+
+  it("reports a 2xx without a message id as a failure, never as success", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ success: false, errors: [{ code: 10203, message: "email.sending_disabled" }] }), { status: 200 }));
     const { status, json } = await post({ email: "ana@example.com" });
     expect(status).toBe(502);
     expect(json.ok).toBe(false);
@@ -108,7 +116,7 @@ describe("the site Worker", () => {
   });
 
   it("answers 503 and sends nothing when the key is missing", async () => {
-    expect((await post({ email: "ana@example.com" }, env({ RESEND_API_KEY: undefined }))).status).toBe(503);
+    expect((await post({ email: "ana@example.com" }, env({ CLOUDFLARE_EMAIL_API_TOKEN: undefined }))).status).toBe(503);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

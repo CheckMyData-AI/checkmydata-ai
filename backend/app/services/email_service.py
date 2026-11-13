@@ -1,13 +1,22 @@
-"""Transactional email service powered by Resend."""
+"""Transactional email service powered by Cloudflare Email Sending.
+
+Resend sent this mail until 2026-11-13, when the operator retired it everywhere. The account
+that holds checkmydata.ai sends it: ``POST /accounts/{id}/email/sending/send`` with a token that
+can only send (Observatory preset ``email-send``).
+
+Cloudflare takes no idempotency key, so a retry is only safe when nothing can have been sent: a
+429. A 5xx or a timeout after the request left may already have delivered the mail, and trying
+again would be a second email in the recipient's inbox, so those are not retried.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from html import escape
 
-import resend
-from resend.exceptions import ApplicationError, RateLimitError
+import httpx
 
 from app.config import settings
 
@@ -63,25 +72,90 @@ def _base_html(title: str, body: str) -> str:
     )
 
 
+_API = "https://api.cloudflare.com/client/v4"
+_SEND_TIMEOUT_S = 15.0
+
+
+class EmailNotSentError(Exception):
+    """Nothing was sent: a 429, or a request that never reached Cloudflare. Safe to try again."""
+
+
+class EmailRefusedError(Exception):
+    """Cloudflare refused the message (4xx): nothing was sent, and retrying will not help."""
+
+
+class EmailOutcomeUnknownError(Exception):
+    """A 5xx, a malformed answer or a timeout after the request left: it may have been sent."""
+
+
+def _mailbox(value: str) -> dict[str, str]:
+    """``Name <address>`` -> ``{"address", "name"}``; a bare address -> ``{"address"}``."""
+    m = re.match(r"^\s*(.*?)\s*<\s*([^<>\s]+@[^<>\s]+)\s*>\s*$", value)
+    if not m:
+        return {"address": value.strip()}
+    name = m.group(1).strip().strip('"')
+    return {"address": m.group(2), "name": name} if name else {"address": m.group(2)}
+
+
+def _cf_send(params: dict[str, object], options: dict[str, str] | None = None) -> dict[str, object]:
+    """One send through Cloudflare Email Sending: the typed errors above, or the result."""
+    del options  # Cloudflare takes no idempotency key; the caller's no-retry rule stands in for it.
+    body = {
+        "from": _mailbox(str(params["from"])),
+        "to": params["to"],
+        "subject": params["subject"],
+        "html": params["html"],
+    }
+    url = f"{_API}/accounts/{settings.cloudflare_email_account_id}/email/sending/send"
+    headers = {"Authorization": f"Bearer {settings.cloudflare_email_api_token}"}
+    try:
+        res = httpx.post(url, json=body, headers=headers, timeout=_SEND_TIMEOUT_S)
+    except httpx.ConnectError as exc:
+        raise EmailNotSentError(
+            f"Cloudflare Email Sending was not reached: {type(exc).__name__}"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise EmailOutcomeUnknownError(
+            f"Cloudflare Email Sending did not answer: {type(exc).__name__}"
+        ) from exc
+    try:
+        answer = res.json()
+    except ValueError:
+        answer = {}
+    words = "; ".join(
+        f"{e.get('code', '')} {e.get('message', '')}".strip() for e in (answer.get("errors") or [])
+    )
+    if res.status_code == 429:
+        raise EmailNotSentError(words or "rate limited")
+    if 400 <= res.status_code < 500:
+        raise EmailRefusedError(
+            f"Cloudflare refused the mail ({res.status_code}): {words or 'no reason given'}"
+        )
+    result = answer.get("result") or {}
+    if res.status_code >= 300 or answer.get("success") is False or not result.get("message_id"):
+        raise EmailOutcomeUnknownError(
+            f"Cloudflare Email Sending answered {res.status_code}: {words or 'no message id'}"
+        )
+    return {"id": result["message_id"]}
+
+
 def _is_retryable(exc: Exception) -> bool:
-    return isinstance(exc, (RateLimitError, ApplicationError))
+    # Only a refusal before acceptance, or a request that never reached Cloudflare. Never an
+    # unknown outcome: a retry there is a second email.
+    return isinstance(exc, EmailNotSentError)
 
 
 class EmailService:
-    """Fire-and-forget transactional emails via Resend.
+    """Fire-and-forget transactional emails via Cloudflare Email Sending.
 
-    All public methods silently no-op when RESEND_API_KEY is not configured.
+    All public methods silently no-op when the Cloudflare token or account is not configured.
     Exceptions are caught and logged so email failures never break the main flow.
-    Transient errors (429 rate-limit, 500 server error) are retried up to 3 times
-    with exponential backoff.
+    A 429, or a request that never reached Cloudflare, is retried up to 3 times with
+    exponential backoff; an unknown outcome is not, so a retry is never a second email.
     """
 
-    def __init__(self) -> None:
-        if settings.resend_api_key:
-            resend.api_key = settings.resend_api_key
-
     def _is_configured(self) -> bool:
-        return bool(settings.resend_api_key)
+        return bool(settings.cloudflare_email_api_token and settings.cloudflare_email_account_id)
 
     async def _send(
         self,
@@ -94,22 +168,22 @@ class EmailService:
     ) -> bool:
         if not self._is_configured():
             return False
-        params: resend.Emails.SendParams = {
-            "from": settings.resend_from_email,
+        params: dict[str, object] = {
+            "from": settings.email_from,
             "to": [to],
             "subject": subject,
             "html": html,
         }
         if tags:
-            params["tags"] = tags  # type: ignore[typeddict-item]
-        options: resend.Emails.SendOptions | None = None
+            params["tags"] = tags
+        options: dict[str, str] | None = None
         if idempotency_key:
             options = {"idempotency_key": idempotency_key}
 
         last_exc: Exception | None = None
         for attempt in range(_MAX_RETRIES + 1):
             try:
-                result = await asyncio.to_thread(resend.Emails.send, params, options)
+                result = await asyncio.to_thread(_cf_send, params, options)
                 email_id = (
                     result.get("id") if isinstance(result, dict) else getattr(result, "id", None)
                 )
