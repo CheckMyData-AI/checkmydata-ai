@@ -20,6 +20,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   gone (a 429, a request that never reached Cloudflare). A 5xx, a timeout or an answer
   without a message id may already have delivered the mail: it is reported as not sent and
   not retried, because a retry would be a second email.
+- **Security:** `npm audit fix` (no `--force`) in `frontend/`: `@sentry/nextjs` and its
+  bundler plugin past the critical advisory GHSA-mchm-gjx6-7h55, plus in-range updates;
+  `npm audit --omit=dev --audit-level=high` passes again.
 
 ### Changed — checkmydata.ai is a static site on Cloudflare; hosting costs nothing (2026-10-12)
 
